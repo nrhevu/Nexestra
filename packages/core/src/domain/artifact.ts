@@ -8,6 +8,8 @@ export const ArtifactKindSchema = z.enum([
   "test_report",
   "log",
   "screenshot",
+  /** Findings produced by a cross-review run (M5). */
+  "review",
 ]);
 export type ArtifactKind = z.infer<typeof ArtifactKindSchema>;
 

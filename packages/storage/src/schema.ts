@@ -137,6 +137,7 @@ export const tasks = sqliteTable(
     maxAttempts: integer("maxAttempts").notNull().default(3),
     acceptanceCriteriaIds: json<string[]>("acceptanceCriteriaIds").notNull(),
     costUSD: real("costUSD").notNull().default(0),
+    mergeState: text("mergeState").$type<Task["mergeState"]>(),
     order: integer("order").notNull().default(0),
     createdAt: text("createdAt").notNull(),
     updatedAt: text("updatedAt").notNull(),

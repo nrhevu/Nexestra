@@ -9,6 +9,8 @@ export const ApprovalKindSchema = z.enum([
   "merge",
   "destructive",
   "spec",
+  /** An acceptance criterion whose `verification.kind` is `manual_review` (M5). */
+  "manual_verification",
 ]);
 export type ApprovalKind = z.infer<typeof ApprovalKindSchema>;
 
