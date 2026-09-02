@@ -104,7 +104,7 @@ export function TerminalPane({ run }: { run: Run | undefined }) {
           {run ? `${run.harness} · ${run.kind} · ${run.id}` : "no run selected"}
         </span>
       </div>
-      <div className="terminal-host" ref={host} />
+      <div className="terminal-host" ref={host} data-testid="terminal" />
       {run && (rows?.length ?? 0) === 0 ? (
         <div className="terminal-empty nx-muted">waiting for the harness to say something…</div>
       ) : null}

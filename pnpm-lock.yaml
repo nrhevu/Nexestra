@@ -35,6 +35,9 @@ importers:
       '@nexestra/adapter-codex':
         specifier: workspace:*
         version: link:../../packages/adapters/codex
+      '@nexestra/adapter-fake':
+        specifier: workspace:*
+        version: link:../../packages/adapters/fake
       '@nexestra/adapter-opencode':
         specifier: workspace:*
         version: link:../../packages/adapters/opencode
@@ -50,6 +53,9 @@ importers:
       '@nexestra/storage':
         specifier: workspace:*
         version: link:../../packages/storage
+      better-sqlite3:
+        specifier: 13.0.3
+        version: 13.0.3
       hono:
         specifier: 4.13.5
         version: 4.13.5

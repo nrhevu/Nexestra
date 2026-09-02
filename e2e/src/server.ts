@@ -9,15 +9,16 @@
  * - `apps/web/dist` served by the server itself, so no Vite is involved and a
  *   test is looking at exactly what `pnpm build` produces.
  *
- * The server runs from source under `tsx` rather than from `apps/server/dist`:
- * the bundle keeps `better-sqlite3` external and, under pnpm's isolated
- * `node_modules`, `apps/server/dist/index.js` cannot resolve it. See
- * `docs/testing.md`.
+ * Since M7 the suite runs `apps/server/dist/index.js` — the same bundle
+ * `pnpm start` runs — rather than the sources under `tsx`. That was impossible
+ * before: the bundle externalised `better-sqlite3` and `drizzle-orm` without
+ * declaring them, so it could not boot at all. Now that it can, running it here
+ * means every e2e run is also a check that the production artefact works.
  */
 import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync, openSync } from "node:fs";
 import path from "node:path";
-import { E2E_PORT, REPO_ROOT, SERVER_DIR, WEB_DIST } from "./paths.js";
+import { E2E_PORT, SERVER_DIR, WEB_DIST } from "./paths.js";
 
 export interface StartServerOptions {
   readonly home: string;
@@ -34,7 +35,8 @@ export interface RunningServer {
   readonly baseURL: string;
 }
 
-const TSX = path.join(SERVER_DIR, "node_modules", ".bin", "tsx");
+/** The production bundle — the exact file `pnpm start` runs. */
+const SERVER_ENTRY = path.join(SERVER_DIR, "dist", "index.js");
 
 export function assertWebBuild(): void {
   if (existsSync(path.join(WEB_DIST, "index.html"))) return;
@@ -45,8 +47,10 @@ export function assertWebBuild(): void {
 
 export async function startServer(options: StartServerOptions): Promise<RunningServer> {
   assertWebBuild();
-  if (!existsSync(TSX)) {
-    throw new Error(`tsx not found at ${TSX} — run \`pnpm install\` in ${REPO_ROOT}`);
+  if (!existsSync(SERVER_ENTRY)) {
+    throw new Error(
+      `${SERVER_ENTRY} is missing — run \`pnpm build\` before the e2e suite (\`pnpm e2e\` does)`,
+    );
   }
 
   const log = openSync(options.logFile, "a");
@@ -72,7 +76,7 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     delete env[key];
   }
 
-  const child = spawn(TSX, ["src/index.ts"], {
+  const child = spawn(process.execPath, [SERVER_ENTRY], {
     cwd: SERVER_DIR,
     env,
     stdio: ["ignore", log, log],

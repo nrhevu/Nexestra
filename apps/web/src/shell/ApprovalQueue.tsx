@@ -51,18 +51,23 @@ export function ApprovalQueue({
 
   if (pending.length === 0) {
     return (
-      <section className="approval-queue" aria-label="Approval queue">
+      <section className="approval-queue" aria-label="Approval queue" data-testid="approval-queue">
         <div className="nx-muted">{emptyLabel}</div>
       </section>
     );
   }
 
   return (
-    <ul className="approval-queue" aria-label="Approval queue">
+    <ul className="approval-queue" aria-label="Approval queue" data-testid="approval-queue">
       {pending.map((approval) => {
         const task = titleOf(approval.taskId);
         return (
-          <li key={approval.id} className="approval-queue__item">
+          <li
+            key={approval.id}
+            className="approval-queue__item"
+            data-testid="approval"
+            data-approval-kind={approval.kind}
+          >
             <div className="approval-queue__head">
               <StatusDot tone={approval.risk === "high" ? "error" : "warn"} />
               <span className="approval-queue__title">{approval.title}</span>
@@ -80,6 +85,7 @@ export function ApprovalQueue({
               <Button
                 tone="primary"
                 boxed
+                data-testid="approval-approve"
                 disabled={busyId === approval.id}
                 onClick={() => onResolve(approval.id, "approved")}
               >
@@ -88,6 +94,7 @@ export function ApprovalQueue({
               <Button
                 tone="danger"
                 boxed
+                data-testid="approval-reject"
                 disabled={busyId === approval.id}
                 onClick={() => onResolve(approval.id, "rejected")}
               >

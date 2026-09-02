@@ -11,6 +11,7 @@
     "dev": "concurrently -k -n server,web -c cyan,magenta \"pnpm --filter @nexestra/server dev\" \"pnpm --filter @nexestra/web dev\"",
     "build": "pnpm --filter @nexestra/web build && pnpm --filter @nexestra/server build",
     "start": "pnpm --filter @nexestra/server start",
+    "smoke": "pnpm --filter @nexestra/server smoke",
     "test": "pnpm -r --parallel test",
     "e2e": "pnpm build && pnpm --filter @nexestra/e2e e2e",
     "e2e:only": "pnpm --filter @nexestra/e2e e2e",

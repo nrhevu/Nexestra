@@ -69,6 +69,11 @@ const MAX_COMMAND_LOG = 200;
 export async function executeRun(options: ExecuteRunOptions): Promise<RunOutcome> {
   const { store, adapter, config, task, spec, signal, hooks } = options;
 
+  // A spec with no model is the common case — it is what makes the adapter
+  // leave `-m` off the command line — so pricing has to fall back to whatever
+  // the harness itself said it defaults to, or every such run costs $0.00.
+  const model = spec.model ?? config.defaultModelFor(adapter.id);
+
   const prepared = await adapter.prepare(spec);
   let run = store.recordRun({
     id: prepared.runId,
@@ -124,7 +129,7 @@ export async function executeRun(options: ExecuteRunOptions): Promise<RunOutcome
           hooks?.onPermission?.(run.id, event);
           break;
         case "usage": {
-          const cost = priceUsage(event, spec.model, config.priceTable);
+          const cost = priceUsage(event, model, config.priceTable);
           usage = addUsage(usage, event, cost);
           costUSD += cost;
           await hooks?.onCost?.(run.id, cost);
