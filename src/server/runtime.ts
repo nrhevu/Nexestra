@@ -155,7 +155,7 @@ export class LocalAgentRunner implements AgentRunner {
     ];
     if (agent.model) args.push("-m", agent.model);
     if (agent.reasoningEffort) args.push("--variant", agent.reasoningEffort);
-    args.push("--file", invocation.transcriptPath, localHarnessPrompt(agent, invocation));
+    args.push("--file", invocation.transcriptPath, "--", localHarnessPrompt(agent, invocation));
     const result = await runCommand(binary, args, {
       cwd: this.options.store.workspacePath,
       timeoutMs: 5 * 60_000,
