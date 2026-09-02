@@ -33,14 +33,16 @@ is not ready while workspace, memory and task-management features remain
 available.
 
 Configure the Master from **Settings → Master provider**. Select a built-in or
-add a custom provider, choose its authentication mode, paste its API key, and
-save. A server restart is not required.
+add a custom provider, choose its authentication mode, paste its API key, load
+the provider's model catalogue, and save. Then open **Agents**, create a
+Nexestra agent with that provider/model, and select it for the current chat. A
+server restart is not required.
 
 | You have | What runs |
 |----------|-----------|
 | an OpenAI API key | OpenAI Responses with `chat-latest` by default (or select `gpt-5.6`) |
 | an Anthropic API key | Anthropic Messages with Claude Opus 5 |
-| a compatible endpoint | Add a custom OpenAI Responses or Anthropic Messages provider, base URL, model and API key |
+| a compatible endpoint | Add a custom OpenAI Responses, OpenAI Chat Completions or Anthropic Messages provider, then choose a discovered model |
 | a trusted no-auth local endpoint | Add a custom provider with `No authentication`; loopback HTTP is allowed |
 | `codex` on `PATH`, after `codex login` | Real Codex runs the tasks |
 | `opencode` too, after `opencode auth login` | A second real harness can cross-review task results |
@@ -54,6 +56,8 @@ flow.
 OpenAI does not expose ChatGPT subscription OAuth for third-party applications,
 so Nexestra uses official API credentials rather than pretending that a ChatGPT
 web login authorizes API calls. Harness auth is each harness's own business;
+selecting a Codex worker agent can use a Codex CLI authenticated by
+`codex login`, but that login does not turn the CLI into Nexestra's Master.
 `GET /api/harnesses` reports what `discover()` found (for OpenCode that means
 `GET /provider` returning at least one connected provider), and
 **Settings → Detected harnesses → [Refresh detection]** re-runs it after you
@@ -65,17 +69,18 @@ One switch worth knowing:
 NEXESTRA_HARNESSES=codex pnpm dev # one adapter ⇒ no cross-review ⇒ no second model billed
 ```
 
-## The four surfaces
+## The five surfaces
 
 | # | Surface | What it is |
 |---|---------|------------|
 | 1 | **Workspace / Chat** | The conversation with the Master, streaming live: clarifying questions, the spec as it is written, the plan preview, tool calls, and the orchestrator's progress interleaved by time |
 | 2 | **Task Board** | The plan as a kanban — TODO / IN PROGRESS / DONE (plus REVIEW and BLOCKED when occupied) — with the harness, model, attempts, cost and merge state on each card, and `[Start execution]` / `[Pause]` / `[Cancel]` in the header |
-| 3 | **Editor / Agent workspace** | One run from three angles: its worktree file tree, a file in CodeMirror, the unified diff against the branch it was cut from, and its event stream in a terminal |
-| 4 | **Memory Graph** | What the Master decided and learned, as typed nodes and edges, editable |
+| 3 | **Agents** | Reusable project-level profiles. A Nexestra agent selects a Master provider/model for chat; a Codex or OpenCode agent selects the harness/model/instructions used by an assigned task |
+| 4 | **Editor / Runs** | One run from three angles: its worktree file tree, a file in CodeMirror, the unified diff against the branch it was cut from, and its event stream in a terminal |
+| 5 | **Memory Graph** | What the Master decided and learned, as typed nodes and edges, editable |
 
 Plus **Settings** (`⌘,`): detected harnesses, Master providers and credentials,
-defaults, budget, concurrency, theme. `⌘1`…`⌘4` switch surfaces, `⌘/`
+defaults, budget, concurrency, theme. `⌘1`…`⌘5` switch surfaces, `⌘/`
 focuses the composer, `⌘K` is the command palette.
 
 The approval queue lives in the navigation column with a count badge on the
@@ -111,7 +116,7 @@ flowchart TD
 
     X -.->|events| E[(append-only event log)]
     V -.->|artifacts| E
-    E -.->|/ws| UI[The four surfaces]
+    E -.->|/ws| UI[The five surfaces]
 ```
 
 Two rules hold the whole thing up. The **phase machine is code, not prompt** —
@@ -165,7 +170,7 @@ nexestra/
       src/routes/           # one file per resource group
       src/master/           # Master runner, provider resolver, host and store
       src/execution/        # the orchestrator wired up: registry, runtime, files
-    web/                    # React 19 SPA — the four surfaces
+    web/                    # React 19 SPA — the five surfaces
       src/shell/            # rail, navigation, surface frame, keyboard, palette, approvals
       src/surfaces/{chat,board,editor,memory}/
       src/settings/         # the Settings route
@@ -236,6 +241,10 @@ Migrations are applied at startup from the array embedded in
   credential (or a deliberate no-auth endpoint), the runtime reports
   `configuration required` and does
   not fabricate a plan.
+- **Provider model discovery follows the selected wire protocol.** It reads
+  OpenAI-compatible `GET /models` or Anthropic `GET /v1/models`. A provider
+  with a proprietary catalogue can still use an exact model id entered during
+  setup.
 - **Usage events are treated as increments.** A harness reporting cumulative
   totals per turn would over-count; Codex emits one per turn, so this is correct
   today and worth revisiting per adapter.

@@ -30,3 +30,4 @@ implementation forced. Where a decision changed in practice, the ADR says so and
 | [0020](0020-production-master-provider-registry.md) | Production Master provider registry with no simulation fallback | Accepted |
 | [0021](0021-slack-inspired-project-workspace.md) | Slack-inspired project workspace | Accepted |
 | [0022](0022-local-provider-credential-store.md) | Configure provider credentials in the app | Accepted |
+| [0023](0023-reusable-agent-profiles.md) | Reusable agent profiles select Master providers and worker harnesses | Accepted |

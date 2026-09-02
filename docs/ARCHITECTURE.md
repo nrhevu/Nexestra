@@ -8,8 +8,10 @@ from planned code at a glance.
 Codex/OpenCode harnesses, and requires a configured OpenAI, Anthropic or custom
 Master provider. The Master owns research, design, planning and project-memory
 work; coding/testing/build work is delegated as persisted tasks. The web shell
-uses the Slack-inspired layout recorded in ADR 0021. Older milestone detail
-below remains useful, but ADR 0020 wins wherever it mentions demo/fake startup.
+uses the Slack-inspired layout recorded in ADR 0021, with persisted agent
+profiles selecting the Master provider/model per thread or worker harness/model
+per task (ADR 0023). Older milestone detail below remains useful, but ADR 0020
+wins wherever it mentions demo/fake startup.
 
 **Milestone reached: M6 — the loop is closed.** A vague sentence in the Chat
 surface becomes clarifying questions, a spec with verifiable acceptance
@@ -32,7 +34,7 @@ same WebSocket as everything else (§11).
 | `@nexestra/orchestrator` | **implemented** | The dispatch / review / verify loop: scheduler over the task DAG, worktree per task, cross-review, acceptance criteria run as real commands, retry, replan, approval gates, budget, merge, recovery. |
 | `@nexestra/adapter-codex` | **implemented** | `codex exec --json` → `HarnessEvent`, plus the git worktree primitives everything else reuses. |
 | `@nexestra/adapter-opencode` | **implemented** | `opencode serve` + SSE → `HarnessEvent`, with permission replies and per-workspace server management. |
-| `@nexestra/web` | **implemented** | React 19 SPA: shell layout, four surfaces, settings, keyboard shortcuts, command palette — all on `/api`, with TanStack Query mutations and a `/ws` connection that folds events into the cache, including a live Master turn. |
+| `@nexestra/web` | **implemented** | React 19 SPA: shell layout, five surfaces, settings, keyboard shortcuts, command palette — all on `/api`, with TanStack Query mutations and a `/ws` connection that folds events into the cache, including a live Master turn. |
 | `@nexestra/ui-kit` | **implemented** | Slack-inspired product components and CSS-variable dark/light tokens; code, diffs and terminals retain the mono tokens. |
 | `@nexestra/adapter-fake` | **test only** | Deterministic `HarnessAdapter` injected by unit/integration tests; never registered or exposed by production. |
 
@@ -58,6 +60,7 @@ One file per entity under `domain/`, all exported from `src/index.ts`:
 |------|---------|
 | `common.ts` | `IdSchema`, `TimestampSchema`, `EntityBaseSchema`, `HarnessIdSchema`, `SandboxLevelSchema`, `ReasoningLevelSchema`, `RunKindSchema`, `McpServerRefSchema`, `UsageSchema`, `JsonSchemaSchema` |
 | `workspace.ts` | `Workspace`, `WorkspaceSettings` |
+| `agent.ts` | `Agent`, `AgentHarness`; reusable Nexestra Master and Codex/OpenCode worker profiles |
 | `thread.ts` | `Thread`, `ThreadPhase`, `ACTIVE_THREAD_PHASES` |
 | `message.ts` | `Message`, `MessageRole`, `MessageReference`, `MessageToolCall`, `MessageAttachment` |
 | `spec.ts` | `Spec`, `SpecScope`, `AcceptanceCriterion`, `Verification`, `OpenQuestion`, `Decision` |
@@ -103,7 +106,7 @@ touches SQLite directly.
 
 ### 3.2 Tables
 
-One projection table per domain entity — `workspaces`, `threads`, `messages`,
+One projection table per domain entity — `workspaces`, `agents`, `threads`, `messages`,
 `specs`, `plans`, `tasks`, `runs`, `run_events`, `artifacts`, `approvals`,
 `memories` — plus:
 
@@ -115,6 +118,10 @@ One projection table per domain entity — `workspaces`, `threads`, `messages`,
   `thread.created`; events with no `threadId` (workspace-level: `workspace.*`,
   `settings.updated`) are sequenced per workspace instead.
 - **`settings`** `(key, value, updatedAt)` — a single JSON row keyed `app`.
+- **Agent assignment** — nullable `threads.agentId` selects a Nexestra Master
+  profile and nullable `tasks.agentId` selects a Codex/OpenCode worker profile.
+  Both references use `ON DELETE RESTRICT`; routes also return a clear conflict
+  while a profile is assigned.
 - **`master_messages`** `(id, workspaceId, threadId, seq, role, content, createdAt)` and
   **`master_state`** `(threadId, workspaceId, state, updatedAt)` **(M3)** — the
   Master's own working memory: the raw API content blocks of its conversation,
@@ -181,6 +188,9 @@ which is what makes replay a plain upsert.
 |------|-------|---------|-----------|
 | `workspace.created` | workspace | ✓ `Workspace` | `createWorkspace` |
 | `workspace.updated` | workspace | ✓ `Workspace` | `updateWorkspace` |
+| `agent.created` | workspace | ✓ `Agent` | `createAgent` |
+| `agent.updated` | workspace | ✓ `Agent` | `updateAgent` |
+| `agent.deleted` | workspace | `{id, workspaceId}` | `deleteAgent` |
 | `thread.created` | thread (seq 0) | ✓ `Thread` | `createThread` |
 | `thread.updated` | thread | ✓ `Thread` | `updateThread` (no phase change) |
 | `thread.phase_changed` | thread | ✓ `Thread` | `updateThread` (phase changed) |
@@ -281,13 +291,17 @@ Codes: `bad_request` (400), `not_found` (404), `conflict` (409),
 | GET | `/api/health` | `{ ok, version, master }` — `master` says which model client the process started with |
 | GET / PUT | `/api/settings` | Machine-wide defaults, read-only `master`, and per-provider credential-presence booleans |
 | POST | `/api/settings/providers` | Validate, create and optionally activate a custom provider with a write-only credential |
+| POST | `/api/settings/providers/discover-models` | Test an unsaved provider connection and return its model ids without persisting the write-only credential |
+| GET | `/api/settings/providers/:id/models` | Discover model ids from a saved provider and its server-side credential |
 | PUT / DELETE | `/api/settings/providers/:id/credential` | Write or remove a provider key; the value is never returned |
+| GET / POST | `/api/agents?workspaceId=` / `/api/agents` | List or create reusable agent profiles |
+| PATCH / DELETE | `/api/agents/:id` | Update a profile or delete it when it is not assigned |
 | GET | `/api/workspaces` | |
 | POST | `/api/workspaces` | `{path, name?, shortLabel?, defaultBranch?, settings?}` — the path must exist and be a git repository |
 | GET / PATCH | `/api/workspaces/:id` | |
 | GET | `/api/threads?workspaceId=` | |
 | POST | `/api/threads` | `{workspaceId, title, summary?, phase?, budgetUSD?}` |
-| GET / PATCH | `/api/threads/:id` | PATCH takes `{title?, summary?, phase?, budgetUSD?}` |
+| GET / PATCH | `/api/threads/:id` | PATCH takes `{title?, summary?, phase?, budgetUSD?, agentId?}`; only Nexestra agents are accepted |
 | GET / POST | `/api/threads/:id/messages` | |
 | GET / PUT | `/api/threads/:id/spec` | GET returns `null` when there is none |
 | GET / PUT | `/api/threads/:id/plan` | |
@@ -298,7 +312,7 @@ Codes: `bad_request` (400), `not_found` (404), `conflict` (409),
 | GET | `/api/tasks?threadId=` | `threadId` is required |
 | POST | `/api/tasks` | |
 | POST | `/api/tasks/reorder` | `{threadId, taskIds[]}` — index becomes `Task.order` |
-| GET / PATCH / DELETE | `/api/tasks/:id` | |
+| GET / PATCH / DELETE | `/api/tasks/:id` | PATCH accepts a Codex/OpenCode `agentId`; its harness/model become the effective worker configuration |
 | POST | `/api/tasks/:id/status` | `{status, order?}` — what a board drag calls |
 | POST | `/api/threads/:id/execution/(start\|pause\|resume\|cancel)` | **(M6)** Drives the orchestrator; answers an `ExecutionStatus`. `start` also accepts the plan (`planning → executing`) |
 | GET | `/api/threads/:id/execution/status` | **(M6)** `ExecutionStatus`: loop state, task counts, live runs, pending approvals, cost against budget |
@@ -610,6 +624,7 @@ invalidating it. A refetch per line would be one HTTP request per token of
 | Chat | Send a message to the Master | `POST /api/threads/:id/master/send` |
 | Chat | Answer an `ask_user` card | `POST …/master/send` `{kind:"answers"}` |
 | Chat | Stop a turn | `POST /api/threads/:id/master/cancel` |
+| Chat | Select a Nexestra Master agent for the thread | `PATCH /api/threads/:id` |
 | Chat / sidebar | Approve / reject — records the decision **and** resumes the suspended turn | `POST /api/approvals/:id/resolve` |
 | Board | Drag a card between columns (optimistic, rolled back on failure) | `POST /api/tasks/:id/status` |
 | Board header | `[Start execution]` / `[Pause]` / `[Resume]` / `[Cancel]` **(M6)** | `POST /api/threads/:id/execution/…` |
@@ -618,9 +633,11 @@ invalidating it. A refetch per line would be one HTTP request per token of
 | Navigation | Approve / reject anything in the queue **(M6)** | `POST /api/approvals/:id/resolve` |
 | Settings | `[Refresh detection]` **(M6)** | `GET /api/harnesses?refresh=1` |
 | Board sidebar | Edit title / agent / status / model / reasoning / sandbox | `PATCH /api/tasks/:id` |
+| Agents | Create or delete a profile; select a Nexestra profile for chat | `POST`/`DELETE /api/agents`, `PATCH /api/threads/:id` |
 | Memory sidebar | Edit a memory | `PATCH /api/memories/:id` |
 | Settings | Read and write defaults | `GET`/`PUT /api/settings` |
 | Settings | Add and activate a custom Master provider | `POST /api/settings/providers` |
+| Settings / Agents | Discover provider models before selection | `POST /api/settings/providers/discover-models`, `GET /api/settings/providers/:id/models` |
 | Settings | Save or remove a Master provider key | `PUT`/`DELETE /api/settings/providers/:id/credential` |
 
 **(M6)** The only buttons still disabled for a later milestone are `+ Add` task
@@ -634,7 +651,7 @@ on the board and `Open source` in the memory sidebar.
 apps/web/src
   main.tsx              QueryClientProvider + RouterProvider, applies the theme
   router.tsx            code-based TanStack Router route tree
-  app.css               layout for the shell, the four surfaces and the dialog
+  app.css               layout for the shell, the five surfaces and dialogs
   shell/
     AppShell.tsx        rail | navigation | content; mounts keyboard, palette, /ws
     WorkspaceRail.tsx   workspace rail + "add workspace" dialog
@@ -643,7 +660,7 @@ apps/web/src
     PromptDialog.tsx    one-field modal
     SurfaceLayout.tsx   main | sidebar (280px) frame used by every surface
     surfaces.ts         surface descriptors and their route paths
-    useShellKeyboard.ts ⌘1..⌘4, ⌘/, ⌘K, ⌘,
+    useShellKeyboard.ts ⌘1..⌘5, ⌘/, ⌘K, ⌘,
     CommandPalette.tsx  ⌘K palette
     ApprovalQueue.tsx   every pending approval, of every kind (M6)
     ApprovalQueuePanel  the queue wired to the workspace, plus the rail badge
@@ -651,6 +668,8 @@ apps/web/src
                         QuestionCard (ask_user), SpecCard (inline + sidebar),
                         PlanCard (plan_preview), ToolCallCard (collapsed),
                         ApprovalBanner
+  surfaces/agents/      AgentsSurface + AgentDialog; project profiles,
+                        provider/model selection and thread assignment
   surfaces/editor/      EditorSurface + useActiveRun, FileTree, CodePane,
                         DiffPane, TerminalPane and `terminal.ts` — the pure
                         `RunEvent[] → lines` reducer behind the xterm pane (M6)
@@ -668,8 +687,9 @@ Routes:
 /w/$workspaceId                              → first thread, or "create one"
 /w/$workspaceId/t/$threadId/chat             surface 1
 /w/$workspaceId/t/$threadId/board            surface 2
-/w/$workspaceId/t/$threadId/editor           surface 3
-/w/$workspaceId/t/$threadId/memory           surface 4
+/w/$workspaceId/t/$threadId/agents           surface 3
+/w/$workspaceId/t/$threadId/editor           surface 4
+/w/$workspaceId/t/$threadId/memory           surface 5
 /settings
 ```
 
@@ -682,6 +702,7 @@ the main pane.
 |---------|------|---------|-----------|
 | Chat | Timeline + the live turn (streaming text, collapsed tool cards), question card, spec card, plan preview, approval banner above the composer, and the orchestrator's progress interleaved by time as compact system rows | Cost against budget, the thread's approvals, the live Spec, Decisions (spec + `decision` memories), References, Master usage | — |
 | Task Board | TODO / IN PROGRESS / DONE columns (REVIEW and BLOCKED appear when occupied), drag between columns; cards carry harness / model / reasoning tags, a spinner while a harness is on them, attempts, cost and `mergeState`; the header carries the loop's state and its three verbs | Editable title, agent, status, model, reasoning, sandbox; both directions of the dependency edge; criteria + evidence; the task's runs; `[Dispatch]` / `[Verify]` | `@dnd-kit/core` |
+| Agents | Reusable Nexestra, Codex and OpenCode profiles; create a profile, inspect provider/model/instructions and activate a Master profile for this chat | Selected profile details, chat assignment and deletion | — |
 | Editor | One `Run`, from three angles: its worktree file tree, a file in CodeMirror, the unified diff behind `[View changes]`, and its event stream in xterm. The run is picked in the header and defaults to the newest running one | Harness, model, kind, session, tokens, cost; the current task; progress measured in **criteria satisfied**; artifacts; `[View changes]` / `[Cancel run]` | `@uiw/react-codemirror`, `@xterm/xterm` |
 | Memory Graph | Nodes coloured by `Memory.type`, typed edges, dagre layout | Selected memory with inline edit | `@xyflow/react`, `@dagrejs/dagre` |
 
@@ -831,6 +852,10 @@ never silently lost.
   saved credential (or a deliberate no-auth endpoint), the app remains usable
   for persisted project data but
   does not generate questions, specs or plans.
+- **Provider model discovery is best effort.** It supports OpenAI-compatible
+  `GET /models` and Anthropic `GET /v1/models`; a proprietary catalogue needs
+  an exact model id entered manually. Agent profile editing has an API, but the
+  first Agents UI exposes creation, assignment and deletion only.
 - **One process owns the store.** The approval gate waits on the in-process
   `EventStore` fan-out, so a second process resolving an approval in the same
   SQLite file would not release the waiter.

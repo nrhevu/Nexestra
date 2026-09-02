@@ -7,7 +7,7 @@ milestone it describes and, where it matters, what it does **not** yet cover.
 
 | # | Read | Why |
 |---|------|-----|
-| 1 | [`../README.md`](../README.md) | What Nexestra is, a 60-second quickstart, the four surfaces, the env vars and the scripts |
+| 1 | [`../README.md`](../README.md) | What Nexestra is, a 60-second quickstart, the five surfaces, the env vars and the scripts |
 | 2 | [`PLAN.md`](PLAN.md) §0 | The status section: which milestones landed, with commit ranges and evidence, and which §1 decisions changed in practice |
 | 3 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | The implemented system — package map, domain model, storage, event catalogue, the full route list, the WebSocket protocol, and §11's known gaps |
 
@@ -41,6 +41,8 @@ is depth on one part of it.
    Anthropic and custom provider resolution, secrets and the no-fallback rule.
 5. [`adr/0022`](adr/0022-local-provider-credential-store.md) — write-only
    provider credentials configured in the app and stored outside SQLite.
+6. [`adr/0023`](adr/0023-reusable-agent-profiles.md) — project agent profiles,
+   per-thread Master provider/model selection and per-task worker assignment.
 
 ### Working on the orchestration loop
 
@@ -103,7 +105,7 @@ gates, where the contracts live, and the rules that are not negotiable.
 | [`adapters/codex.md`](adapters/codex.md) | M4 | `@nexestra/adapter-codex` |
 | [`adapters/opencode.md`](adapters/opencode.md) | M5 | `@nexestra/adapter-opencode` |
 | [`testing.md`](testing.md) | M7, amended M8 | Test pyramid, test doubles, fixtures, e2e, live tests and gates |
-| [`adr/`](adr/) | all | 21 decision records — see [`adr/0000-index.md`](adr/0000-index.md) |
+| [`adr/`](adr/) | all | 23 decision records — see [`adr/0000-index.md`](adr/0000-index.md) |
 | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | — | Conventions and workflow |
 | [`../CLAUDE.md`](../CLAUDE.md) | — | Orientation for AI coding agents |
 

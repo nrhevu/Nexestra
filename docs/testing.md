@@ -119,11 +119,12 @@ pnpm exec playwright show-trace e2e/test-results/<test>/trace.zip
 
 | File | Covers | Status |
 |------|--------|--------|
-| `tests/shell.spec.ts` | shell chrome, the four surfaces by mouse and by `⌘1..⌘4`, deep-link reload | passing |
+| `tests/shell.spec.ts` | shell chrome, the five surfaces by mouse and by `⌘1..⌘5`, deep-link reload | passing |
 | `tests/workspace.spec.ts` | adding a workspace pointed at a real git repo, creating a thread, rejecting a non-repo path | passing |
 | `tests/chat.spec.ts` | an unconfigured Master fails honestly and still persists the user's transcript | passing |
 | `tests/board.spec.ts` | dragging a card between columns, persistence across reload, selection | passing |
 | `tests/settings.spec.ts` | honest provider readiness, real harness discovery with no fake entry, saving defaults | passing |
+| `tests/agents.spec.ts` | create/assign a Codex worker; create a Nexestra agent with a provider/model and select it for chat | passing |
 | `tests/execution.spec.ts` | a persisted task assigned to Codex, board handoff controls, production registry contains only Codex/OpenCode | passing |
 
 Paid model reasoning and logged-in harness execution are deliberately not part

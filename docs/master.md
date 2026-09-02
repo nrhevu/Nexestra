@@ -423,8 +423,9 @@ until the model writes a real one); `master_state` holds the draft.
 
 `apps/server/src/master/llm.ts` is a stable `LlmClient` proxy that resolves the
 latest persisted provider settings at the start of each turn. It supports the
-`openai-responses` and `anthropic-messages` protocols, custom HTTPS base URLs,
-editable models, and loopback HTTP endpoints. Provider metadata stores only an
+`openai-responses`, `openai-chat-completions` and `anthropic-messages`
+protocols, custom HTTPS base URLs, editable models, and loopback HTTP
+endpoints. Provider metadata stores only an
 authentication mode. Keys entered in Settings are persisted outside SQLite in
 `credentials.json`, are preferred over the legacy environment fallback, and
 are never returned by the API. A provider removed from settings, or switched to
@@ -435,7 +436,16 @@ API items, uses strict function schemas, exposes web search as a native tool,
 and sends `store: false`. With no ready provider, the proxy throws a clear
 configuration error and Settings reports which credential is missing. It does
 not substitute `DemoLlmClient`; that client remains an injected integration
-test helper. See ADRs 0020 and 0022.
+test helper.
+
+A thread may select a persisted Nexestra agent profile. The proxy resolves the
+profile on each request, replaces the provider's default model with the
+profile's explicit model, and appends the profile's persistent instructions to
+the system prompt. The global active provider remains the fallback for threads
+without a selected agent. The Chat sidebar reports the effective profile,
+provider and model before a request is sent. Provider model catalogues come
+from their model-list endpoint; an exact configured model remains available
+when catalogue discovery is unsupported. See ADRs 0020, 0022 and 0023.
 
 ---
 
@@ -444,6 +454,10 @@ test helper. See ADRs 0020 and 0022.
 - **Changing provider mid-thread changes model semantics.** Durable history is
   provider-neutral and translated at the boundary, but a different model may
   interpret the same history differently.
+- **Provider model discovery is protocol-conventional.** It understands
+  OpenAI-compatible `GET /models` and Anthropic `GET /v1/models`; endpoints
+  with a proprietary catalogue require an exact model id in provider
+  configuration.
 - **`thinking_summary` is not persisted.** The server drops it rather than
   narrating it, so a reloaded thread shows the Master's text but not its
   reasoning summaries.
