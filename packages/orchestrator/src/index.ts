@@ -65,6 +65,7 @@ export {
 } from "./engine.js";
 /* Test harness */
 export {
+  createFakeAdapter,
   createFakeHarnessAdapter,
   type FakeAdapterCall,
   type FakeAdapterOptions,
