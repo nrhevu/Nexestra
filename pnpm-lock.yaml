@@ -167,10 +167,22 @@ importers:
 
   packages/adapters/opencode:
     dependencies:
+      '@nexestra/adapter-codex':
+        specifier: workspace:*
+        version: link:../codex
       '@nexestra/core':
         specifier: workspace:*
         version: link:../../core
+      execa:
+        specifier: 10.0.1
+        version: 10.0.1
+      zod:
+        specifier: 4.5.4
+        version: 4.5.4
     devDependencies:
+      '@types/node':
+        specifier: 26.4.1
+        version: 26.4.1
       typescript:
         specifier: 5.9.3
         version: 5.9.3
