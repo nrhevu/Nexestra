@@ -19,6 +19,11 @@ import type { ExecutionRuntime } from "../execution/runtime.js";
 export function runRoutes(store: NexestraStore, execution: ExecutionRuntime) {
   const run = (id: string) => required(store.getRun(id), "run");
 
+  const baseBranchOf = (runId: string): string | undefined => {
+    const thread = store.getThread(run(runId).threadId);
+    return thread ? store.getWorkspace(thread.workspaceId)?.defaultBranch : undefined;
+  };
+
   const worktreeOf = (runId: string): string => {
     const row = run(runId);
     if (!row.worktreePath) {
@@ -66,9 +71,10 @@ export function runRoutes(store: NexestraStore, execution: ExecutionRuntime) {
 
       /* ---------------------------------------------------------- the worktree */
 
-      .get("/:runId/files", async (c) =>
-        c.json(await readWorktreeTree(worktreeOf(c.req.param("runId")))),
-      )
+      .get("/:runId/files", async (c) => {
+        const runId = c.req.param("runId");
+        return c.json(await readWorktreeTree(worktreeOf(runId), baseBranchOf(runId)));
+      })
 
       .get("/:runId/files/content", async (c) => {
         const runId = c.req.param("runId");

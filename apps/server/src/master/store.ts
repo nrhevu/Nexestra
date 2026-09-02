@@ -22,7 +22,7 @@ import type { NexestraStore } from "@nexestra/storage";
 export function createStorageMasterStore(store: NexestraStore): MasterStore {
   return {
     async loadState(threadId) {
-      return parseState(threadId, store.getMasterState(threadId));
+      return withPublishedEvidence(store, parseState(threadId, store.getMasterState(threadId)));
     },
 
     async saveState(state) {
@@ -43,6 +43,53 @@ export function createStorageMasterStore(store: NexestraStore): MasterStore {
       return store.listMasterMessages(threadId) as LlmMessageParam[];
     },
   };
+}
+
+/**
+ * Fold the evidence the orchestrator recorded back onto the Master's draft.
+ *
+ * The two copies of the spec have different owners: the *wording* belongs to
+ * the Master and lives in `master_state`, while `satisfied` and
+ * `evidenceArtifactId` are facts produced by running a criterion, which the
+ * orchestrator writes onto the published spec in `specs`. Without this the
+ * phase guard for `all_criteria_verified` would read a draft that predates
+ * every verification run and refuse to finish a thread that is finished
+ * (`packages/master/src/phase.ts`, `unverifiedCriterionCount`).
+ *
+ * Only those two fields are copied, and only onto criteria the draft already
+ * has — a criterion the Master has since dropped does not come back.
+ */
+function withPublishedEvidence(
+  store: NexestraStore,
+  state: MasterThreadState | null,
+): MasterThreadState | null {
+  if (!state?.spec) return state;
+  const published = store.getSpec(state.threadId);
+  if (!published) return state;
+
+  const evidence = new Map(
+    published.acceptanceCriteria.map((criterion) => [criterion.id, criterion]),
+  );
+  let changed = false;
+
+  const acceptanceCriteria = state.spec.acceptanceCriteria.map((criterion) => {
+    const proven = evidence.get(criterion.id);
+    if (!proven) return criterion;
+    if (
+      proven.satisfied === criterion.satisfied &&
+      proven.evidenceArtifactId === criterion.evidenceArtifactId
+    ) {
+      return criterion;
+    }
+    changed = true;
+    return {
+      ...criterion,
+      satisfied: proven.satisfied,
+      ...(proven.evidenceArtifactId ? { evidenceArtifactId: proven.evidenceArtifactId } : {}),
+    };
+  });
+
+  return changed ? { ...state, spec: { ...state.spec, acceptanceCriteria } } : state;
 }
 
 /**

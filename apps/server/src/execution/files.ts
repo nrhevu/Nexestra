@@ -11,6 +11,7 @@
 import type { Dirent } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import type { WorktreeDiff } from "@nexestra/adapter-codex/worktree";
 import { changedFiles, diff } from "@nexestra/adapter-codex/worktree";
 import type { FileContent, FileNode, RunDiff } from "@nexestra/core";
 
@@ -65,9 +66,13 @@ export function languageFor(filePath: string): string {
 /**
  * Flat node list, exactly the shape the Editor's `FileTree` renders: every
  * node carries its own path and the paths of its children.
+ *
+ * The A/M/D marks are the worktree against `base` — not `git status`. Once the
+ * orchestrator has committed a task's work the status is clean, and a tree with
+ * no marks would tell the reader that nothing happened.
  */
-export async function readWorktreeTree(worktree: string): Promise<FileNode[]> {
-  const statuses = await statusMap(worktree);
+export async function readWorktreeTree(worktree: string, base?: string): Promise<FileNode[]> {
+  const statuses = await statusMap(worktree, base);
   const nodes: FileNode[] = [];
   let budget = MAX_ENTRIES;
 
@@ -168,25 +173,73 @@ export async function readWorktreeDiff(options: {
     worktreePath: options.worktree,
     base: result.base,
     patch: result.patch,
-    files: result.files.map((file) => ({
-      path: file.path,
-      kind: file.kind,
-      untracked: file.untracked,
-    })),
+    files: changedAgainstBase(result),
     truncated: result.truncated,
   };
 }
 
+/**
+ * The files this diff touches.
+ *
+ * `WorktreeDiff.files` comes from `git status`, which only ever sees
+ * *uncommitted* work — right for a review of a live run, wrong here: the loop
+ * commits each task's worktree once it is verified, so a finished task would
+ * report a patch with no files in it. The patch is the authority, so the list
+ * is read back out of it; `git status` only contributes the untracked flag.
+ */
+function changedAgainstBase(result: WorktreeDiff): RunDiff["files"] {
+  const untracked = new Set(result.files.filter((file) => file.untracked).map((file) => file.path));
+  const fromPatch = filesFromPatch(result.patch).map((file) => ({
+    ...file,
+    untracked: untracked.has(file.path),
+  }));
+  if (fromPatch.length > 0) return fromPatch;
+  return result.files.map((file) => ({
+    path: file.path,
+    kind: file.kind,
+    untracked: file.untracked,
+  }));
+}
+
+/** Read `diff --git a/x b/x` headers and their add/delete markers. */
+function filesFromPatch(patch: string): { path: string; kind: "add" | "modify" | "delete" }[] {
+  const files: { path: string; kind: "add" | "modify" | "delete" }[] = [];
+  let current: { path: string; kind: "add" | "modify" | "delete" } | null = null;
+
+  for (const line of patch.split("\n")) {
+    const header = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
+    if (header) {
+      current = { path: header[2] ?? header[1] ?? "", kind: "modify" };
+      files.push(current);
+      continue;
+    }
+    if (!current) continue;
+    if (line.startsWith("new file mode")) current.kind = "add";
+    else if (line.startsWith("deleted file mode")) current.kind = "delete";
+  }
+  return files.filter((file) => file.path.length > 0);
+}
+
 /* ---------------------------------------------------------------- internals */
 
-async function statusMap(worktree: string): Promise<Map<string, FileNode["status"]>> {
+async function statusMap(
+  worktree: string,
+  base?: string,
+): Promise<Map<string, FileNode["status"]>> {
   const map = new Map<string, FileNode["status"]>();
+  const mark = (path: string, kind: "add" | "modify" | "delete") => {
+    map.set(path, kind === "add" ? "added" : kind === "delete" ? "deleted" : "modified");
+  };
+
   try {
+    // Uncommitted first, then everything since `base` — so a task that has
+    // already been committed still shows what it changed.
     for (const file of await changedFiles(worktree, [":(exclude).nexestra"])) {
-      map.set(
-        file.path,
-        file.kind === "add" ? "added" : file.kind === "delete" ? "deleted" : "modified",
-      );
+      mark(file.path, file.kind);
+    }
+    if (base) {
+      const result = await diff(worktree, base, { excludePathspecs: [":(exclude).nexestra"] });
+      for (const file of changedAgainstBase(result)) mark(file.path, file.kind);
     }
   } catch {
     // A directory that is not a git worktree still gets a tree, just no marks.

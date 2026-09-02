@@ -1008,11 +1008,23 @@ export class ThreadEngine {
     };
   }
 
-  /** Write evidence back onto the spec in one version bump, not one per criterion. */
+  /**
+   * Write evidence back onto the spec in one version bump, not one per
+   * criterion.
+   *
+   * The spec is re-read here rather than taken from the caller. `verify()`
+   * reads it once and then spends real wall-clock time running commands, so
+   * with `concurrency > 1` two tasks finishing close together would each write
+   * back a snapshot taken *before* the other's outcomes landed — and the later
+   * write would silently drop the earlier one's evidence, leaving a thread that
+   * proved everything unable to reach `done`. Nothing awaits between this read
+   * and the write, so the read-modify-write is atomic on the event loop.
+   */
   private applyOutcomesToSpec(spec: Spec, outcomes: readonly VerificationOutcome[]): void {
+    const current = this.store.getSpec(this.threadId) ?? spec;
     const byId = new Map(outcomes.map((outcome) => [outcome.criterionId, outcome]));
     let changed = false;
-    const acceptanceCriteria = spec.acceptanceCriteria.map((criterion) => {
+    const acceptanceCriteria = current.acceptanceCriteria.map((criterion) => {
       const outcome = byId.get(criterion.id);
       if (!outcome) return criterion;
       const satisfied = outcome.passed;

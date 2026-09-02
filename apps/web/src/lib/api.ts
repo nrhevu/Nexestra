@@ -346,11 +346,28 @@ export function useRunDiff(runId: string | undefined): UseQueryResult<RunDiff> {
   });
 }
 
+/**
+ * What the server can actually drive.
+ *
+ * `discover()` shells out, so the server caches it; this is the cached copy.
+ * `useRefreshHarnesses()` asks the server to detect again, which is what a
+ * user who just installed Codex needs.
+ */
 export function useHarnesses(): UseQueryResult<HarnessInfo[]> {
   return useQuery({
     queryKey: keys.harnesses(),
     queryFn: () => getJson("/harnesses", z.array(HarnessInfoSchema)),
     staleTime: STALE,
+  });
+}
+
+export function useRefreshHarnesses(): UseMutationResult<HarnessInfo[], Error, void> {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () => getJson("/harnesses?refresh=1", z.array(HarnessInfoSchema)),
+    onSuccess: (harnesses) => {
+      client.setQueryData(keys.harnesses(), harnesses);
+    },
   });
 }
 
