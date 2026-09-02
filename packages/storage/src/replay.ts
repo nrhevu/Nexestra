@@ -247,6 +247,12 @@ function applyEvent(store: NexestraStore, event: NexestraEvent): void {
       // results of the turn arrive as ordinary entity events.
       break;
 
+    case "orchestrator.progress":
+    case "orchestrator.status_changed":
+      // Narration of the execution loop (M6). Same story: the runs, tasks,
+      // artifacts and approvals it produced are their own entity events.
+      break;
+
     default: {
       const exhaustive: never = event.type;
       throw new Error(`unhandled event type ${String(exhaustive)}`);

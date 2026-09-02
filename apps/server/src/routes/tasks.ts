@@ -1,14 +1,17 @@
 import {
   CreateTaskRequestSchema,
+  DispatchTaskRequestSchema,
   ReorderTasksRequestSchema,
   UpdateTaskRequestSchema,
   UpdateTaskStatusRequestSchema,
+  VerifyTaskRequestSchema,
 } from "@nexestra/core";
 import type { NexestraStore } from "@nexestra/storage";
 import { Hono } from "hono";
 import { body, required, requireQuery } from "../errors.js";
+import type { ExecutionRuntime } from "../execution/runtime.js";
 
-export function taskRoutes(store: NexestraStore) {
+export function taskRoutes(store: NexestraStore, execution: ExecutionRuntime) {
   return (
     new Hono()
       .get("/", (c) => {
@@ -49,6 +52,34 @@ export function taskRoutes(store: NexestraStore) {
         required(store.getTask(id), "task");
         const input = await body(c, UpdateTaskStatusRequestSchema);
         return c.json(store.updateTaskStatus(id, input.status, input.order));
+      })
+
+      /**
+       * Run one task now, out of band of the scheduler.
+       *
+       * With no `kind` this runs the whole pipeline for the task (execute →
+       * review → verify → commit); `kind: "review"` or `"verify"` runs a single
+       * run of that kind, which is what the Master's `dispatch_task` asks for.
+       */
+      .post("/:taskId/dispatch", async (c) => {
+        const id = c.req.param("taskId");
+        required(store.getTask(id), "task");
+        const input = await body(c, DispatchTaskRequestSchema);
+        return c.json(
+          await execution.orchestrator.dispatch(id, {
+            ...(input.kind ? { kind: input.kind } : {}),
+            ...(input.harness ? { harness: input.harness } : {}),
+            ...(input.instructions ? { instructions: input.instructions } : {}),
+          }),
+        );
+      })
+
+      /** Run the task's acceptance criteria in its worktree and record evidence. */
+      .post("/:taskId/verify", async (c) => {
+        const id = c.req.param("taskId");
+        required(store.getTask(id), "task");
+        const input = await body(c, VerifyTaskRequestSchema);
+        return c.json(await execution.orchestrator.runVerification(id, input.criterionIds));
       })
 
       .delete("/:taskId", (c) => {

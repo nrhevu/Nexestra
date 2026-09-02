@@ -24,8 +24,12 @@ export const EntityBaseSchema = z.object({
 });
 export type EntityBase = z.infer<typeof EntityBaseSchema>;
 
-/** Harnesses Nexestra can drive. `acp` is the generic fallback (PLAN.md §1.7). */
-export const HarnessIdSchema = z.enum(["codex", "opencode", "acp"]);
+/**
+ * Harnesses Nexestra can drive. `acp` is the generic fallback (PLAN.md §1.7);
+ * `fake` is the scripted adapter the orchestrator ships, selectable from the
+ * settings so the whole loop can be exercised without spending harness quota.
+ */
+export const HarnessIdSchema = z.enum(["codex", "opencode", "acp", "fake"]);
 export type HarnessId = z.infer<typeof HarnessIdSchema>;
 
 /** Sandbox level requested for a harness run (PLAN.md §5). */

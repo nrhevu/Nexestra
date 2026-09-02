@@ -2,15 +2,22 @@ import { type AppSettings, HarnessIdSchema, SandboxLevelSchema } from "@nexestra
 import { Button, Checkbox, MonoTable, Select, StatusDot, Tag, TextInput } from "@nexestra/ui-kit";
 import { useRouter } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { useHarnesses, useSaveSettings, useSettings, useWorkspaces } from "../lib/api.js";
+import {
+  useHarnesses,
+  useRefreshHarnesses,
+  useSaveSettings,
+  useSettings,
+  useWorkspaces,
+} from "../lib/api.js";
 import { useUiStore } from "../lib/store.js";
 
 const HARNESS_OPTIONS = HarnessIdSchema.options.map((id) => ({ value: id, label: id }));
 const SANDBOX_OPTIONS = SandboxLevelSchema.options.map((id) => ({ value: id, label: id }));
 
-/** Reads and writes `/api/settings`; harness detection is still a fixture. */
+/** Reads and writes `/api/settings`, and shows what `discover()` found (M6). */
 export function SettingsSurface() {
   const harnesses = useHarnesses();
+  const refreshHarnesses = useRefreshHarnesses();
   const workspaces = useWorkspaces();
   const settings = useSettings();
   const saveSettings = useSaveSettings();
@@ -149,6 +156,34 @@ export function SettingsSurface() {
                     })
                   }
                 />
+                <TextInput
+                  id="max-attempts"
+                  label="Max attempts per task (1–10)"
+                  type="number"
+                  min={1}
+                  max={10}
+                  step={1}
+                  value={String(draft.maxAttempts)}
+                  onChange={(event) =>
+                    patch({
+                      maxAttempts: Math.min(10, Math.max(1, Number(event.target.value) || 1)),
+                    })
+                  }
+                />
+                <Checkbox
+                  checked={draft.autoMerge}
+                  label="Merge a verified task branch without asking"
+                  onChange={(next) => patch({ autoMerge: next })}
+                />
+                <Checkbox
+                  checked={draft.enableFakeHarness}
+                  label="Simulated harness (no real process, no quota)"
+                  onChange={(next) => patch({ enableFakeHarness: next })}
+                />
+                <div className="nx-muted" style={{ marginBottom: 6 }}>
+                  The simulated harness stands in for every adapter and takes effect when the server
+                  restarts. <code>NEXESTRA_FAKE_HARNESS=1</code> forces it on for one process.
+                </div>
 
                 <div className="row" style={{ marginTop: 8 }}>
                   <Button
@@ -175,8 +210,20 @@ export function SettingsSurface() {
 
             <h2>Detected harnesses</h2>
             <div className="nx-muted">
-              Placeholder until the adapters shell out to <code>codex</code> and{" "}
-              <code>opencode</code> (M4 / M5).
+              Real detection: the server runs each adapter's <code>discover()</code> once and caches
+              it, because it shells out to <code>codex --version</code> and to an{" "}
+              <code>opencode serve</code>. Refresh after installing or authenticating one.
+            </div>
+            <div className="row" style={{ margin: "6px 0" }}>
+              <Button
+                disabled={refreshHarnesses.isPending}
+                onClick={() => refreshHarnesses.mutate()}
+              >
+                {refreshHarnesses.isPending ? "Detecting…" : "Refresh detection"}
+              </Button>
+              {refreshHarnesses.isError ? (
+                <span className="form-error">{refreshHarnesses.error.message}</span>
+              ) : null}
             </div>
             <MonoTable
               rowKey={(row) => row.id}

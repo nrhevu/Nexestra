@@ -2,10 +2,12 @@ import { Button, StatusDot, Tag } from "@nexestra/ui-kit";
 import {
   useApprovals,
   useArtifacts,
+  useExecutionStatus,
   useMasterState,
   useMemories,
   useResolveApproval,
   useSpec,
+  useThreads,
 } from "../../lib/api.js";
 import { formatDateTime, formatUsd } from "../../lib/format.js";
 import { SpecCard } from "./SpecCard.js";
@@ -25,6 +27,8 @@ export function ChatSidebar({ workspaceId, threadId }: { workspaceId: string; th
   const artifacts = useArtifacts(threadId);
   const approvals = useApprovals(workspaceId);
   const masterState = useMasterState(threadId);
+  const execution = useExecutionStatus(threadId);
+  const threads = useThreads(workspaceId);
   const resolveApproval = useResolveApproval(workspaceId);
 
   const pending = (approvals.data ?? []).filter(
@@ -35,8 +39,34 @@ export function ChatSidebar({ workspaceId, threadId }: { workspaceId: string; th
   const references = threadMemories.filter((memory) => memory.type !== "decision");
   const usage = masterState.data?.usage;
 
+  // Two costs, deliberately: the Master's own tokens and everything the
+  // harnesses spent. The budget belongs to the thread and covers both.
+  const thread = (threads.data ?? []).find((item) => item.id === threadId);
+  const budgetUSD = execution.data?.budgetUSD ?? thread?.budgetUSD ?? 0;
+  const spentUSD = execution.data?.costUSD ?? thread?.costUSD ?? 0;
+  const ratio = budgetUSD > 0 ? Math.min(1, spentUSD / budgetUSD) : 0;
+
   return (
     <>
+      <section className="sidebar__section">
+        <div className="sidebar__section-title">
+          Budget — {formatUsd(spentUSD)} / {formatUsd(budgetUSD)}
+        </div>
+        <div className="progress">
+          <div
+            className={`progress__fill${ratio >= 1 ? " progress__fill--over" : ratio >= 0.8 ? " progress__fill--warn" : ""}`}
+            style={{ width: `${Math.round(ratio * 100)}%` }}
+          />
+        </div>
+        <div className="nx-muted" style={{ marginTop: 4 }}>
+          {ratio >= 1
+            ? "budget exhausted — execution pauses itself"
+            : ratio >= 0.8
+              ? "past 80% — a spend approval has been raised"
+              : `${Math.round(ratio * 100)}% of the thread budget`}
+        </div>
+      </section>
+
       {pending.length > 0 ? (
         <section className="sidebar__section">
           <div className="sidebar__section-title">Approval queue ({pending.length})</div>

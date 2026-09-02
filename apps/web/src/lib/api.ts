@@ -12,6 +12,12 @@ import {
   type CreateMessageRequest,
   type CreateThreadRequest,
   type CreateWorkspaceRequest,
+  type DispatchTaskRequest,
+  type DispatchTaskResponse,
+  DispatchTaskResponseSchema,
+  type ExecutionAction,
+  type ExecutionStatus,
+  ExecutionStatusSchema,
   type FileContent,
   FileContentSchema,
   type FileNode,
@@ -30,9 +36,17 @@ import {
   type Message,
   MessageSchema,
   type NexestraEvent,
+  NexestraEventSchema,
+  type OrchestratorProgress,
+  OrchestratorProgressSchema,
   type Plan,
   PlanSchema,
   type Run,
+  type RunControlRequest,
+  type RunControlResponse,
+  RunControlResponseSchema,
+  type RunDiff,
+  RunDiffSchema,
   type RunEvent,
   RunEventSchema,
   RunSchema,
@@ -46,6 +60,8 @@ import {
   type UpdateMemoryRequest,
   type UpdateTaskRequest,
   type UpdateThreadRequest,
+  type VerifyTaskResponse,
+  VerifyTaskResponseSchema,
   type Workspace,
   WorkspaceSchema,
 } from "@nexestra/core";
@@ -79,9 +95,11 @@ export const keys = {
   approvals: (workspaceId: string) => ["approvals", workspaceId] as const,
   settings: () => ["settings"] as const,
   masterState: (threadId: string) => ["masterState", threadId] as const,
-  files: () => ["files"] as const,
-  file: (path: string) => ["file", path] as const,
-  terminal: () => ["terminal"] as const,
+  execution: (threadId: string) => ["execution", threadId] as const,
+  progress: (threadId: string) => ["progress", threadId] as const,
+  runFiles: (runId: string) => ["runFiles", runId] as const,
+  runFile: (runId: string, path: string) => ["runFile", runId, path] as const,
+  runDiff: (runId: string) => ["runDiff", runId] as const,
   harnesses: () => ["harnesses"] as const,
 };
 
@@ -255,36 +273,101 @@ export function useMasterState(threadId: string): UseQueryResult<MasterStateResp
   });
 }
 
-export function useFileTree(): UseQueryResult<FileNode[]> {
+/* --------------------------------------------------------------- execution */
+
+/**
+ * Where the orchestrator stands on this thread.
+ *
+ * The live view arrives over `/ws` as `orchestrator.status_changed`, which is
+ * written straight into this cache entry; the query is what makes a reload
+ * correct and what seeds the first render.
+ */
+export function useExecutionStatus(threadId: string): UseQueryResult<ExecutionStatus> {
   return useQuery({
-    queryKey: keys.files(),
-    queryFn: () => getJson("/files", z.array(FileNodeSchema)),
+    queryKey: keys.execution(threadId),
+    queryFn: () => getJson(`/threads/${threadId}/execution/status`, ExecutionStatusSchema),
+    enabled: threadId.length > 0,
     staleTime: STALE,
   });
 }
 
-export function useFileContent(path: string): UseQueryResult<FileContent> {
+/**
+ * The orchestrator's progress lines, read back out of the thread's event log.
+ *
+ * Same trick as the status: the log is the durable copy (so a reload shows the
+ * whole run), and `/ws` appends new lines to this cache entry as they happen.
+ */
+export function useThreadProgress(threadId: string): UseQueryResult<OrchestratorProgress[]> {
   return useQuery({
-    queryKey: keys.file(path),
-    queryFn: () => getJson(`/files/content${query({ path })}`, FileContentSchema),
+    queryKey: keys.progress(threadId),
+    queryFn: async () => {
+      const events = await getJson(`/threads/${threadId}/events`, z.array(NexestraEventSchema));
+      return events
+        .filter((event) => event.type === "orchestrator.progress")
+        .flatMap((event) => {
+          const parsed = OrchestratorProgressSchema.safeParse(event.payload);
+          return parsed.success ? [parsed.data] : [];
+        });
+    },
+    enabled: threadId.length > 0,
     staleTime: STALE,
   });
 }
 
-export function useTerminalLines(): UseQueryResult<string[]> {
+/** The file tree of a run's worktree. */
+export function useRunFiles(runId: string | undefined): UseQueryResult<FileNode[]> {
   return useQuery({
-    queryKey: keys.terminal(),
-    queryFn: async () =>
-      (await getJson("/terminal", z.object({ lines: z.array(z.string()) }))).lines,
-    staleTime: Number.POSITIVE_INFINITY,
+    queryKey: keys.runFiles(runId ?? ""),
+    queryFn: () => getJson(`/runs/${runId}/files`, z.array(FileNodeSchema)),
+    enabled: Boolean(runId),
+    staleTime: STALE,
   });
 }
 
+export function useRunFileContent(
+  runId: string | undefined,
+  path: string | undefined,
+): UseQueryResult<FileContent> {
+  return useQuery({
+    queryKey: keys.runFile(runId ?? "", path ?? ""),
+    queryFn: () => getJson(`/runs/${runId}/files/content${query({ path })}`, FileContentSchema),
+    enabled: Boolean(runId && path),
+    staleTime: STALE,
+  });
+}
+
+/** The unified diff of a run's worktree against the branch it was cut from. */
+export function useRunDiff(runId: string | undefined): UseQueryResult<RunDiff> {
+  return useQuery({
+    queryKey: keys.runDiff(runId ?? ""),
+    queryFn: () => getJson(`/runs/${runId}/diff`, RunDiffSchema),
+    enabled: Boolean(runId),
+    staleTime: STALE,
+  });
+}
+
+/**
+ * What the server can actually drive.
+ *
+ * `discover()` shells out, so the server caches it; this is the cached copy.
+ * `useRefreshHarnesses()` asks the server to detect again, which is what a
+ * user who just installed Codex needs.
+ */
 export function useHarnesses(): UseQueryResult<HarnessInfo[]> {
   return useQuery({
     queryKey: keys.harnesses(),
     queryFn: () => getJson("/harnesses", z.array(HarnessInfoSchema)),
     staleTime: STALE,
+  });
+}
+
+export function useRefreshHarnesses(): UseMutationResult<HarnessInfo[], Error, void> {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () => getJson("/harnesses?refresh=1", z.array(HarnessInfoSchema)),
+    onSuccess: (harnesses) => {
+      client.setQueryData(keys.harnesses(), harnesses);
+    },
   });
 }
 
@@ -489,6 +572,85 @@ export function useMasterSend(
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: keys.messages(threadId) });
       void client.invalidateQueries({ queryKey: keys.masterState(threadId) });
+    },
+  });
+}
+
+/* ------------------------------------------------------- execution control */
+
+/**
+ * `[Start execution]` / `[Pause]` / `[Resume]` / `[Cancel]` on the board.
+ *
+ * The response is the fresh `ExecutionStatus`, written straight into the cache
+ * so the header flips before the first `orchestrator.status_changed` arrives.
+ */
+export function useExecutionControl(
+  threadId: string,
+): UseMutationResult<ExecutionStatus, Error, ExecutionAction> {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (action: ExecutionAction) =>
+      request(`/threads/${threadId}/execution/${action}`, ExecutionStatusSchema, {
+        method: "POST",
+        json: {},
+      }),
+    onSuccess: (status) => {
+      client.setQueryData(keys.execution(threadId), status);
+      void client.invalidateQueries({ queryKey: keys.tasks(threadId) });
+    },
+  });
+}
+
+/** Run one task now, out of band of the scheduler. */
+export function useDispatchTask(
+  threadId: string,
+): UseMutationResult<DispatchTaskResponse, Error, { taskId: string; body?: DispatchTaskRequest }> {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ taskId, body: input }: { taskId: string; body?: DispatchTaskRequest }) =>
+      request(`/tasks/${taskId}/dispatch`, DispatchTaskResponseSchema, {
+        method: "POST",
+        json: input ?? {},
+      }),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: keys.runs(threadId) });
+      void client.invalidateQueries({ queryKey: keys.tasks(threadId) });
+    },
+  });
+}
+
+/** Run a task's acceptance criteria now and record the evidence. */
+export function useVerifyTask(
+  threadId: string,
+): UseMutationResult<VerifyTaskResponse, Error, { taskId: string; criterionIds?: string[] }> {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ taskId, criterionIds }: { taskId: string; criterionIds?: string[] }) =>
+      request(`/tasks/${taskId}/verify`, VerifyTaskResponseSchema, {
+        method: "POST",
+        json: criterionIds ? { criterionIds } : {},
+      }),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: keys.tasks(threadId) });
+      void client.invalidateQueries({ queryKey: keys.spec(threadId) });
+      void client.invalidateQueries({ queryKey: keys.artifacts(threadId) });
+    },
+  });
+}
+
+/** Cancel / steer / answer a permission prompt on a live run. */
+export function useRunControl(
+  threadId: string,
+): UseMutationResult<RunControlResponse, Error, { runId: string; body: RunControlRequest }> {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ runId, body: input }: { runId: string; body: RunControlRequest }) =>
+      request(`/runs/${runId}/control`, RunControlResponseSchema, {
+        method: "POST",
+        json: input,
+      }),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: keys.runs(threadId) });
     },
   });
 }

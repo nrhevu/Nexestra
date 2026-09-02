@@ -15,6 +15,8 @@ export * from "./domain/task.js";
 export * from "./domain/thread.js";
 export * from "./domain/workspace.js";
 export * from "./events.js";
+export * from "./execution.js";
 export * from "./harness.js";
 export * from "./master.js";
+export * from "./pricing.js";
 export * from "./ws.js";

@@ -1,4 +1,4 @@
-import type { Message, MessageAttachment, Task } from "@nexestra/core";
+import type { Message, MessageAttachment, OrchestratorProgress, Task } from "@nexestra/core";
 import { Button, Composer, KeyHint, StatusDot, Tag } from "@nexestra/ui-kit";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -10,6 +10,7 @@ import {
   useResolveApproval,
   useSpec,
   useTasks,
+  useThreadProgress,
   useThreads,
 } from "../../lib/api.js";
 import { formatTime, formatUsd, phaseTone } from "../../lib/format.js";
@@ -45,6 +46,7 @@ export function ChatSurface({ workspaceId, threadId }: ChatSurfaceProps) {
   const tasks = useTasks(threadId);
   const approvals = useApprovals(workspaceId);
   const masterState = useMasterState(threadId);
+  const progress = useThreadProgress(threadId);
   const stream = useMasterStream(threadId);
 
   const send = useMasterSend(threadId);
@@ -63,7 +65,10 @@ export function ChatSurface({ workspaceId, threadId }: ChatSurfaceProps) {
     if (composerFocusNonce > 0) composerRef.current?.focus();
   }, [composerFocusNonce]);
 
-  const timeline = messages.data ?? [];
+  // The Master's transcript and the orchestrator's progress are two logs of the
+  // same thread; interleaving them by time is the only way a reader can tell
+  // that a run started *because* of what the Master had just said.
+  const timeline = mergeTimeline(messages.data ?? [], progress.data ?? []);
   const busy = stream.busy || masterState.data?.busy === true;
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: follow the tail as the turn streams
@@ -86,7 +91,7 @@ export function ChatSurface({ workspaceId, threadId }: ChatSurfaceProps) {
   // until the persisted reply lands — hiding it the instant `master.done`
   // arrives would blank the screen for as long as the refetch takes, and
   // hiding it never would double every reply.
-  const replyPersisted = timeline.at(-1)?.role === "master";
+  const replyPersisted = (messages.data ?? []).at(-1)?.role === "master";
   const showLiveTurn =
     busy || ((stream.text.length > 0 || stream.toolCalls.length > 0) && !replyPersisted);
 
@@ -139,9 +144,17 @@ export function ChatSurface({ workspaceId, threadId }: ChatSurfaceProps) {
               </div>
             ) : null}
 
-            {timeline.map((message) => (
-              <MessageBlock key={message.id} message={message} tasks={tasks.data ?? []} />
-            ))}
+            {timeline.map((entry) =>
+              entry.kind === "message" ? (
+                <MessageBlock
+                  key={entry.message.id}
+                  message={entry.message}
+                  tasks={tasks.data ?? []}
+                />
+              ) : (
+                <ProgressRow key={entry.key} progress={entry.progress} />
+              ),
+            )}
 
             {showLiveTurn ? (
               <LiveTurn text={stream.text} toolCalls={stream.toolCalls} busy={busy} />
@@ -234,6 +247,48 @@ export function ChatSurface({ workspaceId, threadId }: ChatSurfaceProps) {
       sidebarTitle="Context"
       sidebar={<ChatSidebar workspaceId={workspaceId} threadId={threadId} />}
     />
+  );
+}
+
+type TimelineEntry =
+  | { kind: "message"; at: string; message: Message }
+  | { kind: "progress"; at: string; key: string; progress: OrchestratorProgress };
+
+function mergeTimeline(
+  messages: readonly Message[],
+  progress: readonly OrchestratorProgress[],
+): TimelineEntry[] {
+  const entries: TimelineEntry[] = [
+    ...messages.map(
+      (message): TimelineEntry => ({ kind: "message", at: message.createdAt, message }),
+    ),
+    ...progress.map(
+      (item, index): TimelineEntry => ({
+        kind: "progress",
+        at: item.at,
+        key: `${item.at}:${item.kind}:${index}`,
+        progress: item,
+      }),
+    ),
+  ];
+  return entries.sort((a, b) => a.at.localeCompare(b.at));
+}
+
+/**
+ * One orchestrator event, as a compact system row.
+ *
+ * Deliberately not a message bubble: these are hundreds of lines over a long
+ * run, and they are the loop narrating itself, not somebody talking.
+ */
+function ProgressRow({ progress }: { progress: OrchestratorProgress }) {
+  return (
+    <div className={`sysrow sysrow--${progress.level}`} title={progress.kind}>
+      <span className="sysrow__time">{formatTime(progress.at)}</span>
+      <span className="sysrow__glyph">
+        {progress.level === "error" ? "✗" : progress.level === "warn" ? "!" : "·"}
+      </span>
+      <span className="sysrow__text">{progress.message}</span>
+    </div>
   );
 }
 

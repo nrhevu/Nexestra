@@ -8,10 +8,11 @@ Local-first: one Node server on your machine plus a SPA in the browser. See
 [`docs/PLAN.md`](docs/PLAN.md) for the full plan and
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for what exists today.
 
-**Current milestone: M1 — server, storage, realtime.** All four surfaces run on
-a real SQLite event store: create a workspace pointing at one of your repos,
-create threads, send messages, move tasks, resolve approvals and edit memories —
-everything survives a reload. No Master, no adapters, no orchestration yet.
+**Current milestone: M6 — the loop is closed.** A vague sentence becomes
+clarifying questions, a spec with verifiable acceptance criteria, an approved
+plan, real harness runs in real git worktrees, a cross-review by a second
+harness, acceptance criteria proved by *running* them, and a merge you approve
+— all of it streaming into the four surfaces as it happens.
 
 ## Requirements
 
@@ -37,6 +38,63 @@ NEXESTRA_SEED_MOCK=1 pnpm dev        # or: pnpm start --seed-mock
 
 Seeding is idempotent — it does nothing once a workspace exists.
 
+### Running work without spending anything
+
+Nexestra drives real coding harnesses, which cost real money. To see the whole
+loop first — plan, runs, worktrees, diffs, review, verification, approvals,
+merge — start it with the **simulated harness**:
+
+```bash
+NEXESTRA_FAKE_HARNESS=1 pnpm dev
+```
+
+It stands in for `codex` and `opencode`, writes real files into the real
+worktrees (so the diff, the commit and the verification commands all see a tree
+that genuinely changed) and spawns nothing. `GET /api/harnesses` and the
+Settings surface say so rather than pretending. The same switch lives in
+**Settings → Defaults → Simulated harness**, which survives a restart.
+
+Then, when you want the real thing:
+
+| You have | What runs |
+|----------|-----------|
+| nothing | The demo Master (a script) plans; the simulated harness "executes" |
+| `codex` on `PATH` | Real Codex runs, still with the demo Master |
+| `ANTHROPIC_API_KEY` set | Claude Opus 5 is the Master |
+| both + `opencode` | The full loop: Opus plans, Codex executes, OpenCode cross-reviews |
+
+`ANTHROPIC_API_KEY` (or `ANTHROPIC_AUTH_TOKEN`) is read from the server's
+environment and never reaches the browser — only *whether* one is set does.
+`NEXESTRA_MASTER_LLM=demo|anthropic` overrides the choice.
+
+Harness auth is each harness's own business: `codex login` and `opencode auth
+login`. `GET /api/harnesses` reports what `discover()` found, and
+**Settings → Detected harnesses → [Refresh detection]** re-runs it after you
+install or authenticate one.
+
+### Running one task, deliberately cheaply
+
+The cross-review pass picks a harness *other* than the executor, so a process
+with one adapter reviews nothing and spends nothing on a second model:
+
+```bash
+NEXESTRA_HARNESSES=codex pnpm dev
+```
+
+### Starting execution
+
+Approving the spec gets you a plan on the **Task Board**. `[Start execution]`
+in its header accepts the plan and hands it to the orchestrator; from there the
+board is live (spinners, attempts, cost, merge state) and `[Pause]` /
+`[Cancel]` do what they say. Per task, the sidebar has `[Dispatch]` (run it now,
+out of band of the scheduler) and `[Verify]` (run its acceptance criteria).
+
+Anything that needs you — a sandbox escalation, 80% of the budget, a merge, a
+manual-review criterion, a harness asking permission mid-run — appears in the
+**approval queue** in the navigation column, with a count badge on the rail. It
+is visible from every surface, because a gate blocks a run wherever you happen
+to be looking.
+
 `pnpm dev` runs two processes concurrently:
 
 | Process | Port | What it does |
@@ -52,6 +110,7 @@ Quick checks:
 ```bash
 curl http://127.0.0.1:4242/api/health                      # {"ok":true,"version":"0.0.0-m1"}
 curl http://127.0.0.1:4242/api/workspaces
+curl http://127.0.0.1:4242/api/harnesses                   # what discover() found
 curl 'http://127.0.0.1:5173/api/tasks?threadId=th_agent_app'  # proxied through Vite
 ```
 
@@ -77,7 +136,8 @@ In this mode the server serves `apps/web/dist` statically with an
 ```
 ~/.nexestra/            # NEXESTRA_HOME overrides this
   nexestra.db           # SQLite (WAL); projections + the append-only event log
-  data/                 # artifact bytes — written from M4
+  data/                 # artifact bytes: diffs, harness logs, verification evidence
+  worktrees/            # <threadId>/<taskId> — one git worktree per task
 ```
 
 Every write goes through a command in `@nexestra/storage` that stores the row
@@ -120,6 +180,10 @@ The event catalogue, the full route list and the WebSocket protocol are in
 | `NEXESTRA_DEV` | unset | Set to `1` to force the redirect-to-Vite behaviour |
 | `NEXESTRA_HOME` | `~/.nexestra` | Where `nexestra.db` and `data/` (artifact bytes) live |
 | `NEXESTRA_SEED_MOCK` | unset | Set to `1` to load the demo fixtures into an empty database (same as `--seed-mock`) |
+| `NEXESTRA_FAKE_HARNESS` | unset | Set to `1` to replace every harness with the scripted stand-in — the whole loop, no quota |
+| `NEXESTRA_HARNESSES` | all | Comma-separated ids to register (`codex`, `opencode`, `fake`). One adapter means no cross-review |
+| `NEXESTRA_MASTER_LLM` | auto | `demo` or `anthropic`; otherwise decided by whether an API key is present |
+| `ANTHROPIC_API_KEY` | unset | The Master's key. Never sent to the browser |
 
 ## Layout
 
@@ -127,6 +191,8 @@ The event catalogue, the full route list and the WebSocket protocol are in
 nexestra/
   apps/
     server/                 # Hono REST API over the store + ws WebSocket
+      src/master/           # the Master runtime: runner, host, store, demo model
+      src/execution/        # the orchestrator wired up: adapters, bridge, worktree files
     web/                    # React 19 SPA — the four surfaces
       src/shell/            # rail, navigation, surface frame, keyboard, palette
       src/surfaces/chat/    # 1. Workspace / Chat
@@ -139,12 +205,12 @@ nexestra/
     core/                   # zod domain schemas, HarnessAdapter contract, mock data
     ui-kit/                 # terminal-like components + design tokens
     storage/                # Drizzle schema, event store, commands, replay, seeding
-    master/                 # (M2) Master agent
-    orchestrator/           # (M4) dispatch / review / verify loop
-    adapters/codex/         # (M4) `codex exec --json`
-    adapters/opencode/      # (M5) `opencode serve` + SSE
+    master/                 # Master agent: phases, tools, spec + plan
+    orchestrator/           # dispatch / review / verify loop
+    adapters/codex/         # `codex exec --json`
+    adapters/opencode/      # `opencode serve` + SSE
   docs/
-  fixtures/                 # (M4) recorded harness output for contract tests
+  fixtures/                 # recorded harness output for contract tests
 ```
 
 Workspace packages are consumed as TypeScript source (`main: ./src/index.ts`).

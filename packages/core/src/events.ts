@@ -54,6 +54,9 @@ export const NexestraEventTypeSchema = z.enum([
   "master.usage",
   "master.error",
   "master.done",
+  // orchestrator (M6) — the execution loop narrated onto the thread log
+  "orchestrator.progress",
+  "orchestrator.status_changed",
 ]);
 export type NexestraEventType = z.infer<typeof NexestraEventTypeSchema>;
 
@@ -79,6 +82,21 @@ export const MASTER_EVENT_TYPES: readonly NexestraEventType[] = [
   "master.usage",
   "master.error",
   "master.done",
+];
+
+/**
+ * `orchestrator.*` events are the execution loop narrated onto the thread log
+ * (M6). Like `master.*` they are **not** entity snapshots: the durable results
+ * of a run arrive as `run.recorded`, `run.event_appended`, `task.status_changed`,
+ * `artifact.recorded` and `approval.*`. These two exist so the Chat surface can
+ * show progress lines and the Task Board can show the loop's own state without
+ * polling.
+ *
+ * Payloads: `OrchestratorProgress` and `ExecutionStatus` (`execution.ts`).
+ */
+export const ORCHESTRATOR_EVENT_TYPES: readonly NexestraEventType[] = [
+  "orchestrator.progress",
+  "orchestrator.status_changed",
 ];
 
 /**
