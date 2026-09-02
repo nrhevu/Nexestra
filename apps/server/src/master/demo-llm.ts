@@ -164,8 +164,8 @@ function decide(request: LlmRequest): DemoTurn {
       return {
         text:
           "The plan is on the Task Board: four tasks, wired so nothing starts before " +
-          "what it depends on is done. Running them needs the harness orchestrator, " +
-          "which is not wired up in this build yet.",
+          "what it depends on is done. Press [Start execution] there and the " +
+          "orchestrator will dispatch them to the harnesses in dependency order.",
       };
 
     // From M6 the orchestrator drives these three phases; the demo model's job

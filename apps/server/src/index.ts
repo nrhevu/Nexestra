@@ -15,12 +15,17 @@ const app = createApp(store);
  * (`docs/orchestrator.md` §7.4).
  */
 const recovered = await app.execution.recoverAll();
+const detected = await app.execution.registry.list();
 
 const server = serve({ fetch: app.fetch, hostname: HOST, port: PORT }, (info) => {
   const mode = hasWebBuild() ? "serving apps/web/dist" : `redirecting to ${WEB_DEV_URL}`;
-  const harnesses = app.execution.registry.simulated
-    ? "simulated (NEXESTRA_FAKE_HARNESS)"
-    : "codex, opencode";
+  const available = detected
+    .filter((harness) => harness.available)
+    .map((harness) => `${harness.id}@${harness.version ?? "?"}`)
+    .join(", ");
+  const harnesses =
+    (available || "none available — install codex or opencode") +
+    (app.execution.registry.simulated ? "  (simulated)" : "");
   process.stdout.write(
     `nexestra server ${SERVER_VERSION} → http://${HOST}:${info.port}  (${mode})\n` +
       `  database  ${store.file}${seeded ? "  (seeded with mock data)" : ""}\n` +

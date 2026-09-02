@@ -21,6 +21,7 @@
 
 import path from "node:path";
 import type {
+  Approval,
   ExecutionStatus,
   HarnessId,
   OrchestratorProgress,
@@ -35,7 +36,7 @@ import type {
   OrchestratorStatus,
   ReplanEvidence,
 } from "@nexestra/orchestrator";
-import { createOrchestrator } from "@nexestra/orchestrator";
+import { branchNameFor, createOrchestrator, mergeTaskBranch } from "@nexestra/orchestrator";
 import { type NexestraStore, nexestraHome } from "@nexestra/storage";
 import type { ExecutionContext, ExecutionHost } from "../master/execution-host.js";
 import type { MasterRunner } from "../master/runner.js";
@@ -55,6 +56,8 @@ export interface ExecutionRuntimeOptions {
   readonly harnesses?: HarnessRegistry | HarnessRegistryOptions;
   /** Overrides the settings / env decision about the simulated harness. */
   readonly fake?: boolean;
+  /** Register only these harness ids. Defaults to `NEXESTRA_HARNESSES`. */
+  readonly only?: readonly HarnessId[];
   /** Ask the Master to summarise once a thread reaches `done`. Default on. */
   readonly autoSummarize?: boolean;
 }
@@ -67,6 +70,9 @@ export class ExecutionRuntime implements MasterBridge {
   private master: MasterRunner | null = null;
   private readonly store: NexestraStore;
   private readonly autoSummarize: boolean;
+  private readonly unsubscribe: () => void;
+  /** Merges are serialised: two branches landing on one base is the conflict. */
+  private merges: Promise<unknown> = Promise.resolve();
 
   constructor(options: ExecutionRuntimeOptions) {
     const { store } = options;
@@ -77,7 +83,11 @@ export class ExecutionRuntime implements MasterBridge {
     this.registry = isRegistry(options.harnesses)
       ? options.harnesses
       : createHarnessRegistry({
-          fake: options.fake ?? settings.enableFakeHarness ?? fakeHarnessRequested(),
+          // The env var is a per-process override and wins; the setting is the
+          // durable default. `??` on the setting alone would never reach the
+          // env, because `enableFakeHarness` is always present (it defaults).
+          fake: options.fake ?? (fakeHarnessRequested() || settings.enableFakeHarness),
+          ...(options.only ? { only: options.only } : {}),
           ...(options.harnesses ?? {}),
         });
 
@@ -105,6 +115,16 @@ export class ExecutionRuntime implements MasterBridge {
     });
 
     this.host = this.createExecutionHost();
+
+    // The loop raises a `merge` approval and stops there; somebody has to
+    // actually land the branch once a human says yes. That somebody is the
+    // process that owns the checkout, which is this one.
+    this.unsubscribe = store.events.subscribeAll((event) => {
+      if (event.type !== "approval.resolved") return;
+      const approval = event.payload as Approval;
+      if (approval.kind !== "merge") return;
+      this.merges = this.merges.catch(() => undefined).then(() => this.landApprovedMerge(approval));
+    });
   }
 
   /** True when nothing can actually be run (no adapter is registered). */
@@ -201,8 +221,81 @@ export class ExecutionRuntime implements MasterBridge {
 
   /** Cancel every thread, then release the adapters (OpenCode servers die here). */
   async dispose(): Promise<void> {
+    this.unsubscribe();
+    await this.merges.catch(() => undefined);
     await this.orchestrator.close().catch(() => undefined);
     await this.registry.dispose().catch(() => undefined);
+  }
+
+  /**
+   * Land a task branch whose `merge` approval was just approved.
+   *
+   * `mergeTaskBranch` refuses rather than forces: it will not touch a
+   * repository that is mid-rebase, dirty, or sitting on another branch. A
+   * refusal leaves `mergeState: "pending"` and says why on the log, so the
+   * approval the user gave is not silently lost — they can clean the checkout
+   * and approve the next one, or merge by hand.
+   */
+  private async landApprovedMerge(approval: Approval): Promise<void> {
+    const at = () => new Date().toISOString();
+    const task = approval.taskId ? this.store.getTask(approval.taskId) : null;
+    const thread = this.store.getThread(approval.threadId);
+    const workspace = thread ? this.store.getWorkspace(thread.workspaceId) : null;
+    if (!task || !workspace) return;
+
+    const progress = (level: "info" | "warn" | "error", message: string) => {
+      this.append(approval.threadId, "orchestrator.progress", {
+        threadId: approval.threadId,
+        kind: "merge",
+        level,
+        message,
+        taskId: task.id,
+        at: at(),
+      });
+    };
+
+    if (approval.status !== "approved") {
+      progress("warn", `Merge of "${task.title}" was rejected; the branch stays unmerged.`);
+      return;
+    }
+
+    const branch = task.harnessConfig.branch ?? branchNameFor(approval.threadId, task.id);
+    const into = this.orchestrator.config.baseBranch ?? workspace.defaultBranch;
+
+    const result = await mergeTaskBranch({
+      repo: workspace.rootPath,
+      branch,
+      into,
+      identity: this.orchestrator.config.commitIdentity,
+      message: `Merge ${branch} (${task.title})`,
+    }).catch((error) => ({
+      outcome: "unavailable" as const,
+      detail: error instanceof Error ? error.message : String(error),
+    }));
+
+    if (result.outcome === "merged" || result.outcome === "up_to_date") {
+      this.store.updateTask(task.id, { mergeState: "merged" });
+      progress(
+        "info",
+        `Merged ${branch} into ${into}${result.outcome === "up_to_date" ? " (already up to date)" : "."}`,
+      );
+      return;
+    }
+
+    if (result.outcome === "conflict") {
+      this.store.updateTask(task.id, { mergeState: "conflict" });
+      progress(
+        "error",
+        `Merge of ${branch} conflicted and was aborted${result.detail ? `: ${result.detail}` : "."}`,
+      );
+      return;
+    }
+
+    progress(
+      "warn",
+      `Could not merge ${branch} into ${into}${result.detail ? `: ${result.detail}` : "."} ` +
+        "The branch is still there; land it by hand once the checkout is clean.",
+    );
   }
 
   /* ----------------------------------------------------------- MasterBridge */
@@ -221,9 +314,38 @@ export class ExecutionRuntime implements MasterBridge {
     }
   }
 
+  /**
+   * Ask the Master to replan a task that ran out of attempts.
+   *
+   * Only when the Master actually owns this thread. A `continue` turn on a
+   * thread the Master has never seen starts its session at `intake` with an
+   * empty draft, and the first thing the model does there is `update_spec` —
+   * which republishes the draft over whatever spec the thread had. A thread
+   * assembled through the REST API (a script, a test fixture, this file's own
+   * demo) would lose its acceptance criteria to a failed run. So a thread with
+   * no `master_state` gets an error line on the log instead, which says
+   * plainly that nothing can replan it.
+   */
   async requestReplan(taskId: string, reason: string, evidence: ReplanEvidence): Promise<void> {
     const task = this.store.getTask(taskId);
     if (!task || !this.master) return;
+
+    if (!this.store.getMasterState(task.threadId)) {
+      this.append(task.threadId, "orchestrator.progress", {
+        threadId: task.threadId,
+        kind: "replan_requested",
+        level: "error",
+        message:
+          `Task "${task.title}" failed after ${evidence.attempts} attempts (${reason}), and ` +
+          "the Master has no session on this thread, so there is nobody to replan it. " +
+          "Fix the task by hand, or start the thread from the Chat surface.",
+        taskId,
+        at: new Date().toISOString(),
+        detail: evidence,
+      });
+      return;
+    }
+
     this.master.send(task.threadId, {
       kind: "continue",
       note: renderReplanRequest(task.title, taskId, reason, evidence),
@@ -291,14 +413,19 @@ export class ExecutionRuntime implements MasterBridge {
     type: "orchestrator.progress" | "orchestrator.status_changed",
     payload: OrchestratorProgress | ExecutionStatus,
   ): void {
-    const thread = this.store.getThread(threadId);
-    if (!thread) return;
-    this.store.events.append({
-      workspaceId: thread.workspaceId,
-      threadId,
-      type,
-      payload,
-    });
+    try {
+      const thread = this.store.getThread(threadId);
+      if (!thread) return;
+      this.store.events.append({
+        workspaceId: thread.workspaceId,
+        threadId,
+        type,
+        payload,
+      });
+    } catch {
+      // Narration is never worth a crash — the store can be closed under a
+      // task that is still finishing when the process shuts down.
+    }
   }
 
   /** `planning → executing`, exactly once, and never against a finished thread. */

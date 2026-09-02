@@ -35,6 +35,8 @@ export type DisposableHarnessAdapter = HarnessAdapter & {
 export interface HarnessRegistryOptions {
   /** Turn the scripted stand-in on. Defaults to the env / settings decision. */
   readonly fake?: boolean;
+  /** Keep only these ids. Defaults to `NEXESTRA_HARNESSES`, else all of them. */
+  readonly only?: readonly HarnessId[];
   /** Replace the whole map — what the tests inject. */
   readonly adapters?: Partial<Record<HarnessId, DisposableHarnessAdapter>>;
 }
@@ -56,10 +58,30 @@ export function fakeHarnessRequested(): boolean {
   return value === "1" || value === "true";
 }
 
+/**
+ * `NEXESTRA_HARNESSES=codex` — register only these ids.
+ *
+ * Useful for a deliberately cheap run: the cross-review pass picks a harness
+ * *other* than the executor, so a process with one adapter reviews nothing and
+ * spends nothing on a second model.
+ */
+export function requestedHarnessIds(): readonly HarnessId[] | undefined {
+  const raw = process.env.NEXESTRA_HARNESSES;
+  if (!raw) return undefined;
+  const ids = raw
+    .split(",")
+    .map((value) => value.trim())
+    .flatMap((value) => {
+      const parsed = HarnessIdSchema.safeParse(value);
+      return parsed.success ? [parsed.data] : [];
+    });
+  return ids.length > 0 ? ids : undefined;
+}
+
 export function createHarnessRegistry(options: HarnessRegistryOptions = {}): HarnessRegistry {
   const simulated = options.adapters ? false : (options.fake ?? false);
   const adapters: Partial<Record<HarnessId, DisposableHarnessAdapter>> =
-    options.adapters ?? buildAdapters(simulated);
+    options.adapters ?? restrict(buildAdapters(simulated), options.only ?? requestedHarnessIds());
 
   let cache: Promise<HarnessInfo[]> | null = null;
 
@@ -111,6 +133,16 @@ function buildAdapters(simulated: boolean): Partial<Record<HarnessId, Disposable
     codex: createCodexAdapter(),
     opencode: createOpenCodeAdapter(),
   };
+}
+
+function restrict(
+  adapters: Partial<Record<HarnessId, DisposableHarnessAdapter>>,
+  only: readonly HarnessId[] | undefined,
+): Partial<Record<HarnessId, DisposableHarnessAdapter>> {
+  if (!only) return adapters;
+  const kept: Partial<Record<HarnessId, DisposableHarnessAdapter>> = {};
+  for (const id of only) if (adapters[id]) kept[id] = adapters[id];
+  return kept;
 }
 
 function fakeAdapter(id: HarnessId): DisposableHarnessAdapter {
