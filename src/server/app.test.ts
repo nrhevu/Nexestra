@@ -42,6 +42,35 @@ describe("HTTP app", () => {
     app = createApp({ store, runner });
   });
 
+  it("creates a workspace and returns only its scoped bootstrap data", async () => {
+    const response = await app.request("/api/workspaces", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Product Team" }),
+    });
+    expect(response.status).toBe(201);
+    const workspace = (await response.json()) as { id: string; name: string };
+
+    await store.createAgent({
+      workspaceId: workspace.id,
+      kind: "worker",
+      name: "Product Planner",
+      handle: "planner",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    const bootstrap = await app.request(`/api/bootstrap?workspaceId=${workspace.id}`);
+
+    await expect(bootstrap.json()).resolves.toMatchObject({
+      workspace: { id: workspace.id, name: "Product Team" },
+      workspaces: [{ name: "Nexestra" }, { id: workspace.id, name: "Product Team" }],
+      agents: [{ workspaceId: workspace.id, handle: "planner" }],
+      threads: [{ workspaceId: workspace.id, name: "general" }],
+      tasks: [],
+    });
+  });
+
   it("creates an agent and dispatches only an explicit mention", async () => {
     const agentResponse = await app.request("/api/agents", {
       method: "POST",

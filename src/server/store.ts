@@ -9,6 +9,7 @@ import {
   CreateAgentSchema,
   CreateTaskSchema,
   CreateThreadSchema,
+  CreateWorkspaceSchema,
   type Message,
   MessageSchema,
   RunSchema,
@@ -20,13 +21,23 @@ import {
   type UpdateAgentInput,
   UpdateAgentSchema,
   UpdateTaskSchema,
+  type Workspace,
+  WorkspaceSchema,
 } from "../shared/contracts.js";
 
 const StateSchema = z.object({
-  version: z.literal(1),
+  version: z.literal(2),
+  workspaces: z.array(WorkspaceSchema).min(1),
   agents: z.array(AgentSchema),
   threads: z.array(ThreadSchema),
   tasks: z.array(TaskSchema),
+});
+
+const LegacyStateSchema = z.object({
+  version: z.literal(1),
+  agents: z.array(z.record(z.string(), z.unknown())),
+  threads: z.array(z.record(z.string(), z.unknown())),
+  tasks: z.array(z.record(z.string(), z.unknown())),
 });
 
 type PersistedState = z.infer<typeof StateSchema>;
@@ -99,7 +110,8 @@ export class FileStore {
       threadDirectory: join(root, "threads"),
     };
     await mkdir(paths.threadDirectory, { recursive: true, mode: 0o700 });
-    const state = await readJson(paths.stateFile, StateSchema, createInitialState());
+    const { state, needsWrite } = await readState(paths.stateFile);
+    if (needsWrite) await writeJsonAtomic(paths.stateFile, state, 0o600);
     const credentialDocument = await readJson(paths.credentialFile, CredentialSchema, {
       version: 1 as const,
       credentials: {},
@@ -111,8 +123,21 @@ export class FileStore {
     return store;
   }
 
-  listAgents(): Agent[] {
-    return structuredClone(this.state.agents);
+  listWorkspaces(): Workspace[] {
+    return structuredClone(this.state.workspaces);
+  }
+
+  getWorkspace(id: string): Workspace | undefined {
+    const workspace = this.state.workspaces.find((entry) => entry.id === id);
+    return workspace ? structuredClone(workspace) : undefined;
+  }
+
+  listAgents(workspaceId?: string): Agent[] {
+    return structuredClone(
+      workspaceId
+        ? this.state.agents.filter((agent) => agent.workspaceId === workspaceId)
+        : this.state.agents,
+    );
   }
 
   getAgent(id: string): Agent | undefined {
@@ -120,14 +145,20 @@ export class FileStore {
     return agent ? structuredClone(agent) : undefined;
   }
 
-  findAgentByHandle(handle: string): Agent | undefined {
-    const agent = this.state.agents.find((entry) => entry.handle === handle.toLowerCase());
+  findAgentByHandle(handle: string, workspaceId?: string): Agent | undefined {
+    const agent = this.state.agents.find(
+      (entry) =>
+        entry.handle === handle.toLowerCase() &&
+        (workspaceId === undefined || entry.workspaceId === workspaceId),
+    );
     return agent ? structuredClone(agent) : undefined;
   }
 
-  listThreads(): Thread[] {
+  listThreads(workspaceId?: string): Thread[] {
     return structuredClone(
-      [...this.state.threads].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+      this.state.threads
+        .filter((thread) => workspaceId === undefined || thread.workspaceId === workspaceId)
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
     );
   }
 
@@ -136,9 +167,11 @@ export class FileStore {
     return thread ? structuredClone(thread) : undefined;
   }
 
-  listTasks(): Task[] {
+  listTasks(workspaceId?: string): Task[] {
     return structuredClone(
-      [...this.state.tasks].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+      this.state.tasks
+        .filter((task) => workspaceId === undefined || task.workspaceId === workspaceId)
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
     );
   }
 
@@ -150,15 +183,40 @@ export class FileStore {
     return join(this.threadDirectory, `${threadId}.jsonl`);
   }
 
+  async createWorkspace(rawInput: unknown): Promise<Workspace> {
+    const input = CreateWorkspaceSchema.parse(rawInput);
+    return this.withWrite(async () => {
+      const now = new Date().toISOString();
+      const workspace = WorkspaceSchema.parse({
+        id: crypto.randomUUID(),
+        name: input.name,
+        slug: uniqueWorkspaceSlug(input.name, this.state.workspaces),
+        createdAt: now,
+        updatedAt: now,
+      });
+      const thread = createThreadRecord(workspace.id, "general", now, []);
+      this.state.workspaces.push(workspace);
+      this.state.threads.push(thread);
+      await this.writeState();
+      return structuredClone(workspace);
+    });
+  }
+
   async createAgent(rawInput: unknown): Promise<Agent> {
     const input = CreateAgentSchema.parse(rawInput);
     return this.withWrite(async () => {
-      if (this.state.agents.some((agent) => agent.handle === input.handle)) {
+      const workspaceId = this.requireWorkspace(input.workspaceId).id;
+      if (
+        this.state.agents.some(
+          (agent) => agent.workspaceId === workspaceId && agent.handle === input.handle,
+        )
+      ) {
         throw new StoreError("conflict", `@${input.handle} is already in use.`);
       }
       const now = new Date().toISOString();
       const base = {
         id: crypto.randomUUID(),
+        workspaceId,
         name: input.name,
         handle: input.handle,
         description: input.description,
@@ -254,16 +312,9 @@ export class FileStore {
   async createThread(rawInput: unknown): Promise<Thread> {
     const input = CreateThreadSchema.parse(rawInput);
     return this.withWrite(async () => {
+      const workspaceId = this.requireWorkspace(input.workspaceId).id;
       const now = new Date().toISOString();
-      const thread = ThreadSchema.parse({
-        id: crypto.randomUUID(),
-        name: input.name,
-        slug: uniqueSlug(input.name, this.state.threads),
-        createdAt: now,
-        updatedAt: now,
-        messageCount: 0,
-        lastMessageAt: null,
-      });
+      const thread = createThreadRecord(workspaceId, input.name, now, this.state.threads);
       this.state.threads.push(thread);
       await this.writeState();
       return structuredClone(thread);
@@ -351,10 +402,12 @@ export class FileStore {
   async createTask(rawInput: unknown): Promise<Task> {
     const input = CreateTaskSchema.parse(rawInput);
     return this.withWrite(async () => {
-      this.validateReferences(input.assigneeId, input.threadId);
+      const workspaceId = this.requireWorkspace(input.workspaceId).id;
+      this.validateReferences(workspaceId, input.assigneeId, input.threadId);
       const now = new Date().toISOString();
       const task = TaskSchema.parse({
         id: crypto.randomUUID(),
+        workspaceId,
         title: input.title,
         description: input.description,
         status: input.status,
@@ -377,7 +430,7 @@ export class FileStore {
       if (!current) throw new StoreError("not_found", "Task not found.");
       const assigneeId = input.assigneeId === undefined ? current.assigneeId : input.assigneeId;
       const threadId = input.threadId === undefined ? current.threadId : input.threadId;
-      this.validateReferences(assigneeId, threadId);
+      this.validateReferences(current.workspaceId, assigneeId, threadId);
       const updated = TaskSchema.parse({
         ...current,
         ...input,
@@ -389,9 +442,11 @@ export class FileStore {
     });
   }
 
-  async activeRuns(): Promise<AgentRun[]> {
+  async activeRuns(workspaceId?: string): Promise<AgentRun[]> {
     const active: AgentRun[] = [];
-    for (const thread of this.state.threads) {
+    for (const thread of this.state.threads.filter(
+      (entry) => workspaceId === undefined || entry.workspaceId === workspaceId,
+    )) {
       const data = await this.threadData(thread.id);
       active.push(
         ...data.runs.filter((run) => run.status === "queued" || run.status === "running"),
@@ -506,16 +561,35 @@ export class FileStore {
     }
   }
 
-  private validateReferences(assigneeId: string | null, threadId: string | null): void {
+  private validateReferences(
+    workspaceId: string,
+    assigneeId: string | null,
+    threadId: string | null,
+  ): void {
     if (
       assigneeId &&
-      !this.state.agents.some((agent) => agent.id === assigneeId && !agent.archived)
+      !this.state.agents.some(
+        (agent) => agent.id === assigneeId && agent.workspaceId === workspaceId && !agent.archived,
+      )
     ) {
       throw new StoreError("invalid", "The assigned agent does not exist or has been archived.");
     }
-    if (threadId && !this.state.threads.some((thread) => thread.id === threadId)) {
+    if (
+      threadId &&
+      !this.state.threads.some(
+        (thread) => thread.id === threadId && thread.workspaceId === workspaceId,
+      )
+    ) {
       throw new StoreError("invalid", "The linked thread does not exist.");
     }
+  }
+
+  private requireWorkspace(id?: string): Workspace {
+    const workspace = id
+      ? this.state.workspaces.find((entry) => entry.id === id)
+      : this.state.workspaces[0];
+    if (!workspace) throw new StoreError("not_found", "Workspace not found.");
+    return workspace;
   }
 
   private requireThread(id: string): Thread {
@@ -553,25 +627,44 @@ export class FileStore {
 
 function createInitialState(): PersistedState {
   const now = new Date().toISOString();
+  const workspace = WorkspaceSchema.parse({
+    id: crypto.randomUUID(),
+    name: "Nexestra",
+    slug: "nexestra",
+    createdAt: now,
+    updatedAt: now,
+  });
   return {
-    version: 1,
+    version: 2,
+    workspaces: [workspace],
     agents: [],
-    threads: [
-      {
-        id: crypto.randomUUID(),
-        name: "general",
-        slug: "general",
-        createdAt: now,
-        updatedAt: now,
-        messageCount: 0,
-        lastMessageAt: null,
-      },
-    ],
+    threads: [createThreadRecord(workspace.id, "general", now, [])],
     tasks: [],
   };
 }
 
-function uniqueSlug(name: string, threads: Thread[]): string {
+function createThreadRecord(
+  workspaceId: string,
+  name: string,
+  now: string,
+  threads: Thread[],
+): Thread {
+  return ThreadSchema.parse({
+    id: crypto.randomUUID(),
+    workspaceId,
+    name,
+    slug: uniqueSlug(
+      name,
+      threads.filter((thread) => thread.workspaceId === workspaceId),
+    ),
+    createdAt: now,
+    updatedAt: now,
+    messageCount: 0,
+    lastMessageAt: null,
+  });
+}
+
+function uniqueSlug(name: string, entries: { slug: string }[]): string {
   const base =
     name
       .normalize("NFD")
@@ -583,11 +676,15 @@ function uniqueSlug(name: string, threads: Thread[]): string {
       .slice(0, 48) || "thread";
   let slug = base;
   let suffix = 2;
-  while (threads.some((thread) => thread.slug === slug)) {
+  while (entries.some((entry) => entry.slug === slug)) {
     slug = `${base}-${suffix}`;
     suffix += 1;
   }
   return slug;
+}
+
+function uniqueWorkspaceSlug(name: string, workspaces: Workspace[]): string {
+  return uniqueSlug(name, workspaces);
 }
 
 function normaliseBaseUrl(value: string): string {
@@ -684,6 +781,42 @@ async function readJson<T>(file: string, schema: z.ZodType<T>, fallback: T): Pro
     return schema.parse(JSON.parse(await readFile(file, "utf8")));
   } catch (error) {
     if (isNodeError(error, "ENOENT")) return fallback;
+    throw new Error(`Unable to read ${file}.`, { cause: error });
+  }
+}
+
+async function readState(file: string): Promise<{ state: PersistedState; needsWrite: boolean }> {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(await readFile(file, "utf8"));
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return { state: createInitialState(), needsWrite: true };
+    throw new Error(`Unable to read ${file}.`, { cause: error });
+  }
+
+  try {
+    const version = z.object({ version: z.number() }).parse(raw).version;
+    if (version === 2) return { state: StateSchema.parse(raw), needsWrite: false };
+    const legacy = LegacyStateSchema.parse(raw);
+    const now = new Date().toISOString();
+    const workspace = WorkspaceSchema.parse({
+      id: crypto.randomUUID(),
+      name: "Nexestra",
+      slug: "nexestra",
+      createdAt: now,
+      updatedAt: now,
+    });
+    return {
+      state: StateSchema.parse({
+        version: 2,
+        workspaces: [workspace],
+        agents: legacy.agents.map((agent) => ({ ...agent, workspaceId: workspace.id })),
+        threads: legacy.threads.map((thread) => ({ ...thread, workspaceId: workspace.id })),
+        tasks: legacy.tasks.map((task) => ({ ...task, workspaceId: workspace.id })),
+      }),
+      needsWrite: true,
+    };
+  } catch (error) {
     throw new Error(`Unable to read ${file}.`, { cause: error });
   }
 }

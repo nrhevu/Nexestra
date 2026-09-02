@@ -6,8 +6,22 @@ export const HandleSchema = z
   .toLowerCase()
   .regex(/^[a-z0-9][a-z0-9_-]{1,30}$/, "Use 2–31 characters: a-z, 0-9, _ or -.");
 
+export const WorkspaceSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  slug: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type Workspace = z.infer<typeof WorkspaceSchema>;
+
+export const CreateWorkspaceSchema = z.object({
+  name: z.string().trim().min(1).max(60),
+});
+
 const AgentBaseSchema = z.object({
   id: z.string(),
+  workspaceId: z.string(),
   name: z.string(),
   handle: HandleSchema,
   description: z.string(),
@@ -52,6 +66,7 @@ export type WorkerAgent = z.infer<typeof WorkerAgentSchema>;
 export type MasterAgent = z.infer<typeof MasterAgentSchema>;
 
 const AgentInputBaseSchema = z.object({
+  workspaceId: z.string().optional(),
   name: z.string().trim().min(1).max(60),
   handle: HandleSchema,
   description: z.string().trim().max(240).default(""),
@@ -100,6 +115,7 @@ export type AgentView = Agent & {
 
 export const ThreadSchema = z.object({
   id: z.string(),
+  workspaceId: z.string(),
   name: z.string(),
   slug: z.string(),
   createdAt: z.string(),
@@ -110,6 +126,7 @@ export const ThreadSchema = z.object({
 export type Thread = z.infer<typeof ThreadSchema>;
 
 export const CreateThreadSchema = z.object({
+  workspaceId: z.string().optional(),
   name: z.string().trim().min(1).max(80),
 });
 
@@ -158,6 +175,7 @@ export type AgentRun = z.infer<typeof RunSchema>;
 
 export const TaskSchema = z.object({
   id: z.string(),
+  workspaceId: z.string(),
   title: z.string(),
   description: z.string(),
   status: z.enum(["todo", "in_progress", "done"]),
@@ -169,6 +187,7 @@ export const TaskSchema = z.object({
 export type Task = z.infer<typeof TaskSchema>;
 
 export const CreateTaskSchema = z.object({
+  workspaceId: z.string().optional(),
   title: z.string().trim().min(1).max(160),
   description: z.string().trim().max(2_000).default(""),
   status: z.enum(["todo", "in_progress", "done"]).default("todo"),
@@ -192,6 +211,8 @@ export interface RuntimeStatus {
 }
 
 export interface BootstrapData {
+  workspaces: Workspace[];
+  workspace: Workspace;
   agents: AgentView[];
   threads: Thread[];
   tasks: Task[];

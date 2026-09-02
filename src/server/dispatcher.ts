@@ -187,10 +187,12 @@ export class ChatService {
 
   async send(threadId: string, rawInput: unknown): Promise<{ message: Message; runs: AgentRun[] }> {
     const { content } = CreateMessageSchema.parse(rawInput);
+    const thread = this.store.getThread(threadId);
+    if (!thread) throw new StoreError("not_found", "Thread not found.");
     const agents: Agent[] = [];
     const releases: (() => void)[] = [];
     for (const handle of extractMentionHandles(content)) {
-      const agent = this.store.findAgentByHandle(handle);
+      const agent = this.store.findAgentByHandle(handle, thread.workspaceId);
       if (!agent) continue;
       const release = this.dispatcher.reserveAgent(agent.id);
       if (!release) continue;

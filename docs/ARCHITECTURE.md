@@ -5,6 +5,8 @@
 M9 is a single-user, local-first control center. The server binds to `127.0.0.1`, the SPA
 communicates over HTTP, and the server invokes configured coding harnesses or providers. The two
 primary navigation areas are Threads and Surfaces; the first two surfaces are Taskboard and Agents.
+The far-left rail switches between workspaces, while the adjacent panel owns the Threads, Surfaces,
+and Settings navigation.
 
 ## Components
 
@@ -25,9 +27,13 @@ The shared Zod contracts in `src/shared/contracts.ts` define the boundary betwee
 
 ## Persistence
 
-`state.json` stores agent profiles, thread metadata, and tasks. State writes use a temporary file
-followed by an atomic rename. The separate `credentials.json` file has mode `0600` and stores only
-custom API keys by agent ID.
+`state.json` stores workspaces, agent profiles, thread metadata, and tasks. Every agent, thread, and
+task carries a workspace ID. Handles and thread slugs are unique only within their workspace, and
+task references cannot cross workspace boundaries. Creating a workspace seeds a `general` thread.
+Version 1 state is migrated in place to version 2 by assigning every existing record to a default
+`Nexestra` workspace; record IDs and transcript paths do not change. State writes use a temporary
+file followed by an atomic rename. The separate `credentials.json` file has mode `0600` and stores
+only custom API keys by agent ID.
 
 Permanent agent deletion removes the profile and its custom credential, clears matching task
 assignments, and releases the handle for reuse. Credential removal is persisted before public state
@@ -42,12 +48,12 @@ replies were fsynced; otherwise, they are marked interrupted and can be retried.
 
 ## Mention and dispatch
 
-`ChatService` resolves handles case-insensitively and removes duplicates. Unknown handles remain
-plain text. Each known handle creates one run; disabled or unavailable agents create explicit failed
-runs. The dispatcher maintains one promise queue per agent, so each agent replies serially while
-different agents can run in parallel. Every invocation is tied to the exact triggering message ID
-and content; stale or duplicate retries are rejected. Agent output goes directly to the transcript
-without passing through the mention parser.
+`ChatService` resolves handles case-insensitively inside the thread's workspace and removes
+duplicates. Unknown handles remain plain text. Each known handle creates one run; disabled or
+unavailable agents create explicit failed runs. The dispatcher maintains one promise queue per
+agent, so each agent replies serially while different agents can run in parallel. Every invocation
+is tied to the exact triggering message ID and content; stale or duplicate retries are rejected.
+Agent output goes directly to the transcript without passing through the mention parser.
 
 Chat reserves each resolved agent before persisting the user's message, without starting dispatch.
 Deletion is rejected while a reservation or per-agent queue is pending or running, and a deletion
@@ -86,6 +92,7 @@ Provider responses have a byte limit enforced before parsing.
 - OpenCode `plan` is an application policy, not an independent OS or container sandbox.
 - Agent profiles cannot yet edit their full configuration after creation; enable, disable, archive,
   and permanent deletion are available.
+- Workspaces cannot yet be renamed, reordered, or deleted.
 - Device OAuth displays raw Codex CLI instructions; it does not yet use `codex app-server` JSON-RPC.
 - Custom providers support only two OpenAI-compatible protocols; Anthropic Messages is not supported.
 - Queues live in process. A restart marks runs interrupted, and the user must click Retry.

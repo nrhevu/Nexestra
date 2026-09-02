@@ -42,18 +42,29 @@ export function createApp(options: CreateAppOptions) {
 
   app.get("/api/bootstrap", async (context) => {
     const runtime = await runner.runtimeStatus();
+    const workspaces = options.store.listWorkspaces();
+    const requestedWorkspaceId = context.req.query("workspaceId");
+    const workspace =
+      (requestedWorkspaceId && options.store.getWorkspace(requestedWorkspaceId)) ?? workspaces[0];
+    if (!workspace) throw new StoreError("not_found", "Workspace not found.");
     const data: BootstrapData = {
+      workspaces,
+      workspace,
       agents: options.store
-        .listAgents()
+        .listAgents(workspace.id)
         .map((agent) => agentView(agent, runtime, dispatcher.busyAgentIds())),
-      threads: options.store.listThreads(),
-      tasks: options.store.listTasks(),
-      activeRuns: await options.store.activeRuns(),
+      threads: options.store.listThreads(workspace.id),
+      tasks: options.store.listTasks(workspace.id),
+      activeRuns: await options.store.activeRuns(workspace.id),
       runtime,
       workspacePath: options.store.workspacePath,
       dataPath: options.store.root,
     };
     return context.json(data);
+  });
+
+  app.post("/api/workspaces", async (context) => {
+    return context.json(await options.store.createWorkspace(await context.req.json()), 201);
   });
 
   app.post("/api/agents", async (context) => {

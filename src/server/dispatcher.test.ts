@@ -40,6 +40,38 @@ async function setup() {
 }
 
 describe("mention dispatch", () => {
+  it("resolves a mentioned handle only inside the thread workspace", async () => {
+    const { chat, dispatcher, runner, store } = await setup();
+    const [firstWorkspace] = store.listWorkspaces();
+    if (!firstWorkspace) throw new Error("expected default workspace");
+    const secondWorkspace = await store.createWorkspace({ name: "Product" });
+    await store.createAgent({
+      workspaceId: firstWorkspace.id,
+      kind: "worker",
+      name: "First Planner",
+      handle: "planner",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    const secondAgent = await store.createAgent({
+      workspaceId: secondWorkspace.id,
+      kind: "worker",
+      name: "Product Planner",
+      handle: "planner",
+      description: "",
+      instructions: "",
+      harness: "opencode",
+    });
+    const [secondThread] = store.listThreads(secondWorkspace.id);
+    if (!secondThread) throw new Error("expected workspace thread");
+
+    await chat.send(secondThread.id, { content: "@planner answer here" });
+    await dispatcher.waitForIdle();
+
+    expect(runner.invocations.map(({ agent }) => agent.id)).toEqual([secondAgent.id]);
+  });
+
   it("persists ordinary chat without invoking an agent", async () => {
     const { chat, dispatcher, runner, store, thread } = await setup();
     await chat.send(thread.id, { content: "a note without a mention" });
