@@ -1,0 +1,180 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { serveStatic } from "@hono/node-server/serve-static";
+import { Hono } from "hono";
+import { ZodError } from "zod";
+import type { BootstrapData } from "../shared/contracts.js";
+import { ChatGptAuthManager } from "./auth.js";
+import { AgentDispatcher, ChatService } from "./dispatcher.js";
+import { type AgentRunner, agentView, LocalAgentRunner } from "./runtime.js";
+import { type FileStore, StoreError } from "./store.js";
+
+interface CreateAppOptions {
+  store: FileStore;
+  runner?: AgentRunner;
+  auth?: ChatGptAuthManager;
+  productionAssets?: boolean;
+}
+
+export function createApp(options: CreateAppOptions) {
+  const runner = options.runner ?? new LocalAgentRunner({ store: options.store });
+  const dispatcher = new AgentDispatcher(options.store, runner);
+  const chat = new ChatService(options.store, dispatcher);
+  const localRunner = runner instanceof LocalAgentRunner ? runner : undefined;
+  const auth =
+    options.auth ?? (localRunner ? new ChatGptAuthManager(options.store, localRunner) : undefined);
+  const app = new Hono();
+
+  app.use("/api/*", async (context, next) => {
+    if (context.req.method !== "GET" && context.req.method !== "HEAD") {
+      const origin = context.req.header("origin");
+      if (origin && !isLoopbackOrigin(origin)) {
+        return context.json(
+          { error: { code: "forbidden_origin", message: "Origin không được phép." } },
+          403,
+        );
+      }
+    }
+    await next();
+  });
+
+  app.get("/api/health", (context) => context.json({ ok: true, version: "0.1.0" }));
+
+  app.get("/api/bootstrap", async (context) => {
+    const runtime = await runner.runtimeStatus();
+    const data: BootstrapData = {
+      agents: options.store
+        .listAgents()
+        .map((agent) => agentView(agent, runtime, dispatcher.busyAgentIds())),
+      threads: options.store.listThreads(),
+      tasks: options.store.listTasks(),
+      activeRuns: await options.store.activeRuns(),
+      runtime,
+      workspacePath: options.store.workspacePath,
+      dataPath: options.store.root,
+    };
+    return context.json(data);
+  });
+
+  app.post("/api/agents", async (context) => {
+    const agent = await options.store.createAgent(await context.req.json());
+    const runtime = await runner.runtimeStatus();
+    return context.json(agentView(agent, runtime, dispatcher.busyAgentIds()), 201);
+  });
+
+  app.patch("/api/agents/:id", async (context) => {
+    const agent = await options.store.updateAgent(
+      context.req.param("id"),
+      await context.req.json(),
+    );
+    const runtime = await runner.runtimeStatus();
+    return context.json(agentView(agent, runtime, dispatcher.busyAgentIds()));
+  });
+
+  app.post("/api/threads", async (context) => {
+    return context.json(await options.store.createThread(await context.req.json()), 201);
+  });
+
+  app.get("/api/threads/:id", async (context) => {
+    return context.json(await options.store.threadData(context.req.param("id")));
+  });
+
+  app.post("/api/threads/:id/messages", async (context) => {
+    return context.json(await chat.send(context.req.param("id"), await context.req.json()), 201);
+  });
+
+  app.post("/api/runs/:id/retry", async (context) => {
+    return context.json(await dispatcher.retry(context.req.param("id")), 201);
+  });
+
+  app.post("/api/tasks", async (context) => {
+    return context.json(await options.store.createTask(await context.req.json()), 201);
+  });
+
+  app.patch("/api/tasks/:id", async (context) => {
+    return context.json(
+      await options.store.updateTask(context.req.param("id"), await context.req.json()),
+    );
+  });
+
+  app.post("/api/auth/chatgpt/start", async (context) => {
+    if (!auth) throw new StoreError("invalid", "OAuth ChatGPT không khả dụng trong runtime này.");
+    return context.json(await auth.start(), 201);
+  });
+
+  app.get("/api/auth/chatgpt/:id", async (context) => {
+    if (!auth) throw new StoreError("invalid", "OAuth ChatGPT không khả dụng trong runtime này.");
+    const session = await auth.get(context.req.param("id"));
+    if (!session) throw new StoreError("not_found", "Không tìm thấy phiên đăng nhập.");
+    return context.json(session);
+  });
+
+  app.delete("/api/auth/chatgpt/:id", (context) => {
+    if (!auth) throw new StoreError("invalid", "OAuth ChatGPT không khả dụng trong runtime này.");
+    const session = auth.cancel(context.req.param("id"));
+    if (!session) throw new StoreError("not_found", "Không tìm thấy phiên đăng nhập.");
+    return context.json(session);
+  });
+
+  app.notFound((context) => {
+    if (isApiPath(context.req.path)) {
+      return context.json(
+        { error: { code: "not_found", message: "API route không tồn tại." } },
+        404,
+      );
+    }
+    return context.text("Not found", 404);
+  });
+
+  app.onError((error, context) => {
+    if (error instanceof ZodError) {
+      return context.json(
+        {
+          error: {
+            code: "invalid_request",
+            message: error.issues[0]?.message ?? "Dữ liệu không hợp lệ.",
+          },
+        },
+        400,
+      );
+    }
+    if (error instanceof StoreError) {
+      const status = error.code === "not_found" ? 404 : error.code === "conflict" ? 409 : 400;
+      return context.json({ error: { code: error.code, message: error.message } }, status);
+    }
+    console.error(error);
+    return context.json(
+      { error: { code: "internal_error", message: error.message || "Lỗi máy chủ." } },
+      500,
+    );
+  });
+
+  if (options.productionAssets) {
+    app.use("/*", serveStatic({ root: "./dist/web" }));
+    app.get("/*", async (context) => {
+      if (isApiPath(context.req.path)) {
+        return context.json(
+          { error: { code: "not_found", message: "API route không tồn tại." } },
+          404,
+        );
+      }
+      if (/\.[a-z0-9]+$/i.test(context.req.path)) return context.text("Not found", 404);
+      return context.html(await readFile(join(process.cwd(), "dist/web/index.html"), "utf8"));
+    });
+  }
+
+  return Object.assign(app, { dispatcher, runner });
+}
+
+function isApiPath(path: string): boolean {
+  return path === "/api" || path.startsWith("/api/");
+}
+
+function isLoopbackOrigin(origin: string): boolean {
+  try {
+    const hostname = new URL(origin).hostname;
+    return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "[::1]";
+  } catch {
+    return false;
+  }
+}
