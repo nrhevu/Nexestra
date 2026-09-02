@@ -552,6 +552,28 @@ export function useSaveSettings(): UseMutationResult<
   });
 }
 
+export function useSaveProviderCredential(): UseMutationResult<
+  AppSettingsResponse,
+  Error,
+  { providerId: string; credential: string | null }
+> {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ providerId, credential }) =>
+      request(
+        `/settings/providers/${encodeURIComponent(providerId)}/credential`,
+        AppSettingsResponseSchema,
+        {
+          method: credential === null ? "DELETE" : "PUT",
+          ...(credential === null ? {} : { json: { credential } }),
+        },
+      ),
+    onSuccess: (settings) => {
+      client.setQueryData(keys.settings(), settings);
+    },
+  });
+}
+
 /**
  * Send something to the Master: a message, answers to `ask_user`, an approval
  * decision, or a nudge to continue.

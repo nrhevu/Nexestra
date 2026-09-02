@@ -4,6 +4,7 @@ import {
   HarnessIdSchema,
   type MasterProvider,
   MasterProviderSchema,
+  masterProviderAuth,
   SandboxLevelSchema,
 } from "@nexestra/core";
 import { Button, Checkbox, MonoTable, Select, StatusDot, Tag, TextInput } from "@nexestra/ui-kit";
@@ -12,6 +13,7 @@ import { useEffect, useState } from "react";
 import {
   useHarnesses,
   useRefreshHarnesses,
+  useSaveProviderCredential,
   useSaveSettings,
   useSettings,
   useWorkspaces,
@@ -26,6 +28,10 @@ const PROVIDER_PROTOCOL_OPTIONS = [
   { value: "openai-responses", label: "OpenAI Responses" },
   { value: "anthropic-messages", label: "Anthropic Messages" },
 ];
+const PROVIDER_AUTH_OPTIONS = [
+  { value: "api-key", label: "API key" },
+  { value: "none", label: "No authentication" },
+];
 
 const EMPTY_PROVIDER: MasterProvider = {
   id: "",
@@ -33,7 +39,7 @@ const EMPTY_PROVIDER: MasterProvider = {
   protocol: "openai-responses",
   baseUrl: "https://",
   model: "",
-  apiKeyEnv: "",
+  auth: "api-key",
   enabled: true,
 };
 
@@ -44,22 +50,30 @@ export function SettingsSurface() {
   const workspaces = useWorkspaces();
   const settings = useSettings();
   const saveSettings = useSaveSettings();
+  const saveCredential = useSaveProviderCredential();
   const theme = useUiStore((state) => state.theme);
   const setTheme = useUiStore((state) => state.setTheme);
   const router = useRouter();
 
   const [draft, setDraft] = useState<AppSettings | null>(null);
   const [providerDraft, setProviderDraft] = useState<MasterProvider>(EMPTY_PROVIDER);
+  const [providerDraftCredential, setProviderDraftCredential] = useState("");
+  const [credentialDrafts, setCredentialDrafts] = useState<Record<string, string>>({});
   const [providerError, setProviderError] = useState<string | null>(null);
   useEffect(() => {
     if (settings.data) setDraft(AppSettingsSchema.parse(settings.data));
   }, [settings.data]);
 
   const workspace = workspaces.data?.[0];
-  const dirty =
+  const runtimeProvider = settings.data?.masterProviders.find(
+    (provider) => provider.id === settings.data?.master.providerId,
+  );
+  const settingsDirty =
     draft !== null &&
     settings.data !== undefined &&
     JSON.stringify(draft) !== JSON.stringify(AppSettingsSchema.parse(settings.data));
+  const credentialsDirty = Object.values(credentialDrafts).some((value) => value.trim().length > 0);
+  const dirty = settingsDirty || credentialsDirty;
 
   const patch = (change: Partial<AppSettings>) =>
     setDraft((current) => (current ? { ...current, ...change } : current));
@@ -81,7 +95,6 @@ export function SettingsSurface() {
       name: providerDraft.name.trim(),
       baseUrl: providerDraft.baseUrl.trim().replace(/\/+$/, ""),
       model: providerDraft.model.trim(),
-      apiKeyEnv: providerDraft.apiKeyEnv?.trim() || undefined,
     };
     const parsed = MasterProviderSchema.safeParse(normalised);
     if (!parsed.success) {
@@ -93,8 +106,44 @@ export function SettingsSurface() {
       return;
     }
     patch({ masterProviders: [...draft.masterProviders, parsed.data] });
+    if (masterProviderAuth(parsed.data) === "api-key" && providerDraftCredential.trim()) {
+      setCredentialDrafts((current) => ({
+        ...current,
+        [parsed.data.id]: providerDraftCredential,
+      }));
+    }
     setProviderDraft(EMPTY_PROVIDER);
+    setProviderDraftCredential("");
     setProviderError(null);
+  };
+
+  const removeProvider = (id: string) => {
+    if (!draft) return;
+    const active = draft.activeMasterProviderId === id;
+    patch({
+      masterProviders: draft.masterProviders.filter((entry) => entry.id !== id),
+      activeMasterProviderId: active ? null : draft.activeMasterProviderId,
+    });
+    setCredentialDrafts((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+  };
+
+  const saveAll = async () => {
+    if (!draft) return;
+    setProviderError(null);
+    try {
+      if (settingsDirty) await saveSettings.mutateAsync(draft);
+      for (const [providerId, credential] of Object.entries(credentialDrafts)) {
+        const value = credential.trim();
+        if (value) await saveCredential.mutateAsync({ providerId, credential: value });
+      }
+      setCredentialDrafts({});
+    } catch (error) {
+      setProviderError(error instanceof Error ? error.message : "Could not save settings");
+    }
   };
 
   return (
@@ -147,15 +196,12 @@ export function SettingsSurface() {
                   <span className="kv__v">{settings.data.master.model || "—"}</span>
                   <span className="kv__k">credential</span>
                   <span className="kv__v">
-                    {settings.data.master.credentialEnv ? (
-                      <>
-                        <code>{settings.data.master.credentialEnv}</code>{" "}
-                        <Tag tone={settings.data.master.credentialPresent ? "accent" : "warn"}>
-                          {settings.data.master.credentialPresent ? "present" : "missing"}
-                        </Tag>
-                      </>
-                    ) : (
+                    {runtimeProvider && masterProviderAuth(runtimeProvider) === "none" ? (
                       "not required"
+                    ) : (
+                      <Tag tone={settings.data.master.credentialPresent ? "accent" : "warn"}>
+                        {settings.data.master.credentialPresent ? "configured" : "missing"}
+                      </Tag>
                     )}
                   </span>
                 </div>
@@ -167,11 +213,9 @@ export function SettingsSurface() {
               <div className="nx-muted">loading…</div>
             )}
             <div className="settings__notice">
-              ChatGPT subscription OAuth is not exposed to third-party apps. Nexestra therefore uses
-              the official OpenAI API with a server-side <code>OPENAI_API_KEY</code>. Choose the
-              built-in OpenAI provider with <code>chat-latest</code> to use the model aligned with
-              ChatGPT, or change the model to <code>gpt-5.6</code> for the recommended production
-              API model. Secrets never enter this page or the database.
+              Enter provider credentials here. Nexestra saves them locally in a separate,
+              current-user-only file; keys never enter SQLite, the event log, or API responses.
+              Choose <code>No authentication</code> only for a trusted local endpoint.
             </div>
 
             {draft ? (
@@ -179,6 +223,10 @@ export function SettingsSurface() {
                 <div className="provider-list">
                   {draft.masterProviders.map((provider) => {
                     const active = draft.activeMasterProviderId === provider.id;
+                    const auth = masterProviderAuth(provider);
+                    const hasSavedCredential =
+                      settings.data?.providerCredentials[provider.id] ?? false;
+                    const stagedCredential = credentialDrafts[provider.id] ?? "";
                     return (
                       <section
                         className={`provider-card${active ? " provider-card--active" : ""}`}
@@ -202,19 +250,7 @@ export function SettingsSurface() {
                             >
                               {active ? "Active" : "Use"}
                             </Button>
-                            <Button
-                              tone="danger"
-                              onClick={() =>
-                                patch({
-                                  masterProviders: draft.masterProviders.filter(
-                                    (entry) => entry.id !== provider.id,
-                                  ),
-                                  activeMasterProviderId: active
-                                    ? null
-                                    : draft.activeMasterProviderId,
-                                })
-                              }
-                            >
+                            <Button tone="danger" onClick={() => removeProvider(provider.id)}>
                               Remove
                             </Button>
                           </div>
@@ -244,17 +280,72 @@ export function SettingsSurface() {
                               updateProvider(provider.id, { baseUrl: event.target.value })
                             }
                           />
-                          <TextInput
-                            label="Credential env"
-                            value={provider.apiKeyEnv ?? ""}
-                            placeholder="Optional for a local endpoint"
-                            onChange={(event) =>
-                              updateProvider(provider.id, {
-                                apiKeyEnv: event.target.value || undefined,
-                              })
-                            }
+                          <Select
+                            label="Authentication"
+                            value={auth}
+                            options={PROVIDER_AUTH_OPTIONS}
+                            onChange={(event) => {
+                              const next = event.target.value as "api-key" | "none";
+                              updateProvider(provider.id, { auth: next });
+                              if (next === "none") {
+                                setCredentialDrafts((current) => {
+                                  const updated = { ...current };
+                                  delete updated[provider.id];
+                                  return updated;
+                                });
+                              }
+                            }}
                           />
+                          {auth === "api-key" ? (
+                            <TextInput
+                              label="API key"
+                              type="password"
+                              autoComplete="new-password"
+                              value={stagedCredential}
+                              placeholder={
+                                hasSavedCredential
+                                  ? "Saved — enter a new key to replace"
+                                  : "Paste provider API key"
+                              }
+                              onChange={(event) =>
+                                setCredentialDrafts((current) => ({
+                                  ...current,
+                                  [provider.id]: event.target.value,
+                                }))
+                              }
+                            />
+                          ) : null}
                         </div>
+                        {auth === "api-key" ? (
+                          <div className="row">
+                            <Tag tone={hasSavedCredential ? "accent" : "warn"}>
+                              {hasSavedCredential ? "credential saved" : "credential missing"}
+                            </Tag>
+                            {hasSavedCredential ? (
+                              <Button
+                                tone="danger"
+                                disabled={saveCredential.isPending}
+                                onClick={() =>
+                                  saveCredential.mutate(
+                                    { providerId: provider.id, credential: null },
+                                    {
+                                      onSuccess: () =>
+                                        setCredentialDrafts((current) => {
+                                          const updated = { ...current };
+                                          delete updated[provider.id];
+                                          return updated;
+                                        }),
+                                    },
+                                  )
+                                }
+                              >
+                                Remove saved key
+                              </Button>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <div className="nx-muted">Requests are sent without a credential.</div>
+                        )}
                         <Checkbox
                           checked={provider.enabled}
                           label="Provider enabled"
@@ -311,17 +402,27 @@ export function SettingsSurface() {
                         setProviderDraft((current) => ({ ...current, baseUrl: event.target.value }))
                       }
                     />
-                    <TextInput
-                      label="Credential env"
-                      placeholder="COMPANY_API_KEY"
-                      value={providerDraft.apiKeyEnv ?? ""}
+                    <Select
+                      label="Authentication"
+                      value={masterProviderAuth(providerDraft)}
+                      options={PROVIDER_AUTH_OPTIONS}
                       onChange={(event) =>
                         setProviderDraft((current) => ({
                           ...current,
-                          apiKeyEnv: event.target.value,
+                          auth: event.target.value as "api-key" | "none",
                         }))
                       }
                     />
+                    {masterProviderAuth(providerDraft) === "api-key" ? (
+                      <TextInput
+                        label="API key"
+                        type="password"
+                        autoComplete="new-password"
+                        placeholder="Paste provider API key"
+                        value={providerDraftCredential}
+                        onChange={(event) => setProviderDraftCredential(event.target.value)}
+                      />
+                    ) : null}
                   </div>
                   <div className="row">
                     <Button boxed tone="primary" onClick={addProvider}>
@@ -406,26 +507,34 @@ export function SettingsSurface() {
                 <div className="row" style={{ marginTop: 8 }}>
                   <Button
                     tone="primary"
-                    disabled={!dirty || saveSettings.isPending}
-                    onClick={() => saveSettings.mutate(draft)}
+                    disabled={!dirty || saveSettings.isPending || saveCredential.isPending}
+                    onClick={() => void saveAll()}
                   >
-                    {saveSettings.isPending ? "Saving…" : "Save changes"}
+                    {saveSettings.isPending || saveCredential.isPending
+                      ? "Saving…"
+                      : "Save changes"}
                   </Button>
                   <Button
                     disabled={!dirty}
-                    onClick={() =>
-                      setDraft(settings.data ? AppSettingsSchema.parse(settings.data) : null)
-                    }
+                    onClick={() => {
+                      setDraft(settings.data ? AppSettingsSchema.parse(settings.data) : null);
+                      setCredentialDrafts({});
+                      setProviderError(null);
+                    }}
                   >
                     Reset
                   </Button>
-                  {saveSettings.isSuccess && !dirty ? (
+                  {(saveSettings.isSuccess || saveCredential.isSuccess) && !dirty ? (
                     <span className="nx-muted">saved</span>
                   ) : null}
                 </div>
                 {saveSettings.isError ? (
                   <div className="form-error">{saveSettings.error.message}</div>
                 ) : null}
+                {saveCredential.isError ? (
+                  <div className="form-error">{saveCredential.error.message}</div>
+                ) : null}
+                {providerError ? <div className="form-error">{providerError}</div> : null}
               </div>
             ) : (
               <div className="nx-muted">loading…</div>

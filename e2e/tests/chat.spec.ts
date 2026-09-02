@@ -24,7 +24,7 @@ test("reports that the Master provider needs configuration", async ({ page }) =>
   ).toBeVisible();
   const error = page.locator(".card--error");
   await expect(error).toBeVisible();
-  await expect(error).toContainText("OPENAI_API_KEY");
+  await expect(error).toContainText("Enter an API key for OpenAI in Settings");
   await expect(page.getByRole("region", { name: "Questions from Master" })).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Plan preview" })).toHaveCount(0);
 });
