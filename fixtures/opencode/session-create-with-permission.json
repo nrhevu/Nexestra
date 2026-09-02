@@ -1,0 +1,13 @@
+{
+  "id": "ses_fa05d3da7ffewu9kn1BHjXTrv6",
+  "slug": "silent-planet",
+  "projectID": "d74b33ec9b39daf058cd51a7f38a61918bf5b227",
+  "directory": "/WORK/repo",
+  "path": "",
+  "cost": 0,
+  "tokens": { "input": 0, "output": 0, "reasoning": 0, "cache": { "read": 0, "write": 0 } },
+  "title": "nexestra permission test",
+  "version": "1.18.25",
+  "time": { "created": 1788310897240, "updated": 1788310897240 },
+  "permission": [{ "permission": "bash", "pattern": "*", "action": "ask" }]
+}

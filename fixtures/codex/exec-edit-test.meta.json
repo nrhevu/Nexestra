@@ -1,0 +1,28 @@
+{
+  "harness": "codex",
+  "harnessVersion": "codex-cli 0.148.0",
+  "platform": "darwin arm64 (Darwin 27.0.0)",
+  "node": "v24.19.0",
+  "recordedAt": "2026-09-02",
+  "scenario": "successful edit+test task (workspace-write)",
+  "argv": [
+    "codex",
+    "exec",
+    "--json",
+    "-s",
+    "workspace-write",
+    "-C",
+    "/WORK/codex-a",
+    "--skip-git-repo-check",
+    "-o",
+    "/WORK/out/a-last.md",
+    "Add a function add(a, b) to src/math.ts and a test for it in src/math.test.ts, then run 'node --test src/*.test.ts' to verify."
+  ],
+  "stdin": "/dev/null",
+  "cwd": "/WORK/codex-a",
+  "exitCode": 0,
+  "durationMs": null,
+  "stderr": "Reading additional input from stdin...",
+  "lastMessageFile": "/WORK/out/a-last.md",
+  "notes": "An earlier, SIGHUP-killed run of the same prompt had already applied the edits, so this recording contains no file_change item - the agent only re-verified. See exec-output-schema.jsonl for a real file_change item."
+}

@@ -1,0 +1,26 @@
+{
+  "harness": "codex",
+  "harnessVersion": "codex-cli 0.148.0",
+  "platform": "darwin arm64 (Darwin 27.0.0)",
+  "node": "v24.19.0",
+  "recordedAt": "2026-09-02",
+  "scenario": "run truncated by SIGHUP (process-group kill) - malformed/partial stream sample",
+  "argv": [
+    "codex",
+    "exec",
+    "--json",
+    "-s",
+    "workspace-write",
+    "-C",
+    "/WORK/codex-a",
+    "--skip-git-repo-check",
+    "-o",
+    "/WORK/out/a-last.md",
+    "<same edit+test prompt>"
+  ],
+  "stdin": "inherited (tool background pipe)",
+  "cwd": "/WORK/codex-a",
+  "exitCode": null,
+  "durationMs": null,
+  "notes": "Useful negative fixture: stream ends mid-turn with no terminal event. The child process actually survived the kill and kept editing files - relevant for orphan-process handling."
+}

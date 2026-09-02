@@ -1,0 +1,12 @@
+{
+  "harness": "codex",
+  "harnessVersion": "codex-cli 0.148.0",
+  "platform": "darwin arm64 (Darwin 27.0.0)",
+  "node": "v24.19.0",
+  "recordedAt": "2026-09-02",
+  "scenario": "generated app-server JSON-RPC protocol schema",
+  "argv": ["codex", "app-server", "generate-json-schema", "--out", "<dir>"],
+  "exitCode": 0,
+  "alsoWorks": ["codex app-server generate-ts --out <dir>  (exit 0, ~250 .ts files under v2/)"],
+  "notes": "--out <DIR> is REQUIRED (without it: exit 2, 'error: the following required arguments were not provided: --out <DIR>'). Only the two aggregate schema files are checked in here; FILELIST.txt lists everything the generator produced. NOTE: this schema does NOT describe `codex exec --json` JSONL - that is a separate, undocumented format (see @openai/codex-sdk types)."
+}

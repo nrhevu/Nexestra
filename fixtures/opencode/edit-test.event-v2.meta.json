@@ -1,0 +1,22 @@
+{
+  "harness": "opencode",
+  "harnessVersion": "1.18.25",
+  "platform": "darwin arm64 (Darwin 27.0.0)",
+  "node": "v24.19.0",
+  "recordedAt": "2026-09-02",
+  "scenario": "v2 SSE stream (GET /api/event) recorded over the same window",
+  "serverArgv": [
+    "opencode",
+    "serve",
+    "--port",
+    "4791",
+    "--hostname",
+    "127.0.0.1",
+    "--print-logs",
+    "--log-level",
+    "INFO"
+  ],
+  "serverCwd": "/WORK/repo",
+  "request": "GET /api/event (text/event-stream)",
+  "notes": "IMPORTANT: /api/event did NOT emit the per-part streaming events for the session (only 118 lines, mostly plugin.added). Use the v1 /event stream for run telemetry."
+}

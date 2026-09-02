@@ -1,0 +1,25 @@
+{
+  "info": {
+    "parentID": "msg_05f9e2d6f0014j4gI5wHuL3h45",
+    "role": "assistant",
+    "mode": "build",
+    "agent": "build",
+    "path": { "cwd": "/WORK/repo", "root": "/WORK/repo" },
+    "cost": 0,
+    "tokens": { "input": 0, "output": 0, "reasoning": 0, "cache": { "read": 0, "write": 0 } },
+    "modelID": "dsv4/deepseek-v4-flash-0731",
+    "providerID": "9router",
+    "time": { "created": 1788310596991, "completed": 1788310660999 },
+    "error": {
+      "name": "APIError",
+      "data": {
+        "message": "Cannot connect to API: Unable to connect. Is the computer able to access the url?",
+        "isRetryable": true,
+        "metadata": { "url": "http://127.0.0.1:20128/v1/chat/completions" }
+      }
+    },
+    "id": "msg_05f9e2d7f0014vQFam1XASOSxO",
+    "sessionID": "ses_fa061f5b8ffeclW2NwNUPwjMK1"
+  },
+  "parts": []
+}

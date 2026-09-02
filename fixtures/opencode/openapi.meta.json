@@ -1,0 +1,24 @@
+{
+  "harness": "opencode",
+  "harnessVersion": "1.18.25",
+  "platform": "darwin arm64 (Darwin 27.0.0)",
+  "node": "v24.19.0",
+  "recordedAt": "2026-09-02",
+  "scenario": "OpenAPI 3.1 spec served by opencode serve",
+  "serverArgv": [
+    "opencode",
+    "serve",
+    "--port",
+    "4791",
+    "--hostname",
+    "127.0.0.1",
+    "--print-logs",
+    "--log-level",
+    "INFO"
+  ],
+  "serverCwd": "/WORK/repo",
+  "request": "GET http://127.0.0.1:4791/doc",
+  "httpStatus": 200,
+  "bytes": 478742,
+  "notes": "/doc is the OpenAPI path (there is no /openapi.json). Two API surfaces: legacy/stable v1 at the root (/session, /event, /permission) and v2 under /api (/api/session, /api/event, /api/permission/...)."
+}

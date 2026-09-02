@@ -1,0 +1,23 @@
+{
+  "harness": "opencode",
+  "harnessVersion": "1.18.25",
+  "platform": "darwin arm64 (Darwin 27.0.0)",
+  "node": "v24.19.0",
+  "recordedAt": "2026-09-02",
+  "scenario": "opencode run --format json",
+  "argv": [
+    "opencode",
+    "run",
+    "--format",
+    "json",
+    "-m",
+    "openai/gpt-5.4-mini",
+    "Add a function add(a, b) to src/math.ts and a test in src/math.test.ts, then run 'node --test src/*.test.ts'. Keep it minimal."
+  ],
+  "cwd": "/WORK/repo",
+  "exitCode": 0,
+  "durationMs": 23164,
+  "stdin": "/dev/null",
+  "stderr": "(empty)",
+  "notes": "Different envelope from SSE: {type,timestamp,sessionID,part}. type is step_start|text|tool_use|step_finish (snake_case), while part.type stays kebab-case (step-start/step-finish). Only terminal tool states are emitted (no pending/running)."
+}

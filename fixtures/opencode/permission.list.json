@@ -1,0 +1,14 @@
+[
+  {
+    "id": "per_05fa2d22d00158GgZ4FbiGCDKh",
+    "sessionID": "ses_fa05d3da7ffewu9kn1BHjXTrv6",
+    "permission": "bash",
+    "patterns": ["node --test src/*.test.ts"],
+    "metadata": { "command": "node --test src/*.test.ts" },
+    "always": ["node *"],
+    "tool": {
+      "messageID": "msg_05fa2c337001KVzoWaqWpaG3Wj",
+      "callID": "call_EYhAzHukdXQ7IG6c7Zyhm6pA"
+    }
+  }
+]
