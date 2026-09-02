@@ -82,6 +82,14 @@ export function ChatSurface({ workspaceId, threadId }: ChatSurfaceProps) {
       : null);
   const openQuestion = question && question.callId !== answeredCallId ? question : null;
 
+  // The live block is the turn *before* it becomes a `Message`. It stays up
+  // until the persisted reply lands — hiding it the instant `master.done`
+  // arrives would blank the screen for as long as the refetch takes, and
+  // hiding it never would double every reply.
+  const replyPersisted = timeline.at(-1)?.role === "master";
+  const showLiveTurn =
+    busy || ((stream.text.length > 0 || stream.toolCalls.length > 0) && !replyPersisted);
+
   const pendingApproval = (approvals.data ?? []).find(
     (approval) => approval.status === "pending" && approval.threadId === threadId,
   );
@@ -135,13 +143,8 @@ export function ChatSurface({ workspaceId, threadId }: ChatSurfaceProps) {
               <MessageBlock key={message.id} message={message} tasks={tasks.data ?? []} />
             ))}
 
-            {busy || stream.text || stream.toolCalls.length > 0 ? (
-              <LiveTurn
-                text={stream.text}
-                toolCalls={stream.toolCalls}
-                busy={busy}
-                hidden={!busy && timeline.length > 0 && !stream.text}
-              />
+            {showLiveTurn ? (
+              <LiveTurn text={stream.text} toolCalls={stream.toolCalls} busy={busy} />
             ) : null}
 
             {stream.error ? (
@@ -239,14 +242,11 @@ function LiveTurn({
   text,
   toolCalls,
   busy,
-  hidden,
 }: {
   text: string;
   toolCalls: ReturnType<typeof useMasterStream>["toolCalls"];
   busy: boolean;
-  hidden: boolean;
 }) {
-  if (hidden) return null;
   return (
     <article className="msg msg--live">
       <div className="msg__head">
