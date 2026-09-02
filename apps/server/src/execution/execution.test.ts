@@ -87,11 +87,18 @@ interface Bed {
 function bed(
   options: { script?: FakeAdapterOptions["script"]; autoSummarize?: boolean } = {},
 ): Bed {
-  const adapterFor = (id: "codex" | "opencode") =>
-    createFakeHarnessAdapter({
+  const adapterFor = (id: "codex" | "opencode") => {
+    const scripted = options.script ?? createDemoHarnessScript(id);
+    return createFakeHarnessAdapter({
       id,
-      script: options.script ?? createDemoHarnessScript(id),
+      // These tests await explicit lifecycle signals, so simulated token
+      // pacing adds wall-clock time without exercising another behaviour.
+      script: (context) => {
+        const selected = scripted?.(context);
+        return selected && !Array.isArray(selected) ? { ...selected, delayMs: 0 } : selected;
+      },
     });
+  };
 
   const execution = new ExecutionRuntime({
     store,

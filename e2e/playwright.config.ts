@@ -1,6 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
 import { BASE_URL } from "./src/paths.js";
 
+const patient = Boolean(process.env.CI || process.env.NEXESTRA_E2E_SLOW === "1");
+
 /**
  * One worker, no parallelism: every test drives the same server and the same
  * SQLite database, and the point of the suite is the real wiring rather than
@@ -20,12 +22,14 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   forbidOnly: !!process.env.CI,
-  retries: 1,
+  // A local failure should return immediately. CI retries once to distinguish
+  // infrastructure flakes from deterministic regressions.
+  retries: process.env.CI ? 1 : 0,
 
   /* Live provider tests are opt-in and may stream a full research/planning
      turn, so keep headroom above the fast credential-free acceptance suite. */
-  timeout: 150_000,
-  expect: { timeout: 15_000 },
+  timeout: patient ? 150_000 : 30_000,
+  expect: { timeout: patient ? 15_000 : 5_000 },
 
   reporter: process.env.CI
     ? [["github"], ["list"], ["html", { open: "never" }]]
@@ -35,10 +39,10 @@ export default defineConfig({
     baseURL: BASE_URL,
     headless: true,
     screenshot: "only-on-failure",
-    trace: "on-first-retry",
+    trace: process.env.CI ? "on-first-retry" : "retain-on-failure",
     video: "off",
-    actionTimeout: 15_000,
-    navigationTimeout: 30_000,
+    actionTimeout: patient ? 15_000 : 5_000,
+    navigationTimeout: patient ? 30_000 : 10_000,
   },
 
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
