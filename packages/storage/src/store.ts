@@ -32,7 +32,7 @@ import {
   WorkspaceSettingsSchema,
 } from "@nexestra/core";
 import type Database from "better-sqlite3";
-import { and, asc, desc, eq, gt, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import { type NexestraDatabase, type OpenDatabaseOptions, openDatabase } from "./db.js";
 import { EventStore } from "./event-store.js";
 import { newId, now } from "./ids.js";
@@ -1116,6 +1116,81 @@ export class NexestraStore {
       });
       return this.getMemory(sourceId) as Memory;
     });
+  }
+
+  // --------------------------------------------------- master working memory
+
+  /**
+   * The Master's raw model conversation (M3), oldest first.
+   *
+   * These four commands are the only ones that do **not** append an event.
+   * `master_messages` / `master_state` are the agent's working memory, not a
+   * projection of the domain log: nothing replays them, `rebuildProjections`
+   * leaves them alone, and narrating every content block onto the thread log
+   * would double the database for no reader. What the user sees — the assistant
+   * message, the spec, the plan, the tasks, the approval — is written through
+   * the ordinary commands and does carry events.
+   */
+  listMasterMessages(threadId: string): Array<{ role: t.MasterMessageRole; content: unknown }> {
+    return this.db
+      .select()
+      .from(t.masterMessages)
+      .where(eq(t.masterMessages.threadId, threadId))
+      .orderBy(asc(t.masterMessages.seq))
+      .all()
+      .map((row) => ({ role: row.role, content: row.content }));
+  }
+
+  /** Append messages verbatim. Never rewrites an earlier row. */
+  appendMasterMessages(
+    threadId: string,
+    messages: readonly { role: t.MasterMessageRole; content: unknown }[],
+  ): number {
+    if (messages.length === 0) return 0;
+    const thread = this.getThread(threadId);
+    if (!thread) throw new NotFoundError("thread", threadId);
+
+    const at = now();
+    const row = this.db
+      .select({ max: sql<number | null>`max(${t.masterMessages.seq})` })
+      .from(t.masterMessages)
+      .where(eq(t.masterMessages.threadId, threadId))
+      .get();
+    let seq = (row?.max ?? -1) + 1;
+
+    const values = messages.map((message) => ({
+      id: newId("mmsg"),
+      workspaceId: thread.workspaceId,
+      threadId,
+      seq: seq++,
+      role: message.role,
+      content: message.content,
+      createdAt: at,
+    }));
+
+    this.db.insert(t.masterMessages).values(values).run();
+    return values.length;
+  }
+
+  /** The serialised `MasterThreadState`, or null for a thread never run. */
+  getMasterState(threadId: string): unknown | null {
+    const row = this.db
+      .select()
+      .from(t.masterState)
+      .where(eq(t.masterState.threadId, threadId))
+      .get();
+    return row ? row.state : null;
+  }
+
+  putMasterState(threadId: string, state: unknown): void {
+    const thread = this.getThread(threadId);
+    if (!thread) throw new NotFoundError("thread", threadId);
+    const at = now();
+    this.db
+      .insert(t.masterState)
+      .values({ threadId, workspaceId: thread.workspaceId, state, updatedAt: at })
+      .onConflictDoUpdate({ target: t.masterState.threadId, set: { state, updatedAt: at } })
+      .run();
   }
 
   // -------------------------------------------------------------- settings

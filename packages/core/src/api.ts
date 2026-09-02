@@ -1,10 +1,13 @@
 import { z } from "zod";
 import { HarnessInfoSchema } from "./harness.js";
+import { MasterRuntimeInfoSchema } from "./master.js";
 
 /** `GET /api/health` */
 export const HealthResponseSchema = z.object({
   ok: z.literal(true),
   version: z.string(),
+  /** Which Master model client the server is running on (M3). */
+  master: MasterRuntimeInfoSchema.optional(),
 });
 export type HealthResponse = z.infer<typeof HealthResponseSchema>;
 

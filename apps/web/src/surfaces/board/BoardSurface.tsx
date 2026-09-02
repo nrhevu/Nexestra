@@ -19,7 +19,7 @@ import {
 import { Button, StatusDot, Tag } from "@nexestra/ui-kit";
 import { useMemo, useState } from "react";
 import { useTasks, useThreads, useUpdateTaskStatus } from "../../lib/api.js";
-import { formatUsd, statusTone } from "../../lib/format.js";
+import { formatUsd, phaseTone, statusTone } from "../../lib/format.js";
 import { useUiStore } from "../../lib/store.js";
 import { SurfaceLayout } from "../../shell/SurfaceLayout.js";
 import { BoardSidebar } from "./BoardSidebar.js";
@@ -54,6 +54,13 @@ export function BoardSurface({ workspaceId, threadId }: { workspaceId: string; t
     return grouped;
   }, [tasks.data]);
 
+  // Dependency badges name the blocking task, not its id: an id the model
+  // invented ("t2") tells the reader nothing.
+  const titles = useMemo(
+    () => new Map((tasks.data ?? []).map((task) => [task.id, task.title])),
+    [tasks.data],
+  );
+
   const visibleColumns = COLUMN_ORDER.filter(
     (column) => ALWAYS_VISIBLE.includes(column) || (board.get(column)?.length ?? 0) > 0,
   );
@@ -87,6 +94,7 @@ export function BoardSurface({ workspaceId, threadId }: { workspaceId: string; t
       title={`Task Board — ${thread?.title ?? threadId}`}
       headerRight={
         <>
+          {thread ? <Tag tone={phaseTone(thread.phase)}>{thread.phase}</Tag> : null}
           <span className="nx-muted">{[...board.values()].flat().length} tasks</span>
           <span className="nx-muted">{formatUsd(totalCost)}</span>
           {updateTaskStatus.isError ? (
@@ -112,13 +120,14 @@ export function BoardSurface({ workspaceId, threadId }: { workspaceId: string; t
                 selectedTaskId={selectedTaskId}
                 onSelect={selectTask}
                 draggingId={draggingId}
+                titles={titles}
               />
             ))}
           </div>
           <DragOverlay dropAnimation={null}>
             {draggingTask ? (
               <div className="task-card task-card--overlay">
-                <TaskCardBody task={draggingTask} />
+                <TaskCardBody task={draggingTask} titles={titles} />
               </div>
             ) : null}
           </DragOverlay>
@@ -136,12 +145,14 @@ function Column({
   selectedTaskId,
   onSelect,
   draggingId,
+  titles,
 }: {
   column: BoardColumn;
   tasks: readonly Task[];
   selectedTaskId: string | null;
   onSelect: (id: string) => void;
   draggingId: string | null;
+  titles: ReadonlyMap<string, string>;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: column });
 
@@ -166,6 +177,7 @@ function Column({
             selected={task.id === selectedTaskId}
             dragging={task.id === draggingId}
             onSelect={onSelect}
+            titles={titles}
           />
         ))}
         {tasks.length === 0 ? <div className="nx-muted">— empty —</div> : null}
@@ -179,11 +191,13 @@ function TaskCard({
   selected,
   dragging,
   onSelect,
+  titles,
 }: {
   task: Task;
   selected: boolean;
   dragging: boolean;
   onSelect: (id: string) => void;
+  titles: ReadonlyMap<string, string>;
 }) {
   const { attributes, listeners, setNodeRef } = useDraggable({ id: task.id });
 
@@ -198,23 +212,27 @@ function TaskCard({
       {...listeners}
       {...attributes}
     >
-      <TaskCardBody task={task} />
+      <TaskCardBody task={task} titles={titles} />
     </button>
   );
 }
 
-function TaskCardBody({ task }: { task: Task }) {
+function TaskCardBody({ task, titles }: { task: Task; titles: ReadonlyMap<string, string> }) {
   return (
     <>
       <span className="task-card__title">{task.title}</span>
       <span className="task-card__meta">
         <StatusDot tone={statusTone(task.status)} label={task.status} />
         {task.assignedHarness ? <Tag tone="info">{task.assignedHarness}</Tag> : null}
+        {task.harnessConfig.model ? <Tag tone="magenta">{task.harnessConfig.model}</Tag> : null}
+        <Tag>{task.harnessConfig.reasoning}</Tag>
         {task.costUSD > 0 ? <Tag>{formatUsd(task.costUSD)}</Tag> : null}
         {task.attempts > 1 ? <Tag tone="warn">{task.attempts} attempts</Tag> : null}
       </span>
       {task.dependsOn.length > 0 ? (
-        <span className="task-card__deps">depends on {task.dependsOn.length}</span>
+        <span className="task-card__deps">
+          ↑ blocked by {task.dependsOn.map((id) => titles.get(id) ?? id).join(", ")}
+        </span>
       ) : null}
     </>
   );

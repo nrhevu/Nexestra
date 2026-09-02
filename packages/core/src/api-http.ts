@@ -8,6 +8,7 @@ import {
   MessageRoleSchema,
 } from "./domain/message.js";
 import { PlanEdgeSchema } from "./domain/plan.js";
+import { AppSettingsSchema } from "./domain/settings.js";
 import {
   AcceptanceCriterionSchema,
   DecisionSchema,
@@ -17,6 +18,7 @@ import {
 import { HarnessConfigSchema, TaskStatusSchema } from "./domain/task.js";
 import { ThreadPhaseSchema } from "./domain/thread.js";
 import { WorkspaceSettingsSchema } from "./domain/workspace.js";
+import { MasterRuntimeInfoSchema } from "./master.js";
 
 /**
  * Request bodies and the error envelope for the real REST API introduced in
@@ -201,6 +203,18 @@ export const LinkMemoriesRequestSchema = z.object({
   note: z.string().optional(),
 });
 export type LinkMemoriesRequest = z.infer<typeof LinkMemoriesRequestSchema>;
+
+// ---------------------------------------------------------------- settings
+
+/**
+ * `GET` / `PUT /api/settings`. The editable defaults plus the read-only
+ * description of the Master runtime the server actually started with, so the
+ * Settings surface can show which model client is live without a second call.
+ */
+export const AppSettingsResponseSchema = AppSettingsSchema.extend({
+  master: MasterRuntimeInfoSchema,
+});
+export type AppSettingsResponse = z.infer<typeof AppSettingsResponseSchema>;
 
 // ------------------------------------------------------------------- misc
 

@@ -3,7 +3,8 @@ import {
   type Approval,
   ApprovalSchema,
   type AppSettings,
-  AppSettingsSchema,
+  type AppSettingsResponse,
+  AppSettingsResponseSchema,
   type Artifact,
   ArtifactContentSchema,
   ArtifactSchema,
@@ -17,6 +18,13 @@ import {
   FileNodeSchema,
   type HarnessInfo,
   HarnessInfoSchema,
+  type MasterCancelResponse,
+  MasterCancelResponseSchema,
+  type MasterSendRequest,
+  type MasterSendResponse,
+  MasterSendResponseSchema,
+  type MasterStateResponse,
+  MasterStateResponseSchema,
   type Memory,
   MemorySchema,
   type Message,
@@ -70,6 +78,7 @@ export const keys = {
   memories: (workspaceId: string) => ["memories", workspaceId] as const,
   approvals: (workspaceId: string) => ["approvals", workspaceId] as const,
   settings: () => ["settings"] as const,
+  masterState: (threadId: string) => ["masterState", threadId] as const,
   files: () => ["files"] as const,
   file: (path: string) => ["file", path] as const,
   terminal: () => ["terminal"] as const,
@@ -222,10 +231,26 @@ export function useApprovals(workspaceId: string): UseQueryResult<Approval[]> {
   });
 }
 
-export function useSettings(): UseQueryResult<AppSettings> {
+export function useSettings(): UseQueryResult<AppSettingsResponse> {
   return useQuery({
     queryKey: keys.settings(),
-    queryFn: () => getJson("/settings", AppSettingsSchema),
+    queryFn: () => getJson("/settings", AppSettingsResponseSchema),
+    staleTime: STALE,
+  });
+}
+
+/**
+ * What the Master is doing on this thread.
+ *
+ * The live view of a turn comes over `/ws`; this is the fallback that makes a
+ * reload correct — which phase, whether a turn is in flight, and which
+ * question or approval is still waiting on the user.
+ */
+export function useMasterState(threadId: string): UseQueryResult<MasterStateResponse> {
+  return useQuery({
+    queryKey: keys.masterState(threadId),
+    queryFn: () => getJson(`/threads/${threadId}/master/state`, MasterStateResponseSchema),
+    enabled: threadId.length > 0,
     staleTime: STALE,
   });
 }
@@ -429,13 +454,57 @@ export function useUpdateMemory(
   });
 }
 
-export function useSaveSettings(): UseMutationResult<AppSettings, Error, Partial<AppSettings>> {
+export function useSaveSettings(): UseMutationResult<
+  AppSettingsResponse,
+  Error,
+  Partial<AppSettings>
+> {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (patch: Partial<AppSettings>) =>
-      request("/settings", AppSettingsSchema, { method: "PUT", json: patch }),
+      request("/settings", AppSettingsResponseSchema, { method: "PUT", json: patch }),
     onSuccess: (settings) => {
       client.setQueryData(keys.settings(), settings);
+    },
+  });
+}
+
+/**
+ * Send something to the Master: a message, answers to `ask_user`, an approval
+ * decision, or a nudge to continue.
+ *
+ * The response is a `202` with a `turnId` — the turn itself arrives as
+ * `master.*` events, so nothing here waits on the model.
+ */
+export function useMasterSend(
+  threadId: string,
+): UseMutationResult<MasterSendResponse, Error, MasterSendRequest> {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: MasterSendRequest) =>
+      request(`/threads/${threadId}/master/send`, MasterSendResponseSchema, {
+        method: "POST",
+        json: input,
+      }),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: keys.messages(threadId) });
+      void client.invalidateQueries({ queryKey: keys.masterState(threadId) });
+    },
+  });
+}
+
+export function useMasterCancel(
+  threadId: string,
+): UseMutationResult<MasterCancelResponse, Error, void> {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      request(`/threads/${threadId}/master/cancel`, MasterCancelResponseSchema, {
+        method: "POST",
+        json: {},
+      }),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: keys.masterState(threadId) });
     },
   });
 }

@@ -43,4 +43,12 @@ export const MIGRATIONS: readonly Migration[] = [
     tag: "0001_task_merge_state",
     statements: ["ALTER TABLE `tasks` ADD `mergeState` text;"],
   },
+  {
+    tag: "0002_master_runtime",
+    statements: [
+      "CREATE TABLE `master_messages` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`workspaceId` text NOT NULL,\n\t`threadId` text NOT NULL,\n\t`seq` integer NOT NULL,\n\t`role` text NOT NULL,\n\t`content` text NOT NULL,\n\t`createdAt` text NOT NULL\n);",
+      "CREATE INDEX `master_messages_thread_idx` ON `master_messages` (`threadId`,`seq`);",
+      "CREATE TABLE `master_state` (\n\t`threadId` text PRIMARY KEY NOT NULL,\n\t`workspaceId` text NOT NULL,\n\t`state` text NOT NULL,\n\t`updatedAt` text NOT NULL\n);",
+    ],
+  },
 ];

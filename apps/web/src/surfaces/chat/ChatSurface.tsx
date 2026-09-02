@@ -1,26 +1,61 @@
-import type { Message, MessageAttachment } from "@nexestra/core";
-import { Button, Composer, KeyHint, Tag } from "@nexestra/ui-kit";
+import type { Message, MessageAttachment, Task } from "@nexestra/core";
+import { Button, Composer, KeyHint, StatusDot, Tag } from "@nexestra/ui-kit";
 import { useEffect, useRef, useState } from "react";
-import { useMessages, useSendMessage, useThreads } from "../../lib/api.js";
+import {
+  useApprovals,
+  useMasterCancel,
+  useMasterSend,
+  useMasterState,
+  useMessages,
+  useResolveApproval,
+  useSpec,
+  useTasks,
+  useThreads,
+} from "../../lib/api.js";
 import { formatTime, formatUsd, phaseTone } from "../../lib/format.js";
+import { useMasterStream } from "../../lib/master.js";
 import { useUiStore } from "../../lib/store.js";
 import { SurfaceLayout } from "../../shell/SurfaceLayout.js";
+import { ApprovalBanner } from "./ApprovalBanner.js";
 import { ChatSidebar } from "./ChatSidebar.js";
+import { PlanCard } from "./PlanCard.js";
+import { QuestionCard } from "./QuestionCard.js";
+import { SpecCard } from "./SpecCard.js";
+import { ToolCallCard } from "./ToolCallCard.js";
 
 export interface ChatSurfaceProps {
   workspaceId: string;
   threadId: string;
 }
 
+/**
+ * Surface 1 — the conversation with the Master.
+ *
+ * Three things are on screen at once and they come from different places:
+ * the persisted transcript (`messages`), the turn currently streaming
+ * (`useMasterStream`, fed by `master.*` events over `/ws`), and whatever the
+ * Master is blocked on (a question card, an approval banner). The composer is
+ * disabled whenever a turn is in flight, because the server refuses a second
+ * user message on a busy thread rather than interleaving two model loops.
+ */
 export function ChatSurface({ workspaceId, threadId }: ChatSurfaceProps) {
   const threads = useThreads(workspaceId);
   const messages = useMessages(threadId);
-  const thread = (threads.data ?? []).find((item) => item.id === threadId);
+  const spec = useSpec(threadId);
+  const tasks = useTasks(threadId);
+  const approvals = useApprovals(workspaceId);
+  const masterState = useMasterState(threadId);
+  const stream = useMasterStream(threadId);
 
-  const sendMessage = useSendMessage(threadId);
+  const send = useMasterSend(threadId);
+  const cancel = useMasterCancel(threadId);
+  const resolveApproval = useResolveApproval(workspaceId);
+
+  const thread = (threads.data ?? []).find((item) => item.id === threadId);
   const composerFocusNonce = useUiStore((state) => state.composerFocusNonce);
 
   const [draft, setDraft] = useState("");
+  const [answeredCallId, setAnsweredCallId] = useState<string | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const timelineRef = useRef<HTMLDivElement | null>(null);
 
@@ -29,19 +64,51 @@ export function ChatSurface({ workspaceId, threadId }: ChatSurfaceProps) {
   }, [composerFocusNonce]);
 
   const timeline = messages.data ?? [];
+  const busy = stream.busy || masterState.data?.busy === true;
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: scroll to the bottom whenever the timeline grows
+  // biome-ignore lint/correctness/useExhaustiveDependencies: follow the tail as the turn streams
   useEffect(() => {
     const node = timelineRef.current;
     if (node) node.scrollTop = node.scrollHeight;
-  }, [timeline.length]);
+  }, [timeline.length, stream.text, stream.toolCalls.length]);
 
-  /** Stores a user message. Master does not reply yet — that lands in M2. */
-  const send = () => {
-    const content = draft.trim();
-    if (!content || sendMessage.isPending) return;
+  // The live card wins over the persisted one: a question is answered in the
+  // browser before the server has finished the next turn.
+  const pendingState = masterState.data?.pending;
+  const question =
+    stream.question ??
+    (pendingState?.kind === "ask_user"
+      ? { callId: pendingState.callId, questions: pendingState.questions }
+      : null);
+  const openQuestion = question && question.callId !== answeredCallId ? question : null;
+
+  // The live block is the turn *before* it becomes a `Message`. It stays up
+  // until the persisted reply lands — hiding it the instant `master.done`
+  // arrives would blank the screen for as long as the refetch takes, and
+  // hiding it never would double every reply.
+  const replyPersisted = timeline.at(-1)?.role === "master";
+  const showLiveTurn =
+    busy || ((stream.text.length > 0 || stream.toolCalls.length > 0) && !replyPersisted);
+
+  const pendingApproval = (approvals.data ?? []).find(
+    (approval) => approval.status === "pending" && approval.threadId === threadId,
+  );
+  const specApprovalPending = pendingApproval?.kind === "spec";
+
+  const submit = () => {
+    const text = draft.trim();
+    if (!text || busy) return;
     setDraft("");
-    sendMessage.mutate({ role: "user", content }, { onError: () => setDraft(content) });
+    send.mutate({ kind: "user_message", text }, { onError: () => setDraft(text) });
+  };
+
+  const answer = (answers: { id: string; answer: string }[]) => {
+    if (!openQuestion) return;
+    setAnsweredCallId(openQuestion.callId);
+    send.mutate(
+      { kind: "answers", callId: openQuestion.callId, answers },
+      { onError: () => setAnsweredCallId(null) },
+    );
   };
 
   return (
@@ -66,34 +133,100 @@ export function ChatSurface({ workspaceId, threadId }: ChatSurfaceProps) {
             {messages.isError ? (
               <div className="state">could not reach /api — is the Nexestra server running?</div>
             ) : null}
+            {timeline.length === 0 && !messages.isPending && !busy ? (
+              <div className="state">
+                Describe what you want, however vaguely. Master will ask what it needs.
+              </div>
+            ) : null}
+
             {timeline.map((message) => (
-              <MessageBlock key={message.id} message={message} />
+              <MessageBlock key={message.id} message={message} tasks={tasks.data ?? []} />
             ))}
+
+            {showLiveTurn ? (
+              <LiveTurn text={stream.text} toolCalls={stream.toolCalls} busy={busy} />
+            ) : null}
+
+            {stream.error ? (
+              <div className="card card--error">
+                <div className="card__head">
+                  <StatusDot tone="error" />
+                  <span>master error</span>
+                  <span className="card__title">{stream.error.code}</span>
+                </div>
+                <div className="card__body">{stream.error.message}</div>
+              </div>
+            ) : null}
+
+            {openQuestion ? (
+              <QuestionCard
+                callId={openQuestion.callId}
+                questions={openQuestion.questions}
+                busy={send.isPending || busy}
+                onSubmit={answer}
+              />
+            ) : null}
+
+            {specApprovalPending && spec.data ? <SpecCard spec={spec.data} /> : null}
           </div>
+
+          {pendingApproval ? (
+            <ApprovalBanner
+              approval={pendingApproval}
+              busy={resolveApproval.isPending}
+              onResolve={(status) =>
+                resolveApproval.mutate({ approvalId: pendingApproval.id, status })
+              }
+            />
+          ) : null}
 
           <Composer
             textareaRef={composerRef}
             value={draft}
-            placeholder="Message Master..."
+            disabled={busy}
+            placeholder={busy ? "Master is working…" : "Message Master..."}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                send();
-              }
+              if (event.key !== "Enter") return;
+              if (event.shiftKey) return;
+              // ⌘/Ctrl+Enter and a bare Enter both send; Shift+Enter is a newline.
+              event.preventDefault();
+              submit();
             }}
             action={
-              <Button tone="primary" boxed onClick={send} title="Send (Enter)">
-                {">"}
-              </Button>
+              busy ? (
+                <Button
+                  tone="danger"
+                  boxed
+                  onClick={() => cancel.mutate()}
+                  title="Stop the current turn"
+                >
+                  ■
+                </Button>
+              ) : (
+                <Button tone="primary" boxed onClick={submit} title="Send (⌘Enter)">
+                  {">"}
+                </Button>
+              )
             }
             hints={
-              <>
-                <span className="nx-composer__token">@agent</span>
-                <span className="nx-composer__token">#ref</span>
-                <span className="nx-composer__token">/command</span>
-                <span>Enter to send · Shift+Enter for a new line</span>
-              </>
+              busy ? (
+                <>
+                  <StatusDot tone="running" />
+                  <span>Master is thinking — the composer unlocks when the turn ends</span>
+                  {stream.costUSD !== null ? (
+                    <span className="nx-muted">{formatUsd(stream.costUSD)}</span>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <span className="nx-composer__token">@agent</span>
+                  <span className="nx-composer__token">#ref</span>
+                  <span className="nx-composer__token">/command</span>
+                  <span>⌘Enter to send · Shift+Enter for a new line</span>
+                  {send.isError ? <span className="form-error">{send.error.message}</span> : null}
+                </>
+              )
             }
           />
         </div>
@@ -104,7 +237,44 @@ export function ChatSurface({ workspaceId, threadId }: ChatSurfaceProps) {
   );
 }
 
-function MessageBlock({ message }: { message: Message }) {
+/** The half-written assistant message of a turn still in flight. */
+function LiveTurn({
+  text,
+  toolCalls,
+  busy,
+}: {
+  text: string;
+  toolCalls: ReturnType<typeof useMasterStream>["toolCalls"];
+  busy: boolean;
+}) {
+  return (
+    <article className="msg msg--live">
+      <div className="msg__head">
+        <span className="msg__role msg__role--master">master</span>
+        {busy ? <StatusDot tone="running" label="streaming" /> : null}
+      </div>
+      {text ? (
+        <div className="msg__body">
+          {text}
+          {busy ? <span className="msg__caret">▌</span> : null}
+        </div>
+      ) : (
+        <div className="msg__body nx-muted">thinking…</div>
+      )}
+      {toolCalls.map((call) => (
+        <ToolCallCard
+          key={call.callId}
+          name={call.name}
+          input={call.input}
+          ok={call.ok}
+          output={call.output}
+        />
+      ))}
+    </article>
+  );
+}
+
+function MessageBlock({ message, tasks }: { message: Message; tasks: readonly Task[] }) {
   const { attachments, references, toolCalls } = message;
 
   return (
@@ -113,7 +283,7 @@ function MessageBlock({ message }: { message: Message }) {
         <span className={`msg__role msg__role--${message.role}`}>{message.role}</span>
         <span className="msg__time">{formatTime(message.createdAt)}</span>
       </div>
-      <div className="msg__body">{message.content}</div>
+      {message.content ? <div className="msg__body">{message.content}</div> : null}
 
       {references.length > 0 ? (
         <div className="msg__refs">
@@ -126,31 +296,43 @@ function MessageBlock({ message }: { message: Message }) {
       ) : null}
 
       {toolCalls.map((call) => (
-        <div className="card" key={call.callId}>
-          <div className="card__head">
-            <span>tool call</span>
-            <span className="card__title">{call.name}</span>
-            <span style={{ marginLeft: "auto" }}>
-              <Tag tone={call.ok ? "accent" : "danger"}>{call.ok ? "ok" : "failed"}</Tag>
-            </span>
-          </div>
-          <div className="card__body">
-            <pre className="card__pre">{JSON.stringify(call.input, null, 2)}</pre>
-          </div>
-        </div>
+        <ToolCallCard
+          key={call.callId}
+          name={call.name}
+          input={call.input}
+          ok={call.ok}
+          output={call.output}
+        />
       ))}
 
       {attachments.map((attachment) => (
         <AttachmentCard
           key={`${message.id}-${attachment.kind}-${attachment.title}`}
           attachment={attachment}
+          tasks={tasks}
         />
       ))}
     </article>
   );
 }
 
-function AttachmentCard({ attachment }: { attachment: MessageAttachment }) {
+function AttachmentCard({
+  attachment,
+  tasks,
+}: {
+  attachment: MessageAttachment;
+  tasks: readonly Task[];
+}) {
+  if (attachment.kind === "plan_preview") {
+    return (
+      <PlanCard
+        title={attachment.title}
+        tasks={tasks.filter((task) => task.planId === attachment.planId)}
+        taskTitles={attachment.taskTitles}
+      />
+    );
+  }
+
   return (
     <div className="card">
       <div className="card__head">
@@ -167,14 +349,6 @@ function AttachmentCard({ attachment }: { attachment: MessageAttachment }) {
 
 function renderAttachment(attachment: MessageAttachment) {
   switch (attachment.kind) {
-    case "plan_preview":
-      return (
-        <ol className="card__list">
-          {attachment.taskTitles.map((title) => (
-            <li key={title}>{title}</li>
-          ))}
-        </ol>
-      );
     case "diff":
       return (
         <pre className="card__pre">

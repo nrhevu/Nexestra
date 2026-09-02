@@ -920,3 +920,266 @@
 .link-button:hover {
   color: var(--nx-fg-strong);
 }
+
+/* ------------------------------------------------- surface 1, Master (M3) */
+
+/* The turn currently streaming, before it becomes a persisted message. */
+.msg--live .msg__body {
+  border-left-color: var(--nx-accent-dim);
+}
+
+.msg__caret {
+  color: var(--nx-accent);
+  animation: nx-blink 1s step-end infinite;
+}
+
+@keyframes nx-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msg__caret {
+    animation: none;
+  }
+}
+
+.card--error {
+  border-color: var(--nx-danger);
+}
+
+/* Tool calls are collapsed: a workspace listing must not push the
+   conversation off screen, but it has to stay inspectable. */
+.tool > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.tool > summary::-webkit-details-marker {
+  display: none;
+}
+
+.tool__head::before {
+  content: "▸";
+  color: var(--nx-fg-faint);
+}
+
+.tool[open] .tool__head::before {
+  content: "▾";
+}
+
+.tool[open] .card__head {
+  border-bottom: 1px solid var(--nx-border);
+}
+
+.tool:not([open]) .card__head {
+  border-bottom: 0;
+}
+
+.tool__label {
+  color: var(--nx-fg-faint);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin: 4px 0 2px;
+}
+
+.tool__output {
+  white-space: pre-wrap;
+  max-height: 260px;
+  overflow: auto;
+}
+
+/* The `ask_user` card: the only thing that can move a suspended turn on. */
+.qcard {
+  border-color: var(--nx-warn);
+}
+
+.qcard__item {
+  margin-bottom: 10px;
+}
+
+.qcard__question {
+  display: block;
+  color: var(--nx-fg);
+  margin-bottom: 5px;
+  line-height: 1.5;
+}
+
+.qcard__index {
+  color: var(--nx-fg-faint);
+}
+
+.qcard__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 5px;
+}
+
+.qcard__option {
+  border: 1px solid var(--nx-border);
+  border-radius: var(--nx-radius);
+  background: var(--nx-bg);
+  color: var(--nx-fg-dim);
+  font-family: inherit;
+  font-size: 11px;
+  padding: 2px 7px;
+  cursor: pointer;
+}
+
+.qcard__option:hover {
+  background: var(--nx-bg-hover);
+  color: var(--nx-fg);
+}
+
+.qcard__option--picked {
+  background: var(--nx-bg-active);
+  border-color: var(--nx-border-strong);
+  color: var(--nx-fg-strong);
+}
+
+.qcard__input {
+  width: 100%;
+  height: var(--nx-row);
+  padding: 0 6px;
+  border: 1px solid var(--nx-border);
+  border-radius: var(--nx-radius);
+  background: var(--nx-bg-input);
+  color: var(--nx-fg);
+  font-family: inherit;
+  font-size: 11px;
+}
+
+.qcard__input:focus {
+  outline: none;
+  border-color: var(--nx-border-focus);
+}
+
+.qcard__foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 4px;
+  border-top: 1px solid var(--nx-border);
+}
+
+/* The spec, shown inline in Chat and bare in the sidebar. */
+.spec {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.spec--bare {
+  font-size: 11px;
+}
+
+.spec__goal {
+  color: var(--nx-fg-strong);
+  line-height: 1.5;
+}
+
+.spec__outcome {
+  color: var(--nx-fg-dim);
+  line-height: 1.5;
+}
+
+.spec__section-title {
+  color: var(--nx-fg-faint);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 3px;
+}
+
+.spec__criteria {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.spec__criterion {
+  display: flex;
+  gap: 6px;
+  line-height: 1.6;
+  margin-bottom: 3px;
+}
+
+.spec__bullet {
+  color: var(--nx-fg-faint);
+  flex: 0 0 auto;
+}
+
+.spec__proof {
+  word-break: break-word;
+}
+
+/* Plan preview under a Master message. */
+.plan__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  counter-reset: plan;
+}
+
+.plan__task {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 5px 0;
+  border-top: 1px solid var(--nx-border);
+}
+
+.plan__task:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.plan__title {
+  color: var(--nx-fg);
+}
+
+.plan__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.plan__deps {
+  color: var(--nx-fg-faint);
+  font-size: 10px;
+}
+
+/* Approval banner: sits between the timeline and the composer, because the
+   Master's turn is suspended until it is answered. */
+.approval {
+  border-top: 1px solid var(--nx-warn);
+  background: var(--nx-bg-elev);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.approval__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.approval__title {
+  color: var(--nx-fg-strong);
+}
+
+.approval__body {
+  color: var(--nx-fg-dim);
+  line-height: 1.5;
+}
+
+.approval__actions {
+  display: flex;
+  gap: 6px;
+}

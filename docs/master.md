@@ -1,7 +1,8 @@
 # The Master agent (`@nexestra/master`)
 
-Milestone M2. The Master turns a vague request into a frozen `Spec` and a
-validated `Plan`, then supervises the harnesses that do the work.
+Milestone M2, wired into the server in M3 (§9). The Master turns a vague
+request into a frozen `Spec` and a validated `Plan`, then supervises the
+harnesses that do the work.
 
 It is a **library**, not a service: no HTTP, no database, no process spawning,
 no filesystem writes. Three seams keep it that way.
@@ -9,8 +10,8 @@ no filesystem writes. Three seams keep it that way.
 | Seam | Interface | Real implementation | Test implementation |
 |------|-----------|---------------------|---------------------|
 | The model | `LlmClient` | `createAnthropicLlmClient()` | `createFakeLlmClient(script)` |
-| The world | `MasterHost` | the orchestrator / server (later milestone) | `createFakeHost()` |
-| The transcript | `MasterStore` | `@nexestra/storage` (M1) | `createInMemoryMasterStore()` |
+| The world | `MasterHost` | `ServerMasterHost` in `apps/server` (M3) | `createFakeHost()` |
+| The transcript | `MasterStore` | `StorageMasterStore` over `@nexestra/storage` (M3) | `createInMemoryMasterStore()` |
 
 Because all three are injected, the entire loop — phases, tool validation, spec
 and plan bookkeeping, budget rules — runs in Vitest without an API key, a repo
@@ -323,20 +324,131 @@ asserts the request *shape* is accepted by the live endpoint: adaptive thinking,
 effort, prompt caching, a strict tool schema, the fallback beta and compaction
 all together. Without credentials it is skipped with a message.
 
+### The other half
+
+`apps/server/src/master/runner.test.ts` runs the same acceptance criterion
+through the **real** store: a scripted model, a temp SQLite database and the
+production `ServerMasterHost`, asserting that clarify → spec → approval → plan
+lands as rows, that resolving the approval over HTTP resumes the suspended
+turn, and that the `master.*` events reach the log in stream order.
+`demo-llm.test.ts` holds the demo model to the same bar.
+
 ---
 
-## 9. Known gaps
+## 9. Server integration (M3)
 
-- **Nothing is wired up yet.** The server and the Chat surface consume this in a
-  later milestone; `apps/server` does not import `@nexestra/master` today.
-- **Prompts are read from disk.** The esbuild server bundle would not carry the
-  `.md` files; the server must pass `prompts` explicitly or copy them into
-  `dist`.
+`apps/server/src/master/` is the only caller. What it fills in, and why each
+choice is the way it is.
+
+### 9.1 The shape
+
+```
+POST /api/threads/:id/master/send    { kind: "user_message" | "answers" | "approval" | "continue", … }
+        │  202 { turnId } — the turn streams over /ws, no request is held open
+        ▼
+   MasterRunner                      one live MasterSession per thread,
+        │                            one turn at a time per thread
+        ├── llm     createAnthropicLlmClient() | createDemoLlmClient()
+        ├── store   StorageMasterStore   → master_messages / master_state
+        └── host    ServerMasterHost     → NexestraStore commands
+                          └── ExecutionHost  (the execution half, injectable)
+        │
+        ▼
+   master.* store events ──► EventStore ──► /ws ──► Chat surface
+```
+
+Routes: `POST …/master/send`, `POST …/master/cancel`,
+`GET …/master/state`. `POST /api/approvals/:id/resolve` also calls
+`runner.resumeApproval(...)`, so the Approve button both records the decision
+and un-suspends the turn.
+
+### 9.2 `MasterEvent` → store events
+
+| `MasterEvent` | Becomes |
+|---------------|---------|
+| `text_delta` | `master.text_delta`, coalesced into ~80-character chunks |
+| `thinking_summary` | *(dropped — not persisted in M3)* |
+| `tool_call` / `tool_result` | `master.tool_call` / `master.tool_result` |
+| `question` | `master.question` |
+| `usage` | `master.usage`, and `Thread.costUSD` |
+| `error` | `master.error` |
+| `done` | `master.done` |
+| `spec_updated` | **nothing** — `onSpecUpdated` already wrote `spec.upserted` |
+| `plan_proposed` | **nothing** — `onPlanProposed` already wrote `plan.upserted` + `task.created` |
+| `approval_requested` | **nothing** — `requestApproval` already wrote `approval.requested` |
+| `phase_changed` | **nothing** — `onPhaseChanged` already wrote `thread.phase_changed` |
+
+The four "nothing" rows matter: narrating them as well would make the UI apply
+the same change twice. A turn also ends with one `master` `Message` carrying
+the text, the tool calls and a `plan_preview` attachment when it planned — that
+is what survives a reload; the `master.*` events are the live view.
+
+### 9.3 What the host does with a plan
+
+`onPlanProposed` writes the plan row and one task row per plan task. Task ids
+are **derived** from `(threadId, model task id)` rather than mapped, which is
+what makes a `replan` an idempotent upsert: the board keeps its cards, a task's
+`status` / `attempts` / `costUSD` survive, tasks no longer in the plan are
+deleted, and `dispatch_task("t1")` resolves without any bookkeeping. Because
+the ids are known in advance, the plan row can be written first with its
+`taskIds` and `edges` already correct.
+
+### 9.4 The `ExecutionHost` seam
+
+The six execution-phase callbacks (`dispatchTask`, `readRunEvents`,
+`readArtifact`, `controlRun`, `runVerification`, `markCriterion`) are delegated
+to an injectable `ExecutionHost` — see `apps/server/src/master/execution-host.ts`
+and `docs/ARCHITECTURE.md` §6.3 for the interface verbatim. Until the
+orchestrator lands, `createNotYetAvailableExecutionHost()` rejects every call;
+the session turns that into a `tool_result` with `is_error: true`, so the
+Master reports "I can plan this but not run it" rather than believing a run
+started.
+
+### 9.5 Two details that bite
+
+**Prompts.** `loadPromptSet()` reads `src/prompts/*.md` relative to its own
+module, which the esbuild bundle does not carry. `scripts/build.mjs` copies
+them into `dist/prompts` and `loadServerPromptSet()` falls back to reading that
+directory, passing the result as `prompts` to `createMasterSession`.
+
+**The draft spec is not `SpecSchema`-valid.** A spec mid-clarification has an
+empty `goal`, which the domain schema rejects. `StorageMasterStore` therefore
+does *not* re-validate `state.spec` on load — doing so silently threw the
+thread's state away and restarted it at `intake`. The published copy in the
+`specs` table is the validated one (the host substitutes a placeholder goal
+until the model writes a real one); `master_state` holds the draft.
+
+### 9.6 Without an API key
+
+`DemoLlmClient` (`apps/server/src/master/demo-llm.ts`) is a deterministic
+`LlmClient` that plays the happy path: read the workspace, three clarifying
+questions with options, a spec with three verifiable acceptance criteria,
+`request_approval`, then a four-task plan with dependencies. It decides what to
+do next from the phase in the system suffix and from which tools the transcript
+already shows — no hidden state, so the same conversation always produces the
+same run. It goes through the same phase machine and the same strict tool
+validation as Opus 5. `GET /api/health` and `GET /api/settings` report which
+client is live and whether a key is present, never the key.
+
+---
+
+## 10. Known gaps
+
+- **Execution is still a stub.** The Master can plan but not dispatch; the
+  `ExecutionHost` the server injects refuses every execution-phase tool until
+  the orchestrator lands (§9.4).
+- **`thinking_summary` is not persisted.** The server drops it rather than
+  narrating it, so a reloaded thread shows the Master's text but not its
+  reasoning summaries.
 - **`replan` re-validates full criterion coverage**, so an amendment that drops
   the only task covering a criterion is rejected. That is intentional for now,
   but M5 may want a softer rule for mid-flight amendments.
 - **The budget warning does not suspend.** At 80% the Master raises a `spend`
-  approval and keeps going; only 100% blocks the thread.
+  approval and keeps going; only 100% blocks the thread. Resolving that
+  approval does not resume anything, because nothing was suspended.
+- **A restart drops live sessions.** `MasterRunner` keeps sessions in memory;
+  state is rebuilt from `master_state` on the next `send()`, but a turn that
+  was in flight when the server stopped is lost rather than resumed.
 - **`output_config.format`** is plumbed through `LlmRequest` but unused: strict
   tools already give schema-valid `propose_plan` input, and structured outputs
   cannot be combined with a tool call in the same turn.

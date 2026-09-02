@@ -1,4 +1,5 @@
-import { type HarnessId, type TaskStatus, TaskStatusSchema } from "@nexestra/core";
+import type { HarnessId, ReasoningLevel, SandboxLevel, TaskStatus } from "@nexestra/core";
+import { ReasoningLevelSchema, SandboxLevelSchema, TaskStatusSchema } from "@nexestra/core";
 import { Button, Select, StatusDot, Tag, TextInput } from "@nexestra/ui-kit";
 import { useEffect, useState } from "react";
 import { useSpec, useTasks, useUpdateTask } from "../../lib/api.js";
@@ -16,6 +17,24 @@ const STATUS_OPTIONS = TaskStatusSchema.options.map((status) => ({
   label: status,
 }));
 
+const REASONING_OPTIONS = ReasoningLevelSchema.options.map((level) => ({
+  value: level,
+  label: level,
+}));
+
+const SANDBOX_OPTIONS = SandboxLevelSchema.options.map((level) => ({
+  value: level,
+  label: level,
+}));
+
+/**
+ * Surface 2's sidebar: everything about one task, editable.
+ *
+ * The Master proposes the harness and its configuration; the user overrules it
+ * here. Edits go through `PATCH /api/tasks/:id`, which merges into
+ * `harnessConfig` rather than replacing it, so changing the model does not
+ * silently drop the sandbox the Master chose.
+ */
 export function BoardSidebar({ threadId }: { threadId: string }) {
   const tasks = useTasks(threadId);
   const spec = useSpec(threadId);
@@ -25,9 +44,11 @@ export function BoardSidebar({ threadId }: { threadId: string }) {
   const rows = tasks.data ?? [];
   const task = rows.find((item) => item.id === selectedTaskId) ?? rows[0];
 
-  // Local draft so typing is smooth; the title is saved on blur or Enter.
+  // Local drafts so typing is smooth; saved on blur or Enter.
   const [title, setTitle] = useState(task?.title ?? "");
+  const [model, setModel] = useState(task?.harnessConfig.model ?? "");
   useEffect(() => setTitle(task?.title ?? ""), [task?.title]);
+  useEffect(() => setModel(task?.harnessConfig.model ?? ""), [task?.harnessConfig.model]);
 
   if (!task) return <div className="nx-muted">Select a task to see its details.</div>;
 
@@ -40,10 +61,27 @@ export function BoardSidebar({ threadId }: { threadId: string }) {
     updateTask.mutate({ taskId: task.id, patch: { title: next } });
   };
 
+  const saveModel = () => {
+    const next = model.trim();
+    // Clearing the field means "use the workspace default", which the harness
+    // config expresses by leaving `model` unset — so revert rather than
+    // writing an empty string the adapter would then pass to the CLI.
+    if (!next || next === task.harnessConfig.model) {
+      setModel(task.harnessConfig.model ?? "");
+      return;
+    }
+    updateTask.mutate({ taskId: task.id, patch: { harnessConfig: { model: next } } });
+  };
+
   const status: TaskStatus = task.status;
   const criteria = (spec.data?.acceptanceCriteria ?? []).filter((criterion) =>
     task.acceptanceCriteriaIds.includes(criterion.id),
   );
+  const blockedBy = task.dependsOn.map((id) => ({
+    id,
+    task: rows.find((item) => item.id === id),
+  }));
+  const blocking = rows.filter((item) => item.dependsOn.includes(task.id));
 
   return (
     <>
@@ -86,6 +124,46 @@ export function BoardSidebar({ threadId }: { threadId: string }) {
         }
       />
 
+      <TextInput
+        id="task-model"
+        label="Model"
+        key={`model-${task.id}`}
+        value={model}
+        placeholder="workspace default"
+        onChange={(event) => setModel(event.target.value)}
+        onBlur={saveModel}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur();
+          if (event.key === "Escape") setModel(task.harnessConfig.model ?? "");
+        }}
+      />
+
+      <Select
+        id="task-reasoning"
+        label="Reasoning"
+        value={task.harnessConfig.reasoning}
+        options={REASONING_OPTIONS}
+        onChange={(event) =>
+          updateTask.mutate({
+            taskId: task.id,
+            patch: { harnessConfig: { reasoning: event.target.value as ReasoningLevel } },
+          })
+        }
+      />
+
+      <Select
+        id="task-sandbox"
+        label="Sandbox"
+        value={task.harnessConfig.sandbox}
+        options={SANDBOX_OPTIONS}
+        onChange={(event) =>
+          updateTask.mutate({
+            taskId: task.id,
+            patch: { harnessConfig: { sandbox: event.target.value as SandboxLevel } },
+          })
+        }
+      />
+
       {updateTask.isError ? <div className="form-error">{updateTask.error.message}</div> : null}
 
       <section className="sidebar__section">
@@ -101,36 +179,55 @@ export function BoardSidebar({ threadId }: { threadId: string }) {
           </span>
           <span className="kv__k">cost</span>
           <span className="kv__v">{formatUsd(task.costUSD)}</span>
-          <span className="kv__k">model</span>
-          <span className="kv__v">{task.harnessConfig.model ?? "—"}</span>
-          <span className="kv__k">sandbox</span>
-          <span className="kv__v">{task.harnessConfig.sandbox}</span>
+          <span className="kv__k">timeout</span>
+          <span className="kv__v">{Math.round(task.harnessConfig.timeoutMs / 60_000)} min</span>
           <span className="kv__k">branch</span>
           <span className="kv__v">{task.harnessConfig.branch ?? "—"}</span>
         </div>
       </section>
 
+      {task.description ? (
+        <section className="sidebar__section">
+          <div className="sidebar__section-title">Description</div>
+          <div className="nx-muted" style={{ whiteSpace: "pre-wrap" }}>
+            {task.description}
+          </div>
+        </section>
+      ) : null}
+
       <section className="sidebar__section">
-        <div className="sidebar__section-title">References</div>
+        <div className="sidebar__section-title">Blocked by</div>
         <ul className="sidebar__list">
-          {task.dependsOn.length === 0 ? <li className="nx-muted">no dependencies</li> : null}
-          {task.dependsOn.map((dependency) => {
-            const upstream = rows.find((item) => item.id === dependency);
-            return (
-              <li key={dependency}>
-                <span className="sidebar__bullet">↑</span>
-                <span>{upstream?.title ?? dependency}</span>
-              </li>
-            );
-          })}
-          {task.harnessConfig.worktreePath ? (
-            <li>
-              <span className="sidebar__bullet">/</span>
-              <span className="nx-muted">{task.harnessConfig.worktreePath}</span>
+          {blockedBy.length === 0 ? <li className="nx-muted">nothing — ready to start</li> : null}
+          {blockedBy.map((dependency) => (
+            <li key={dependency.id}>
+              <span className="sidebar__bullet">↑</span>
+              <span>
+                {dependency.task?.title ?? dependency.id}{" "}
+                {dependency.task ? (
+                  <Tag tone={dependency.task.status === "done" ? "accent" : "warn"}>
+                    {dependency.task.status}
+                  </Tag>
+                ) : null}
+              </span>
             </li>
-          ) : null}
+          ))}
         </ul>
       </section>
+
+      {blocking.length > 0 ? (
+        <section className="sidebar__section">
+          <div className="sidebar__section-title">Blocks</div>
+          <ul className="sidebar__list">
+            {blocking.map((downstream) => (
+              <li key={downstream.id}>
+                <span className="sidebar__bullet">↓</span>
+                <span>{downstream.title}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       <section className="sidebar__section">
         <div className="sidebar__section-title">Acceptance criteria</div>
@@ -145,7 +242,7 @@ export function BoardSidebar({ threadId }: { threadId: string }) {
                   {criterion.text}
                   <br />
                   <Tag tone={criterion.satisfied ? "accent" : "default"}>
-                    {criterion.verification.kind}
+                    {criterion.verification.kind.replace("_", " ")}
                   </Tag>{" "}
                   <span className="nx-muted">
                     {criterion.verification.kind === "manual_review"

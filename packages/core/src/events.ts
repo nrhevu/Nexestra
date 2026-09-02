@@ -45,8 +45,41 @@ export const NexestraEventTypeSchema = z.enum([
   "memory.unlinked",
   // settings
   "settings.updated",
+  // master (M3) — streaming turn events, see `MasterStreamPayload`
+  "master.started",
+  "master.text_delta",
+  "master.tool_call",
+  "master.tool_result",
+  "master.question",
+  "master.usage",
+  "master.error",
+  "master.done",
 ]);
 export type NexestraEventType = z.infer<typeof NexestraEventTypeSchema>;
+
+/**
+ * `master.*` events are the Master's turn narrated onto the thread log (M3).
+ *
+ * Unlike every other event they are **not** entity snapshots: nothing rebuilds
+ * a projection from them, and `rebuildProjections` skips them. They exist so
+ * the WebSocket can stream a turn into the Chat surface with the same
+ * mechanism as everything else, and so a reload can replay what was said.
+ *
+ * Durable state produced during a turn still lands as a real entity event:
+ * `spec.upserted` / `spec.frozen`, `plan.upserted`, `task.created`,
+ * `approval.requested`, `memory.upserted`, `thread.phase_changed`,
+ * `message.added` for the final assistant message.
+ */
+export const MASTER_EVENT_TYPES: readonly NexestraEventType[] = [
+  "master.started",
+  "master.text_delta",
+  "master.tool_call",
+  "master.tool_result",
+  "master.question",
+  "master.usage",
+  "master.error",
+  "master.done",
+];
 
 /**
  * One row of the `events` table. `seq` is monotonic per thread; events with no
