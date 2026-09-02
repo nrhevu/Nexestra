@@ -18,9 +18,14 @@ const AgentBaseSchema = z.object({
   updatedAt: z.string(),
 });
 
+const WorkerModelSchema = z.string().trim().min(1).max(160);
+const WorkerReasoningEffortSchema = z.string().trim().min(1).max(40);
+
 export const WorkerAgentSchema = AgentBaseSchema.extend({
   kind: z.literal("worker"),
   harness: z.enum(["codex", "opencode"]),
+  model: WorkerModelSchema.optional(),
+  reasoningEffort: WorkerReasoningEffortSchema.optional(),
 });
 
 export const MasterAgentSchema = AgentBaseSchema.extend({
@@ -57,6 +62,8 @@ export const CreateAgentSchema = z.discriminatedUnion("kind", [
   AgentInputBaseSchema.extend({
     kind: z.literal("worker"),
     harness: z.enum(["codex", "opencode"]),
+    model: WorkerModelSchema.optional(),
+    reasoningEffort: WorkerReasoningEffortSchema.optional(),
   }),
   AgentInputBaseSchema.extend({
     kind: z.literal("master"),

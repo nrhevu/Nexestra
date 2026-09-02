@@ -51,9 +51,17 @@ describe("HTTP app", () => {
         description: "",
         instructions: "",
         harness: "codex",
+        model: "gpt-test",
+        reasoningEffort: "high",
       }),
     });
     expect(agentResponse.status).toBe(201);
+    await expect(agentResponse.json()).resolves.toMatchObject({
+      kind: "worker",
+      harness: "codex",
+      model: "gpt-test",
+      reasoningEffort: "high",
+    });
     const [thread] = store.listThreads();
     if (!thread) throw new Error("expected seeded thread");
 

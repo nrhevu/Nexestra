@@ -1,7 +1,7 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   LocalAgentRunner,
   parseCodexReply,
@@ -9,6 +9,20 @@ import {
   parseProviderReply,
 } from "./runtime.js";
 import { FileStore } from "./store.js";
+
+const processMocks = vi.hoisted(() => ({
+  findExecutable: vi.fn(),
+  runCommand: vi.fn(),
+}));
+
+vi.mock("./process.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./process.js")>();
+  return {
+    ...actual,
+    findExecutable: processMocks.findExecutable,
+    runCommand: processMocks.runCommand,
+  };
+});
 
 describe("harness output parsers", () => {
   it("takes the last completed Codex agent message", () => {
@@ -28,6 +42,107 @@ describe("harness output parsers", () => {
     ].join("\n");
     expect(parseOpenCodeReply(output)).toBe("two");
   });
+});
+
+describe("Worker harness arguments", () => {
+  beforeEach(() => {
+    processMocks.findExecutable.mockReset();
+    processMocks.runCommand.mockReset();
+  });
+
+  it("passes model and reasoning effort to Codex", async () => {
+    const { agent, invocation, root, runner } = await workerFixture("codex", "gpt-5.4", "high");
+    processMocks.findExecutable.mockResolvedValue("/fake/codex");
+    processMocks.runCommand.mockResolvedValue({
+      stdout: JSON.stringify({
+        type: "item.completed",
+        item: { type: "agent_message", text: "Done." },
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+
+    await expect(runner.invoke(agent, invocation)).resolves.toBe("Done.");
+    const [command, args] = processMocks.runCommand.mock.calls[0] ?? [];
+    expect(command).toBe("/fake/codex");
+    expect(args).toEqual([
+      "exec",
+      "--json",
+      "-C",
+      root,
+      "-s",
+      "read-only",
+      "--skip-git-repo-check",
+      "--ephemeral",
+      "-o",
+      expect.stringContaining(join(root, "runs")),
+      "-m",
+      "gpt-5.4",
+      "-c",
+      'model_reasoning_effort="high"',
+      expect.stringContaining("@codex"),
+    ]);
+  });
+
+  it("passes model and reasoning effort to OpenCode", async () => {
+    const { agent, invocation, root, runner } = await workerFixture(
+      "opencode",
+      "anthropic/claude-sonnet-4",
+      "high",
+    );
+    processMocks.findExecutable.mockResolvedValue("/fake/opencode");
+    processMocks.runCommand.mockResolvedValue({
+      stdout: JSON.stringify({ type: "text", part: { type: "text", text: "Done." } }),
+      stderr: "",
+      exitCode: 0,
+    });
+
+    await expect(runner.invoke(agent, invocation)).resolves.toBe("Done.");
+    const [command, args] = processMocks.runCommand.mock.calls[0] ?? [];
+    expect(command).toBe("/fake/opencode");
+    expect(args).toEqual([
+      "run",
+      "--format",
+      "json",
+      "--pure",
+      "--agent",
+      "plan",
+      "--dir",
+      root,
+      "-m",
+      "anthropic/claude-sonnet-4",
+      "--variant",
+      "high",
+      "--file",
+      invocation.transcriptPath,
+      expect.stringContaining("@opencode"),
+    ]);
+  });
+
+  it.each(["codex", "opencode"] as const)(
+    "keeps the %s defaults when no overrides are configured",
+    async (harness) => {
+      const { agent, invocation, runner } = await workerFixture(harness);
+      processMocks.findExecutable.mockResolvedValue(`/fake/${harness}`);
+      processMocks.runCommand.mockResolvedValue({
+        stdout:
+          harness === "codex"
+            ? JSON.stringify({
+                type: "item.completed",
+                item: { type: "agent_message", text: "Done." },
+              })
+            : JSON.stringify({ type: "text", part: { type: "text", text: "Done." } }),
+        stderr: "",
+        exitCode: 0,
+      });
+
+      await expect(runner.invoke(agent, invocation)).resolves.toBe("Done.");
+      const args = processMocks.runCommand.mock.calls[0]?.[1] ?? [];
+      expect(args).not.toContain("-m");
+      expect(args).not.toContain("-c");
+      expect(args).not.toContain("--variant");
+    },
+  );
 });
 
 describe("parseProviderReply", () => {
@@ -103,3 +218,39 @@ describe("parseProviderReply", () => {
     ).rejects.toThrow("too much data");
   });
 });
+
+async function workerFixture(
+  harness: "codex" | "opencode",
+  model?: string,
+  reasoningEffort?: string,
+) {
+  const root = await mkdtemp(join(tmpdir(), "nexestra-worker-runtime-"));
+  const store = await FileStore.open({ root, workspacePath: root });
+  const agent = await store.createAgent({
+    kind: "worker",
+    name: harness === "codex" ? "Codex" : "OpenCode",
+    handle: harness,
+    description: "",
+    instructions: "",
+    harness,
+    ...(model ? { model } : {}),
+    ...(reasoningEffort ? { reasoningEffort } : {}),
+  });
+  if (agent.kind !== "worker") throw new Error("expected worker agent");
+  const [thread] = store.listThreads();
+  if (!thread) throw new Error("expected seeded thread");
+  const trigger = await store.createUserMessage(thread.id, `@${agent.handle} reply`, [
+    { agentId: agent.id, handle: agent.handle },
+  ]);
+  return {
+    agent,
+    root,
+    runner: new LocalAgentRunner({ store }),
+    invocation: {
+      thread,
+      trigger,
+      transcriptPath: store.transcriptPath(thread.id),
+      transcriptSnapshot: await store.transcriptSnapshot(thread.id),
+    },
+  };
+}

@@ -35,6 +35,52 @@ describe("FileStore", () => {
     expect(transcript).toContain("Hello.");
   });
 
+  it("persists trimmed Worker model settings across restarts", async () => {
+    const store = await openStore();
+    const created = await store.createAgent({
+      kind: "worker",
+      name: "Codex",
+      handle: "codex",
+      description: "",
+      instructions: "",
+      harness: "codex",
+      model: "  gpt-5.4  ",
+      reasoningEffort: "  high  ",
+    });
+
+    expect(created).toMatchObject({ model: "gpt-5.4", reasoningEffort: "high" });
+    const reopened = await FileStore.open({
+      root: store.root,
+      workspacePath: store.workspacePath,
+    });
+    expect(reopened.getAgent(created.id)).toMatchObject({
+      model: "gpt-5.4",
+      reasoningEffort: "high",
+    });
+  });
+
+  it("loads legacy Worker records without model settings", async () => {
+    const store = await openStore();
+    const created = await store.createAgent({
+      kind: "worker",
+      name: "Codex",
+      handle: "codex",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    const state = JSON.parse(await readFile(store.stateFile, "utf8"));
+    expect(state.agents[0]).not.toHaveProperty("model");
+    expect(state.agents[0]).not.toHaveProperty("reasoningEffort");
+
+    const reopened = await FileStore.open({
+      root: store.root,
+      workspacePath: store.workspacePath,
+    });
+    expect(reopened.getAgent(created.id)).not.toHaveProperty("model");
+    expect(reopened.getAgent(created.id)).not.toHaveProperty("reasoningEffort");
+  });
+
   it("never writes a custom provider key to public state or transcripts", async () => {
     const store = await openStore();
     const secret = "sk-super-secret";
