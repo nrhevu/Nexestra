@@ -15,9 +15,9 @@
  * Exit code 0 means the production server is real.
  */
 import { spawn } from "node:child_process";
-import { createServer } from "node:net";
-import { mkdtemp, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

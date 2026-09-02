@@ -81,9 +81,9 @@ process.stdout.write("  copied packages/master/src/prompts → dist/prompts\n");
 async function assertExternalsAreDeclared() {
   const manifest = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
   const declared = new Set(Object.keys(manifest.dependencies ?? {}));
-  const missing = [
-    ...new Set(EXTERNAL.map((entry) => entry.replace(/\/\*$/, ""))),
-  ].filter((name) => !declared.has(name));
+  const missing = [...new Set(EXTERNAL.map((entry) => entry.replace(/\/\*$/, "")))].filter(
+    (name) => !declared.has(name),
+  );
 
   if (missing.length > 0) {
     process.stderr.write(

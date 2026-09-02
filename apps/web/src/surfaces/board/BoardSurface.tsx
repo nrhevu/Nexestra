@@ -193,7 +193,12 @@ function ExecutionControls({
         {running && activeRuns > 0 ? `running · ${activeRuns} run(s)` : state}
       </Tag>
       {running ? (
-        <Button boxed disabled={busy} data-testid="execution-pause" onClick={() => onAction("pause")}>
+        <Button
+          boxed
+          disabled={busy}
+          data-testid="execution-pause"
+          onClick={() => onAction("pause")}
+        >
           Pause
         </Button>
       ) : (
