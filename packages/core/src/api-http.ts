@@ -213,8 +213,16 @@ export type LinkMemoriesRequest = z.infer<typeof LinkMemoriesRequestSchema>;
  */
 export const AppSettingsResponseSchema = AppSettingsSchema.extend({
   master: MasterRuntimeInfoSchema,
+  /** Credential presence by provider id. Values never contain secret material. */
+  providerCredentials: z.record(z.string(), z.boolean()),
 });
 export type AppSettingsResponse = z.infer<typeof AppSettingsResponseSchema>;
+
+/** Write-only body for `PUT /api/settings/providers/:id/credential`. */
+export const SaveProviderCredentialRequestSchema = z.object({
+  credential: z.string().trim().min(1).max(16_384),
+});
+export type SaveProviderCredentialRequest = z.infer<typeof SaveProviderCredentialRequestSchema>;
 
 // ------------------------------------------------------------------- misc
 

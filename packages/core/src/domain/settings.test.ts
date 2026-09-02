@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MasterProviderSchema } from "./settings.js";
+import { masterProviderAuth, MasterProviderSchema } from "./settings.js";
 
 const provider = {
   id: "custom",
@@ -26,5 +26,22 @@ describe("MasterProviderSchema", () => {
     "https://models.example.com/v1#secret",
   ])("rejects unsafe provider URL %s", (baseUrl) => {
     expect(MasterProviderSchema.safeParse({ ...provider, baseUrl }).success).toBe(false);
+  });
+
+  it("keeps legacy provider auth compatible", () => {
+    const withEnvironment = MasterProviderSchema.parse({
+      ...provider,
+      id: "legacy",
+      baseUrl: "https://models.example/v1",
+      apiKeyEnv: "LEGACY_API_KEY",
+    });
+    const local = MasterProviderSchema.parse({
+      ...provider,
+      id: "local",
+      baseUrl: "http://127.0.0.1:8080/v1",
+    });
+
+    expect(masterProviderAuth(withEnvironment)).toBe("api-key");
+    expect(masterProviderAuth(local)).toBe("none");
   });
 });

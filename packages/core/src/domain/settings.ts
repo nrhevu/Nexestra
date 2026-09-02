@@ -4,6 +4,9 @@ import { HarnessIdSchema, SandboxLevelSchema } from "./common.js";
 export const MasterProviderProtocolSchema = z.enum(["openai-responses", "anthropic-messages"]);
 export type MasterProviderProtocol = z.infer<typeof MasterProviderProtocolSchema>;
 
+export const MasterProviderAuthSchema = z.enum(["api-key", "none"]);
+export type MasterProviderAuth = z.infer<typeof MasterProviderAuthSchema>;
+
 const ProviderBaseUrlSchema = z.url().refine(
   (value) => {
     const url = new URL(value);
@@ -25,8 +28,9 @@ const ProviderBaseUrlSchema = z.url().refine(
 /**
  * A server-side model provider for the Master.
  *
- * Secrets are deliberately referenced by environment-variable name. They are
- * never persisted in SQLite or returned to the browser.
+ * Secrets are stored outside SQLite and never returned to the browser. The
+ * legacy `apiKeyEnv` field remains readable so existing installations keep
+ * working, but new configuration is entered in the Settings surface.
  */
 export const MasterProviderSchema = z.object({
   id: z
@@ -38,6 +42,9 @@ export const MasterProviderSchema = z.object({
   protocol: MasterProviderProtocolSchema,
   baseUrl: ProviderBaseUrlSchema,
   model: z.string().min(1).max(160),
+  /** Defaults from `apiKeyEnv` for settings rows written before M8. */
+  auth: MasterProviderAuthSchema.optional(),
+  /** @deprecated Environment credentials are a compatibility fallback only. */
   apiKeyEnv: z
     .string()
     .regex(/^[A-Z_][A-Z0-9_]*$/, "use an uppercase environment-variable name")
@@ -54,6 +61,7 @@ export const DEFAULT_MASTER_PROVIDERS: readonly MasterProvider[] =
       protocol: "openai-responses",
       baseUrl: "https://api.openai.com/v1",
       model: "chat-latest",
+      auth: "api-key",
       apiKeyEnv: "OPENAI_API_KEY",
       enabled: true,
     },
@@ -63,6 +71,7 @@ export const DEFAULT_MASTER_PROVIDERS: readonly MasterProvider[] =
       protocol: "anthropic-messages",
       baseUrl: "https://api.anthropic.com",
       model: "claude-opus-5",
+      auth: "api-key",
       apiKeyEnv: "ANTHROPIC_API_KEY",
       enabled: true,
     },
@@ -131,3 +140,9 @@ export const AppSettingsSchema = z.object({
 export type AppSettings = z.infer<typeof AppSettingsSchema>;
 
 export const DEFAULT_APP_SETTINGS: AppSettings = AppSettingsSchema.parse({});
+
+/** Interpret provider rows written before the explicit auth mode existed. */
+export function masterProviderAuth(provider: MasterProvider): MasterProviderAuth {
+  if (provider.auth) return provider.auth;
+  return provider.apiKeyEnv ? "api-key" : "none";
+}
