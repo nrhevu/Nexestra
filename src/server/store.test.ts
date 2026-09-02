@@ -105,6 +105,109 @@ describe("FileStore", () => {
     expect(JSON.stringify(store.listAgents())).not.toContain(secret);
   });
 
+  it("permanently deletes an agent, its credential, and current task assignments", async () => {
+    const store = await openStore();
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const secret = "sk-delete-me";
+    const agent = await store.createAgent({
+      kind: "master",
+      name: "Maya",
+      handle: "maya",
+      description: "",
+      instructions: "",
+      provider: {
+        type: "custom",
+        name: "Local gateway",
+        baseUrl: "http://127.0.0.1:11434/v1",
+        model: "model-a",
+        protocol: "openai-chat",
+        apiKey: secret,
+      },
+    });
+    const task = await store.createTask({
+      title: "Review the plan",
+      description: "",
+      status: "todo",
+      assigneeId: agent.id,
+      threadId: null,
+    });
+    const trigger = await store.createUserMessage(thread.id, "@maya keep this history", [
+      { agentId: agent.id, handle: agent.handle },
+    ]);
+    await store.createAgentMessage(thread.id, agent, "This reply stays.", trigger.id);
+    const transcriptBefore = await readFile(store.transcriptPath(thread.id), "utf8");
+
+    await store.deleteAgent(agent.id);
+
+    expect(store.getAgent(agent.id)).toBeUndefined();
+    expect(store.findAgentByHandle(agent.handle)).toBeUndefined();
+    expect(store.getCredential(agent.id)).toBeUndefined();
+    expect(store.listTasks().find((entry) => entry.id === task.id)?.assigneeId).toBeNull();
+    expect(await readFile(store.transcriptPath(thread.id), "utf8")).toBe(transcriptBefore);
+    const credentials = JSON.parse(await readFile(store.credentialFile, "utf8"));
+    expect(credentials.credentials).not.toHaveProperty(agent.id);
+    expect(JSON.stringify(credentials)).not.toContain(secret);
+
+    const reopened = await FileStore.open({
+      root: store.root,
+      workspacePath: store.workspacePath,
+    });
+    expect(reopened.getAgent(agent.id)).toBeUndefined();
+    expect(reopened.listTasks().find((entry) => entry.id === task.id)?.assigneeId).toBeNull();
+    await expect(reopened.deleteAgent(agent.id)).rejects.toMatchObject({ code: "not_found" });
+
+    await expect(
+      reopened.createAgent({
+        kind: "worker",
+        name: "New Maya",
+        handle: "maya",
+        description: "",
+        instructions: "",
+        harness: "codex",
+      }),
+    ).resolves.toMatchObject({ handle: "maya" });
+  });
+
+  it("keeps the durable intermediate state retryable when state persistence fails", async () => {
+    const store = await openStore();
+    const agent = await store.createAgent({
+      kind: "master",
+      name: "Maya",
+      handle: "maya",
+      description: "",
+      instructions: "",
+      provider: {
+        type: "custom",
+        name: "Local gateway",
+        baseUrl: "http://127.0.0.1:11434/v1",
+        model: "model-a",
+        protocol: "openai-chat",
+        apiKey: "sk-delete-me",
+      },
+    });
+    const internal = store as unknown as {
+      writeState: (state?: unknown) => Promise<void>;
+    };
+    const writeState = internal.writeState.bind(store);
+    internal.writeState = async () => {
+      throw new Error("simulated state write failure");
+    };
+
+    try {
+      await expect(store.deleteAgent(agent.id)).rejects.toThrow("simulated state write failure");
+      expect(store.getAgent(agent.id)).toBeDefined();
+      expect(store.getCredential(agent.id)).toBeUndefined();
+      expect(await readFile(store.stateFile, "utf8")).toContain(agent.id);
+      expect(await readFile(store.credentialFile, "utf8")).not.toContain(agent.id);
+    } finally {
+      internal.writeState = writeState;
+    }
+
+    await expect(store.deleteAgent(agent.id)).resolves.toBeUndefined();
+    expect(store.getAgent(agent.id)).toBeUndefined();
+  });
+
   it("rejects unsafe custom provider URLs", async () => {
     const store = await openStore();
     const input = {

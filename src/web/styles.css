@@ -722,6 +722,11 @@ kbd {
   color: #f0b2b4;
   font-size: 11px;
 }
+.run-unavailable {
+  margin-left: auto;
+  color: #ad8588;
+  font-size: 11px;
+}
 .composer-wrap {
   position: relative;
   padding: 0 20px 12px;
@@ -905,9 +910,35 @@ kbd {
 }
 .agents-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 13px;
   padding: 20px;
+}
+.archived-agents {
+  border-top: 1px solid var(--border-soft);
+}
+.archived-agents > header {
+  min-height: 58px;
+  padding: 12px 20px 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.archived-agents > header h2 {
+  margin: 2px 0 0;
+  font-size: 14px;
+}
+.archived-agents > header > span {
+  min-width: 24px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #292c33;
+  color: var(--muted);
+  text-align: center;
+  font-size: 11px;
+}
+.archived-agents .agents-grid {
+  padding-top: 12px;
 }
 .agent-card {
   min-width: 0;
@@ -915,6 +946,9 @@ kbd {
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--panel);
+}
+.agent-card-archived {
+  background: #1d1f24;
 }
 .agent-card-top {
   display: flex;
@@ -1010,6 +1044,8 @@ kbd {
 .agent-card-footer {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
   justify-content: space-between;
   margin: 15px -16px -16px;
   padding: 10px 16px;
@@ -1020,7 +1056,10 @@ kbd {
 .agent-card-footer > div {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 9px;
+  margin-left: auto;
 }
 .agent-card-footer button {
   border: 0;
@@ -1488,6 +1527,50 @@ kbd {
   background: transparent;
   color: #c8c5cb;
   font-size: 11px;
+}
+.danger-button {
+  height: 34px;
+  padding: 0 13px;
+  border: 1px solid #c4575e;
+  border-radius: 7px;
+  background: #a84249;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  font-weight: 750;
+}
+.danger-button:hover:not(:disabled) {
+  background: #bb4c54;
+}
+.delete-confirmation {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 13px;
+  border: 1px solid rgba(226, 98, 104, 0.22);
+  border-radius: 9px;
+  background: rgba(138, 42, 50, 0.08);
+}
+.delete-confirmation > span {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: rgba(226, 98, 104, 0.12);
+  color: #e58f94;
+  display: grid;
+  place-items: center;
+}
+.delete-confirmation p {
+  margin: 0;
+  color: #c7bec1;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.delete-confirmation strong {
+  color: #f0dadd;
 }
 .settings-list {
   display: flex;

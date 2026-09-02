@@ -11,6 +11,8 @@ import { type FileStore, StoreError } from "./store.js";
 export class AgentDispatcher {
   private readonly queues = new Map<string, Promise<void>>();
   private readonly busy = new Set<string>();
+  private readonly pendingEnqueues = new Map<string, number>();
+  private readonly deletingAgentIds = new Set<string>();
   private readonly retryingRunIds = new Set<string>();
 
   constructor(
@@ -22,25 +24,65 @@ export class AgentDispatcher {
     return new Set(this.busy);
   }
 
+  hasPendingWork(agentId: string): boolean {
+    return this.queues.has(agentId) || (this.pendingEnqueues.get(agentId) ?? 0) > 0;
+  }
+
+  beginAgentDeletion(agentId: string): boolean {
+    if (this.deletingAgentIds.has(agentId) || this.hasPendingWork(agentId)) return false;
+    this.deletingAgentIds.add(agentId);
+    return true;
+  }
+
+  finishAgentDeletion(agentId: string): void {
+    this.deletingAgentIds.delete(agentId);
+  }
+
+  reserveAgent(agentId: string): (() => void) | undefined {
+    if (this.deletingAgentIds.has(agentId)) return undefined;
+    this.pendingEnqueues.set(agentId, (this.pendingEnqueues.get(agentId) ?? 0) + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const remaining = (this.pendingEnqueues.get(agentId) ?? 1) - 1;
+      if (remaining === 0) this.pendingEnqueues.delete(agentId);
+      else this.pendingEnqueues.set(agentId, remaining);
+    };
+  }
+
   async enqueue(trigger: Message, agents: Agent[], attempt = 1): Promise<AgentRun[]> {
-    const runs: AgentRun[] = [];
+    const releases: (() => void)[] = [];
     for (const agent of agents) {
-      const now = new Date().toISOString();
-      const run: AgentRun = {
-        id: crypto.randomUUID(),
-        threadId: trigger.threadId,
-        triggerMessageId: trigger.id,
-        agentId: agent.id,
-        attempt,
-        status: "queued",
-        createdAt: now,
-        updatedAt: now,
-      };
-      await this.store.updateRun(run);
-      runs.push(run);
-      this.enqueueRun(run, agent, trigger);
+      const release = this.reserveAgent(agent.id);
+      if (!release) {
+        for (const releaseReservedAgent of releases) releaseReservedAgent();
+        throw new StoreError("conflict", `@${agent.handle} is being deleted.`);
+      }
+      releases.push(release);
     }
-    return runs;
+    try {
+      const runs: AgentRun[] = [];
+      for (const agent of agents) {
+        const now = new Date().toISOString();
+        const run: AgentRun = {
+          id: crypto.randomUUID(),
+          threadId: trigger.threadId,
+          triggerMessageId: trigger.id,
+          agentId: agent.id,
+          attempt,
+          status: "queued",
+          createdAt: now,
+          updatedAt: now,
+        };
+        await this.store.updateRun(run);
+        runs.push(run);
+        this.enqueueRun(run, agent, trigger);
+      }
+      return runs;
+    } finally {
+      for (const release of releases) release();
+    }
   }
 
   async retry(runId: string): Promise<AgentRun> {
@@ -146,13 +188,22 @@ export class ChatService {
   async send(threadId: string, rawInput: unknown): Promise<{ message: Message; runs: AgentRun[] }> {
     const { content } = CreateMessageSchema.parse(rawInput);
     const agents: Agent[] = [];
+    const releases: (() => void)[] = [];
     for (const handle of extractMentionHandles(content)) {
       const agent = this.store.findAgentByHandle(handle);
-      if (agent) agents.push(agent);
+      if (!agent) continue;
+      const release = this.dispatcher.reserveAgent(agent.id);
+      if (!release) continue;
+      agents.push(agent);
+      releases.push(release);
     }
-    const mentions = agents.map((agent) => ({ agentId: agent.id, handle: agent.handle }));
-    const message = await this.store.createUserMessage(threadId, content, mentions);
-    const runs = await this.dispatcher.enqueue(message, agents);
-    return { message, runs };
+    try {
+      const mentions = agents.map((agent) => ({ agentId: agent.id, handle: agent.handle }));
+      const message = await this.store.createUserMessage(threadId, content, mentions);
+      const runs = await this.dispatcher.enqueue(message, agents);
+      return { message, runs };
+    } finally {
+      for (const release of releases) release();
+    }
   }
 }

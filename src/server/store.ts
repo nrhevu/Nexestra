@@ -226,6 +226,31 @@ export class FileStore {
     });
   }
 
+  async deleteAgent(id: string): Promise<void> {
+    return this.withWrite(async () => {
+      const nextState = structuredClone(this.state);
+      const index = nextState.agents.findIndex((agent) => agent.id === id);
+      if (index === -1) throw new StoreError("not_found", "Agent not found.");
+
+      nextState.agents.splice(index, 1);
+      const now = new Date().toISOString();
+      for (const task of nextState.tasks) {
+        if (task.assigneeId !== id) continue;
+        task.assigneeId = null;
+        task.updatedAt = now;
+      }
+
+      if (Object.hasOwn(this.credentials, id)) {
+        const nextCredentials = { ...this.credentials };
+        delete nextCredentials[id];
+        await this.writeCredentials(nextCredentials);
+        this.credentials = nextCredentials;
+      }
+      await this.writeState(nextState);
+      this.state = nextState;
+    });
+  }
+
   async createThread(rawInput: unknown): Promise<Thread> {
     const input = CreateThreadSchema.parse(rawInput);
     return this.withWrite(async () => {
@@ -499,16 +524,12 @@ export class FileStore {
     return thread;
   }
 
-  private async writeState(): Promise<void> {
-    await writeJsonAtomic(this.stateFile, this.state, 0o600);
+  private async writeState(state = this.state): Promise<void> {
+    await writeJsonAtomic(this.stateFile, state, 0o600);
   }
 
-  private async writeCredentials(): Promise<void> {
-    await writeJsonAtomic(
-      this.credentialFile,
-      { version: 1, credentials: this.credentials },
-      0o600,
-    );
+  private async writeCredentials(credentials = this.credentials): Promise<void> {
+    await writeJsonAtomic(this.credentialFile, { version: 1, credentials }, 0o600);
   }
 
   private async withWrite<T>(operation: () => Promise<T>): Promise<T> {

@@ -41,6 +41,15 @@ in the same transcript file. Agent replies do not trigger other agents, which pr
 Workers run in read-only discussion mode in the MVP. The Taskboard currently organizes work but
 does not dispatch agents automatically.
 
+## Agent lifecycle
+
+Disabling an agent removes it from the mention picker without deleting its configuration. Archiving
+also keeps the profile and any saved credential, and archived agents remain available in the Agent
+management surface for permanent deletion. Deleting an idle agent removes its profile and saved
+credential, unassigns its current tasks, and releases its handle for reuse. Shared thread history is
+append-only, so existing messages remain attributed to the deleted agent. Agents with queued or
+running work cannot be deleted until that work finishes.
+
 When creating a Worker, the model and reasoning effort are optional. Leaving either field blank
 uses the selected harness default. Codex receives the model and `model_reasoning_effort` overrides;
 OpenCode receives `--model` (in `provider/model` form) and the provider-specific `--variant`.

@@ -29,6 +29,11 @@ The shared Zod contracts in `src/shared/contracts.ts` define the boundary betwee
 followed by an atomic rename. The separate `credentials.json` file has mode `0600` and stores only
 custom API keys by agent ID.
 
+Permanent agent deletion removes the profile and its custom credential, clears matching task
+assignments, and releases the handle for reuse. Credential removal is persisted before public state
+so an interrupted multi-file write favors removing the secret. Thread JSONL files are never rewritten
+for agent deletion; historical author and mention snapshots remain part of the canonical transcript.
+
 Each thread has one canonical JSONL file. The `message.created` and `run.updated` events use a
 monotonically increasing sequence. User messages are appended and fsynced before agents are queued.
 Read projections select messages by sequence and the final state of each run. On startup, only an
@@ -43,6 +48,12 @@ runs. The dispatcher maintains one promise queue per agent, so each agent replie
 different agents can run in parallel. Every invocation is tied to the exact triggering message ID
 and content; stale or duplicate retries are rejected. Agent output goes directly to the transcript
 without passing through the mention parser.
+
+Chat reserves each resolved agent before persisting the user's message, without starting dispatch.
+Deletion is rejected while a reservation or per-agent queue is pending or running, and a deletion
+tombstone prevents new reservations until the profile update finishes. After an agent is deleted, a
+newly typed reference to its old handle is plain text unless that handle has been reused by another
+agent. Historical failed runs for a deleted profile cannot be retried.
 
 ## Agent runtimes
 
@@ -73,7 +84,8 @@ Provider responses have a byte limit enforced before parsing.
 - Chat currently polls instead of streaming tokens in real time.
 - Worker chat runs in read-only discussion mode; Taskboard does not yet dispatch coding jobs or manage worktrees.
 - OpenCode `plan` is an application policy, not an independent OS or container sandbox.
-- Agent profiles cannot yet edit their full configuration after creation; enable, disable, and archive are available.
+- Agent profiles cannot yet edit their full configuration after creation; enable, disable, archive,
+  and permanent deletion are available.
 - Device OAuth displays raw Codex CLI instructions; it does not yet use `codex app-server` JSON-RPC.
 - Custom providers support only two OpenAI-compatible protocols; Anthropic Messages is not supported.
 - Queues live in process. A restart marks runs interrupted, and the user must click Retry.
