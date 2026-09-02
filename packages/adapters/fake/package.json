@@ -1,5 +1,5 @@
 {
-  "name": "@nexestra/orchestrator",
+  "name": "@nexestra/adapter-fake",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -13,11 +13,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@nexestra/adapter-codex": "workspace:*",
-    "@nexestra/adapter-fake": "workspace:*",
-    "@nexestra/core": "workspace:*",
-    "@nexestra/storage": "workspace:*",
-    "execa": "10.0.1"
+    "@nexestra/core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "26.4.1",
