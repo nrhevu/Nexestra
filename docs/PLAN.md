@@ -9,12 +9,12 @@ Codex CLI 0.148.0, OpenCode 1.18.25.
 
 ---
 
-## 0. Status — cập nhật 2026-09-02
+## 0. Status — cập nhật M8, 2026-09-02
 
 > Phần này viết **sau khi implement**. Toàn bộ kế hoạch gốc giữ nguyên bên dưới
 > (§1 trở đi) để so được "định làm gì" với "đã làm gì".
 
-Repo hiện có **61 commit** (HEAD `f0341b7`), **11 workspace package**
+Snapshot M7 bên dưới ghi nhận **61 commit** (HEAD `f0341b7`), **11 workspace package**
 (2 app + 8 library + `e2e`), và `pnpm test` xanh trên máy không cài Codex,
 không cài OpenCode, không có `ANTHROPIC_API_KEY`:
 
@@ -27,6 +27,11 @@ pnpm test  →  472 passed, 6 skipped (478) trên 37 test file / 10 package
 
 6 test skip là các **live test** có opt-in (`NEXESTRA_LIVE_CODEX`,
 `NEXESTRA_LIVE_OPENCODE`, `ANTHROPIC_API_KEY`) — xem `docs/testing.md` §5.
+
+M8 thay đổi boundary production: không seed mock, không demo-model fallback,
+không fake harness trong registry/UI; thêm OpenAI Responses + custom provider,
+project-memory search và Slack-inspired shell. Số test hiện hành được lấy từ
+release gates thay vì snapshot M7 ở trên.
 
 ### 0.1 Milestone M0–M7
 
@@ -44,6 +49,7 @@ số milestone **không** khớp thứ tự thời gian.
 | M5 | OpenCode adapter + cross-review + verification | **done** | `2f2773d..bfe1c5c` (`merge: m5-orchestrator`) + `9670dd1..3bdacb7` (`merge: m5-opencode-adapter`) | `@nexestra/orchestrator` 52 test: DAG 4 task chạy 2 luồng, retry → pass, cross-review bounce, criterion fail rồi pass với đủ 2 evidence artifact, approval gate, budget pause, autoMerge/pending/conflict, `recover()` sau crash. `@nexestra/adapter-opencode` 105 test trên fixture SSE thật của OpenCode 1.18.25. |
 | M6 | Approvals, budget, memory graph (+ wiring) | **done** | `3d52da4..f0341b7` (`merge: m6-integration`) | `apps/server/src/execution/` nối orchestrator vào server; approval queue hiện ở mọi surface + badge trên rail; cost per run/task/thread; memory graph React Flow trên dữ liệu Master ghi thật. `execution.test.ts` là acceptance run: chỉ model (`DemoLlmClient`) và harness (fake) là stub, còn lại là production code — 4 case gồm chạy tới `done` với mọi criterion có evidence, approval chặn rồi mở, task hết attempt → replan request, và crash được `recoverAll()` vá. |
 | M7 | Hardening | **partial** | `6c27a53..c7f0f56` (`merge: m7-test-infra`) + nhánh docs này | **Xong**: `@nexestra/adapter-fake` (scenario-driven), Playwright e2e chạy trên bản build thật (6 spec), resume sau crash (`recoverAll()` trước request đầu tiên), Settings surface + `GET /api/harnesses` kiểm tra version/auth, `docs/testing.md`, và bộ tài liệu này (README, `docs/index.md`, `docs/adr/`, `CONTRIBUTING.md`, `CLAUDE.md`). **Chưa**: `e2e/tests/execution.spec.ts` vẫn skip — cổng thứ nhất (`apps/server` đọc `NEXESTRA_FAKE_HARNESS`) đã mở khi M6 wiring vào, nhưng cổng thứ hai vẫn cần `NEXESTRA_E2E_EXECUTION=1` và `startExecution()` trong file đó vẫn `throw`, chưa trỏ vào route dispatch của M6; log rotation chưa có; xem `docs/ARCHITECTURE.md` §11 cho phần còn lại. |
+| M8 | Production hardening | **done** | `m8-product-hardening` | Provider registry OpenAI/Anthropic/custom; no production demo/fake/seed paths; Master project-memory search; real-only harness discovery; Slack-inspired shell; production-bundle Playwright acceptance. [ADR 0020](adr/0020-production-master-provider-registry.md), [ADR 0021](adr/0021-slack-inspired-project-workspace.md). |
 
 ### 0.2 Những quyết định §1 đã đổi khi làm thật
 
@@ -53,24 +59,24 @@ số milestone **không** khớp thứ tự thời gian.
 | 5 | Event-sourced, UI đọc projection | Giữ nguyên, thêm hai ngoại lệ có chủ ý: `master_messages` / `master_state` **không** phát event (scratch space của Master, không ai replay), và họ event `master.*` / `orchestrator.*` chỉ để stream — `rebuildProjections` bỏ qua chúng. Migration được **embed** vào `src/migrations.ts` bằng `scripts/embed-migrations.mjs` vì server ship dạng một bundle esbuild. | Xem [ADR 0005](adr/0005-event-sourced-store-with-projections.md), [ADR 0006](adr/0006-embedded-numbered-migrations.md). |
 | 6 | Structured outputs cho Spec/Plan | Dùng **strict tools** (`strict: true`, `additionalProperties: false`, JSON Schema sinh từ zod bằng `toStrictJsonSchema()`). `output_config.format` có trong `LlmRequest` nhưng không dùng. | Structured output không kết hợp được với tool call trong cùng một turn; strict tool đã đủ ràng buộc. [ADR 0014](adr/0014-strict-tools-instead-of-structured-outputs.md). |
 | 9 | OpenCode qua `@opencode-ai/sdk` | Qua **`fetch` tự viết** (`client.ts`) + SSE tự parse (`sse.ts`), sinh từ `fixtures/opencode/openapi.json`. | SDK version lệch với binary, không có README, và event stream phải tự cầm để chịu được event lạ + reconnect. [ADR 0010](adr/0010-drive-opencode-with-serve-and-sse-over-fetch.md). |
-| 7 | `HarnessId` = `codex \| opencode \| acp` | Thêm **`fake`**. `HarnessIdSchema = ["codex","opencode","acp","fake"]`. `NEXESTRA_FAKE_HARNESS=1` (hoặc `AppSettings.enableFakeHarness`) cho fake adapter đứng thay **cả** `codex` và `opencode`, nên plan cũ vẫn chạy được. `acp` vẫn chỉ là id, chưa có adapter. | Cần chạy trọn vòng lặp trong CI/e2e/demo mà không tốn quota. [ADR 0018](adr/0018-fake-harness-for-dev-and-tests.md). |
+| 7 | `HarnessId` = `codex \| opencode \| acp` | M7 thêm `fake` cho fixture/test. M8 giữ member này vì schema additive nhưng production chỉ register và discover `codex`/`opencode`; không còn switch fake. | Test double chỉ đi qua dependency injection, không trở thành product mode. [ADR 0018](adr/0018-fake-harness-for-dev-and-tests.md), [ADR 0020](adr/0020-production-master-provider-registry.md). |
 | — | Spec có version | Spec là **một row/thread**, cột `version` tăng dần mỗi lần `upsertSpec` (không phải một row/version). Bản nháp giữa lúc clarify nằm ở `master_state`, bản đã validate nằm ở bảng `specs`, và evidence từ verification được ghi ngược lên bản published. | Row lịch sử đã nằm trong `events` rồi; giữ một row làm projection để mọi query "spec hiện tại" khỏi phải group-by. |
 | §10.2 | Merge tự động hay cần approval? | **Cần approval theo mặc định** — `AppSettings.autoMerge = false`. Orchestrator dựng approval `merge` rồi dừng; `apps/server` là bên thực sự chạy `mergeTaskBranch()` khi row được approve. | Đúng đề xuất trong §10.2. [ADR 0017](adr/0017-approval-gates-and-budget-rules.md). |
-| §10.1 | Master dùng Agent SDK hay Messages API? | **Messages API** + tool tự viết, giữ nguyên đề xuất. Phase machine nằm trong code, không nằm trong prompt. [ADR 0007](adr/0007-master-on-claude-opus-5-messages-api.md), [ADR 0013](adr/0013-phase-machine-outside-the-llm.md). |  |
+| §10.1 | Master dùng Agent SDK hay Messages API? | Provider registry hỗ trợ **OpenAI Responses** và **Anthropic Messages**, tool loop tự viết. Phase machine vẫn nằm trong code. [ADR 0020](adr/0020-production-master-provider-registry.md), [ADR 0013](adr/0013-phase-machine-outside-the-llm.md). |  |
 | §10.3 | Workspace không phải git? | **Không** — `POST /api/workspaces` từ chối path không phải git repository. | Worktree phụ thuộc git, đúng đề xuất. |
 
 ### 0.3 Thêm ngoài kế hoạch
 
-- **`DemoLlmClient`** (`apps/server/src/master/demo-llm.ts`): khi không có
-  `ANTHROPIC_API_KEY`, Master vẫn chạy được bằng một script deterministic đi qua
-  đúng phase machine và đúng strict tool validation. Kế hoạch không có bước này.
-  [ADR 0019](adr/0019-demo-llm-client-without-an-api-key.md).
-- **`@nexestra/adapter-fake`**: harness giả ghi file **thật** vào worktree, nên
-  `git diff`, Editor surface và lệnh verification đều thấy thay đổi thật.
+- **`DemoLlmClient`** (`apps/server/src/master/demo-llm.ts`) còn là test helper
+  deterministic; production fallback của M7 đã bị M8 supersede.
+  [ADR 0019](adr/0019-demo-llm-client-without-an-api-key.md), [ADR 0020](adr/0020-production-master-provider-registry.md).
+- **`@nexestra/adapter-fake`**: test-only harness ghi file **thật** vào temp
+  worktree, nên integration test vẫn chứng minh diff/verification mà không
+  xuất hiện trong production.
   [ADR 0018](adr/0018-fake-harness-for-dev-and-tests.md).
 - **`e2e/`**: Playwright chạy trên `apps/web/dist` do server thật phục vụ, không
   mock API, không stub fetch.
-- **`docs/adr/`**: 19 ADR, một cái cho mỗi quyết định §1 cộng các quyết định phát
+- **`docs/adr/`**: 21 ADR, một cái cho mỗi quyết định §1 cộng các quyết định phát
   sinh khi implement.
 
 ---

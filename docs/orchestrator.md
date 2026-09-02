@@ -1,6 +1,6 @@
 # The orchestration engine (`@nexestra/orchestrator`)
 
-Milestone M5. The orchestrator turns a `Plan` into harness runs: it schedules
+Milestone M5, production-hardened in M8. The orchestrator turns a `Plan` into harness runs: it schedules
 ready tasks over the DAG, gives each one a git worktree, cross-reviews the
 result with a second harness, proves the acceptance criteria by running them,
 retries with the failure attached, and asks the Master to replan when the
@@ -331,15 +331,15 @@ plan; the file names are what actually does them.
 
 2. **The adapter registry** (`harnesses.ts`) constructs `createCodexAdapter()`
    and `createOpenCodeAdapter()` and caches their `discover()` results, which
-   shell out. Two switches change what is registered:
+   shell out. Production discovery enumerates only adapters actually
+   registered in the process. One switch narrows the registry:
 
    | Switch | Effect |
    |--------|--------|
-   | `NEXESTRA_FAKE_HARNESS=1`, or `AppSettings.enableFakeHarness` | `createFakeHarnessAdapter()` stands in for `codex`, `opencode` **and** `fake`, so an existing plan still runs. `discover()` says so in its warnings. |
    | `NEXESTRA_HARNESSES=codex` | Register only these ids. One adapter ⇒ no cross-review ⇒ no second model billed. |
 
-   The env var wins over the setting: it is a per-process override, the setting
-   is the durable default.
+   Fake adapters are injected by tests only; no setting or environment variable
+   can register one in production (ADR 0020).
 
 3. **`ExecutionRuntime` is the `MasterBridge`.** `notify()` does two things
    with every `OrchestratorEvent`:

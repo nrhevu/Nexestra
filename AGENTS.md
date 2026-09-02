@@ -27,9 +27,8 @@ All four gates must be green before a merge. `pnpm test` must stay green with no
 Codex, no OpenCode and no `ANTHROPIC_API_KEY` installed — 472 passing, 6 skipped
 (the skips are opt-in live tests).
 
-Useful switches while developing: `NEXESTRA_FAKE_HARNESS=1` (scripted stand-in
-harness, no quota), `NEXESTRA_SEED_MOCK=1` (demo content),
-`NEXESTRA_HARNESSES=codex` (one adapter, so no cross-review),
+Useful switches while developing: `NEXESTRA_HARNESSES=codex` (one real adapter,
+so no cross-review),
 `NEXESTRA_HOME=/tmp/…` (a scratch database). Full table in the README.
 
 ## Package map
@@ -42,7 +41,7 @@ harness, no quota), `NEXESTRA_SEED_MOCK=1` (demo content),
 | `@nexestra/orchestrator` | The dispatch / review / verify loop as a **library**: scheduler, worktrees, retry, replan, approvals, budget, merge, recovery |
 | `@nexestra/adapter-codex` | `codex exec --json` → `HarnessEvent`, plus the shared git worktree primitives |
 | `@nexestra/adapter-opencode` | `opencode serve` + SSE → `HarnessEvent`, over plain `fetch` |
-| `@nexestra/adapter-fake` | The scripted stand-in; writes real files into the real worktree |
+| `@nexestra/adapter-fake` | Test-only scripted adapter; never registered by production |
 | `@nexestra/ui-kit` | Terminal-like components + the CSS-variable design tokens |
 | `@nexestra/server` (`apps/server`) | Hono REST + `ws`; fills in the Master's seams (`src/master/`) and the loop's seams (`src/execution/`) |
 | `@nexestra/web` (`apps/web`) | React 19 SPA: shell, four surfaces, settings |
@@ -134,8 +133,9 @@ Status; cite the files that implement it) and a row in
 ## Known gaps to not be surprised by
 
 `pause()` does not suspend a live run. Cost reads `$0.00` when a task leaves
-`model` unset. The demo model plans but does not really supervise. One process
-must own the SQLite file, because the approval gate waits on the in-process
+`model` unset. A missing Master credential leaves planning explicitly
+unconfigured; there is no demo fallback. One process must own the SQLite file,
+because the approval gate waits on the in-process
 event fan-out. Worktrees accumulate. The event log is never pruned. The
 authoritative lists are `docs/ARCHITECTURE.md` §11 and `docs/orchestrator.md`
 §9.

@@ -17,9 +17,9 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { FakeAdapterOptions } from "@nexestra/adapter-fake";
+import { createFakeHarnessAdapter, retryableFailure } from "@nexestra/adapter-fake";
 import type { AcceptanceCriterion, NexestraEvent } from "@nexestra/core";
-import type { FakeAdapterOptions } from "@nexestra/orchestrator";
-import { createFakeHarnessAdapter, retryableFailure } from "@nexestra/orchestrator";
 import { createStore, type NexestraStore } from "@nexestra/storage";
 import { execa } from "execa";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";

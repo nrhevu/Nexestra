@@ -1,8 +1,15 @@
-# Architecture — state after M6
+# Architecture — M6 foundation, amended by M8 hardening
 
 `docs/PLAN.md` describes where Nexestra is going. This file describes what is
 actually in the repository right now, so a reader can tell implemented code
 from planned code at a glance.
+
+**M8 current-state amendment.** Production starts empty, registers only real
+Codex/OpenCode harnesses, and requires a configured OpenAI, Anthropic or custom
+Master provider. The Master owns research, design, planning and project-memory
+work; coding/testing/build work is delegated as persisted tasks. The web shell
+uses the Slack-inspired layout recorded in ADR 0021. Older milestone detail
+below remains useful, but ADR 0020 wins wherever it mentions demo/fake startup.
 
 **Milestone reached: M6 — the loop is closed.** A vague sentence in the Chat
 surface becomes clarifying questions, a spec with verifiable acceptance
@@ -26,11 +33,8 @@ same WebSocket as everything else (§11).
 | `@nexestra/adapter-codex` | **implemented** | `codex exec --json` → `HarnessEvent`, plus the git worktree primitives everything else reuses. |
 | `@nexestra/adapter-opencode` | **implemented** | `opencode serve` + SSE → `HarnessEvent`, with permission replies and per-workspace server management. |
 | `@nexestra/web` | **implemented** | React 19 SPA: shell layout, four surfaces, settings, keyboard shortcuts, command palette — all on `/api`, with TanStack Query mutations and a `/ws` connection that folds events into the cache, including a live Master turn. |
-| `@nexestra/ui-kit` | **implemented** | Terminal-like component set plus the CSS-variable design tokens for the dark and light palettes. |
-| `@nexestra/master` | **implemented** | The Master agent (M2): the phase machine, the per-phase tool surface, strict tool schemas, spec and plan bookkeeping, budget rules, the `LlmClient` / `MasterHost` / `MasterStore` seams and the Anthropic client. A library — no HTTP, no database, no processes. See `docs/master.md`. |
-| `@nexestra/adapter-codex` | **implemented** | `HarnessAdapter` over `codex exec --json` (M4): discovery, worktree preparation, JSONL parsing, control and usage, contract-tested against recorded fixtures. Nothing calls it yet — see `docs/adapters/codex.md`. |
-| `@nexestra/orchestrator` | **placeholder** | `selectReadyTasks()` and the default concurrency. `createOrchestrator()` throws. It will implement `ExecutionHost` (§6.3) in M4. |
-| `@nexestra/adapter-opencode` | **placeholder** | Id + contract-tested version range. Lands in M5. |
+| `@nexestra/ui-kit` | **implemented** | Slack-inspired product components and CSS-variable dark/light tokens; code, diffs and terminals retain the mono tokens. |
+| `@nexestra/adapter-fake` | **test only** | Deterministic `HarnessAdapter` injected by unit/integration tests; never registered or exposed by production. |
 
 ### Workspace linking
 
@@ -249,12 +253,12 @@ deliberate mutation.
 
 Workspace-scoped memories are neither cleared nor replayed by a thread rebuild.
 
-### 3.7 Seeding
+### 3.7 Test fixture seeding
 
 `seedMock(store)` writes the `@nexestra/core` fixtures through the commands, so
-the demo content has a real event log behind it. It is idempotent: a store that
-already has a workspace is left alone. Trigger it with `NEXESTRA_SEED_MOCK=1`
-or `--seed-mock`.
+tests can build a database with a real event log behind it. It is idempotent: a
+store that already has a workspace is left alone. Production startup has no
+seed flag or automatic fixture path; a new installation starts empty.
 
 ---
 
@@ -381,7 +385,7 @@ POST /api/threads/:id/master/send        ← user message / answers / approval
         ▼
    MasterRunner            one live MasterSession per thread,
         │                  one turn at a time per thread
-        ├── LlmClient      AnthropicLlmClient  |  DemoLlmClient   (§6.4)
+        ├── LlmClient      OpenAI Responses | Anthropic Messages (§6.4)
         ├── MasterStore    StorageMasterStore  → master_messages / master_state
         └── MasterHost     ServerMasterHost    → NexestraStore commands
                                  └── ExecutionHost  (§6.3, not available yet)
@@ -399,6 +403,7 @@ and reaches the UI without extra plumbing.
 | Callback | What it writes |
 |----------|----------------|
 | `readWorkspace` / `searchCode` | nothing — `createFsWorkspaceReader` on the workspace's repository root, confined to it |
+| `searchMemory` | nothing — searches persisted project/thread memories by query and type |
 | `recordMemory` | `upsertMemory` + `linkMemories` (links to nodes that do not exist yet are dropped, not fatal) |
 | `requestApproval` | `createApproval`, always `pending`: the decision is the user's |
 | `onSpecUpdated` | `upsertSpec` (`spec.frozen` when the approval flips `frozen`) |
@@ -476,15 +481,18 @@ user instead of the turn crashing, and does not believe a run started.
 
 ### 6.4 Which model
 
-`ANTHROPIC_API_KEY` (or `ANTHROPIC_AUTH_TOKEN`) present → `claude-opus-5` via
-`createAnthropicLlmClient()`. Otherwise `DemoLlmClient`: a deterministic,
-scripted stand-in that reads the workspace, asks three clarifying questions,
-drafts a spec with three verifiable acceptance criteria, requests approval and
-proposes a four-task plan. It is a real `LlmClient`, so it goes through the
-same phase machine, the same strict tool validation and the same store writes
-— what it is not is intelligent. `NEXESTRA_MASTER_LLM=demo|anthropic`
-overrides the choice; `GET /api/health` and `GET /api/settings` report which
-one is live and whether a key was found, never the key itself.
+`AppSettings.masterProviders` is the persisted registry for OpenAI Responses,
+Anthropic Messages and protocol-compatible custom endpoints. Each entry stores
+metadata plus the name of a server environment variable; its secret value
+never reaches SQLite or the browser. `activeMasterProviderId` selects the
+provider, and changes apply on the next turn without restarting the server.
+
+The OpenAI client sends `store: false` and translates the canonical durable
+history and strict Master tools into Responses API items. The built-in model is
+`chat-latest` and is editable (for example to `gpt-5.6`). The Anthropic client
+supports a configurable base URL and Claude model. With no ready provider,
+health/settings report `configuration required` and a Master turn fails
+honestly; there is no scripted fallback. See ADR 0020.
 
 The Master's prompts are Markdown read at run time, which the esbuild bundle
 does not carry. `scripts/build.mjs` copies them into `dist/prompts` and
@@ -585,7 +593,7 @@ ones as they arrive.
 
 `run.event_appended` is **appended** to `keys.runEvents(runId)` rather than
 invalidating it. A refetch per line would be one HTTP request per token of
-harness output, and the terminal writes only the tail it has not written yet.
+    harness output, and the terminal writes only the tail it has not written yet.
 
 ### Interactions that persist
 
@@ -621,7 +629,7 @@ apps/web/src
   app.css               layout for the shell, the four surfaces and the dialog
   shell/
     AppShell.tsx        rail | navigation | content; mounts keyboard, palette, /ws
-    WorkspaceRail.tsx   48px workspace rail + "add workspace" dialog
+    WorkspaceRail.tsx   workspace rail + "add workspace" dialog
     NavigationPanel.tsx THREADS list + "new thread" dialog, SURFACES, Settings
     EmptyWorkspace.tsx  /w/:workspaceId with no thread yet
     PromptDialog.tsx    one-field modal
@@ -687,14 +695,14 @@ the main pane.
     `/ws` server for subscribe / push / unsubscribe, **and the M3 acceptance
     run**: a scripted model driven through the real store from a vague request
     to four task rows, including the approval resuming a suspended turn and the
-    `master.*` events arriving in stream order. The demo model gets the same
-    acceptance test, because it is what someone without an API key meets;
+    `master.*` events arriving in stream order. Deterministic model clients are
+    injected only by tests; production never selects them;
   - `apps/web` runs component tests in jsdom (Vitest + React Testing Library),
     aliased to the workspace sources exactly as the app is, so a test cannot
     pass against a stale build — the two M3 cards, the **approval queue** and
     the **run terminal reducer**;
   - `apps/server/src/execution/execution.test.ts` **(M6)** is the acceptance
-    run: only the model (`DemoLlmClient`) and the harness
+    run: only the test-injected model (`DemoLlmClient`) and harness
     (`createFakeHarnessAdapter`) are stubbed, and everything between them is
     production code — the phase machine, `ServerMasterHost`, the real
     `ThreadEngine`, real git worktrees on a temp repository, real verification
@@ -720,7 +728,7 @@ POST /api/threads/:id/execution/start
         ▼
    ExecutionRuntime ─────────────────────────────► Orchestrator
         │  (is the MasterBridge)                        │
-        │                                               ├── HarnessAdapter  codex | opencode | fake
+        │                                               ├── HarnessAdapter  codex | opencode
         ├── notify()  ──► orchestrator.* store events    ├── git worktree per task
         │             └─► MasterSession.applyTrigger     └── NexestraStore   runs, events, artifacts
         ├── requestReplan() ──► MasterRunner.send({kind:"continue"})
@@ -732,16 +740,16 @@ POST /api/threads/:id/execution/start
 
 | File | Responsibility |
 |------|----------------|
-| `harnesses.ts` | Builds the adapter registry and caches `discover()` (it shells out). `NEXESTRA_FAKE_HARNESS=1` / `AppSettings.enableFakeHarness` substitutes the scripted adapter for every id; `NEXESTRA_HARNESSES=codex` registers only what is named. `dispose()` is what kills the OpenCode servers. |
+| `harnesses.ts` | Builds the production Codex/OpenCode registry and caches `discover()` (it shells out). `NEXESTRA_HARNESSES=codex` registers only what is named. Discovery enumerates registered adapters only; `dispose()` kills the OpenCode servers. |
 | `runtime.ts` | `ExecutionRuntime`: owns the orchestrator, **is** the `MasterBridge`, exposes the `ExecutionHost` the Master's host delegates to, sweeps `recover()` at startup, lands approved merges, and disposes everything on a signal. |
 | `progress.ts` | `OrchestratorEvent` → one `OrchestratorProgress` line. The browser never has to know the loop's union. |
 | `files.ts` | The Editor's data: a run's worktree as a tree (marked against the base branch), one file's text, and the unified diff. |
-| `fake-script.ts` | What the simulated harness "does" — it writes a real Markdown file per task, so the diff, the commit and the verification commands all see a tree that genuinely changed. |
+| `fake-script.ts` | Integration-test support: deterministic worktree writes used only with an injected test adapter. |
 
 ### 10.1 Configuration
 
-`AppSettings` supplies `concurrency`, `maxAttempts`, `autoMerge`, `budgetUSD`
-and `enableFakeHarness`; `DEFAULT_PRICE_TABLE` from `@nexestra/core` turns
+`AppSettings` supplies `concurrency`, `maxAttempts`, `autoMerge` and
+`budgetUSD`; `DEFAULT_PRICE_TABLE` from `@nexestra/core` turns
 tokens into dollars. Worktrees live at
 `$NEXESTRA_HOME/worktrees/<threadId>/<taskId>`.
 
@@ -810,11 +818,9 @@ never silently lost.
   but a Codex CLI signed in with a ChatGPT account rejects it (and
   `gpt-5.1-codex-mini`) with a 400. Leaving the model unset works everywhere;
   `KNOWN_CODEX_MODELS` is a static hint, not detection.
-- **The demo model does not really supervise.** It records a decision and waits
-  while the orchestrator runs the plan; it cannot replan, and a thread it drives
-  reaches `done` because the loop proved the criteria, not because the model
-  checked. That is the point of a scripted stand-in, but it means the `verifying`
-  and `executing` phases are only lightly exercised without an API key.
+- **Agentic Master work requires a configured provider.** Without a usable
+  server-side credential, the app remains usable for persisted project data but
+  does not generate questions, specs or plans.
 - **One process owns the store.** The approval gate waits on the in-process
   `EventStore` fan-out, so a second process resolving an approval in the same
   SQLite file would not release the waiter.
@@ -825,19 +831,14 @@ never silently lost.
   pruning them. Text is coalesced and progress is one row per loop event, but a
   long thread will still carry thousands of rows the UI only needs while the
   work is live.
-- The demo model is a script, not a fallback model: it produces a sensible
-  shape for any request but does not understand any of them.
 - `rebuildProjections` is thread-scoped and exposed as a library function only;
   there is no CLI or route that calls it, and no automatic integrity check at
   startup.
-- The seeded demo workspace points at `/Users/dev/Works/Nexestra`, which does
-  not exist. It is fixture data, not something the path validation ever saw —
-  workspaces created from the UI are validated.
 - The web bundle is still a single ~1.6 MB chunk. Code-splitting per surface is
   worth doing once the surfaces stop changing.
-- `apps/web` has component tests for the two M3 cards, the approval queue and
-  the terminal reducer; the surfaces themselves are untested, and Playwright
-  coverage is still planned for M7.
+- The Slack-inspired shell is desktop-first. Narrow screens reduce top-bar
+  detail but do not yet collapse the resizable navigation/context panels into
+  mobile drawers.
 - **A cancelled run leaves its worktree behind** until the next `recover()`
   prunes worktrees no live task claims. Nothing cleans up after a thread that
   finishes normally either, so `$NEXESTRA_HOME/worktrees` grows.

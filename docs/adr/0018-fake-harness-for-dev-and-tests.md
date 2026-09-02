@@ -40,9 +40,11 @@ for `codex` **and** `opencode` as well, so an existing plan runs unchanged.
 
 ## Status
 
-Accepted; amends PLAN.md §1.7 (`HarnessId` gains a fourth member). Implemented
+Partially superseded by [0020](0020-production-master-provider-registry.md).
+The package, schema member and injected test support remain; the production
+environment switch, Settings choice and discovery entry were removed in M8.
+Originally accepted as an amendment to PLAN.md §1.7. Implemented
 in `packages/adapters/fake/src/adapter.ts`,
 `packages/adapters/fake/src/scenarios.ts`,
 `packages/orchestrator/src/fake-adapter.ts`,
-`apps/server/src/execution/harnesses.ts`,
 `apps/server/src/execution/fake-script.ts`. `docs/testing.md` §3.

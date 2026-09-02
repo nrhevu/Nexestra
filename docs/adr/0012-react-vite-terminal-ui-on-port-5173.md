@@ -29,7 +29,9 @@ with an `index.html` fallback, and there is only one port.
 
 ## Status
 
-Accepted; amends PLAN.md §1.1 on the dev URL. Implemented in
+The React/Vite/port decision remains accepted; its terminal-like visual design
+was superseded by [0021](0021-slack-inspired-project-workspace.md) in M8.
+Originally amended PLAN.md §1.1 on the dev URL. Implemented in
 `apps/web/vite.config.ts`, `apps/server/src/config.ts` (`WEB_DEV_URL`,
 `DEV_MODE`), `apps/server/src/app.ts`, `apps/server/src/static.ts`,
 `packages/ui-kit/src/styles.css`. PLAN.md §1.11, §7.

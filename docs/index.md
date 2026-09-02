@@ -37,6 +37,8 @@ is depth on one part of it.
 3. [`adr/0013`](adr/0013-phase-machine-outside-the-llm.md) and
    [`adr/0014`](adr/0014-strict-tools-instead-of-structured-outputs.md) — why
    the process lives in code and the schemas are strict tools.
+4. [`adr/0020`](adr/0020-production-master-provider-registry.md) — OpenAI,
+   Anthropic and custom provider resolution, secrets and the no-fallback rule.
 
 ### Working on the orchestration loop
 
@@ -69,14 +71,15 @@ is depth on one part of it.
 1. [`ARCHITECTURE.md`](ARCHITECTURE.md) §7 (how data flows, the web data layer,
    which interactions persist) and §8 (the file structure, routes and the
    per-surface breakdown).
-2. [`PLAN.md`](PLAN.md) §7 — the wireframe the layout is built to.
-3. [`adr/0012`](adr/0012-react-vite-terminal-ui-on-port-5173.md).
+2. [`adr/0021`](adr/0021-slack-inspired-project-workspace.md) — the current
+   Slack-inspired shell and its interaction rules.
+3. [`PLAN.md`](PLAN.md) §7 — the original terminal wireframe, retained as
+   historical context.
 
 ### Writing or running tests
 
-1. [`testing.md`](testing.md) — the pyramid, what is real and what is
-   substituted at each layer, the e2e suite, the fake harness's scenarios, how
-   to record a fixture, and the live tests.
+1. [`testing.md`](testing.md) — the pyramid, test-only substitutes, the
+   credential-free production e2e suite, fixture recording and live tests.
 2. [`adr/0018`](adr/0018-fake-harness-for-dev-and-tests.md) and
    [`adr/0019`](adr/0019-demo-llm-client-without-an-api-key.md) — the two
    substitutes that make `pnpm test` runnable with no accounts.
@@ -91,14 +94,14 @@ gates, where the contracts live, and the rules that are not negotiable.
 | File | Milestone it describes | Contents |
 |------|------------------------|----------|
 | [`PLAN.md`](PLAN.md) | M0–M7 | The original plan (Vietnamese), with a status section at the top written after the fact |
-| [`ARCHITECTURE.md`](ARCHITECTURE.md) | M6 | The implemented system, end to end |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | M6, amended M8 | The implemented system, end to end |
 | [`master.md`](master.md) | M2, wired in M3 | `@nexestra/master` |
 | [`orchestrator.md`](orchestrator.md) | M5, wired in M6 | `@nexestra/orchestrator` |
 | [`harness-protocols.md`](harness-protocols.md) | M4/M5 groundwork | Recorded reference for Codex 0.148.0 and OpenCode 1.18.25 |
 | [`adapters/codex.md`](adapters/codex.md) | M4 | `@nexestra/adapter-codex` |
 | [`adapters/opencode.md`](adapters/opencode.md) | M5 | `@nexestra/adapter-opencode` |
-| [`testing.md`](testing.md) | M7 | The test pyramid, the fake harness, fixtures, live tests, the gates |
-| [`adr/`](adr/) | all | 19 decision records — see [`adr/0000-index.md`](adr/0000-index.md) |
+| [`testing.md`](testing.md) | M7, amended M8 | Test pyramid, test doubles, fixtures, e2e, live tests and gates |
+| [`adr/`](adr/) | all | 21 decision records — see [`adr/0000-index.md`](adr/0000-index.md) |
 | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | — | Conventions and workflow |
 | [`../CLAUDE.md`](../CLAUDE.md) | — | Orientation for AI coding agents |
 

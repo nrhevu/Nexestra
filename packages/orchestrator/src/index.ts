@@ -63,20 +63,6 @@ export {
   selectReadyTasks,
   ThreadEngine,
 } from "./engine.js";
-/* Test harness */
-export {
-  createFakeAdapter,
-  createFakeHarnessAdapter,
-  type FakeAdapterCall,
-  type FakeAdapterOptions,
-  type FakeHarnessAdapter,
-  type FakeRunContext,
-  type FakeRunScript,
-  fatalFailure,
-  retryableFailure,
-  reviewFindings,
-  writesFiles,
-} from "./fake-adapter.js";
 /* Prompt composition */
 export {
   buildExecuteInstructions,

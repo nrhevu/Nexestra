@@ -1,5 +1,5 @@
 /**
- * `@nexestra/adapter-fake` — a `HarnessAdapter` for demos, tests and e2e.
+ * `@nexestra/adapter-fake` — deterministic `HarnessAdapter` test support.
  *
  * Two entry points, one implementation:
  *
@@ -11,7 +11,7 @@
  * - `createFakeHarnessAdapter(options)` — script driven, for a unit test that
  *   wants to spell out the exact events a run emits.
  *
- * See `docs/testing.md` for how to switch a running server onto it.
+ * Production does not import or register this package. See `docs/testing.md`.
  */
 export type { CreateFakeAdapterOptions } from "./adapter.js";
 export {

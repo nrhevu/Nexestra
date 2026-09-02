@@ -14,12 +14,12 @@
   },
   "dependencies": {
     "@nexestra/adapter-codex": "workspace:*",
-    "@nexestra/adapter-fake": "workspace:*",
     "@nexestra/core": "workspace:*",
     "@nexestra/storage": "workspace:*",
     "execa": "10.0.1"
   },
   "devDependencies": {
+    "@nexestra/adapter-fake": "workspace:*",
     "@types/node": "26.4.1",
     "typescript": "5.9.3",
     "vitest": "4.1.11"

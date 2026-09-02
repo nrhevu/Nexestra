@@ -35,9 +35,6 @@ importers:
       '@nexestra/adapter-codex':
         specifier: workspace:*
         version: link:../../packages/adapters/codex
-      '@nexestra/adapter-fake':
-        specifier: workspace:*
-        version: link:../../packages/adapters/fake
       '@nexestra/adapter-opencode':
         specifier: workspace:*
         version: link:../../packages/adapters/opencode
@@ -66,6 +63,9 @@ importers:
         specifier: 4.5.4
         version: 4.5.4
     devDependencies:
+      '@nexestra/adapter-fake':
+        specifier: workspace:*
+        version: link:../../packages/adapters/fake
       '@types/node':
         specifier: 26.4.1
         version: 26.4.1
@@ -294,9 +294,6 @@ importers:
       '@nexestra/adapter-codex':
         specifier: workspace:*
         version: link:../adapters/codex
-      '@nexestra/adapter-fake':
-        specifier: workspace:*
-        version: link:../adapters/fake
       '@nexestra/core':
         specifier: workspace:*
         version: link:../core
@@ -307,6 +304,9 @@ importers:
         specifier: 10.0.1
         version: 10.0.1
     devDependencies:
+      '@nexestra/adapter-fake':
+        specifier: workspace:*
+        version: link:../adapters/fake
       '@types/node':
         specifier: 26.4.1
         version: 26.4.1

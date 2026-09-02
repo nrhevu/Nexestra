@@ -1,6 +1,6 @@
 # The Master agent (`@nexestra/master`)
 
-Milestone M2, wired into the server in M3 (§9). The Master turns a vague
+Milestone M2, wired into the server in M3 and provider-hardened in M8 (§9). The Master turns a vague
 request into a frozen `Spec` and a validated `Plan`, then supervises the
 harnesses that do the work.
 
@@ -9,14 +9,14 @@ no filesystem writes. Three seams keep it that way.
 
 | Seam | Interface | Real implementation | Test implementation |
 |------|-----------|---------------------|---------------------|
-| The model | `LlmClient` | `createAnthropicLlmClient()` | `createFakeLlmClient(script)` |
+| The model | `LlmClient` | OpenAI Responses or Anthropic Messages client | `createFakeLlmClient(script)` |
 | The world | `MasterHost` | `ServerMasterHost` in `apps/server` (M3) | `createFakeHost()` |
 | The transcript | `MasterStore` | `StorageMasterStore` over `@nexestra/storage` (M3) | `createInMemoryMasterStore()` |
 
 Because all three are injected, the entire loop — phases, tool validation, spec
 and plan bookkeeping, budget rules — runs in Vitest without an API key, a repo
-or a harness. One live smoke test exercises the real endpoint when a key is
-present.
+or a harness. Opt-in live smoke tests exercise real endpoints when credentials
+are present.
 
 ---
 
@@ -141,14 +141,14 @@ phase.
 
 | Phase | Tools |
 |-------|-------|
-| `intake` | `read_workspace`, `search_code`, `web_search`, `ask_user`, `update_spec`, `record_memory` |
-| `clarifying` | `ask_user`, `update_spec`, `record_memory`, `read_workspace`, `search_code`, `web_search`, `request_approval` |
+| `intake` | `read_workspace`, `search_code`, `search_memory`, `web_search`, `ask_user`, `update_spec`, `record_memory` |
+| `clarifying` | `ask_user`, `update_spec`, `record_memory`, `read_workspace`, `search_code`, `search_memory`, `web_search`, `request_approval` |
 | `spec_frozen` | `request_approval`, `record_memory`, `summarize` |
-| `planning` | `propose_plan`, `record_memory`, `read_workspace`, `search_code` |
-| `executing` | `dispatch_task`, `read_run_events`, `read_artifact`, `control_run`, `request_approval`, `replan`, `record_memory` |
-| `verifying` | `run_verification`, `read_artifact`, `mark_criterion`, `record_memory` |
-| `done` | `summarize`, `record_memory` |
-| `blocked` | `summarize`, `request_approval`, `record_memory` |
+| `planning` | `propose_plan`, `record_memory`, `search_memory`, `read_workspace`, `search_code` |
+| `executing` | `dispatch_task`, `read_run_events`, `read_artifact`, `control_run`, `request_approval`, `replan`, `record_memory`, `search_memory` |
+| `verifying` | `run_verification`, `read_artifact`, `mark_criterion`, `record_memory`, `search_memory` |
+| `done` | `summarize`, `record_memory`, `search_memory` |
+| `blocked` | `summarize`, `request_approval`, `record_memory`, `search_memory` |
 | `cancelled` | — |
 
 This is PLAN.md §4.1 with three additions the loop needs to work: `intake` can
@@ -331,7 +331,8 @@ through the **real** store: a scripted model, a temp SQLite database and the
 production `ServerMasterHost`, asserting that clarify → spec → approval → plan
 lands as rows, that resolving the approval over HTTP resumes the suspended
 turn, and that the `master.*` events reach the log in stream order.
-`demo-llm.test.ts` holds the demo model to the same bar.
+`demo-llm.test.ts` holds the integration-test model to the same bar; production
+never selects it.
 
 ---
 
@@ -348,7 +349,7 @@ POST /api/threads/:id/master/send    { kind: "user_message" | "answers" | "appro
         ▼
    MasterRunner                      one live MasterSession per thread,
         │                            one turn at a time per thread
-        ├── llm     createAnthropicLlmClient() | createDemoLlmClient()
+        ├── llm     dynamic OpenAI Responses | Anthropic Messages provider
         ├── store   StorageMasterStore   → master_messages / master_state
         └── host    ServerMasterHost     → NexestraStore commands
                           └── ExecutionHost  (the execution half, injectable)
@@ -418,25 +419,28 @@ thread's state away and restarted it at `intake`. The published copy in the
 `specs` table is the validated one (the host substitutes a placeholder goal
 until the model writes a real one); `master_state` holds the draft.
 
-### 9.6 Without an API key
+### 9.6 Provider resolution and missing credentials (M8)
 
-`DemoLlmClient` (`apps/server/src/master/demo-llm.ts`) is a deterministic
-`LlmClient` that plays the happy path: read the workspace, three clarifying
-questions with options, a spec with three verifiable acceptance criteria,
-`request_approval`, then a four-task plan with dependencies. It decides what to
-do next from the phase in the system suffix and from which tools the transcript
-already shows — no hidden state, so the same conversation always produces the
-same run. It goes through the same phase machine and the same strict tool
-validation as Opus 5. `GET /api/health` and `GET /api/settings` report which
-client is live and whether a key is present, never the key.
+`apps/server/src/master/llm.ts` is a stable `LlmClient` proxy that resolves the
+latest persisted provider settings at the start of each turn. It supports the
+`openai-responses` and `anthropic-messages` protocols, custom HTTPS base URLs,
+editable models, and loopback HTTP endpoints. Provider metadata stores only an
+environment-variable name; the secret value remains in the server process.
+
+The OpenAI implementation maps the canonical tool/history format to Responses
+API items, uses strict function schemas, exposes web search as a native tool,
+and sends `store: false`. With no ready provider, the proxy throws a clear
+configuration error and Settings reports which credential is missing. It does
+not substitute `DemoLlmClient`; that client remains an injected integration
+test helper. See ADR 0020.
 
 ---
 
 ## 10. Known gaps
 
-- **Execution is still a stub.** The Master can plan but not dispatch; the
-  `ExecutionHost` the server injects refuses every execution-phase tool until
-  the orchestrator lands (§9.4).
+- **Changing provider mid-thread changes model semantics.** Durable history is
+  provider-neutral and translated at the boundary, but a different model may
+  interpret the same history differently.
 - **`thinking_summary` is not persisted.** The server drops it rather than
   narrating it, so a reloaded thread shows the Master's text but not its
   reasoning summaries.

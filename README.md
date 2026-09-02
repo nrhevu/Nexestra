@@ -3,8 +3,8 @@
 Nexestra is a control center for agentic work: it turns a vague request into a
 spec with acceptance criteria you can actually check, then plans the work and
 drives coding harnesses — Codex, OpenCode — until every criterion has been
-proved by running it. A Master agent (Claude Opus 5) does the clarifying,
-planning and supervising; an orchestrator gives each task its own git worktree,
+proved by running it. A configurable Master agent does the research,
+clarifying, design, planning and project-memory work; an orchestrator gives each task its own git worktree,
 has a *second* harness review the result, runs the acceptance criteria itself,
 retries with the failure attached, and stops at a merge you approve. It is
 local-first: one Node process on your machine, a browser SPA, a SQLite file, and
@@ -27,34 +27,34 @@ Open **<http://localhost:5173>**. The first run creates `~/.nexestra/nexestra.db
 and applies the migrations. It starts empty: add a workspace from the `+` in the
 left rail, pointing it at a **git repository** on your machine.
 
-Want the whole loop without spending anything? Nexestra ships a scripted
-stand-in harness that writes real files into the real worktrees, so the diff,
-the commit and the verification commands all see a tree that genuinely changed:
+The application never silently substitutes generated demo content or a scripted
+model. Without a configured provider, Settings and Chat report that the Master
+is not ready while workspace, memory and task-management features remain
+available.
 
-```bash
-NEXESTRA_FAKE_HARNESS=1 pnpm dev
-```
-
-Then, as you add credentials, more of it becomes real:
+Configure the Master from **Settings → Master provider**. The built-ins are:
 
 | You have | What runs |
 |----------|-----------|
-| nothing | The demo Master (a script) plans; the simulated harness "executes" |
-| `ANTHROPIC_API_KEY` (or `ANTHROPIC_AUTH_TOKEN`) | Claude Opus 5 is the Master |
+| `OPENAI_API_KEY` | OpenAI Responses with `chat-latest` by default (or select `gpt-5.6`) |
+| `ANTHROPIC_API_KEY` (or `ANTHROPIC_AUTH_TOKEN`) | Anthropic Messages with Claude Opus 5 |
+| a compatible endpoint | Add a custom OpenAI Responses or Anthropic Messages provider, model and credential environment variable |
 | `codex` on `PATH`, after `codex login` | Real Codex runs the tasks |
-| `opencode` too, after `opencode auth login` | The full loop: Opus plans, Codex executes, OpenCode cross-reviews |
+| `opencode` too, after `opencode auth login` | A second real harness can cross-review task results |
 
-The key is read from the **server's** environment and never reaches the browser
-— only *whether* one is set does. Harness auth is each harness's own business;
+Provider keys are read from the **server's** environment and never reach the
+browser or SQLite — only the environment-variable name and whether it is set do.
+OpenAI does not expose ChatGPT subscription OAuth for third-party applications,
+so Nexestra uses official API credentials rather than pretending that a ChatGPT
+web login authorizes API calls. Harness auth is each harness's own business;
 `GET /api/harnesses` reports what `discover()` found (for OpenCode that means
 `GET /provider` returning at least one connected provider), and
 **Settings → Detected harnesses → [Refresh detection]** re-runs it after you
 install or authenticate one.
 
-Two more switches worth knowing:
+One switch worth knowing:
 
 ```bash
-NEXESTRA_SEED_MOCK=1 pnpm dev     # load demo content into an empty database
 NEXESTRA_HARNESSES=codex pnpm dev # one adapter ⇒ no cross-review ⇒ no second model billed
 ```
 
@@ -117,22 +117,20 @@ worktree and captured the exit code, never because the harness said so.
 | Variable | Default | Meaning |
 |----------|---------|---------|
 | `NEXESTRA_PORT` | `4242` | Server port (Vite's proxy target too) |
-| `NEXESTRA_HOST` | `127.0.0.1` | Server bind address — keep it local |
+| `NEXESTRA_HOST` | `127.0.0.1` | Server bind address; only `127.0.0.1`, `localhost` or `::1` is accepted |
 | `NEXESTRA_HOME` | `~/.nexestra` | Where `nexestra.db`, `data/` and `worktrees/` live |
 | `NEXESTRA_DEV` | unset | `1` forces the redirect-to-Vite behaviour (set by the server's `dev` script) |
 | `NEXESTRA_WEB_DEV_URL` | `http://localhost:5173` | Where dev-mode non-API requests are redirected |
-| `NEXESTRA_SEED_MOCK` | unset | `1` loads the demo fixtures into an empty database (same as `--seed-mock`) |
-| `NEXESTRA_FAKE_HARNESS` | unset | `1` (or `true`) replaces every harness with the scripted stand-in |
-| `NEXESTRA_HARNESSES` | all | Comma-separated ids to register: `codex`, `opencode`, `acp`, `fake` |
-| `NEXESTRA_MASTER_LLM` | auto | `demo` or `anthropic`; otherwise decided by whether a key is present |
-| `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` | unset | The Master's credentials. Never sent to the browser |
+| `NEXESTRA_HARNESSES` | all | Comma-separated real adapters to register: `codex`, `opencode` |
+| `OPENAI_API_KEY` | unset | Credential for the built-in OpenAI Master provider |
+| `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` | unset | Credential for the built-in Anthropic Master provider |
+| custom provider variable | unset | Any environment-variable name configured in Settings; its value stays server-side |
 | `NEXESTRA_LIVE_CODEX` | unset | `1` runs the opt-in Codex live tests |
 | `NEXESTRA_LIVE_CODEX_MODEL` | adapter default | Model for those |
 | `NEXESTRA_LIVE_OPENCODE` | unset | `1` runs the opt-in OpenCode live tests |
 | `NEXESTRA_LIVE_OPENCODE_MODEL` | `openai/gpt-5.4-mini` | Model for those |
 | `NEXESTRA_E2E_PORT` | `4282` | Port the Playwright suite's server listens on |
 | `NEXESTRA_E2E_KEEP` | unset | `1` keeps the scratch home, repo and server log after an e2e run |
-| `NEXESTRA_E2E_EXECUTION` | unset | `1` opts into `e2e/tests/execution.spec.ts` |
 
 ## Scripts
 
@@ -149,9 +147,8 @@ worktree and captured the exit code, never because the harness said so.
 | `pnpm e2e:only` | Skip the build; `pnpm e2e:browsers` installs Chromium; `pnpm e2e:report` opens the last report |
 | `pnpm --filter @nexestra/storage db:generate` | Regenerate `drizzle/` **and** re-embed the SQL into `src/migrations.ts` |
 
-`pnpm test` is green on a machine with no Codex, no OpenCode and no API key —
-**472 passing, 6 skipped** across 10 packages. The 6 skips are live tests behind
-the opt-in variables above.
+`pnpm test` is green on a machine with no Codex, no OpenCode and no API key.
+Paid or logged-in live tests remain opt-in behind the variables above.
 
 ## Repo layout
 
@@ -160,7 +157,7 @@ nexestra/
   apps/
     server/                 # Hono REST + ws WebSocket over the store
       src/routes/           # one file per resource group
-      src/master/           # the Master runtime: runner, host, store, demo model
+      src/master/           # Master runner, provider resolver, host and store
       src/execution/        # the orchestrator wired up: registry, runtime, files
     web/                    # React 19 SPA — the four surfaces
       src/shell/            # rail, navigation, surface frame, keyboard, palette, approvals
@@ -169,13 +166,13 @@ nexestra/
       src/lib/              # TanStack Query hooks, the /ws client, Zustand, formatting
   packages/
     core/                   # zod domain schemas, HarnessAdapter contract, events, wire formats
-    ui-kit/                 # terminal-like components + design tokens
+    ui-kit/                 # Slack-inspired components + design tokens
     storage/                # Drizzle schema, event store, commands, replay, seeding
     master/                 # the Master agent: phases, tools, spec + plan (a library)
     orchestrator/           # the dispatch / review / verify loop (a library)
     adapters/codex/         # `codex exec --json`
     adapters/opencode/      # `opencode serve` + SSE
-    adapters/fake/          # the scripted stand-in
+    adapters/fake/          # deterministic test support; never registered in production
   e2e/                      # Playwright, against the built app on a real server
   fixtures/                 # recorded harness output for the contract tests
   docs/                     # see docs/index.md
@@ -228,9 +225,9 @@ Migrations are applied at startup from the array embedded in
 - **`gpt-5.1-codex` is not a safe default for every account.** It is what
   `AppSettings.defaultModel` says, but a Codex CLI signed in with a ChatGPT
   account rejects it with a 400. Leaving the model unset works everywhere.
-- **The demo model does not really supervise.** Without an API key a thread
-  reaches `done` because the loop proved the criteria, not because a model
-  checked — so `executing` and `verifying` are only lightly exercised.
+- **A Master provider is required for agentic planning.** With no usable
+  server-side credential, the runtime reports `configuration required` and does
+  not fabricate a plan.
 - **Usage events are treated as increments.** A harness reporting cumulative
   totals per turn would over-count; Codex emits one per turn, so this is correct
   today and worth revisiting per adapter.

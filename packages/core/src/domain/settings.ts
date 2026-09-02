@@ -8,11 +8,18 @@ const ProviderBaseUrlSchema = z.url().refine(
   (value) => {
     const url = new URL(value);
     return (
-      url.protocol === "https:" ||
-      (url.protocol === "http:" && ["127.0.0.1", "localhost", "::1"].includes(url.hostname))
+      (url.protocol === "https:" ||
+        (url.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname))) &&
+      url.username === "" &&
+      url.password === "" &&
+      url.search === "" &&
+      url.hash === ""
     );
   },
-  { message: "provider URLs must use HTTPS, except for loopback HTTP endpoints" },
+  {
+    message:
+      "provider URLs must use HTTPS (except loopback HTTP) and cannot embed credentials, query parameters or fragments",
+  },
 );
 
 /**

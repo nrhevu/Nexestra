@@ -40,7 +40,7 @@ conversation always produces the same run.
 
 ## Status
 
-Accepted. Implemented in `apps/server/src/master/demo-llm.ts`,
-`apps/server/src/master/llm.ts`, `packages/master/src/llm/fake.ts` (the unit
-test client). Proved by `apps/server/src/master/demo-llm.test.ts`.
-`docs/master.md` §9.6.
+Superseded by [0020](0020-production-master-provider-registry.md). M8 removed
+the startup fallback and keeps `DemoLlmClient` only as injected deterministic
+test support. `apps/server/src/master/llm.ts` now resolves a persisted real
+provider and reports an honest unconfigured state when credentials are absent.

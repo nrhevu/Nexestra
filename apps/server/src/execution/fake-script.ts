@@ -12,8 +12,9 @@
  * changed — everything downstream of the harness is exercised for real. Only
  * the model is missing.
  */
+
+import type { FakeRunContext, FakeRunScript } from "@nexestra/adapter-fake";
 import type { HarnessEvent } from "@nexestra/core";
-import type { FakeRunContext, FakeRunScript } from "@nexestra/orchestrator";
 
 /** Directory the simulated harness writes into, relative to the worktree. */
 export const DEMO_OUTPUT_DIR = "nexestra-demo";

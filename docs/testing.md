@@ -1,19 +1,19 @@
 # Testing Nexestra
 
-Milestone M7. Nexestra drives real processes against real repositories, so the
+Milestone M7, amended by M8 hardening. Nexestra drives real processes against real repositories, so the
 question every layer of this suite answers is the same one: **how much of the
 system is really under test, and what stood in for the rest?**
 
 The rule the whole pyramid is built on: *never fake the thing you are testing,
 and never require a thing you are not*. `pnpm test` is green on a laptop with
-no Codex, no OpenCode and no `ANTHROPIC_API_KEY` — because every external
+no Codex, no OpenCode and no provider API key — because every external
 dependency sits behind an interface with a real implementation and a
 substitute, not because the tests avoid the hard parts.
 
 | Seam | Real | Substitute |
 |------|------|------------|
 | The harnesses | `@nexestra/adapter-codex`, `@nexestra/adapter-opencode` | `@nexestra/adapter-fake` |
-| The model | `createAnthropicLlmClient()` (`claude-opus-5`) | `FakeLlmClient` (unit), `DemoLlmClient` (server, e2e) |
+| The model | OpenAI Responses or Anthropic Messages provider | `FakeLlmClient` / `DemoLlmClient` in unit and integration tests only |
 | The repository | the user's checkout | `createTempGitRepo()` from `@nexestra/core/testing` |
 | The database | `~/.nexestra/nexestra.db` | the same store on a temp `NEXESTRA_HOME` |
 | The browser | the user's | Playwright + Chromium, against the built SPA |
@@ -58,8 +58,8 @@ in for the harnesses. The verification commands are really executed and the
 diffs are really `git diff`, because the fake writes real files.
 
 `apps/server` does the same one level up: `createApp(store, { master })` takes
-an injected Master runtime, so the routes and the WebSocket are tested against
-a scripted model.
+an injected Master runtime, so the routes and WebSocket can be tested against
+a deterministic model without creating a production fallback.
 
 ```bash
 pnpm --filter @nexestra/orchestrator test
@@ -97,9 +97,9 @@ pnpm e2e
    - creates a scratch `NEXESTRA_HOME` under the system temp directory;
    - creates a throwaway git repository (`createTempGitRepo()`) for a workspace
      to point at;
-   - starts the server on **port 4282** with `NEXESTRA_SEED_MOCK=0`, no
-     `ANTHROPIC_API_KEY` (so the Master is the deterministic `DemoLlmClient`)
-     and `NEXESTRA_FAKE_HARNESS=1`;
+   - starts `apps/server/dist/index.js` on **port 4282** with an empty database
+     and strips OpenAI and Anthropic credentials, so readiness is tested without
+     a paid or simulated Master;
    - waits for `GET /api/health`, then writes `e2e/.e2e-state.json` for the
      workers.
 3. The specs run in **one worker, serially** — they share one server and one
@@ -121,22 +121,14 @@ pnpm exec playwright show-trace e2e/test-results/<test>/trace.zip
 |------|--------|--------|
 | `tests/shell.spec.ts` | shell chrome, the four surfaces by mouse and by `⌘1..⌘4`, deep-link reload | passing |
 | `tests/workspace.spec.ts` | adding a workspace pointed at a real git repo, creating a thread, rejecting a non-repo path | passing |
-| `tests/chat.spec.ts` | vague message → question card → answers → spec card → approve → plan → tasks on the board | passing |
+| `tests/chat.spec.ts` | an unconfigured Master fails honestly and still persists the user's transcript | passing |
 | `tests/board.spec.ts` | dragging a card between columns, persistence across reload, selection | passing |
-| `tests/settings.spec.ts` | the Master runtime it actually started with, the harness table, saving a default | passing |
-| `tests/execution.spec.ts` | a task run to `done` on the fake harness, the Editor showing the worktree, an approval unblocking a run | **skipped — M6** |
+| `tests/settings.spec.ts` | honest provider readiness, real harness discovery with no fake entry, saving defaults | passing |
+| `tests/execution.spec.ts` | a persisted task assigned to Codex, board handoff controls, production registry contains only Codex/OpenCode | passing |
 
-`execution.spec.ts` is skipped for two reasons, both of which name themselves
-in the skip message:
-
-1. `apps/server` does not read `NEXESTRA_FAKE_HARNESS` yet — the orchestrator
-   is not wired into the server on this branch. Global setup greps the server
-   sources for the variable and records the answer, so the gate opens on its
-   own when the wiring lands.
-2. There is still no way to *dispatch* a task from a test: there is no
-   `POST /api/tasks/:id/dispatch`, and `DemoLlmClient` has no `executing`
-   phase. `startExecution()` in that file is the one place to point at whatever
-   M6 exposes; then set `NEXESTRA_E2E_EXECUTION=1` and delete the second gate.
+Paid model reasoning and logged-in harness execution are deliberately not part
+of the default browser suite. They are covered at the provider/adapter contract
+boundaries and by the opt-in live tests below.
 
 ### Environment
 
@@ -144,23 +136,20 @@ in the skip message:
 |----------|--------|
 | `NEXESTRA_E2E_PORT` | server port for the suite (default `4282`) |
 | `NEXESTRA_E2E_KEEP=1` | keep the scratch home, repo and server log after the run |
-| `NEXESTRA_E2E_EXECUTION=1` | opt in to the execution specs once M6 provides a dispatch trigger |
 | `CI` | adds the GitHub reporter and forbids `test.only` |
 
-> The suite runs the server from source under `tsx`, not from
-> `apps/server/dist/index.js`. The esbuild bundle keeps `better-sqlite3`
-> external, and under pnpm's isolated `node_modules` that specifier is not
-> resolvable from `apps/server/dist` — `pnpm start` fails the same way. Switch
-> `e2e/src/server.ts` to the bundle once that is fixed.
+The suite runs the same built server entry as `pnpm start`, so every browser run
+also proves that the production bundle boots and serves `apps/web/dist`.
 
 ---
 
 ## 3. The fake harness
 
-`@nexestra/adapter-fake` is a complete `HarnessAdapter` (PLAN.md §5) with
-nothing behind it. It is what makes the orchestrator loop, the server and the
-e2e suite runnable on a machine with no Codex and no OpenCode — and what makes
-the demo mode of the product possible at all.
+`@nexestra/adapter-fake` is a complete test implementation of `HarnessAdapter`
+(PLAN.md §5). It makes deterministic orchestrator and server integration tests
+possible on a machine with no Codex or OpenCode. M8 made it a dev dependency:
+production never registers it, discovery never returns it, and there is no
+environment switch that enables it.
 
 ```ts
 import { createFakeAdapter } from "@nexestra/adapter-fake";
@@ -169,9 +158,8 @@ const fake = createFakeAdapter({ id: "codex", delayMs: 20 });
 const orchestrator = createOrchestrator({ store, adapters: { codex: fake }, config });
 ```
 
-`HarnessId` has no `fake` member — the fake *stands in for* a harness rather
-than being one — so it impersonates `codex` by default and takes the id it
-should answer to. `discover()` reports version `0.0.0-fake`, model
+The additive `HarnessId` schema still accepts old/test `fake` rows, while tests
+usually make the adapter impersonate `codex` or `opencode`. `discover()` reports version `0.0.0-fake`, model
 `fake-model`, `authOk: true` and a warning saying what it is.
 
 ### Scenarios
@@ -242,17 +230,11 @@ A script can also stream, which is how a scenario waits for a control action:
 }
 ```
 
-### Using it in dev
+### Scope boundary
 
-`NEXESTRA_FAKE_HARNESS=1` is the agreed switch for running the server's
-orchestrator on the fake harness instead of a real one:
-
-```bash
-NEXESTRA_FAKE_HARNESS=1 pnpm dev
-```
-
-> Not yet honoured by `apps/server` — see §2, "The specs". Until it is, the
-> fake is reachable from library code and tests only.
+Import this package only from tests or explicit test-support modules. The
+production registry in `apps/server/src/execution/harnesses.ts` constructs the
+Codex and OpenCode adapters directly and enumerates only registered adapters.
 
 ---
 
@@ -316,11 +298,11 @@ the real endpoint accepts what the adapter sends — not of model judgement.
 | `NEXESTRA_LIVE_CODEX_MODEL` | overrides the model those use | — |
 | `NEXESTRA_LIVE_OPENCODE=1` | the OpenCode adapter against a real `opencode serve` | `NEXESTRA_LIVE_OPENCODE=1 pnpm --filter @nexestra/adapter-opencode test` |
 | `NEXESTRA_LIVE_OPENCODE_MODEL` | overrides that model (default `openai/gpt-5.4-mini`) | — |
-| `ANTHROPIC_API_KEY` (or `ANTHROPIC_AUTH_TOKEN`) | the Master's one live turn against `claude-opus-5` | `ANTHROPIC_API_KEY=sk-ant-… pnpm --filter @nexestra/master test` |
+| `ANTHROPIC_API_KEY` (or `ANTHROPIC_AUTH_TOKEN`) | the Master's Anthropic live turn | `ANTHROPIC_API_KEY=sk-ant-… pnpm --filter @nexestra/master test` |
 
-The e2e suite deliberately strips `ANTHROPIC_API_KEY` from the server's
-environment, so exporting one in your shell does not silently turn the
-Playwright run into a paid, non-deterministic one.
+The e2e suite deliberately strips OpenAI and Anthropic credentials from the
+server environment, so exporting one in your shell cannot silently turn the
+Playwright run into a paid, non-deterministic run.
 
 ---
 
