@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -312,6 +312,51 @@ describe("settings", () => {
           model: "planner",
           ready: true,
         }),
+      }),
+    );
+  });
+
+  it("saves a provider credential from Settings without returning it", async () => {
+    await send("/api/settings", "PUT", {
+      activeMasterProviderId: "custom-master",
+      masterProviders: [
+        {
+          id: "custom-master",
+          name: "Custom Master",
+          protocol: "openai-responses",
+          baseUrl: "https://models.example/v1",
+          model: "planner",
+          auth: "api-key",
+          enabled: true,
+        },
+      ],
+    });
+
+    const saved = await send("/api/settings/providers/custom-master/credential", "PUT", {
+      credential: "top-secret-provider-key",
+    });
+    expect(saved.status).toBe(200);
+    const payload = (await saved.json()) as {
+      master: { ready: boolean };
+      providerCredentials: Record<string, boolean>;
+    };
+    expect(payload.master.ready).toBe(true);
+    expect(payload.providerCredentials["custom-master"]).toBe(true);
+
+    const publicResponse = JSON.stringify(await (await get("/api/settings")).json());
+    expect(publicResponse).not.toContain("top-secret-provider-key");
+    expect(JSON.stringify(store.getSettings())).not.toContain("top-secret-provider-key");
+
+    const file = join(home, "credentials.json");
+    expect(readFileSync(file, "utf8")).toContain("top-secret-provider-key");
+    if (process.platform !== "win32") expect(statSync(file).mode & 0o777).toBe(0o600);
+
+    const removed = await send("/api/settings/providers/custom-master/credential", "DELETE");
+    expect(removed.status).toBe(200);
+    expect(await removed.json()).toEqual(
+      expect.objectContaining({
+        master: expect.objectContaining({ ready: false }),
+        providerCredentials: { "custom-master": false },
       }),
     );
   });

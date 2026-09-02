@@ -5,6 +5,7 @@ import { hasWebBuild, SERVER_VERSION, WEB_DEV_URL } from "./config.js";
 import { renderError } from "./errors.js";
 import { ExecutionRuntime, type ExecutionRuntimeOptions } from "./execution/runtime.js";
 import { createMasterLlm } from "./master/llm.js";
+import { ProviderCredentialStore, providerCredentialPath } from "./master/provider-credentials.js";
 import { MasterRunner, type MasterRunnerOptions } from "./master/runner.js";
 import { approvalRoutes } from "./routes/approvals.js";
 import { artifactRoutes } from "./routes/artifacts.js";
@@ -20,6 +21,8 @@ import { workspaceRoutes } from "./routes/workspaces.js";
 import { serveWebDist } from "./static.js";
 
 export interface CreateAppOptions {
+  /** Replace local provider credential persistence in tests. */
+  readonly credentials?: ProviderCredentialStore;
   /**
    * Replace the Master runtime — a test injects `createFakeLlmClient` here
    * rather than reaching into the module graph.
@@ -43,8 +46,10 @@ export interface CreateAppOptions {
  * cannot change a phase) and calling `attachMaster()` once the runner exists.
  */
 export function createApp(store: NexestraStore, options: CreateAppOptions = {}) {
+  const credentials =
+    options.credentials ?? new ProviderCredentialStore(providerCredentialPath(store.file));
   const execution = resolveExecution(store, options.execution);
-  const runner = resolveRunner(store, options.master, execution);
+  const runner = resolveRunner(store, options.master, execution, credentials);
   execution.attachMaster(runner);
 
   const api = new Hono()
@@ -56,7 +61,7 @@ export function createApp(store: NexestraStore, options: CreateAppOptions = {}) 
       };
       return c.json(health);
     })
-    .route("/settings", settingsRoutes(store, runner))
+    .route("/settings", settingsRoutes(store, runner, credentials))
     .route("/workspaces", workspaceRoutes(store))
     .route("/threads", threadRoutes(store))
     .route("/threads", masterRoutes(store, runner))
@@ -82,7 +87,7 @@ export function createApp(store: NexestraStore, options: CreateAppOptions = {}) 
     return c.redirect(`${WEB_DEV_URL}${c.req.path}`, 302);
   });
 
-  return Object.assign(app, { master: runner, execution });
+  return Object.assign(app, { master: runner, execution, credentials });
 }
 
 function resolveExecution(
@@ -97,10 +102,14 @@ function resolveRunner(
   store: NexestraStore,
   master: CreateAppOptions["master"],
   execution: ExecutionRuntime,
+  credentials: ProviderCredentialStore,
 ): MasterRunner {
   if (master instanceof MasterRunner) return master;
   if (master) return new MasterRunner({ store, execution: execution.host, ...master });
-  const runtime = createMasterLlm({ settings: () => store.getSettings() });
+  const runtime = createMasterLlm({
+    settings: () => store.getSettings(),
+    credentials,
+  });
   return new MasterRunner({
     store,
     llm: runtime.client,

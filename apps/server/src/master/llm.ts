@@ -1,6 +1,6 @@
 /** Resolve the Master's active provider from persisted settings and server secrets. */
 import type { AppSettings, MasterProvider, MasterRuntimeInfo } from "@nexestra/core";
-import { DEFAULT_APP_SETTINGS } from "@nexestra/core";
+import { DEFAULT_APP_SETTINGS, masterProviderAuth } from "@nexestra/core";
 import type { LlmClient } from "@nexestra/master";
 import { createAnthropicLlmClient, createOpenAiLlmClient } from "@nexestra/master";
 
@@ -13,8 +13,13 @@ export interface MasterLlmRuntime {
 
 export interface CreateMasterLlmOptions {
   readonly settings?: () => AppSettings;
+  readonly credentials?: ProviderCredentialReader;
   readonly env?: NodeJS.ProcessEnv;
   readonly fetch?: typeof globalThis.fetch;
+}
+
+export interface ProviderCredentialReader {
+  get(providerId: string): string | undefined;
 }
 
 interface ResolvedProvider {
@@ -34,7 +39,7 @@ export function createMasterLlm(options: CreateMasterLlmOptions = {}): MasterLlm
   const env = options.env ?? process.env;
   const clients = new Map<string, LlmClient>();
 
-  const resolve = (): ResolvedProvider => resolveProvider(readSettings(), env);
+  const resolve = (): ResolvedProvider => resolveProvider(readSettings(), env, options.credentials);
   const client: LlmClient = {
     get model() {
       return resolve().provider?.model ?? "unconfigured";
@@ -69,11 +74,16 @@ export function createMasterLlm(options: CreateMasterLlmOptions = {}): MasterLlm
 export function resolveProvider(
   settings: AppSettings,
   env: NodeJS.ProcessEnv = process.env,
+  credentials?: ProviderCredentialReader,
 ): ResolvedProvider {
   const enabled = settings.masterProviders.filter((provider) => provider.enabled);
   let provider = settings.activeMasterProviderId
     ? enabled.find((entry) => entry.id === settings.activeMasterProviderId)
-    : enabled.find((entry) => credentialFor(entry, env) !== undefined || !entry.apiKeyEnv);
+    : enabled.find(
+        (entry) =>
+          credentialFor(entry, env, credentials) !== undefined ||
+          masterProviderAuth(entry) === "none",
+      );
 
   if (!provider && settings.activeMasterProviderId) {
     return {
@@ -95,8 +105,8 @@ export function resolveProvider(
     };
   }
 
-  const credential = credentialFor(provider, env);
-  const credentialPresent = credential !== undefined || !provider.apiKeyEnv;
+  const credential = credentialFor(provider, env, credentials);
+  const credentialPresent = credential !== undefined || masterProviderAuth(provider) === "none";
   return {
     provider,
     credential,
@@ -105,12 +115,19 @@ export function resolveProvider(
     ...(credentialPresent
       ? {}
       : {
-          message: `Set ${provider.apiKeyEnv} on the server to use ${provider.name}.`,
+          message: `Enter an API key for ${provider.name} in Settings.`,
         }),
   };
 }
 
-function credentialFor(provider: MasterProvider, env: NodeJS.ProcessEnv): string | undefined {
+export function credentialFor(
+  provider: MasterProvider,
+  env: NodeJS.ProcessEnv = process.env,
+  credentials?: ProviderCredentialReader,
+): string | undefined {
+  if (masterProviderAuth(provider) === "none") return undefined;
+  const saved = credentials?.get(provider.id)?.trim();
+  if (saved) return saved;
   const configured = provider.apiKeyEnv ? env[provider.apiKeyEnv]?.trim() : undefined;
   if (configured) return configured;
   if (provider.id === "anthropic") return env.ANTHROPIC_AUTH_TOKEN?.trim() || undefined;
@@ -153,6 +170,7 @@ function runtimeInfo(selected: ResolvedProvider): MasterRuntimeInfo {
       ? {
           providerName: provider.name,
           protocol: provider.protocol,
+          // Compatibility-only metadata. New credentials are saved from Settings.
           ...(provider.apiKeyEnv ? { credentialEnv: provider.apiKeyEnv } : {}),
         }
       : {}),

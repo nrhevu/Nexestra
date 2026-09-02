@@ -25,6 +25,21 @@ describe("Master provider resolution", () => {
         ready: false,
       }),
     );
+    expect(runtime.info().message).toBe("Enter an API key for OpenAI in Settings.");
+  });
+
+  it("prefers the credential saved from Settings over the environment fallback", () => {
+    const settings = AppSettingsSchema.parse({ activeMasterProviderId: "openai" });
+    const selected = resolveProvider(
+      settings,
+      { OPENAI_API_KEY: "environment-secret" },
+      {
+        get: () => "saved-secret",
+      },
+    );
+
+    expect(selected.credential).toBe("saved-secret");
+    expect(selected.ready).toBe(true);
   });
 
   it("supports a custom loopback Responses provider without a credential", async () => {
@@ -38,6 +53,7 @@ describe("Master provider resolution", () => {
           protocol: "openai-responses",
           baseUrl: "http://127.0.0.1:8080/v1",
           model: "local-master",
+          auth: "none",
         },
       ],
     });
