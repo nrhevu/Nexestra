@@ -1,12 +1,13 @@
 import type { AppSettingsResponse } from "@nexestra/core";
 import {
   AppSettingsSchema,
+  CreateMasterProviderRequestSchema,
   masterProviderAuth,
   SaveProviderCredentialRequestSchema,
 } from "@nexestra/core";
 import type { NexestraStore } from "@nexestra/storage";
 import { Hono } from "hono";
-import { badRequest, body, required } from "../errors.js";
+import { badRequest, body, conflict, required } from "../errors.js";
 import { credentialFor } from "../master/llm.js";
 import type { ProviderCredentialStore } from "../master/provider-credentials.js";
 import type { MasterRunner } from "../master/runner.js";
@@ -45,6 +46,33 @@ export function settingsRoutes(
         if (masterProviderAuth(provider) === "none") credentials.delete(provider.id);
       }
       return c.json(respond(settings));
+    })
+    .post("/providers", async (c) => {
+      const input = await body(c, CreateMasterProviderRequestSchema);
+      const current = store.getSettings();
+      if (current.masterProviders.some((provider) => provider.id === input.provider.id)) {
+        throw conflict(`Provider id "${input.provider.id}" already exists.`);
+      }
+      if (input.provider.auth === "api-key" && !input.credential) {
+        throw badRequest(`Enter an API key for ${input.provider.name}.`);
+      }
+      if (input.provider.auth === "none" && input.credential) {
+        throw badRequest("A no-auth provider cannot store an API key.");
+      }
+
+      if (input.credential) credentials.set(input.provider.id, input.credential);
+      try {
+        const settings = store.putSettings({
+          masterProviders: [...current.masterProviders, input.provider],
+          activeMasterProviderId: input.activate
+            ? input.provider.id
+            : current.activeMasterProviderId,
+        });
+        return c.json(respond(settings), 201);
+      } catch (error) {
+        if (input.credential) credentials.delete(input.provider.id);
+        throw error;
+      }
     })
     .put("/providers/:providerId/credential", async (c) => {
       const provider = required(

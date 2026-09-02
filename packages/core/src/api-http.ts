@@ -8,7 +8,11 @@ import {
   MessageRoleSchema,
 } from "./domain/message.js";
 import { PlanEdgeSchema } from "./domain/plan.js";
-import { AppSettingsSchema } from "./domain/settings.js";
+import {
+  AppSettingsSchema,
+  MasterProviderAuthSchema,
+  MasterProviderSchema,
+} from "./domain/settings.js";
 import {
   AcceptanceCriterionSchema,
   DecisionSchema,
@@ -217,6 +221,17 @@ export const AppSettingsResponseSchema = AppSettingsSchema.extend({
   providerCredentials: z.record(z.string(), z.boolean()),
 });
 export type AppSettingsResponse = z.infer<typeof AppSettingsResponseSchema>;
+
+/** One-step custom-provider creation from the Settings dialog. */
+export const CreateMasterProviderRequestSchema = z.object({
+  provider: MasterProviderSchema.omit({ apiKeyEnv: true }).extend({
+    auth: MasterProviderAuthSchema,
+  }),
+  /** Write-only. Required by the server when `auth` is `api-key`. */
+  credential: z.string().trim().min(1).max(16_384).optional(),
+  activate: z.boolean().default(true),
+});
+export type CreateMasterProviderRequest = z.infer<typeof CreateMasterProviderRequestSchema>;
 
 /** Write-only body for `PUT /api/settings/providers/:id/credential`. */
 export const SaveProviderCredentialRequestSchema = z.object({

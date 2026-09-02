@@ -360,6 +360,66 @@ describe("settings", () => {
       }),
     );
   });
+
+  it("creates and activates a custom provider with its credential in one request", async () => {
+    const response = await send("/api/settings/providers", "POST", {
+      provider: {
+        id: "openrouter",
+        name: "OpenRouter",
+        protocol: "openai-responses",
+        baseUrl: "https://openrouter.ai/api/v1",
+        model: "openai/gpt-5.6",
+        auth: "api-key",
+        enabled: true,
+      },
+      credential: "custom-provider-secret",
+      activate: true,
+    });
+
+    expect(response.status).toBe(201);
+    const text = await response.text();
+    expect(text).not.toContain("custom-provider-secret");
+    expect(JSON.parse(text)).toEqual(
+      expect.objectContaining({
+        activeMasterProviderId: "openrouter",
+        providerCredentials: expect.objectContaining({ openrouter: true }),
+        master: expect.objectContaining({ providerId: "openrouter", ready: true }),
+      }),
+    );
+    expect(store.getSettings().masterProviders).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "openrouter" })]),
+    );
+  });
+
+  it("rejects duplicate, missing-key and contradictory custom providers", async () => {
+    const provider = {
+      id: "custom-master",
+      name: "Custom Master",
+      protocol: "openai-responses",
+      baseUrl: "https://models.example/v1",
+      model: "planner",
+      auth: "api-key",
+      enabled: true,
+    };
+
+    expect((await send("/api/settings/providers", "POST", { provider })).status).toBe(400);
+    expect(
+      (
+        await send("/api/settings/providers", "POST", {
+          provider: { ...provider, id: "openai" },
+          credential: "secret",
+        })
+      ).status,
+    ).toBe(409);
+    expect(
+      (
+        await send("/api/settings/providers", "POST", {
+          provider: { ...provider, id: "local", auth: "none" },
+          credential: "unused-secret",
+        })
+      ).status,
+    ).toBe(400);
+  });
 });
 
 describe("events", () => {
