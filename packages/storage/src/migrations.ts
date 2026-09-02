@@ -41,8 +41,6 @@ export const MIGRATIONS: readonly Migration[] = [
   },
   {
     tag: "0001_task_merge_state",
-    statements: [
-      "ALTER TABLE `tasks` ADD `mergeState` text;",
-    ],
+    statements: ["ALTER TABLE `tasks` ADD `mergeState` text;"],
   },
 ];

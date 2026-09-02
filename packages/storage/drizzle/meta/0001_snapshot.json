@@ -118,10 +118,7 @@
       "indexes": {
         "approvals_workspace_idx": {
           "name": "approvals_workspace_idx",
-          "columns": [
-            "workspaceId",
-            "status"
-          ],
+          "columns": ["workspaceId", "status"],
           "isUnique": false
         }
       },
@@ -231,9 +228,7 @@
       "indexes": {
         "artifacts_thread_idx": {
           "name": "artifacts_thread_idx",
-          "columns": [
-            "threadId"
-          ],
+          "columns": ["threadId"],
           "isUnique": false
         }
       },
@@ -305,18 +300,12 @@
       "indexes": {
         "events_thread_seq_idx": {
           "name": "events_thread_seq_idx",
-          "columns": [
-            "threadId",
-            "seq"
-          ],
+          "columns": ["threadId", "seq"],
           "isUnique": false
         },
         "events_workspace_seq_idx": {
           "name": "events_workspace_seq_idx",
-          "columns": [
-            "workspaceId",
-            "seq"
-          ],
+          "columns": ["workspaceId", "seq"],
           "isUnique": false
         }
       },
@@ -411,9 +400,7 @@
       "indexes": {
         "memories_workspace_idx": {
           "name": "memories_workspace_idx",
-          "columns": [
-            "workspaceId"
-          ],
+          "columns": ["workspaceId"],
           "isUnique": false
         }
       },
@@ -472,20 +459,14 @@
       "indexes": {
         "memory_links_target_idx": {
           "name": "memory_links_target_idx",
-          "columns": [
-            "targetId"
-          ],
+          "columns": ["targetId"],
           "isUnique": false
         }
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {
         "memory_links_sourceId_targetId_type_pk": {
-          "columns": [
-            "sourceId",
-            "targetId",
-            "type"
-          ],
+          "columns": ["sourceId", "targetId", "type"],
           "name": "memory_links_sourceId_targetId_type_pk"
         }
       },
@@ -569,10 +550,7 @@
       "indexes": {
         "messages_thread_idx": {
           "name": "messages_thread_idx",
-          "columns": [
-            "threadId",
-            "createdAt"
-          ],
+          "columns": ["threadId", "createdAt"],
           "isUnique": false
         }
       },
@@ -659,9 +637,7 @@
       "indexes": {
         "plans_thread_idx": {
           "name": "plans_thread_idx",
-          "columns": [
-            "threadId"
-          ],
+          "columns": ["threadId"],
           "isUnique": false
         }
       },
@@ -733,10 +709,7 @@
       "indexes": {
         "run_events_run_idx": {
           "name": "run_events_run_idx",
-          "columns": [
-            "runId",
-            "seq"
-          ],
+          "columns": ["runId", "seq"],
           "isUnique": false
         }
       },
@@ -857,10 +830,7 @@
       "indexes": {
         "runs_thread_idx": {
           "name": "runs_thread_idx",
-          "columns": [
-            "threadId",
-            "startedAt"
-          ],
+          "columns": ["threadId", "startedAt"],
           "isUnique": false
         }
       },
@@ -1007,9 +977,7 @@
       "indexes": {
         "specs_thread_idx": {
           "name": "specs_thread_idx",
-          "columns": [
-            "threadId"
-          ],
+          "columns": ["threadId"],
           "isUnique": false
         }
       },
@@ -1156,10 +1124,7 @@
       "indexes": {
         "tasks_thread_idx": {
           "name": "tasks_thread_idx",
-          "columns": [
-            "threadId",
-            "order"
-          ],
+          "columns": ["threadId", "order"],
           "isUnique": false
         }
       },
@@ -1262,9 +1227,7 @@
       "indexes": {
         "threads_workspace_idx": {
           "name": "threads_workspace_idx",
-          "columns": [
-            "workspaceId"
-          ],
+          "columns": ["workspaceId"],
           "isUnique": false
         }
       },
