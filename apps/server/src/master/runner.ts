@@ -43,6 +43,8 @@ import type {
   MasterSession,
   MasterThreadState,
   MasterTurnOutcome,
+  PhaseTransition,
+  PhaseTrigger,
 } from "@nexestra/master";
 import { createMasterSession } from "@nexestra/master";
 import { type NexestraStore, NotFoundError, newId } from "@nexestra/storage";
@@ -120,6 +122,33 @@ export class MasterRunner {
       }),
     );
     return { turnId };
+  }
+
+  /**
+   * Push a phase transition that came from outside the model (M6).
+   *
+   * The orchestrator reports what happened — the plan was accepted, every task
+   * is done, the thread is blocked — and the phase machine decides whether that
+   * is a legal move. It is queued on the same chain as `send()`, so it can
+   * never interleave with a turn that is halfway through rewriting the state.
+   */
+  applyTrigger(threadId: string, trigger: PhaseTrigger): Promise<PhaseTransition | null> {
+    if (!this.options.store.getThread(threadId)) return Promise.resolve(null);
+    const previous = this.queues.get(threadId) ?? Promise.resolve();
+    const next = previous
+      .catch(() => undefined)
+      .then(() => this.sessionFor(threadId).applyTrigger(trigger));
+    this.queues.set(
+      threadId,
+      next.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return next.catch((error) => {
+      process.stderr.write(`master trigger failed on ${threadId}: ${String(error)}\n`);
+      return null;
+    });
   }
 
   /** Abort the in-flight model request, if there is one. */

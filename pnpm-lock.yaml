@@ -32,12 +32,21 @@ importers:
       '@hono/node-server':
         specifier: 2.1.1
         version: 2.1.1(hono@4.13.5)
+      '@nexestra/adapter-codex':
+        specifier: workspace:*
+        version: link:../../packages/adapters/codex
+      '@nexestra/adapter-opencode':
+        specifier: workspace:*
+        version: link:../../packages/adapters/opencode
       '@nexestra/core':
         specifier: workspace:*
         version: link:../../packages/core
       '@nexestra/master':
         specifier: workspace:*
         version: link:../../packages/master
+      '@nexestra/orchestrator':
+        specifier: workspace:*
+        version: link:../../packages/orchestrator
       '@nexestra/storage':
         specifier: workspace:*
         version: link:../../packages/storage

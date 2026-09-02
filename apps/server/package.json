@@ -14,8 +14,11 @@
   "dependencies": {
     "@anthropic-ai/sdk": "0.123.0",
     "@hono/node-server": "2.1.1",
+    "@nexestra/adapter-codex": "workspace:*",
+    "@nexestra/adapter-opencode": "workspace:*",
     "@nexestra/core": "workspace:*",
     "@nexestra/master": "workspace:*",
+    "@nexestra/orchestrator": "workspace:*",
     "@nexestra/storage": "workspace:*",
     "hono": "4.13.5",
     "ws": "8.21.3",

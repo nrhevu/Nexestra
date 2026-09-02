@@ -85,6 +85,7 @@ function decide(request: LlmRequest): DemoTurn {
   const answers = answersGiven(request.messages);
   const open = openQuestionIds(request.systemSuffix ?? "");
   const criteria = criterionIds(request.systemSuffix ?? "");
+  const calls = toolUseCounts(request.messages);
 
   switch (phase) {
     case "intake":
@@ -166,6 +167,62 @@ function decide(request: LlmRequest): DemoTurn {
           "what it depends on is done. Running them needs the harness orchestrator, " +
           "which is not wired up in this build yet.",
       };
+
+    // From M6 the orchestrator drives these three phases; the demo model's job
+    // is to leave a readable trace and to record what was learned, not to
+    // second-guess a loop that has already run the acceptance criteria.
+    case "executing":
+      if ((calls.get("record_memory") ?? 0) < 1) {
+        return {
+          text: "Execution is under way. Noting the decision so it survives the thread.",
+          toolUse: {
+            name: "record_memory",
+            input: {
+              type: "decision",
+              title: "Plan handed to the orchestrator",
+              content:
+                `The four tasks for "${goal}" are being dispatched to the harnesses in ` +
+                "dependency order. Failures come back here as a replan request.",
+            },
+          },
+        };
+      }
+      return {
+        text:
+          "The orchestrator is running the plan. Watch the Task Board for status and the " +
+          "Editor for the diff; anything that needs a decision arrives as an approval.",
+      };
+
+    case "verifying":
+      return {
+        text:
+          "Every task has finished. The acceptance criteria were run in each worktree and " +
+          "their evidence is on the spec — a criterion that still has none needs its " +
+          "verification command run, or a manual review approved.",
+      };
+
+    case "done":
+      if ((calls.get("summarize") ?? 0) < 2) {
+        return {
+          text: "Everything is verified. Writing the summary.",
+          toolUse: {
+            name: "summarize",
+            input: {
+              outcome: "done",
+              summary:
+                `Delivered: ${goal}. Every task reached done and every acceptance ` +
+                "criterion carries evidence produced by running it.",
+              lessons: [
+                "Acceptance criteria that name a command can be proved automatically; " +
+                  "the ones that say `manual_review` always stop the loop for a human.",
+                "Splitting the work so each task owns one criterion keeps the retry " +
+                  "loop narrow when a task fails.",
+              ],
+            },
+          },
+        };
+      }
+      return { text: "Done. The thread summary and its lessons are in the memory graph." };
 
     default:
       return {
@@ -357,6 +414,26 @@ function sectionIds(systemSuffix: string, heading: string): string[] {
     if (match[1]) ids.push(match[1]);
   }
   return ids;
+}
+
+/**
+ * How many times each tool was called across the whole transcript.
+ *
+ * `toolsUsed` answers "ever?", which is the right question while the script is
+ * marching through the phases once. `summarize` is called in two different
+ * phases, so the later ones need a count instead.
+ */
+function toolUseCounts(messages: readonly LlmMessageParam[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const message of messages) {
+    if (typeof message.content === "string") continue;
+    for (const block of message.content) {
+      if (typeof block === "object" && block !== null && block.type === "tool_use") {
+        counts.set(block.name, (counts.get(block.name) ?? 0) + 1);
+      }
+    }
+  }
+  return counts;
 }
 
 function toolsUsed(messages: readonly LlmMessageParam[]): Set<string> {
