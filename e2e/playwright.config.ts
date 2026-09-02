@@ -22,8 +22,8 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: 1,
 
-  /* The demo Master streams its answers with a deliberate delay, so a full
-     clarify → spec → approve → plan flow is a minute of wall clock. */
+  /* Live provider tests are opt-in and may stream a full research/planning
+     turn, so keep headroom above the fast credential-free acceptance suite. */
   timeout: 150_000,
   expect: { timeout: 15_000 },
 

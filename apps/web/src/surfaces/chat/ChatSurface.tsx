@@ -304,27 +304,32 @@ function LiveTurn({
 }) {
   return (
     <article className="msg msg--live">
-      <div className="msg__head">
-        <span className="msg__role msg__role--master">master</span>
-        {busy ? <StatusDot tone="running" label="streaming" /> : null}
-      </div>
-      {text ? (
-        <div className="msg__body">
-          {text}
-          {busy ? <span className="msg__caret">▌</span> : null}
+      <span className="msg__avatar msg__avatar--master" aria-hidden="true">
+        N
+      </span>
+      <div className="msg__content">
+        <div className="msg__head">
+          <span className="msg__role msg__role--master">Nexestra Master</span>
+          {busy ? <StatusDot tone="running" label="streaming" /> : null}
         </div>
-      ) : (
-        <div className="msg__body nx-muted">thinking…</div>
-      )}
-      {toolCalls.map((call) => (
-        <ToolCallCard
-          key={call.callId}
-          name={call.name}
-          input={call.input}
-          ok={call.ok}
-          output={call.output}
-        />
-      ))}
+        {text ? (
+          <div className="msg__body">
+            {text}
+            {busy ? <span className="msg__caret">▌</span> : null}
+          </div>
+        ) : (
+          <div className="msg__body nx-muted">thinking…</div>
+        )}
+        {toolCalls.map((call) => (
+          <ToolCallCard
+            key={call.callId}
+            name={call.name}
+            input={call.input}
+            ok={call.ok}
+            output={call.output}
+          />
+        ))}
+      </div>
     </article>
   );
 }
@@ -334,39 +339,50 @@ function MessageBlock({ message, tasks }: { message: Message; tasks: readonly Ta
 
   return (
     <article className="msg">
-      <div className="msg__head">
-        <span className={`msg__role msg__role--${message.role}`}>{message.role}</span>
-        <span className="msg__time">{formatTime(message.createdAt)}</span>
-      </div>
-      {message.content ? <div className="msg__body">{message.content}</div> : null}
-
-      {references.length > 0 ? (
-        <div className="msg__refs">
-          {references.map((reference) => (
-            <Tag key={`${reference.kind}:${reference.id}`} tone="info">
-              {reference.label}
-            </Tag>
-          ))}
+      <span className={`msg__avatar msg__avatar--${message.role}`} aria-hidden="true">
+        {message.role === "master" ? "N" : message.role === "user" ? "Y" : "!"}
+      </span>
+      <div className="msg__content">
+        <div className="msg__head">
+          <span className={`msg__role msg__role--${message.role}`}>
+            {message.role === "master"
+              ? "Nexestra Master"
+              : message.role === "user"
+                ? "You"
+                : "System"}
+          </span>
+          <span className="msg__time">{formatTime(message.createdAt)}</span>
         </div>
-      ) : null}
+        {message.content ? <div className="msg__body">{message.content}</div> : null}
 
-      {toolCalls.map((call) => (
-        <ToolCallCard
-          key={call.callId}
-          name={call.name}
-          input={call.input}
-          ok={call.ok}
-          output={call.output}
-        />
-      ))}
+        {references.length > 0 ? (
+          <div className="msg__refs">
+            {references.map((reference) => (
+              <Tag key={`${reference.kind}:${reference.id}`} tone="info">
+                {reference.label}
+              </Tag>
+            ))}
+          </div>
+        ) : null}
 
-      {attachments.map((attachment) => (
-        <AttachmentCard
-          key={`${message.id}-${attachment.kind}-${attachment.title}`}
-          attachment={attachment}
-          tasks={tasks}
-        />
-      ))}
+        {toolCalls.map((call) => (
+          <ToolCallCard
+            key={call.callId}
+            name={call.name}
+            input={call.input}
+            ok={call.ok}
+            output={call.output}
+          />
+        ))}
+
+        {attachments.map((attachment) => (
+          <AttachmentCard
+            key={`${message.id}-${attachment.kind}-${attachment.title}`}
+            attachment={attachment}
+            tasks={tasks}
+          />
+        ))}
+      </div>
     </article>
   );
 }

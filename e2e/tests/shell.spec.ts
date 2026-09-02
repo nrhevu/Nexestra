@@ -25,6 +25,8 @@ test.beforeEach(async ({ nexestra }) => {
 test("renders the shell chrome", async ({ page }) => {
   await page.goto(`${fixture.route}/chat`);
 
+  await expect(page.getByText("Nexestra", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Search and open command palette" })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Workspaces" })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Navigation" })).toBeVisible();
   await expect(surfaceTitle(page)).toHaveText(`Chat — ${fixture.thread.title}`);
@@ -35,9 +37,7 @@ test("navigates the four surfaces from the navigation panel", async ({ page }) =
   await page.goto(`${fixture.route}/chat`);
 
   for (const surface of SURFACES) {
-    // The real checkbox is visually replaced by the `[x]` box, so click the
-    // label the way a user does rather than the input it hides.
-    await page.locator(".nav__surfaces .nx-check").filter({ hasText: surface.label }).click();
+    await page.locator(".nav__surfaces .nav__surface").filter({ hasText: surface.label }).click();
     await expect(page).toHaveURL(new RegExp(`/${surface.route}$`));
     await expect(surfaceTitle(page)).toHaveText(surface.title);
   }

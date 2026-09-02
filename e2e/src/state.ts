@@ -20,12 +20,6 @@ export interface E2eState {
   readonly logFile: string;
   /** PID of the server process. */
   readonly pid: number;
-  /**
-   * True once `apps/server` reads `NEXESTRA_FAKE_HARNESS` — i.e. once the
-   * orchestrator is wired in and a run can actually execute. Until then the
-   * execution specs skip themselves rather than fail.
-   */
-  readonly fakeHarnessSupported: boolean;
 }
 
 export function writeE2eState(state: E2eState): void {

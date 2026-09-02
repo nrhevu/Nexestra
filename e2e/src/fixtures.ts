@@ -1,7 +1,6 @@
 /**
  * The `test` every spec imports: Playwright's, plus what global setup left
- * behind (the base URL, the scratch repository, whether the fake harness
- * switch exists yet).
+ * behind: the base URL, scratch home and throwaway repository.
  */
 import { test as base, expect } from "@playwright/test";
 import type { E2eState } from "./state.js";

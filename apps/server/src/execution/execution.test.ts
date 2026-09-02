@@ -415,7 +415,7 @@ describe("the execution routes", () => {
     expect(response.status).toBe(200);
     const list = (await response.json()) as { id: string; available: boolean }[];
     expect(list.find((info) => info.id === "codex")?.available).toBe(true);
-    expect(list.find((info) => info.id === "acp")?.available).toBe(false);
+    expect(list.map((info) => info.id)).toEqual(["codex", "opencode"]);
   });
 
   it("refuses an unknown execution action", async () => {

@@ -65,7 +65,7 @@ export interface RailProps {
   children?: ReactNode;
 }
 
-/** The 48px vertical workspace rail on the far left of the shell. */
+/** Vertical workspace switcher on the far left of the shell. */
 export function Rail({ items, activeId, onSelect, footer, children }: RailProps) {
   return (
     <nav className="nx-rail" aria-label="Workspaces">
@@ -146,7 +146,7 @@ export function Tag({ tone = "default", className, children, ...rest }: TagProps
 /* ----------------------------------------------------------------- Button */
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  /** Render the label inside `[ ]` brackets, TUI style. */
+  /** Render the label inside `[ ]` brackets for legacy compact controls. */
   bracket?: boolean;
   tone?: "default" | "primary" | "danger";
   boxed?: boolean;
@@ -172,9 +172,17 @@ export function Button({
       )}
       {...rest}
     >
-      {bracket ? <span className="nx-button__bracket">[</span> : null}
+      {bracket ? (
+        <span className="nx-button__bracket" aria-hidden="true">
+          [
+        </span>
+      ) : null}
       <span>{children}</span>
-      {bracket ? <span className="nx-button__bracket">]</span> : null}
+      {bracket ? (
+        <span className="nx-button__bracket" aria-hidden="true">
+          ]
+        </span>
+      ) : null}
     </button>
   );
 }
@@ -237,7 +245,7 @@ export interface CheckboxProps {
   disabled?: boolean;
 }
 
-/** `[x] Label` / `[ ] Label` — TUI styling over a real checkbox input. */
+/** Themeable checkbox backed by a real accessible checkbox input. */
 export function Checkbox({ checked, label, hint, onChange, disabled = false }: CheckboxProps) {
   return (
     <label className="nx-check">

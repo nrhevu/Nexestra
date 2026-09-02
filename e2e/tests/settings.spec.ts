@@ -12,17 +12,19 @@ test.beforeEach(async ({ nexestra }) => {
   fixture = await createFixture(nexestra.baseURL, nexestra.repo, "settings");
 });
 
-test("reports the demo Master and the detected harnesses", async ({ page }) => {
+test("reports honest provider readiness and the detected harnesses", async ({ page }) => {
   await page.goto("/settings");
 
   await expect(page.getByRole("heading", { name: "Nexestra — local settings" })).toBeVisible();
 
-  // The suite runs with no ANTHROPIC_API_KEY, so the Master must say so.
-  const master = page.locator(".kv").first();
-  await expect(master).toContainText("demo");
-  await expect(master).toContainText("nexestra-demo-master");
-  await expect(master).toContainText("not set");
-  await expect(page.getByText("No ANTHROPIC_API_KEY on the server")).toBeVisible();
+  // The suite deliberately removes provider credentials. Production must say
+  // it is unconfigured instead of silently falling back to a demo model.
+  const master = page.locator(".provider-status");
+  await expect(master).toContainText("configuration required");
+  await expect(master).toContainText("OpenAI");
+  await expect(master).toContainText("chat-latest");
+  await expect(master).toContainText("missing");
+  await expect(page.getByText(/ChatGPT subscription OAuth is not exposed/)).toBeVisible();
 
   // Harness detection table.
   await expect(page.getByRole("heading", { name: "Detected harnesses" })).toBeVisible();
@@ -30,10 +32,12 @@ test("reports the demo Master and the detected harnesses", async ({ page }) => {
   await expect(harnesses).toBeVisible();
   await expect(harnesses.locator("th").first()).toHaveText("harness");
   await expect(harnesses).toContainText("codex");
+  await expect(harnesses).not.toContainText("fake");
 });
 
 test("is reachable with ⌘, and saves a changed default", async ({ page }) => {
   await page.goto(`${fixture.route}/chat`);
+  await expect(page.locator(".surface__title")).toHaveText(/^Chat — /);
   await page.keyboard.press("ControlOrMeta+,");
   await expect(page).toHaveURL(/\/settings$/);
 

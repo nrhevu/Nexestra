@@ -35,7 +35,7 @@ export interface HarnessRegistryOptions {
 
 export interface HarnessRegistry {
   readonly adapters: Partial<Record<HarnessId, HarnessAdapter>>;
-  /** Cached `discover()` results, one entry per known harness id. */
+  /** Cached `discover()` results, one entry per registered harness adapter. */
   list(): Promise<HarnessInfo[]>;
   /** Re-run `discover()` and replace the cache. */
   refresh(): Promise<HarnessInfo[]>;
@@ -84,13 +84,9 @@ export function createHarnessRegistry(options: HarnessRegistryOptions = {}): Har
 
   const describe = async (): Promise<HarnessInfo[]> => {
     const results: HarnessInfo[] = [];
-    for (const id of HarnessIdSchema.options) {
-      const adapter = adapters[id];
-      if (!adapter) {
-        results.push(unavailable(id));
-        continue;
-      }
-      results.push(await safeDiscover(id, adapter));
+    for (const [rawId, adapter] of Object.entries(adapters)) {
+      const id = HarnessIdSchema.safeParse(rawId);
+      if (id.success && adapter) results.push(await safeDiscover(id.data, adapter));
     }
     latest = results;
     return results;
@@ -155,22 +151,4 @@ async function safeDiscover(id: HarnessId, adapter: HarnessAdapter): Promise<Har
       detectedAt: new Date().toISOString(),
     };
   }
-}
-
-function unavailable(id: HarnessId): HarnessInfo {
-  const warnings =
-    id === "acp"
-      ? ["Not implemented yet — planned after the first two adapters ship."]
-      : id === "fake"
-        ? ["Test-only adapter; it is never registered by the production server."]
-        : ["Not registered in this process."];
-  return {
-    id,
-    available: false,
-    models: [],
-    sandboxModes: [],
-    authOk: false,
-    warnings,
-    detectedAt: new Date().toISOString(),
-  };
 }

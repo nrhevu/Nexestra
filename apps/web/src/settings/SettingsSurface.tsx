@@ -19,7 +19,7 @@ import {
 import { useUiStore } from "../lib/store.js";
 
 const HARNESS_OPTIONS = HarnessIdSchema.options
-  .filter((id) => id !== "fake")
+  .filter((id) => id === "codex" || id === "opencode")
   .map((id) => ({ value: id, label: id }));
 const SANDBOX_OPTIONS = SandboxLevelSchema.options.map((id) => ({ value: id, label: id }));
 const PROVIDER_PROTOCOL_OPTIONS = [
@@ -98,7 +98,7 @@ export function SettingsSurface() {
   };
 
   return (
-    <div className="app">
+    <div className="app app--settings">
       <div className="surface" style={{ width: "100%" }}>
         <header className="surface__head">
           <span className="surface__title">Settings</span>
