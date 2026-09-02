@@ -105,8 +105,12 @@ describe("the scheduler", () => {
     bed = await createTestBed();
     for (const title of ["A", "B", "C", "D"]) bed.addTask({ title });
 
+    // Long enough that two runs reliably overlap. At 15ms the whole run was
+    // ~75ms, which a loaded machine can finish before the scheduler has
+    // released the second task — and the test then measured the machine, not
+    // the concurrency limit.
     const adapter = createFakeHarnessAdapter({
-      script: () => ({ delayMs: 15, events: undefined }),
+      script: () => ({ delayMs: 60, events: undefined }),
     });
     const orchestrator = createOrchestrator({
       store: bed.store,
