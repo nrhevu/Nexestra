@@ -49,22 +49,48 @@ export async function runVerificationCommand(options: {
       : verification.command;
 
   const startedAt = Date.now();
-  const result = await execa(command, {
+  const subprocess = execa(command, {
     shell: true,
     cwd: options.cwd,
     reject: false,
     stdin: "ignore",
     all: false,
-    timeout: options.timeoutMs,
+    // A shell can spawn grandchildren that keep stdout/stderr open after the
+    // shell itself dies. Give the command its own process group so a hard
+    // timeout terminates the complete verification tree, not just `/bin/sh`.
+    detached: process.platform !== "win32",
     ...(options.signal ? { cancelSignal: options.signal } : {}),
     env: { ...options.env, CI: "1", NEXESTRA_VERIFICATION: "1" },
+  });
+
+  let deadlineExpired = false;
+  const terminateTree = () => {
+    const pid = subprocess.pid;
+    if (!pid) return;
+    try {
+      if (process.platform === "win32") subprocess.kill("SIGKILL");
+      else process.kill(-pid, "SIGKILL");
+    } catch {
+      // The command won the race and already exited.
+    }
+  };
+  const timeout = setTimeout(() => {
+    deadlineExpired = true;
+    terminateTree();
+  }, options.timeoutMs);
+  timeout.unref();
+  options.signal?.addEventListener("abort", terminateTree, { once: true });
+
+  const result = await subprocess.finally(() => {
+    clearTimeout(timeout);
+    options.signal?.removeEventListener("abort", terminateTree);
   });
 
   const durationMs = Date.now() - startedAt;
   const stdout = clip(typeof result.stdout === "string" ? result.stdout : "");
   const stderr = clip(typeof result.stderr === "string" ? result.stderr : "");
   const exitCode = typeof result.exitCode === "number" ? result.exitCode : undefined;
-  const timedOut = result.timedOut === true;
+  const timedOut = deadlineExpired || result.timedOut === true;
 
   const expected = verification.kind === "command" ? verification.expectExitCode : 0;
   let passed = !timedOut && exitCode === expected;
