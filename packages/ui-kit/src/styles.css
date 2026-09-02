@@ -1,0 +1,599 @@
+/*
+ * Nexestra terminal-like design tokens.
+ *
+ * Dark-first (PLAN.md §7). Borders are real 1px DOM borders, never ASCII
+ * box-drawing text. Hover / selection are expressed with background changes so
+ * the 1px grid never shifts.
+ */
+
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --nx-bg: #0a0c0f;
+  --nx-bg-alt: #0e1116;
+  --nx-bg-elev: #131820;
+  --nx-bg-hover: #171d26;
+  --nx-bg-active: #1c2531;
+  --nx-bg-input: #0c0f14;
+
+  --nx-border: #222a34;
+  --nx-border-strong: #33404f;
+  --nx-border-focus: #4d6b8a;
+
+  --nx-fg: #d6dee8;
+  --nx-fg-strong: #f2f6fa;
+  --nx-fg-dim: #8b98a8;
+  --nx-fg-faint: #5a6674;
+
+  --nx-accent: #7ddba0;
+  --nx-accent-dim: #3c6b4f;
+  --nx-info: #6fb3ff;
+  --nx-warn: #e3b25c;
+  --nx-danger: #ea7b7b;
+  --nx-magenta: #c294e0;
+  --nx-cyan: #64c8cf;
+
+  --nx-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --nx-bg: #fbfbf9;
+  --nx-bg-alt: #f3f3f0;
+  --nx-bg-elev: #ffffff;
+  --nx-bg-hover: #ececeb;
+  --nx-bg-active: #e2e4e6;
+  --nx-bg-input: #ffffff;
+
+  --nx-border: #d7d8d5;
+  --nx-border-strong: #b4b6b3;
+  --nx-border-focus: #6f8fae;
+
+  --nx-fg: #23262a;
+  --nx-fg-strong: #0d0f11;
+  --nx-fg-dim: #61676e;
+  --nx-fg-faint: #8b9199;
+
+  --nx-accent: #1e7a45;
+  --nx-accent-dim: #a9d8bd;
+  --nx-info: #1f5fa8;
+  --nx-warn: #96660c;
+  --nx-danger: #b03a3a;
+  --nx-magenta: #7a44a3;
+  --nx-cyan: #17707a;
+
+  --nx-shadow: 0 6px 18px rgb(0 0 0 / 12%);
+}
+
+:root {
+  --nx-font-mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  --nx-font-size: 12px;
+  --nx-line: 1.5;
+  --nx-row: 22px;
+  --nx-pad: 8px;
+  --nx-radius: 2px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--nx-bg);
+  color: var(--nx-fg);
+  font-family: var(--nx-font-mono);
+  font-size: var(--nx-font-size);
+  line-height: var(--nx-line);
+  font-variant-ligatures: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--nx-accent-dim);
+  color: var(--nx-fg-strong);
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--nx-border);
+  border-radius: 0;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--nx-border-strong);
+}
+
+/* ------------------------------------------------------------------ Pane */
+
+.nx-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  border: 1px solid var(--nx-border);
+  background: var(--nx-bg-alt);
+  border-radius: var(--nx-radius);
+}
+
+.nx-pane--flush {
+  border: 0;
+  background: transparent;
+}
+
+.nx-pane__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--nx-row);
+  padding: 0 var(--nx-pad);
+  border-bottom: 1px solid var(--nx-border);
+  background: var(--nx-bg-elev);
+  color: var(--nx-fg-dim);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.nx-pane__title {
+  color: var(--nx-fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nx-pane__actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.nx-pane__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--nx-pad);
+}
+
+.nx-pane__body--flush {
+  padding: 0;
+}
+
+/* ------------------------------------------------------------------ Rail */
+
+.nx-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 48px;
+  flex: 0 0 48px;
+  padding: 8px 0;
+  border-right: 1px solid var(--nx-border);
+  background: var(--nx-bg-elev);
+}
+
+.nx-rail__item {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--nx-border);
+  background: var(--nx-bg-alt);
+  color: var(--nx-fg-dim);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: var(--nx-radius);
+  padding: 0;
+}
+
+.nx-rail__item:hover {
+  background: var(--nx-bg-hover);
+  color: var(--nx-fg);
+}
+
+.nx-rail__item[aria-current="true"] {
+  background: var(--nx-bg-active);
+  color: var(--nx-accent);
+  border-color: var(--nx-border-strong);
+}
+
+.nx-rail__spacer {
+  flex: 1 1 auto;
+}
+
+/* --------------------------------------------------------------- KeyHint */
+
+.nx-keyhint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--nx-fg-faint);
+  white-space: nowrap;
+}
+
+.nx-keyhint__label {
+  color: var(--nx-fg-faint);
+}
+
+/* ------------------------------------------------------------------- Kbd */
+
+.nx-kbd {
+  display: inline-block;
+  min-width: 16px;
+  padding: 0 4px;
+  border: 1px solid var(--nx-border);
+  border-bottom-width: 2px;
+  border-radius: var(--nx-radius);
+  background: var(--nx-bg-elev);
+  color: var(--nx-fg-dim);
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 15px;
+  text-align: center;
+}
+
+/* ------------------------------------------------------------- StatusDot */
+
+.nx-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.nx-dot__mark {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: var(--nx-fg-faint);
+}
+
+.nx-dot--running .nx-dot__mark {
+  background: var(--nx-info);
+  animation: nx-pulse 1.4s ease-in-out infinite;
+}
+
+.nx-dot--done .nx-dot__mark {
+  background: var(--nx-accent);
+}
+
+.nx-dot--warn .nx-dot__mark {
+  background: var(--nx-warn);
+}
+
+.nx-dot--error .nx-dot__mark {
+  background: var(--nx-danger);
+}
+
+.nx-dot--idle .nx-dot__mark {
+  background: var(--nx-fg-faint);
+}
+
+@keyframes nx-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nx-dot--running .nx-dot__mark {
+    animation: none;
+  }
+}
+
+/* ------------------------------------------------------------------- Tag */
+
+.nx-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 5px;
+  border: 1px solid var(--nx-border);
+  border-radius: var(--nx-radius);
+  background: var(--nx-bg-elev);
+  color: var(--nx-fg-dim);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.nx-tag--accent {
+  color: var(--nx-accent);
+  border-color: var(--nx-accent-dim);
+}
+
+.nx-tag--info {
+  color: var(--nx-info);
+}
+
+.nx-tag--warn {
+  color: var(--nx-warn);
+}
+
+.nx-tag--danger {
+  color: var(--nx-danger);
+}
+
+.nx-tag--magenta {
+  color: var(--nx-magenta);
+}
+
+/* ---------------------------------------------------------------- Button */
+
+.nx-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 2px;
+  border: 1px solid transparent;
+  border-radius: var(--nx-radius);
+  background: transparent;
+  color: var(--nx-fg-dim);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.nx-button:hover:not(:disabled) {
+  background: var(--nx-bg-hover);
+  color: var(--nx-fg-strong);
+}
+
+.nx-button:focus-visible {
+  outline: none;
+  border-color: var(--nx-border-focus);
+}
+
+.nx-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.nx-button--primary {
+  color: var(--nx-accent);
+}
+
+.nx-button--danger {
+  color: var(--nx-danger);
+}
+
+.nx-button--boxed {
+  border-color: var(--nx-border);
+  background: var(--nx-bg-elev);
+  padding: 0 6px;
+}
+
+.nx-button__bracket {
+  color: var(--nx-fg-faint);
+}
+
+/* ---------------------------------------------------------------- Select */
+
+.nx-select,
+.nx-input,
+.nx-textarea {
+  width: 100%;
+  border: 1px solid var(--nx-border);
+  border-radius: var(--nx-radius);
+  background: var(--nx-bg-input);
+  color: var(--nx-fg);
+  font-family: inherit;
+  font-size: 11px;
+  padding: 3px 6px;
+}
+
+.nx-select:focus,
+.nx-input:focus,
+.nx-textarea:focus {
+  outline: none;
+  border-color: var(--nx-border-focus);
+}
+
+.nx-textarea {
+  resize: none;
+  line-height: 1.5;
+}
+
+.nx-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 10px;
+}
+
+.nx-field__label {
+  color: var(--nx-fg-faint);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* -------------------------------------------------------------- Checkbox */
+
+.nx-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: var(--nx-row);
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--nx-radius);
+  background: transparent;
+  color: var(--nx-fg-dim);
+  font-family: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nx-check__input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.nx-check:hover {
+  background: var(--nx-bg-hover);
+  color: var(--nx-fg);
+}
+
+.nx-check:has(.nx-check__input:checked) {
+  background: var(--nx-bg-active);
+  color: var(--nx-fg-strong);
+}
+
+.nx-check__box {
+  color: var(--nx-fg-faint);
+  flex: 0 0 auto;
+}
+
+.nx-check__label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.nx-check:focus-within {
+  background: var(--nx-bg-hover);
+  outline: 1px solid var(--nx-border-focus);
+}
+
+.nx-check:has(.nx-check__input:checked) .nx-check__box {
+  color: var(--nx-accent);
+}
+
+.nx-check__hint {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+/* ------------------------------------------------------------- MonoTable */
+
+.nx-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.nx-table th {
+  text-align: left;
+  font-weight: 400;
+  color: var(--nx-fg-faint);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 2px 8px 4px 0;
+  border-bottom: 1px solid var(--nx-border);
+}
+
+.nx-table td {
+  padding: 3px 8px 3px 0;
+  border-bottom: 1px solid var(--nx-border);
+  color: var(--nx-fg-dim);
+  vertical-align: top;
+}
+
+.nx-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.nx-table tbody tr:hover td {
+  background: var(--nx-bg-hover);
+  color: var(--nx-fg);
+}
+
+.nx-table td:last-child,
+.nx-table th:last-child {
+  padding-right: 0;
+}
+
+/* -------------------------------------------------------------- Composer */
+
+.nx-composer {
+  border-top: 1px solid var(--nx-border);
+  background: var(--nx-bg-alt);
+  flex: 0 0 auto;
+}
+
+.nx-composer__row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px;
+}
+
+.nx-composer__input {
+  flex: 1 1 auto;
+  min-height: 34px;
+  max-height: 140px;
+}
+
+.nx-composer__hints {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 8px 7px;
+  color: var(--nx-fg-faint);
+  font-size: 10px;
+}
+
+.nx-composer__token {
+  color: var(--nx-fg-dim);
+}
+
+/* ---------------------------------------------------------- misc helpers */
+
+.nx-divider {
+  height: 1px;
+  margin: 6px 0;
+  background: var(--nx-border);
+}
+
+.nx-section-label {
+  padding: 4px 8px;
+  color: var(--nx-fg-faint);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.nx-muted {
+  color: var(--nx-fg-faint);
+}
+
+.nx-scroll {
+  overflow: auto;
+  min-height: 0;
+}
