@@ -25,6 +25,19 @@ ChatService ── AgentDispatcher ── LocalAgentRunner
 
 The shared Zod contracts in `src/shared/contracts.ts` define the boundary between browser and server.
 
+## Refresh and rendering model
+
+The SPA performs no periodic requests while the selected workspace is idle. While the visible
+thread has queued or running work, it polls only that thread once per second. If work continues
+after the user navigates elsewhere, a lightweight activity endpoint is polled instead; the full
+workspace bootstrap is refreshed once when activity finishes. The dispatcher keeps this live-run
+projection in memory, while JSONL run events remain the durable source used for restart recovery.
+
+Harness installation and ChatGPT login status are cached for 30 seconds and explicitly invalidated
+by the login flow. In React, search input owns its local state and the transcript is a memoized render
+boundary. Runs are grouped by trigger in one pass, so typing does not rebuild message rows and a
+transcript refresh does not perform a messages-by-runs nested scan.
+
 ## Persistence
 
 `state.json` stores workspaces, agent profiles, thread metadata, and tasks. Every agent, thread, and
@@ -87,7 +100,7 @@ Provider responses have a byte limit enforced before parsing.
 
 ## Known gaps
 
-- Chat currently polls instead of streaming tokens in real time.
+- Active chat runs currently poll once per second instead of streaming tokens in real time.
 - Worker chat runs in read-only discussion mode; Taskboard does not yet dispatch coding jobs or manage worktrees.
 - OpenCode `plan` is an application policy, not an independent OS or container sandbox.
 - Agent profiles cannot yet edit their full configuration after creation; enable, disable, archive,

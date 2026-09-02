@@ -114,6 +114,41 @@ describe("HTTP app", () => {
     expect(data.messages.at(-1)?.content).toBe("Hello from Codex");
   });
 
+  it("reports live activity without scanning persisted thread history", async () => {
+    let releaseRunner: () => void = () => undefined;
+    runner.gate = new Promise<void>((resolve) => {
+      releaseRunner = resolve;
+    });
+    const [workspace] = store.listWorkspaces();
+    const [thread] = store.listThreads();
+    if (!workspace || !thread) throw new Error("expected seeded workspace");
+    const agent = await store.createAgent({
+      kind: "worker",
+      name: "Codex",
+      handle: "codex",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+
+    const sent = await app.request(`/api/threads/${thread.id}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "@codex keep working" }),
+    });
+    expect(sent.status).toBe(201);
+
+    const active = await app.request(`/api/activity?workspaceId=${workspace.id}`);
+    await expect(active.json()).resolves.toMatchObject({
+      activeRuns: [{ agentId: agent.id, threadId: thread.id }],
+    });
+
+    releaseRunner();
+    await app.dispatcher.waitForIdle();
+    const idle = await app.request(`/api/activity?workspaceId=${workspace.id}`);
+    await expect(idle.json()).resolves.toEqual({ activeRuns: [] });
+  });
+
   it("rejects mutating browser requests from a non-loopback origin", async () => {
     const response = await app.request("/api/threads", {
       method: "POST",

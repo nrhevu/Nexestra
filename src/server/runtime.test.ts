@@ -44,6 +44,31 @@ describe("harness output parsers", () => {
   });
 });
 
+describe("Runtime status cache", () => {
+  it("reuses binary and login detection for thirty seconds", async () => {
+    vi.useFakeTimers();
+    try {
+      processMocks.findExecutable.mockReset();
+      processMocks.runCommand.mockReset();
+      processMocks.findExecutable.mockResolvedValue(undefined);
+      const root = await mkdtemp(join(tmpdir(), "nexestra-runtime-cache-"));
+      const store = await FileStore.open({ root, workspacePath: root });
+      const runner = new LocalAgentRunner({ store });
+
+      await runner.runtimeStatus();
+      vi.advanceTimersByTime(29_000);
+      await runner.runtimeStatus();
+      expect(processMocks.findExecutable).toHaveBeenCalledTimes(2);
+
+      vi.advanceTimersByTime(2_000);
+      await runner.runtimeStatus();
+      expect(processMocks.findExecutable).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("Worker harness arguments", () => {
   beforeEach(() => {
     processMocks.findExecutable.mockReset();

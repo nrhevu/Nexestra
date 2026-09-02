@@ -55,12 +55,21 @@ export function createApp(options: CreateAppOptions) {
         .map((agent) => agentView(agent, runtime, dispatcher.busyAgentIds())),
       threads: options.store.listThreads(workspace.id),
       tasks: options.store.listTasks(workspace.id),
-      activeRuns: await options.store.activeRuns(workspace.id),
+      activeRuns: dispatcher.activeRuns(workspace.id),
       runtime,
       workspacePath: options.store.workspacePath,
       dataPath: options.store.root,
     };
     return context.json(data);
+  });
+
+  app.get("/api/activity", (context) => {
+    const requestedWorkspaceId = context.req.query("workspaceId");
+    const workspace =
+      (requestedWorkspaceId && options.store.getWorkspace(requestedWorkspaceId)) ??
+      options.store.listWorkspaces()[0];
+    if (!workspace) throw new StoreError("not_found", "Workspace not found.");
+    return context.json({ activeRuns: dispatcher.activeRuns(workspace.id) });
   });
 
   app.post("/api/workspaces", async (context) => {

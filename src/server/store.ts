@@ -442,19 +442,6 @@ export class FileStore {
     });
   }
 
-  async activeRuns(workspaceId?: string): Promise<AgentRun[]> {
-    const active: AgentRun[] = [];
-    for (const thread of this.state.threads.filter(
-      (entry) => workspaceId === undefined || entry.workspaceId === workspaceId,
-    )) {
-      const data = await this.threadData(thread.id);
-      active.push(
-        ...data.runs.filter((run) => run.status === "queued" || run.status === "running"),
-      );
-    }
-    return active;
-  }
-
   private async appendMessage(
     threadId: string,
     input: Omit<Message, "sequence">,

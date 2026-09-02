@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentView, BootstrapData, ThreadData } from "../shared/contracts.js";
@@ -54,7 +54,103 @@ const bootstrapData: BootstrapData = {
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+describe("Activity-aware refresh", () => {
+  it("does not schedule background polling while the workspace is idle", async () => {
+    window.history.replaceState({}, "", "/surfaces/agents");
+    const intervalSpy = vi
+      .spyOn(window, "setInterval")
+      .mockImplementation(() => 1 as unknown as ReturnType<typeof window.setInterval>);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(bootstrapData)),
+    );
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Agent management" });
+
+    expect(intervalSpy.mock.calls.filter(([, delay]) => delay === 1_000)).toHaveLength(0);
+  });
+
+  it("polls only the active thread and refreshes bootstrap once when work finishes", async () => {
+    const thread = {
+      id: "thread-active",
+      workspaceId: workspace.id,
+      name: "general",
+      slug: "general",
+      createdAt: now,
+      updatedAt: now,
+      messageCount: 1,
+      lastMessageAt: now,
+    };
+    const run = {
+      id: "run-active",
+      threadId: thread.id,
+      triggerMessageId: "message-trigger",
+      agentId: workerAgent.id,
+      attempt: 1,
+      status: "running" as const,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const callbacks: { handler: () => void; delay?: number }[] = [];
+    const intervalSpy = vi.spyOn(window, "setInterval").mockImplementation((handler, delay) => {
+      if (typeof handler === "function") callbacks.push({ handler, delay });
+      return callbacks.length as unknown as ReturnType<typeof window.setInterval>;
+    });
+    let threadReads = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/bootstrap") {
+        return jsonResponse({
+          ...bootstrapData,
+          agents: [workerAgent],
+          threads: [thread],
+          activeRuns: [run],
+        });
+      }
+      if (path === `/api/bootstrap?workspaceId=${workspace.id}`) {
+        return jsonResponse({
+          ...bootstrapData,
+          agents: [workerAgent],
+          threads: [thread],
+          activeRuns: [],
+        });
+      }
+      if (path === `/api/threads/${thread.id}`) {
+        threadReads += 1;
+        return jsonResponse({
+          thread,
+          messages: [],
+          runs: [{ ...run, status: threadReads === 1 ? "running" : "completed" }],
+        });
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+
+    render(<App />);
+    await screen.findByRole("combobox", { name: "Message" });
+    await waitFor(() => expect(intervalSpy).toHaveBeenCalledWith(expect.any(Function), 1_000));
+
+    await act(async () => {
+      callbacks.find((entry) => entry.delay === 1_000)?.handler();
+    });
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(`/api/bootstrap?workspaceId=${workspace.id}`, {
+        headers: {},
+      });
+    });
+
+    expect(threadReads).toBe(2);
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/bootstrap")),
+    ).toHaveLength(2);
+  });
 });
 
 describe("Workspace navigation", () => {
