@@ -1,6 +1,9 @@
 node_modules/
 dist/
 coverage/
+.worktrees/
+playwright-report/
+test-results/
 .nexestra/
 .env
 .DS_Store
