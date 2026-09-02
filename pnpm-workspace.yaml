@@ -8,6 +8,9 @@ allowBuilds:
   esbuild: true
 
 minimumReleaseAgeExclude:
+  - '@testing-library/react@16.3.3'
+  - '@testing-library/user-event@14.6.7'
+  - 'jsdom@30.0.1'
   - '@types/node@26.4.1'
   - '@xyflow/react@12.11.6'
   - '@xyflow/system@0.0.82'

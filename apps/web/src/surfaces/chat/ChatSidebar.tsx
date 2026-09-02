@@ -2,23 +2,38 @@ import { Button, StatusDot, Tag } from "@nexestra/ui-kit";
 import {
   useApprovals,
   useArtifacts,
+  useMasterState,
   useMemories,
   useResolveApproval,
   useSpec,
 } from "../../lib/api.js";
-import { formatDateTime } from "../../lib/format.js";
+import { formatDateTime, formatUsd } from "../../lib/format.js";
+import { SpecCard } from "./SpecCard.js";
 
+/**
+ * Surface 1's sidebar: the Master's current picture of the work.
+ *
+ * Requirements is the live Spec — the same component Chat shows inline when an
+ * approval is waiting, so the two can never disagree. Decisions merges the
+ * spec's own `decisions` with the memories the Master recorded as
+ * `type: "decision"`, because a decision reached mid-conversation lands in the
+ * memory graph rather than in the spec.
+ */
 export function ChatSidebar({ workspaceId, threadId }: { workspaceId: string; threadId: string }) {
   const spec = useSpec(threadId);
   const memories = useMemories(workspaceId);
   const artifacts = useArtifacts(threadId);
   const approvals = useApprovals(workspaceId);
+  const masterState = useMasterState(threadId);
   const resolveApproval = useResolveApproval(workspaceId);
 
   const pending = (approvals.data ?? []).filter(
     (approval) => approval.status === "pending" && approval.threadId === threadId,
   );
-  const references = (memories.data ?? []).filter((memory) => memory.threadId === threadId);
+  const threadMemories = (memories.data ?? []).filter((memory) => memory.threadId === threadId);
+  const decisions = threadMemories.filter((memory) => memory.type === "decision");
+  const references = threadMemories.filter((memory) => memory.type !== "decision");
+  const usage = masterState.data?.usage;
 
   return (
     <>
@@ -69,26 +84,7 @@ export function ChatSidebar({ workspaceId, threadId }: { workspaceId: string; th
       <section className="sidebar__section">
         <div className="sidebar__section-title">Requirements</div>
         {spec.data ? (
-          <ul className="sidebar__list">
-            {spec.data.scope.in.map((item) => (
-              <li key={item}>
-                <span className="sidebar__bullet">+</span>
-                <span>{item}</span>
-              </li>
-            ))}
-            {spec.data.scope.out.map((item) => (
-              <li key={item}>
-                <span className="sidebar__bullet">−</span>
-                <span className="nx-muted">{item}</span>
-              </li>
-            ))}
-            {spec.data.constraints.map((item) => (
-              <li key={item}>
-                <span className="sidebar__bullet">!</span>
-                <span>{item}</span>
-              </li>
-            ))}
-          </ul>
+          <SpecCard spec={spec.data} bare />
         ) : (
           <div className="nx-muted">No spec yet — Master is still clarifying.</div>
         )}
@@ -96,45 +92,83 @@ export function ChatSidebar({ workspaceId, threadId }: { workspaceId: string; th
 
       <section className="sidebar__section">
         <div className="sidebar__section-title">Decisions</div>
-        {spec.data && spec.data.decisions.length > 0 ? (
+        {(spec.data?.decisions.length ?? 0) === 0 && decisions.length === 0 ? (
+          <div className="nx-muted">No decisions recorded.</div>
+        ) : (
           <ul className="sidebar__list">
-            {spec.data.decisions.map((decision) => (
+            {(spec.data?.decisions ?? []).map((decision) => (
               <li key={decision.id}>
                 <span className="sidebar__bullet">·</span>
                 <span>
                   {decision.text}
+                  {decision.rationale ? (
+                    <>
+                      <br />
+                      <span className="nx-muted">{decision.rationale}</span>
+                    </>
+                  ) : null}
+                </span>
+              </li>
+            ))}
+            {decisions.map((memory) => (
+              <li key={memory.id}>
+                <span className="sidebar__bullet">·</span>
+                <span>
+                  {memory.title}
                   <br />
-                  <span className="nx-muted">{decision.rationale}</span>
+                  <span className="nx-muted">{memory.content}</span>
                 </span>
               </li>
             ))}
           </ul>
-        ) : (
-          <div className="nx-muted">No decisions recorded.</div>
         )}
       </section>
 
       <section className="sidebar__section">
         <div className="sidebar__section-title">References</div>
-        <ul className="sidebar__list">
-          {references.slice(0, 6).map((memory) => (
-            <li key={memory.id}>
-              <span className="sidebar__bullet">#</span>
-              <span>
-                {memory.title} <Tag>{memory.type}</Tag>
-              </span>
-            </li>
-          ))}
-          {(artifacts.data ?? []).slice(0, 4).map((artifact) => (
-            <li key={artifact.id}>
-              <span className="sidebar__bullet">@</span>
-              <span>
-                {artifact.title} <Tag tone="info">{artifact.kind}</Tag>
-              </span>
-            </li>
-          ))}
-        </ul>
+        {references.length === 0 && (artifacts.data ?? []).length === 0 ? (
+          <div className="nx-muted">Nothing recorded yet.</div>
+        ) : (
+          <ul className="sidebar__list">
+            {references.slice(0, 6).map((memory) => (
+              <li key={memory.id}>
+                <span className="sidebar__bullet">#</span>
+                <span>
+                  {memory.title} <Tag>{memory.type}</Tag>
+                </span>
+              </li>
+            ))}
+            {(artifacts.data ?? []).slice(0, 4).map((artifact) => (
+              <li key={artifact.id}>
+                <span className="sidebar__bullet">@</span>
+                <span>
+                  {artifact.title} <Tag tone="info">{artifact.kind}</Tag>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
+
+      {usage ? (
+        <section className="sidebar__section">
+          <div className="sidebar__section-title">Master</div>
+          <div className="kv">
+            <span className="kv__k">client</span>
+            <span className="kv__v">{masterState.data?.runtime.client}</span>
+            <span className="kv__k">questions</span>
+            <span className="kv__v">
+              {masterState.data?.questionsAsked} / {masterState.data?.maxQuestions}
+            </span>
+            <span className="kv__k">tokens</span>
+            <span className="kv__v">
+              {usage.inputTokens + usage.cacheReadTokens} in · {usage.outputTokens} out
+            </span>
+            <span className="kv__k">cost</span>
+            <span className="kv__v">{formatUsd(usage.costUSD)}</span>
+          </div>
+        </section>
+      ) : null}
     </>
   );
 }

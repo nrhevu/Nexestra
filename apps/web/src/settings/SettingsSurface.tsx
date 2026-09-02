@@ -61,6 +61,44 @@ export function SettingsSurface() {
               onChange={(next) => setTheme(next ? "light" : "dark")}
             />
 
+            <h2>Master</h2>
+            {settings.data ? (
+              <div className="kv" style={{ maxWidth: 460 }}>
+                <span className="kv__k">model client</span>
+                <span className="kv__v">
+                  <Tag tone={settings.data.master.client === "anthropic" ? "accent" : "warn"}>
+                    {settings.data.master.client}
+                  </Tag>
+                </span>
+                <span className="kv__k">model</span>
+                <span className="kv__v">{settings.data.master.model}</span>
+                <span className="kv__k">API key</span>
+                <span className="kv__v">
+                  <StatusDot
+                    tone={settings.data.master.apiKeyPresent ? "done" : "warn"}
+                    label={settings.data.master.apiKeyPresent ? "present" : "not set"}
+                  />
+                </span>
+              </div>
+            ) : (
+              <div className="nx-muted">loading…</div>
+            )}
+            <div className="nx-muted">
+              {settings.data?.master.client === "demo" ? (
+                <>
+                  No <code>ANTHROPIC_API_KEY</code> on the server, so the Master runs on the
+                  deterministic demo model: it clarifies, writes a spec and proposes a plan, but it
+                  does not think. Set the key and restart the server to use{" "}
+                  <code>claude-opus-5</code>.
+                </>
+              ) : (
+                <>
+                  The Master runs on the live Anthropic client. Choosing the client is a restart,
+                  not a setting — change the environment and restart the server.
+                </>
+              )}
+            </div>
+
             <h2>Defaults</h2>
             {draft ? (
               <div style={{ maxWidth: 320 }}>
@@ -198,7 +236,8 @@ export function SettingsSurface() {
 
             <h2>API key</h2>
             <div className="nx-muted">
-              Read from <code>ANTHROPIC_API_KEY</code> on the server. Never stored in the browser.
+              Read from <code>ANTHROPIC_API_KEY</code> (or <code>ANTHROPIC_AUTH_TOKEN</code>) on the
+              server. The value never reaches the browser — only whether one is set.
             </div>
           </div>
         </div>
