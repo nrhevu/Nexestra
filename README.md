@@ -8,6 +8,10 @@ Milestone M9 is a fresh rebuild focused on two primary workflows:
 - chat in shared threads and invoke agents only with an `@handle`;
 - manage tasks and agents in the first two surfaces: Taskboard and Agents.
 
+Workspaces are selected from the far-left rail. Each workspace has its own threads, agents, and
+tasks; Threads, Surfaces, and Settings live in the navigation panel beside that rail. Creating a
+workspace also creates its initial `general` thread.
+
 ## Run locally
 
 Requires Node.js 24+ and pnpm 11.
@@ -24,7 +28,7 @@ By default, data is stored in `.nexestra/` in the running repository:
 
 ```text
 .nexestra/
-├── state.json          # agent and thread metadata, plus tasks
+├── state.json          # workspace, agent, thread, and task metadata
 ├── credentials.json    # custom API keys, mode 0600
 └── threads/
     └── <thread-id>.jsonl  # the thread's shared append-only transcript

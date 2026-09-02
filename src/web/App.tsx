@@ -4,7 +4,6 @@ import {
   ArrowRight,
   Bot,
   Check,
-  ChevronDown,
   CircleAlert,
   Columns3,
   Copy,
@@ -38,13 +37,14 @@ import type {
   Task,
   Thread,
   ThreadData,
+  Workspace,
 } from "../shared/contracts.js";
 import { extractMentionHandles, handleFromName } from "../shared/contracts.js";
 import { api } from "./api.js";
 
 type PrimaryView = "threads" | "surfaces";
 type Surface = "taskboard" | "agents";
-type ModalName = "thread" | "agent" | "task" | "settings" | null;
+type ModalName = "workspace" | "thread" | "agent" | "task" | "settings" | null;
 
 interface RouteState {
   view: PrimaryView;
@@ -69,6 +69,9 @@ export function App() {
   const [error, setError] = useState<string>();
   const [taskStatus, setTaskStatus] = useState<Task["status"]>("todo");
   const [agentToDelete, setAgentToDelete] = useState<AgentView>();
+  const workspaceIdRef = useRef<string | undefined>(
+    window.localStorage.getItem("nexestra.workspaceId") ?? undefined,
+  );
 
   const navigate = useCallback((nextPath: string, nextRoute: RouteState, replace = false) => {
     window.history[replace ? "replaceState" : "pushState"]({}, "", nextPath);
@@ -76,9 +79,12 @@ export function App() {
     setQuery("");
   }, []);
 
-  const refresh = useCallback(async (quiet = false) => {
+  const refresh = useCallback(async (quiet = false, workspaceId = workspaceIdRef.current) => {
     try {
-      const next = await api<BootstrapData>("/api/bootstrap");
+      const query = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
+      const next = await api<BootstrapData>(`/api/bootstrap${query}`);
+      workspaceIdRef.current = next.workspace.id;
+      window.localStorage.setItem("nexestra.workspaceId", next.workspace.id);
       setData(next);
       if (!quiet) setError(undefined);
       return next;
@@ -138,6 +144,19 @@ export function App() {
   const openSurface = (surface: Surface) =>
     navigate(`/surfaces/${surface}`, { view: "surfaces", surface });
 
+  const selectWorkspace = async (workspaceId: string) => {
+    if (workspaceId === data?.workspace.id) return;
+    setThreadData(undefined);
+    const next = await refresh(false, workspaceId);
+    if (!next) return;
+    if (route.view === "threads") {
+      const threadId = next.threads[0]?.id;
+      if (threadId) {
+        navigate(`/threads/${threadId}`, { ...route, view: "threads", threadId });
+      }
+    }
+  };
+
   const flash = (message: string) => {
     setNotice(message);
     window.setTimeout(() => setNotice(undefined), 2_600);
@@ -179,20 +198,22 @@ export function App() {
         onSurface={openSurface}
         onSettings={() => setModal("settings")}
       />
-      <Rail
-        view={route.view}
-        onThreads={() => {
-          const threadId = route.threadId ?? data.threads[0]?.id;
-          if (threadId) openThread(threadId);
-        }}
-        onSurfaces={() => openSurface(route.surface)}
-        onSettings={() => setModal("settings")}
+      <WorkspaceRail
+        workspaces={data.workspaces}
+        activeWorkspaceId={data.workspace.id}
+        onWorkspace={(workspaceId) => void selectWorkspace(workspaceId)}
+        onCreate={() => setModal("workspace")}
       />
       <Sidebar
         data={data}
         route={route}
         onThread={openThread}
         onSurface={openSurface}
+        onThreads={() => {
+          const threadId = route.threadId ?? data.threads[0]?.id;
+          if (threadId) openThread(threadId);
+        }}
+        onSettings={() => setModal("settings")}
         onCreate={() => {
           if (route.view === "threads") setModal("thread");
           else if (route.surface === "agents") setModal("agent");
@@ -277,12 +298,39 @@ export function App() {
             try {
               const thread = await api<Thread>("/api/threads", {
                 method: "POST",
-                body: JSON.stringify({ name }),
+                body: JSON.stringify({ workspaceId: data.workspace.id, name }),
               });
               await refresh();
               setModal(null);
               openThread(thread.id);
               flash("Thread created.");
+            } catch (caught) {
+              setError(messageFrom(caught));
+              throw caught;
+            }
+          }}
+        />
+      )}
+      {modal === "workspace" && (
+        <WorkspaceDialog
+          onClose={() => setModal(null)}
+          onCreate={async (name) => {
+            try {
+              const workspace = await api<Workspace>("/api/workspaces", {
+                method: "POST",
+                body: JSON.stringify({ name }),
+              });
+              const next = await refresh(false, workspace.id);
+              setModal(null);
+              const threadId = next?.threads[0]?.id;
+              if (threadId) {
+                navigate(`/threads/${threadId}`, {
+                  view: "threads",
+                  surface: route.surface,
+                  threadId,
+                });
+              }
+              flash(`Workspace ${workspace.name} created.`);
             } catch (caught) {
               setError(messageFrom(caught));
               throw caught;
@@ -409,11 +457,6 @@ function TopBar(props: {
     : [];
   return (
     <header className="topbar">
-      <div className="traffic-lights" aria-hidden="true">
-        <span />
-        <span />
-        <span />
-      </div>
       <div className="global-search">
         <Search size={16} />
         <input
@@ -452,40 +495,41 @@ function TopBar(props: {
   );
 }
 
-function Rail(props: {
-  view: PrimaryView;
-  onThreads: () => void;
-  onSurfaces: () => void;
-  onSettings: () => void;
+function WorkspaceRail(props: {
+  workspaces: Workspace[];
+  activeWorkspaceId: string;
+  onWorkspace: (id: string) => void;
+  onCreate: () => void;
 }) {
   return (
-    <nav className="app-rail" aria-label="Main navigation">
-      <div className="brand-mark">N</div>
+    <nav className="app-rail" aria-label="Workspaces">
+      <div className="workspace-switcher">
+        {props.workspaces.map((workspace) => (
+          <button
+            className={
+              workspace.id === props.activeWorkspaceId
+                ? "workspace-button active"
+                : "workspace-button"
+            }
+            type="button"
+            key={workspace.id}
+            onClick={() => props.onWorkspace(workspace.id)}
+            aria-label={`Switch to ${workspace.name}`}
+            aria-current={workspace.id === props.activeWorkspaceId ? "page" : undefined}
+            title={workspace.name}
+          >
+            {workspaceInitials(workspace.name)}
+          </button>
+        ))}
+      </div>
       <button
-        className={props.view === "threads" ? "rail-item active" : "rail-item"}
+        className="workspace-button workspace-add"
         type="button"
-        onClick={props.onThreads}
+        onClick={props.onCreate}
+        aria-label="Create workspace"
+        title="Create workspace"
       >
-        <span className="rail-icon">
-          <MessageSquareMore size={21} />
-        </span>
-        Threads
-      </button>
-      <button
-        className={props.view === "surfaces" ? "rail-item active" : "rail-item"}
-        type="button"
-        onClick={props.onSurfaces}
-      >
-        <span className="rail-icon">
-          <Sparkles size={21} />
-        </span>
-        Surfaces
-      </button>
-      <button className="rail-item rail-settings" type="button" onClick={props.onSettings}>
-        <span className="rail-icon">
-          <Settings size={20} />
-        </span>
-        Settings
+        <Plus size={20} />
       </button>
     </nav>
   );
@@ -496,15 +540,15 @@ function Sidebar(props: {
   route: RouteState;
   onThread: (id: string) => void;
   onSurface: (surface: Surface) => void;
+  onThreads: () => void;
+  onSettings: () => void;
   onCreate: () => void;
 }) {
   const visibleAgents = props.data.agents.filter((agent) => !agent.archived);
   return (
     <aside className="sidebar">
       <div className="workspace-title">
-        <div>
-          Nexestra <ChevronDown size={15} />
-        </div>
+        <div title={props.data.workspace.name}>{props.data.workspace.name}</div>
         <button
           className="icon-button"
           type="button"
@@ -514,88 +558,118 @@ function Sidebar(props: {
           <Plus size={18} />
         </button>
       </div>
-      {props.route.view === "threads" ? (
-        <>
-          <div className="sidebar-hint">
-            <MessageSquareMore size={14} />
-            <span>Shared conversations</span>
-          </div>
-          <div className="section-label">
-            <span>Threads</span>
-            <button type="button" onClick={props.onCreate} aria-label="Create thread">
-              <Plus size={15} />
-            </button>
-          </div>
-          <div className="sidebar-list">
-            {props.data.threads.map((thread) => (
+      <nav className="primary-navigation" aria-label="Workspace navigation">
+        <button
+          className={
+            props.route.view === "threads" ? "primary-nav-item active" : "primary-nav-item"
+          }
+          type="button"
+          onClick={props.onThreads}
+        >
+          <MessageSquareMore size={17} />
+          Threads
+        </button>
+        <button
+          className={
+            props.route.view === "surfaces" ? "primary-nav-item active" : "primary-nav-item"
+          }
+          type="button"
+          onClick={() => props.onSurface(props.route.surface)}
+        >
+          <Sparkles size={17} />
+          Surfaces
+        </button>
+      </nav>
+      <div className="sidebar-content">
+        {props.route.view === "threads" ? (
+          <>
+            <div className="sidebar-hint">
+              <MessageSquareMore size={14} />
+              <span>Shared conversations</span>
+            </div>
+            <div className="section-label">
+              <span>Threads</span>
+              <button type="button" onClick={props.onCreate} aria-label="Create thread">
+                <Plus size={15} />
+              </button>
+            </div>
+            <div className="sidebar-list">
+              {props.data.threads.map((thread) => (
+                <button
+                  className={
+                    thread.id === props.route.threadId ? "sidebar-row selected" : "sidebar-row"
+                  }
+                  type="button"
+                  key={thread.id}
+                  onClick={() => props.onThread(thread.id)}
+                >
+                  <span className="hash">#</span>
+                  <span className="row-label">{thread.name}</span>
+                  {thread.messageCount > 0 && <span className="count">{thread.messageCount}</span>}
+                </button>
+              ))}
+            </div>
+            <div className="sidebar-rule" />
+            <div className="section-label">
+              <span>Agent directory</span>
+              <span className="count">{visibleAgents.length}</span>
+            </div>
+            {visibleAgents.slice(0, 6).map((agent) => (
               <button
-                className={
-                  thread.id === props.route.threadId ? "sidebar-row selected" : "sidebar-row"
-                }
+                className="presence-row"
                 type="button"
-                key={thread.id}
-                onClick={() => props.onThread(thread.id)}
+                key={agent.id}
+                onClick={() => props.onSurface("agents")}
               >
-                <span className="hash">#</span>
-                <span className="row-label">{thread.name}</span>
-                {thread.messageCount > 0 && <span className="count">{thread.messageCount}</span>}
+                <Avatar agent={agent} small />
+                <span>@{agent.handle}</span>
+                <i className={`presence-${agent.readiness}`} />
               </button>
             ))}
-          </div>
-          <div className="sidebar-rule" />
-          <div className="section-label">
-            <span>Agent directory</span>
-            <span className="count">{visibleAgents.length}</span>
-          </div>
-          {visibleAgents.slice(0, 6).map((agent) => (
-            <button
-              className="presence-row"
-              type="button"
-              key={agent.id}
-              onClick={() => props.onSurface("agents")}
-            >
-              <Avatar agent={agent} small />
-              <span>@{agent.handle}</span>
-              <i className={`presence-${agent.readiness}`} />
-            </button>
-          ))}
-          {visibleAgents.length === 0 && (
-            <button
-              className="sidebar-empty"
-              type="button"
-              onClick={() => props.onSurface("agents")}
-            >
-              Create your first agent →
-            </button>
-          )}
-        </>
-      ) : (
-        <>
-          <p className="sidebar-kicker">Workspace</p>
-          <div className="sidebar-list surface-list">
-            <button
-              className={
-                props.route.surface === "taskboard" ? "sidebar-row selected" : "sidebar-row"
-              }
-              type="button"
-              onClick={() => props.onSurface("taskboard")}
-            >
-              <Columns3 size={17} />
-              <span className="row-label">Taskboard</span>
-              <span className="count">{props.data.tasks.length}</span>
-            </button>
-            <button
-              className={props.route.surface === "agents" ? "sidebar-row selected" : "sidebar-row"}
-              type="button"
-              onClick={() => props.onSurface("agents")}
-            >
-              <UsersRound size={17} />
-              <span className="row-label">Agent management</span>
-              <span className="count">{visibleAgents.length}</span>
-            </button>
-          </div>
-        </>
-      )}
+            {visibleAgents.length === 0 && (
+              <button
+                className="sidebar-empty"
+                type="button"
+                onClick={() => props.onSurface("agents")}
+              >
+                Create your first agent →
+              </button>
+            )}
+          </>
+        ) : (
+          <>
+            <p className="sidebar-kicker">Workspace</p>
+            <div className="sidebar-list surface-list">
+              <button
+                className={
+                  props.route.surface === "taskboard" ? "sidebar-row selected" : "sidebar-row"
+                }
+                type="button"
+                onClick={() => props.onSurface("taskboard")}
+              >
+                <Columns3 size={17} />
+                <span className="row-label">Taskboard</span>
+                <span className="count">{props.data.tasks.length}</span>
+              </button>
+              <button
+                className={
+                  props.route.surface === "agents" ? "sidebar-row selected" : "sidebar-row"
+                }
+                type="button"
+                onClick={() => props.onSurface("agents")}
+              >
+                <UsersRound size={17} />
+                <span className="row-label">Agent management</span>
+                <span className="count">{visibleAgents.length}</span>
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+      <button className="sidebar-settings" type="button" onClick={props.onSettings}>
+        <Settings size={17} />
+        Settings
+      </button>
     </aside>
   );
 }
@@ -1312,6 +1386,43 @@ function ThreadDialog({
   );
 }
 
+function WorkspaceDialog({
+  onClose,
+  onCreate,
+}: {
+  onClose: () => void;
+  onCreate: (name: string) => Promise<void>;
+}) {
+  const [name, setName] = useState("");
+  const [saving, setSaving] = useState(false);
+  return (
+    <Modal title="Create workspace" eyebrow="NEW WORKSPACE" onClose={onClose}>
+      <form
+        onSubmit={async (event) => {
+          event.preventDefault();
+          setSaving(true);
+          try {
+            await onCreate(name);
+          } finally {
+            setSaving(false);
+          }
+        }}
+      >
+        <Field label="Workspace name" hint="A separate home for threads, agents, and tasks">
+          <input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="Product team"
+            required
+            maxLength={60}
+          />
+        </Field>
+        <ModalActions onClose={onClose} saving={saving} submitLabel="Create workspace" />
+      </form>
+    </Modal>
+  );
+}
+
 function DeleteAgentDialog({
   agent,
   onClose,
@@ -1413,6 +1524,7 @@ function AgentDialog({
     setFormError(undefined);
     const fields = new FormData(event.currentTarget);
     const common = {
+      workspaceId: data.workspace.id,
       kind,
       name,
       handle,
@@ -1762,6 +1874,7 @@ function TaskDialog({
             await api("/api/tasks", {
               method: "POST",
               body: JSON.stringify({
+                workspaceId: data.workspace.id,
                 title: String(fields.get("title") ?? ""),
                 description: String(fields.get("description") ?? ""),
                 status: String(fields.get("status") ?? initialStatus),
@@ -2107,6 +2220,13 @@ function hashString(value: string): number {
   let hash = 0;
   for (const character of value) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
   return hash;
+}
+
+function workspaceInitials(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  return (
+    words.length > 1 ? `${words[0]?.[0] ?? ""}${words[1]?.[0] ?? ""}` : (words[0]?.[0] ?? "")
+  ).toUpperCase();
 }
 
 function formatTime(value: string): string {

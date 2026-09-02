@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp, readFile } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -10,6 +10,78 @@ async function openStore() {
 }
 
 describe("FileStore", () => {
+  it("migrates version 1 metadata into a default workspace without changing record IDs", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-store-legacy-"));
+    const createdAt = "2026-09-01T10:00:00.000Z";
+    await writeFile(
+      join(root, "state.json"),
+      `${JSON.stringify({
+        version: 1,
+        agents: [],
+        threads: [
+          {
+            id: "legacy-thread",
+            name: "general",
+            slug: "general",
+            createdAt,
+            updatedAt: createdAt,
+            messageCount: 0,
+            lastMessageAt: null,
+          },
+        ],
+        tasks: [],
+      })}\n`,
+    );
+
+    const store = await FileStore.open({ root, workspacePath: root });
+    const [workspace] = store.listWorkspaces();
+
+    expect(workspace).toMatchObject({ name: "Nexestra", slug: "nexestra" });
+    expect(store.getThread("legacy-thread")).toMatchObject({
+      id: "legacy-thread",
+      workspaceId: workspace?.id,
+    });
+    const persisted = JSON.parse(await readFile(store.stateFile, "utf8"));
+    expect(persisted).toMatchObject({ version: 2 });
+  });
+
+  it("creates isolated workspaces with their own general thread and agent handles", async () => {
+    const store = await openStore();
+    const [firstWorkspace] = store.listWorkspaces();
+    if (!firstWorkspace) throw new Error("expected default workspace");
+    const secondWorkspace = await store.createWorkspace({ name: "Product Team" });
+    const firstAgent = await store.createAgent({
+      kind: "worker",
+      name: "Planner One",
+      handle: "planner",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    const secondAgent = await store.createAgent({
+      workspaceId: secondWorkspace.id,
+      kind: "worker",
+      name: "Planner Two",
+      handle: "planner",
+      description: "",
+      instructions: "",
+      harness: "opencode",
+    });
+
+    expect(store.listThreads(firstWorkspace.id)).toHaveLength(1);
+    expect(store.listThreads(secondWorkspace.id)).toMatchObject([{ name: "general" }]);
+    expect(store.listAgents(firstWorkspace.id).map((agent) => agent.id)).toEqual([firstAgent.id]);
+    expect(store.listAgents(secondWorkspace.id).map((agent) => agent.id)).toEqual([secondAgent.id]);
+    await expect(
+      store.createTask({
+        workspaceId: secondWorkspace.id,
+        title: "Cross-workspace assignment",
+        assigneeId: firstAgent.id,
+        threadId: null,
+      }),
+    ).rejects.toMatchObject({ code: "invalid" });
+  });
+
   it("keeps every participant's messages in one append-only thread file", async () => {
     const store = await openStore();
     const [thread] = store.listThreads();

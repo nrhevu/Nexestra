@@ -8,9 +8,17 @@ import type { AgentView, BootstrapData, ThreadData } from "../shared/contracts.j
 import { App } from "./App.js";
 
 const now = "2026-09-02T12:00:00.000Z";
+const workspace = {
+  id: "workspace-nexestra",
+  name: "Nexestra",
+  slug: "nexestra",
+  createdAt: now,
+  updatedAt: now,
+};
 
 const workerAgent: AgentView = {
   id: "agent-planner",
+  workspaceId: workspace.id,
   kind: "worker",
   name: "Planner",
   handle: "planner",
@@ -26,6 +34,8 @@ const workerAgent: AgentView = {
 };
 
 const bootstrapData: BootstrapData = {
+  workspaces: [workspace],
+  workspace,
   agents: [],
   threads: [],
   tasks: [],
@@ -43,7 +53,66 @@ const bootstrapData: BootstrapData = {
 
 afterEach(() => {
   cleanup();
+  window.localStorage.clear();
   vi.unstubAllGlobals();
+});
+
+describe("Workspace navigation", () => {
+  it("uses the left rail for workspaces and creates a newly scoped workspace", async () => {
+    window.history.replaceState({}, "", "/surfaces/agents");
+    const productWorkspace = {
+      id: "workspace-product",
+      name: "Product Team",
+      slug: "product-team",
+      createdAt: now,
+      updatedAt: now,
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/bootstrap") return jsonResponse(bootstrapData);
+      if (path === "/api/workspaces" && init?.method === "POST") {
+        return jsonResponse(productWorkspace, 201);
+      }
+      if (path === `/api/bootstrap?workspaceId=${productWorkspace.id}`) {
+        return jsonResponse({
+          ...bootstrapData,
+          workspaces: [workspace, productWorkspace],
+          workspace: productWorkspace,
+        });
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+
+    await screen.findByRole("heading", { name: "Agent management" });
+    expect(container.querySelector(".traffic-lights")).not.toBeInTheDocument();
+    const workspaceRail = screen.getByRole("navigation", { name: "Workspaces" });
+    expect(
+      within(workspaceRail).getByRole("button", { name: "Switch to Nexestra" }),
+    ).toHaveAttribute("aria-current", "page");
+    const workspaceNavigation = screen.getByRole("navigation", {
+      name: "Workspace navigation",
+    });
+    expect(within(workspaceNavigation).getByRole("button", { name: "Threads" })).toBeVisible();
+    expect(within(workspaceNavigation).getByRole("button", { name: "Surfaces" })).toBeVisible();
+
+    await user.click(within(workspaceRail).getByRole("button", { name: "Create workspace" }));
+    const dialog = screen.getByRole("dialog", { name: "Create workspace" });
+    await user.type(within(dialog).getByPlaceholderText("Product team"), "Product Team");
+    await user.click(within(dialog).getByRole("button", { name: "Create workspace" }));
+
+    await waitFor(() => {
+      expect(
+        within(workspaceRail).getByRole("button", { name: "Switch to Product Team" }),
+      ).toHaveAttribute("aria-current", "page");
+    });
+    const request = fetchMock.mock.calls.find(
+      ([input, init]) => String(input) === "/api/workspaces" && init?.method === "POST",
+    );
+    expect(JSON.parse(String(request?.[1]?.body))).toEqual({ name: "Product Team" });
+  });
 });
 
 describe("Worker creation", () => {
@@ -87,6 +156,7 @@ describe("Worker creation", () => {
       ([input, init]) => String(input) === "/api/agents" && init?.method === "POST",
     );
     expect(JSON.parse(String(request?.[1]?.body))).toEqual({
+      workspaceId: workspace.id,
       kind: "worker",
       name: "OpenCode Planner",
       handle: "opencode-planner",
@@ -215,6 +285,7 @@ describe("Agent deletion", () => {
     window.history.replaceState({}, "", "/threads/general");
     const thread = {
       id: "thread-general",
+      workspaceId: workspace.id,
       name: "general",
       slug: "general",
       createdAt: now,
@@ -292,6 +363,7 @@ describe("Agent deletion", () => {
     const user = userEvent.setup();
     const thread = {
       id: "thread-general",
+      workspaceId: workspace.id,
       name: "general",
       slug: "general",
       createdAt: now,
