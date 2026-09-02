@@ -36,6 +36,30 @@ All of them must be green before a merge. `pnpm test` must stay green on a
 machine with **no** Codex, **no** OpenCode and **no** `ANTHROPIC_API_KEY` —
 that is the rule the whole test pyramid is built on.
 
+### Fast development loop
+
+Keep the inner loop scoped; the full gates are a checkpoint, not a save hook:
+
+```bash
+# While editing one package
+pnpm exec biome check apps/web/src/surfaces/agents/AgentDialog.tsx
+pnpm --filter @nexestra/web typecheck
+pnpm --filter @nexestra/web test
+
+# After a coherent code slice
+pnpm check:fast       # lint, then full typecheck + Vitest concurrently
+
+# Once before handoff
+pnpm check            # check:fast + production build
+pnpm e2e:only tests/agents.spec.ts     # if dist is current
+```
+
+Use `pnpm e2e:ui` when iterating on browser behaviour: it builds once and keeps
+Playwright's UI session available for targeted reruns. Local Playwright runs
+fail after 5 seconds per stuck action and do not retry; CI keeps the longer
+timeouts and one retry. Set `NEXESTRA_E2E_SLOW=1` locally only when debugging a
+deliberately long browser flow.
+
 ## Tooling conventions
 
 **pnpm workspaces.** Packages live under `apps/*`, `packages/*`,

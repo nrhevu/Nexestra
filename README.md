@@ -151,14 +151,18 @@ worktree and captured the exit code, never because the harness said so.
 | Command | Effect |
 |---------|--------|
 | `pnpm dev` | Server on `127.0.0.1:4242` + Vite on `127.0.0.1:5173`, both watching |
+| `pnpm dev:server` / `pnpm dev:web` | Start only one side of the development stack |
 | `pnpm build` | `vite build` for the SPA, an esbuild bundle for the server |
 | `pnpm start` | Run the built server, serving the built SPA from `4242` |
 | `pnpm test` | Vitest across every package — unit, contract and integration |
+| `pnpm test:server` / `pnpm test:web` | Run the most common package-scoped suites |
 | `pnpm typecheck` | `tsc --noEmit` in every package, including `e2e` |
 | `pnpm lint` / `pnpm lint:fix` | Biome check (lint + format + import order) |
 | `pnpm format` | Biome format only |
+| `pnpm check:fast` | Lint, then run full typecheck and Vitest concurrently |
+| `pnpm check` | Fast check plus the production build |
 | `pnpm e2e` | `pnpm build`, then the Playwright suite |
-| `pnpm e2e:only` | Skip the build; `pnpm e2e:browsers` installs Chromium; `pnpm e2e:report` opens the last report |
+| `pnpm e2e:only` / `pnpm e2e:ui` | Skip a known-current build, or build once and rerun tests interactively |
 | `pnpm --filter @nexestra/storage db:generate` | Regenerate `drizzle/` **and** re-embed the SQL into `src/migrations.ts` |
 
 `pnpm test` is green on a machine with no Codex, no OpenCode and no API key.

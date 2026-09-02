@@ -75,6 +75,8 @@ fetch: what the test clicks is what ships.
 ```bash
 pnpm e2e            # build, then run the suite
 pnpm e2e:only       # skip the build (the dist is already current)
+pnpm e2e:only tests/agents.spec.ts     # one changed flow only
+pnpm e2e:ui         # build once, then rerun interactively
 pnpm e2e:report     # open the HTML report of the last run
 ```
 
@@ -109,7 +111,10 @@ pnpm e2e
    `NEXESTRA_E2E_KEEP=1` leaves the scratch home, the repository and the server
    log in place for an autopsy.
 
-Failures leave a screenshot; the retry (there is exactly one) leaves a trace:
+Local runs fail fast: a stuck action gets 5 seconds and is not retried. They
+retain a trace on failure. CI uses 15-second action/expect timeouts and retries
+once; its retry carries the trace. `NEXESTRA_E2E_SLOW=1` opts a local run into
+the longer timeouts without adding a retry.
 
 ```bash
 pnpm exec playwright show-trace e2e/test-results/<test>/trace.zip
@@ -137,6 +142,7 @@ boundaries and by the opt-in live tests below.
 |----------|--------|
 | `NEXESTRA_E2E_PORT` | server port for the suite (default `4282`) |
 | `NEXESTRA_E2E_KEEP=1` | keep the scratch home, repo and server log after the run |
+| `NEXESTRA_E2E_SLOW=1` | use CI-sized timeouts locally for a deliberately long flow |
 | `CI` | adds the GitHub reporter and forbids `test.only` |
 
 The suite runs the same built server entry as `pnpm start`, so every browser run

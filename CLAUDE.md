@@ -13,11 +13,16 @@ the short version.
 ```bash
 pnpm install                 # Node >= 24, pnpm 11 (corepack enable)
 pnpm dev                     # server :4242 + Vite :5173, both watching
+pnpm dev:server / dev:web    # start only the side being changed
 pnpm lint                    # biome check .          ← fastest gate
 pnpm typecheck               # tsc --noEmit everywhere
 pnpm test                    # vitest, every package, in parallel
+pnpm check:fast              # lint, then typecheck + test concurrently
+pnpm check                   # check:fast + production build
 pnpm build                   # apps/web/dist + apps/server/dist/index.js
 pnpm e2e                     # build, then Playwright (needs pnpm e2e:browsers once)
+pnpm e2e:only tests/x.spec.ts     # one spec against an already-current build
+pnpm e2e:ui                  # build once, rerun browser tests interactively
 
 pnpm --filter @nexestra/<name> test          # one package
 pnpm --filter @nexestra/storage db:generate  # after editing storage/src/schema.ts
@@ -26,6 +31,11 @@ pnpm --filter @nexestra/storage db:generate  # after editing storage/src/schema.
 All four gates must be green before a merge. `pnpm test` must stay green with no
 Codex, no OpenCode and no saved provider credential; paid or logged-in live
 tests are opt-in and skipped by default.
+
+During implementation, run Biome on changed files plus the affected package's
+`typecheck` and relevant Vitest file. Do not rerun the whole repository or
+Playwright after every edit. Use `pnpm check:fast` at a code checkpoint,
+`pnpm check` once before handoff, and targeted E2E only for changed user flows.
 
 Useful switches while developing: `NEXESTRA_HARNESSES=codex` (one real adapter,
 so no cross-review),
@@ -44,7 +54,7 @@ so no cross-review),
 | `@nexestra/adapter-fake` | Test-only scripted adapter; never registered by production |
 | `@nexestra/ui-kit` | Terminal-like components + the CSS-variable design tokens |
 | `@nexestra/server` (`apps/server`) | Hono REST + `ws`; fills in the Master's seams (`src/master/`) and the loop's seams (`src/execution/`) |
-| `@nexestra/web` (`apps/web`) | React 19 SPA: shell, four surfaces, settings |
+| `@nexestra/web` (`apps/web`) | React 19 SPA: shell, five surfaces, settings |
 | `@nexestra/e2e` (`e2e/`) | Playwright against the built app on a real server |
 
 ## Where the contracts live
