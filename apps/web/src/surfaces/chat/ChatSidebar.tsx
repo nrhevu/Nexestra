@@ -1,5 +1,11 @@
 import { Button, StatusDot, Tag } from "@nexestra/ui-kit";
-import { useApprovals, useArtifacts, useMemories, useSpec } from "../../lib/api.js";
+import {
+  useApprovals,
+  useArtifacts,
+  useMemories,
+  useResolveApproval,
+  useSpec,
+} from "../../lib/api.js";
 import { formatDateTime } from "../../lib/format.js";
 
 export function ChatSidebar({ workspaceId, threadId }: { workspaceId: string; threadId: string }) {
@@ -7,6 +13,7 @@ export function ChatSidebar({ workspaceId, threadId }: { workspaceId: string; th
   const memories = useMemories(workspaceId);
   const artifacts = useArtifacts(threadId);
   const approvals = useApprovals(workspaceId);
+  const resolveApproval = useResolveApproval(workspaceId);
 
   const pending = (approvals.data ?? []).filter(
     (approval) => approval.status === "pending" && approval.threadId === threadId,
@@ -31,13 +38,28 @@ export function ChatSidebar({ workspaceId, threadId }: { workspaceId: string; th
                   <span className="nx-muted">{formatDateTime(approval.requestedAt)}</span>
                 </div>
                 <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-                  <Button tone="primary" title="Not wired up in M0">
+                  <Button
+                    tone="primary"
+                    disabled={resolveApproval.isPending}
+                    onClick={() =>
+                      resolveApproval.mutate({ approvalId: approval.id, status: "approved" })
+                    }
+                  >
                     Approve
                   </Button>
-                  <Button tone="danger" title="Not wired up in M0">
+                  <Button
+                    tone="danger"
+                    disabled={resolveApproval.isPending}
+                    onClick={() =>
+                      resolveApproval.mutate({ approvalId: approval.id, status: "rejected" })
+                    }
+                  >
                     Reject
                   </Button>
                 </div>
+                {resolveApproval.isError ? (
+                  <div className="form-error">{resolveApproval.error.message}</div>
+                ) : null}
               </div>
             </div>
           ))}

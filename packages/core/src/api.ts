@@ -8,7 +8,7 @@ export const HealthResponseSchema = z.object({
 });
 export type HealthResponse = z.infer<typeof HealthResponseSchema>;
 
-/** Frames pushed over `/ws`. M0 only ever sends `hello`. */
+/** @deprecated M0 `/ws` frames. Superseded by `WsServerMessage` in `ws.ts`. */
 export const ServerFrameSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("hello"),
@@ -26,7 +26,7 @@ export const ServerFrameSchema = z.discriminatedUnion("type", [
 ]);
 export type ServerFrame = z.infer<typeof ServerFrameSchema>;
 
-/** Frames the web app may send over `/ws`. */
+/** @deprecated M0 `/ws` frames. Superseded by `WsClientMessage` in `ws.ts`. */
 export const ClientFrameSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("ping") }),
   z.object({ type: z.literal("subscribe"), threadId: z.string() }),
@@ -51,6 +51,6 @@ export const FileContentSchema = z.object({
 });
 export type FileContent = z.infer<typeof FileContentSchema>;
 
-/** `GET /api/mock/harnesses` — placeholder detection results for Settings. */
+/** `GET /api/harnesses` — placeholder detection results for Settings (real in M4). */
 export const HarnessInfoListSchema = z.array(HarnessInfoSchema);
 export type HarnessInfoList = z.infer<typeof HarnessInfoListSchema>;

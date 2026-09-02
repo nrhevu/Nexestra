@@ -1,17 +1,36 @@
-import { Button, Checkbox, MonoTable, Select, StatusDot, Tag } from "@nexestra/ui-kit";
+import { type AppSettings, HarnessIdSchema, SandboxLevelSchema } from "@nexestra/core";
+import { Button, Checkbox, MonoTable, Select, StatusDot, Tag, TextInput } from "@nexestra/ui-kit";
 import { useRouter } from "@tanstack/react-router";
-import { useHarnesses, useWorkspaces } from "../lib/api.js";
+import { useEffect, useState } from "react";
+import { useHarnesses, useSaveSettings, useSettings, useWorkspaces } from "../lib/api.js";
 import { useUiStore } from "../lib/store.js";
 
-/** Read-only settings placeholder: detected harnesses and workspace defaults. */
+const HARNESS_OPTIONS = HarnessIdSchema.options.map((id) => ({ value: id, label: id }));
+const SANDBOX_OPTIONS = SandboxLevelSchema.options.map((id) => ({ value: id, label: id }));
+
+/** Reads and writes `/api/settings`; harness detection is still a fixture. */
 export function SettingsSurface() {
   const harnesses = useHarnesses();
   const workspaces = useWorkspaces();
+  const settings = useSettings();
+  const saveSettings = useSaveSettings();
   const theme = useUiStore((state) => state.theme);
   const setTheme = useUiStore((state) => state.setTheme);
   const router = useRouter();
 
+  const [draft, setDraft] = useState<AppSettings | null>(null);
+  useEffect(() => {
+    if (settings.data) setDraft(settings.data);
+  }, [settings.data]);
+
   const workspace = workspaces.data?.[0];
+  const dirty =
+    draft !== null &&
+    settings.data !== undefined &&
+    JSON.stringify(draft) !== JSON.stringify(settings.data);
+
+  const patch = (change: Partial<AppSettings>) =>
+    setDraft((current) => (current ? { ...current, ...change } : current));
 
   return (
     <div className="app">
@@ -26,7 +45,8 @@ export function SettingsSurface() {
           <div className="settings">
             <h1>Nexestra — local settings</h1>
             <div className="nx-muted">
-              M0 renders detected harnesses and defaults read-only. Editing lands in M7.
+              Stored on the server in <code>~/.nexestra/nexestra.db</code>. Workspaces inherit these
+              when they are created.
             </div>
 
             <h2>Appearance</h2>
@@ -41,7 +61,85 @@ export function SettingsSurface() {
               onChange={(next) => setTheme(next ? "light" : "dark")}
             />
 
+            <h2>Defaults</h2>
+            {draft ? (
+              <div style={{ maxWidth: 320 }}>
+                <Select
+                  id="default-harness"
+                  label="Default harness"
+                  value={draft.defaultHarness}
+                  options={HARNESS_OPTIONS}
+                  onChange={(event) =>
+                    patch({ defaultHarness: event.target.value as AppSettings["defaultHarness"] })
+                  }
+                />
+                <TextInput
+                  id="default-model"
+                  label="Default model"
+                  value={draft.defaultModel}
+                  onChange={(event) => patch({ defaultModel: event.target.value })}
+                />
+                <Select
+                  id="default-sandbox"
+                  label="Default sandbox"
+                  value={draft.defaultSandbox}
+                  options={SANDBOX_OPTIONS}
+                  onChange={(event) =>
+                    patch({ defaultSandbox: event.target.value as AppSettings["defaultSandbox"] })
+                  }
+                />
+                <TextInput
+                  id="budget"
+                  label="Budget per thread (USD)"
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={String(draft.budgetUSD)}
+                  onChange={(event) => patch({ budgetUSD: Number(event.target.value) || 0 })}
+                />
+                <TextInput
+                  id="concurrency"
+                  label="Concurrency (1–8)"
+                  type="number"
+                  min={1}
+                  max={8}
+                  step={1}
+                  value={String(draft.concurrency)}
+                  onChange={(event) =>
+                    patch({
+                      concurrency: Math.min(8, Math.max(1, Number(event.target.value) || 1)),
+                    })
+                  }
+                />
+
+                <div className="row" style={{ marginTop: 8 }}>
+                  <Button
+                    tone="primary"
+                    disabled={!dirty || saveSettings.isPending}
+                    onClick={() => saveSettings.mutate(draft)}
+                  >
+                    {saveSettings.isPending ? "Saving…" : "Save"}
+                  </Button>
+                  <Button disabled={!dirty} onClick={() => setDraft(settings.data ?? null)}>
+                    Reset
+                  </Button>
+                  {saveSettings.isSuccess && !dirty ? (
+                    <span className="nx-muted">saved</span>
+                  ) : null}
+                </div>
+                {saveSettings.isError ? (
+                  <div className="form-error">{saveSettings.error.message}</div>
+                ) : null}
+              </div>
+            ) : (
+              <div className="nx-muted">loading…</div>
+            )}
+
             <h2>Detected harnesses</h2>
+            <div className="nx-muted">
+              Placeholder until the adapters shell out to <code>codex</code> and{" "}
+              <code>opencode</code> (M4 / M5).
+            </div>
             <MonoTable
               rowKey={(row) => row.id}
               rows={harnesses.data ?? []}
@@ -82,48 +180,20 @@ export function SettingsSurface() {
               ]}
             />
 
-            <h2>Workspace defaults</h2>
+            <h2>Workspace</h2>
             {workspace ? (
-              <div style={{ maxWidth: 320 }}>
-                <Select
-                  id="default-harness"
-                  label="Default harness"
-                  value={workspace.settings.defaultHarness}
-                  options={[
-                    { value: "codex", label: "codex" },
-                    { value: "opencode", label: "opencode" },
-                    { value: "acp", label: "acp" },
-                  ]}
-                  onChange={() => undefined}
-                />
-                <Select
-                  id="default-sandbox"
-                  label="Default sandbox"
-                  value={workspace.settings.defaultSandbox}
-                  options={[
-                    { value: "read-only", label: "read-only" },
-                    { value: "workspace-write", label: "workspace-write" },
-                    { value: "danger-full-access", label: "danger-full-access" },
-                  ]}
-                  onChange={() => undefined}
-                />
-                <div className="kv">
-                  <span className="kv__k">root</span>
-                  <span className="kv__v">{workspace.rootPath}</span>
-                  <span className="kv__k">branch</span>
-                  <span className="kv__v">{workspace.defaultBranch}</span>
-                  <span className="kv__k">model</span>
-                  <span className="kv__v">{workspace.settings.defaultModel ?? "—"}</span>
-                  <span className="kv__k">concurrency</span>
-                  <span className="kv__v">{workspace.settings.concurrency}</span>
-                  <span className="kv__k">budget</span>
-                  <span className="kv__v">${workspace.settings.budgetUSD.toFixed(2)}</span>
-                  <span className="kv__k">auto-merge</span>
-                  <span className="kv__v">{workspace.settings.autoMerge ? "yes" : "no"}</span>
-                </div>
+              <div className="kv" style={{ maxWidth: 420 }}>
+                <span className="kv__k">name</span>
+                <span className="kv__v">{workspace.name}</span>
+                <span className="kv__k">root</span>
+                <span className="kv__v">{workspace.rootPath}</span>
+                <span className="kv__k">branch</span>
+                <span className="kv__v">{workspace.defaultBranch}</span>
+                <span className="kv__k">auto-merge</span>
+                <span className="kv__v">{workspace.settings.autoMerge ? "yes" : "no"}</span>
               </div>
             ) : (
-              <div className="nx-muted">loading…</div>
+              <div className="nx-muted">no workspace yet</div>
             )}
 
             <h2>API key</h2>

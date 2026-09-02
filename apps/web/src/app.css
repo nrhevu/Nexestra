@@ -835,3 +835,88 @@
   background: var(--nx-bg-hover);
   fill: var(--nx-fg-strong);
 }
+
+/* --------------------------------------------------------------- dialog */
+
+.dialog {
+  position: relative;
+  width: min(520px, 90vw);
+  border: 1px solid var(--nx-border-strong);
+  border-radius: var(--nx-radius);
+  background: var(--nx-bg-elev);
+  box-shadow: var(--nx-shadow);
+  overflow: hidden;
+}
+
+.dialog__head {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--nx-border);
+  color: var(--nx-fg-strong);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+}
+
+.dialog__error {
+  padding: 6px 8px;
+  border: 1px solid var(--nx-danger);
+  border-radius: var(--nx-radius);
+  color: var(--nx-danger);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.dialog__foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--nx-border);
+}
+
+/* Inline row of controls in a sidebar section. */
+.row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.form-error {
+  color: var(--nx-danger);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.empty-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 24px;
+  color: var(--nx-fg-dim);
+  font-size: 12px;
+}
+
+/* Inline text button used inside sidebar lists. */
+.link-button {
+  border: 0;
+  background: transparent;
+  color: var(--nx-fg-dim);
+  font-family: inherit;
+  font-size: 11px;
+  text-align: left;
+  padding: 0;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  color: var(--nx-fg-strong);
+}

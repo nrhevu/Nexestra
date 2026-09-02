@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Group, Panel, Separator } from "react-resizable-panels";
+import { useThreadEvents } from "../lib/events.js";
 import { CommandPalette } from "./CommandPalette.js";
 import { NavigationPanel } from "./NavigationPanel.js";
 import type { SurfaceId } from "./surfaces.js";
@@ -16,6 +17,8 @@ export interface AppShellProps {
 /** `WS rail (48px) | Navigation (260px) | Main | Sidebar (280px)` (PLAN.md §7). */
 export function AppShell({ workspaceId, threadId, surface, children }: AppShellProps) {
   useShellKeyboard({ workspaceId, threadId });
+  // One `/ws` subscription per mounted shell; incoming events update the cache.
+  useThreadEvents(workspaceId, threadId);
 
   return (
     <div className="app">

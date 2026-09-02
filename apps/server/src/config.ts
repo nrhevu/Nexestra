@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 /** Directory of this module (works for both `src/` under tsx and `dist/`). */
 const here = dirname(fileURLToPath(import.meta.url));
 
-export const SERVER_VERSION = "0.0.0-m0";
+export const SERVER_VERSION = "0.0.0-m1";
 
 /** Local-first: the server never listens on a public interface (PLAN.md §1.2). */
 export const HOST = process.env.NEXESTRA_HOST ?? "127.0.0.1";
@@ -20,6 +20,13 @@ export const WEB_DEV_URL = process.env.NEXESTRA_WEB_DEV_URL ?? "http://localhost
 
 /** Set by `pnpm --filter @nexestra/server dev`; forces the redirect-to-Vite path. */
 export const DEV_MODE = process.env.NEXESTRA_DEV === "1";
+
+/**
+ * Load `@nexestra/core`'s fixtures into an empty database so a fresh install
+ * has something to look at: `NEXESTRA_SEED_MOCK=1` or `--seed-mock`.
+ */
+export const SEED_MOCK =
+  process.env.NEXESTRA_SEED_MOCK === "1" || process.argv.includes("--seed-mock");
 
 /**
  * Serve `apps/web/dist` only in production. In dev the SPA lives on the Vite

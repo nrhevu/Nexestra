@@ -18,7 +18,7 @@ import {
 } from "@nexestra/core";
 import { Button, StatusDot, Tag } from "@nexestra/ui-kit";
 import { useMemo, useState } from "react";
-import { useTasks, useThreads } from "../../lib/api.js";
+import { useTasks, useThreads, useUpdateTaskStatus } from "../../lib/api.js";
 import { formatUsd, statusTone } from "../../lib/format.js";
 import { useUiStore } from "../../lib/store.js";
 import { SurfaceLayout } from "../../shell/SurfaceLayout.js";
@@ -39,8 +39,7 @@ export function BoardSurface({ workspaceId, threadId }: { workspaceId: string; t
   const tasks = useTasks(threadId);
   const thread = (threads.data ?? []).find((item) => item.id === threadId);
 
-  const overrides = useUiStore((state) => state.taskStatusOverrides);
-  const setTaskStatus = useUiStore((state) => state.setTaskStatus);
+  const updateTaskStatus = useUpdateTaskStatus(threadId);
   const selectedTaskId = useUiStore((state) => state.selectedTaskId);
   const selectTask = useUiStore((state) => state.selectTask);
 
@@ -48,16 +47,12 @@ export function BoardSurface({ workspaceId, threadId }: { workspaceId: string; t
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 
   const board = useMemo(() => {
-    const rows = (tasks.data ?? []).map((task) => ({
-      ...task,
-      status: overrides[task.id] ?? task.status,
-    }));
     const grouped = new Map<BoardColumn, Task[]>();
     for (const column of COLUMN_ORDER) grouped.set(column, []);
-    for (const task of rows) grouped.get(boardColumnForStatus(task.status))?.push(task);
+    for (const task of tasks.data ?? []) grouped.get(boardColumnForStatus(task.status))?.push(task);
     for (const list of grouped.values()) list.sort((a, b) => a.order - b.order);
     return grouped;
-  }, [tasks.data, overrides]);
+  }, [tasks.data]);
 
   const visibleColumns = COLUMN_ORDER.filter(
     (column) => ALWAYS_VISIBLE.includes(column) || (board.get(column)?.length ?? 0) > 0,
@@ -68,14 +63,20 @@ export function BoardSurface({ workspaceId, threadId }: { workspaceId: string; t
     : undefined;
 
   const onDragStart = (event: DragStartEvent) => setDraggingId(String(event.active.id));
+  /** Dropping a card writes the new status through `POST /api/tasks/:id/status`. */
   const onDragEnd = (event: DragEndEvent) => {
     setDraggingId(null);
     const over = event.over?.id;
     if (!over) return;
     const column = COLUMN_ORDER.find((candidate) => candidate === over);
     if (!column) return;
-    setTaskStatus(String(event.active.id), statusForBoardColumn(column));
-    selectTask(String(event.active.id));
+
+    const taskId = String(event.active.id);
+    const status = statusForBoardColumn(column);
+    selectTask(taskId);
+    const current = (tasks.data ?? []).find((task) => task.id === taskId);
+    if (!current || current.status === status) return;
+    updateTaskStatus.mutate({ taskId, status });
   };
 
   const totalCost = [...board.values()].flat().reduce((sum, task) => sum + task.costUSD, 0);
@@ -88,6 +89,9 @@ export function BoardSurface({ workspaceId, threadId }: { workspaceId: string; t
         <>
           <span className="nx-muted">{[...board.values()].flat().length} tasks</span>
           <span className="nx-muted">{formatUsd(totalCost)}</span>
+          {updateTaskStatus.isError ? (
+            <span className="form-error">{updateTaskStatus.error.message}</span>
+          ) : null}
         </>
       }
       main={
@@ -148,7 +152,9 @@ function Column({
         <span className="column__count">{tasks.length}</span>
         {column === "todo" ? (
           <span className="column__actions">
-            <Button title="Add task (not wired up in M0)"> + Add </Button>
+            <Button title="Adding tasks by hand lands with the planner in M3" disabled>
+              {" + Add "}
+            </Button>
           </span>
         ) : null}
       </header>
