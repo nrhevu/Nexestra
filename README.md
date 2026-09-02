@@ -41,6 +41,10 @@ in the same transcript file. Agent replies do not trigger other agents, which pr
 Workers run in read-only discussion mode in the MVP. The Taskboard currently organizes work but
 does not dispatch agents automatically.
 
+When creating a Worker, the model and reasoning effort are optional. Leaving either field blank
+uses the selected harness default. Codex receives the model and `model_reasoning_effort` overrides;
+OpenCode receives `--model` (in `provider/model` form) and the provider-specific `--variant`.
+
 ## Provider
 
 - **ChatGPT OAuth:** install Codex CLI and run `codex login`, or click Connect in the Master

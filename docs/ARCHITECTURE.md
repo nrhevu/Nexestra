@@ -46,8 +46,11 @@ without passing through the mention parser.
 
 ## Agent runtimes
 
-Worker profiles select either `codex` or `opencode`. Chat turns always require read-only discussion
-mode. Master profiles select one of the following:
+Worker profiles select either `codex` or `opencode`, with optional model and reasoning-effort
+overrides. Chat turns always require read-only discussion mode. Codex maps the overrides to
+`--model` and `model_reasoning_effort`; OpenCode maps them to `--model` and its provider-specific
+`--variant`. Missing overrides preserve the harness defaults. Master profiles select one of the
+following:
 
 - ChatGPT: uses the Codex CLI session; device-login output remains in memory, and tokens never enter the app.
 - Custom: uses OpenAI Chat Completions or Responses with an API root, model, and optional API key.

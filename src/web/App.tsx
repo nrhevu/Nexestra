@@ -1008,9 +1008,19 @@ function AgentCard({
   onToggle: (agent: AgentView) => Promise<unknown>;
   onArchive: (agent: AgentView) => Promise<unknown>;
 }) {
+  const workerModel = agent.kind === "worker" ? agent.model : undefined;
+  const workerReasoningEffort = agent.kind === "worker" ? agent.reasoningEffort : undefined;
   const detail =
     agent.kind === "worker"
-      ? `${agent.harness === "codex" ? "Codex" : "OpenCode"} harness`
+      ? [
+          `${agent.harness === "codex" ? "Codex" : "OpenCode"} harness`,
+          workerModel,
+          workerReasoningEffort
+            ? `${workerReasoningEffort} ${agent.harness === "codex" ? "reasoning" : "variant"}`
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" · ")
       : agent.provider.type === "chatgpt"
         ? `ChatGPT OAuth${agent.provider.model ? ` · ${agent.provider.model}` : ""}`
         : `${agent.provider.name} · ${agent.provider.model}`;
@@ -1224,6 +1234,7 @@ function AgentDialog({
   onCreated: () => Promise<void>;
 }) {
   const [kind, setKind] = useState<"worker" | "master">("worker");
+  const [workerHarness, setWorkerHarness] = useState<"codex" | "opencode">("codex");
   const [providerMode, setProviderMode] = useState<"chatgpt" | "custom">("chatgpt");
   const [name, setName] = useState("");
   const [handle, setHandle] = useState("");
@@ -1258,9 +1269,16 @@ function AgentDialog({
       description: String(fields.get("description") ?? ""),
       instructions: String(fields.get("instructions") ?? ""),
     };
+    const workerModel = String(fields.get("workerModel") ?? "").trim();
+    const workerReasoningEffort = String(fields.get("reasoningEffort") ?? "").trim();
     const payload =
       kind === "worker"
-        ? { ...common, harness: String(fields.get("harness") ?? "codex") }
+        ? {
+            ...common,
+            harness: workerHarness,
+            ...(workerModel ? { model: workerModel } : {}),
+            ...(workerReasoningEffort ? { reasoningEffort: workerReasoningEffort } : {}),
+          }
         : {
             ...common,
             provider:
@@ -1344,32 +1362,93 @@ function AgentDialog({
           <input name="description" placeholder="What does this agent handle?" maxLength={240} />
         </Field>
         {kind === "worker" ? (
-          <Field label="Harness">
-            <div className="choice-cards">
-              <label>
-                <input type="radio" name="harness" value="codex" defaultChecked />
-                <span>
-                  <b>Codex</b>
-                  <small>
-                    {data.runtime.harnesses.codex.installed
-                      ? data.runtime.harnesses.codex.version
-                      : "Not installed"}
-                  </small>
-                </span>
-              </label>
-              <label>
-                <input type="radio" name="harness" value="opencode" />
-                <span>
-                  <b>OpenCode</b>
-                  <small>
-                    {data.runtime.harnesses.opencode.installed
-                      ? data.runtime.harnesses.opencode.version
-                      : "Not installed"}
-                  </small>
-                </span>
-              </label>
+          <>
+            <Field label="Harness">
+              <div className="choice-cards">
+                <label>
+                  <input
+                    type="radio"
+                    name="harness"
+                    value="codex"
+                    checked={workerHarness === "codex"}
+                    onChange={() => setWorkerHarness("codex")}
+                  />
+                  <span>
+                    <b>Codex</b>
+                    <small>
+                      {data.runtime.harnesses.codex.installed
+                        ? data.runtime.harnesses.codex.version
+                        : "Not installed"}
+                    </small>
+                  </span>
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name="harness"
+                    value="opencode"
+                    checked={workerHarness === "opencode"}
+                    onChange={() => setWorkerHarness("opencode")}
+                  />
+                  <span>
+                    <b>OpenCode</b>
+                    <small>
+                      {data.runtime.harnesses.opencode.installed
+                        ? data.runtime.harnesses.opencode.version
+                        : "Not installed"}
+                    </small>
+                  </span>
+                </label>
+              </div>
+            </Field>
+            <div className="form-grid">
+              <Field
+                label="Model"
+                optional
+                hint={
+                  workerHarness === "codex"
+                    ? "Leave blank to use the Codex CLI default."
+                    : "Use provider/model; leave blank to use the OpenCode default."
+                }
+              >
+                <input
+                  name="workerModel"
+                  aria-label="Worker model"
+                  placeholder={workerHarness === "codex" ? "Default" : "provider/model"}
+                  maxLength={160}
+                />
+              </Field>
+              <Field
+                label={workerHarness === "codex" ? "Reasoning effort" : "Model variant"}
+                optional
+                hint={
+                  workerHarness === "codex"
+                    ? "Leave blank to use the model or Codex profile default."
+                    : "Passed to OpenCode as --variant; values depend on provider/model."
+                }
+              >
+                <input
+                  name="reasoningEffort"
+                  aria-label={
+                    workerHarness === "codex" ? "Reasoning effort" : "OpenCode model variant"
+                  }
+                  placeholder={
+                    workerHarness === "codex" ? "Default, high, xhigh…" : "Default, high, max…"
+                  }
+                  list="worker-reasoning-suggestions"
+                  maxLength={40}
+                />
+                <datalist id="worker-reasoning-suggestions">
+                  {(workerHarness === "codex"
+                    ? ["low", "medium", "high", "xhigh", "max", "ultra"]
+                    : ["minimal", "low", "medium", "high", "max"]
+                  ).map((effort) => (
+                    <option value={effort} key={effort} />
+                  ))}
+                </datalist>
+              </Field>
             </div>
-          </Field>
+          </>
         ) : (
           <>
             <Field label="Provider">

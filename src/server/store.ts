@@ -170,7 +170,13 @@ export class FileStore {
       };
       let agent: Agent;
       if (input.kind === "worker") {
-        agent = { ...base, kind: "worker", harness: input.harness };
+        agent = {
+          ...base,
+          kind: "worker",
+          harness: input.harness,
+          ...(input.model ? { model: input.model } : {}),
+          ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
+        };
       } else if (input.provider.type === "chatgpt") {
         agent = {
           ...base,

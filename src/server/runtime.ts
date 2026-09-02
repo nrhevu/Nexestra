@@ -8,6 +8,7 @@ import type {
   Message,
   RuntimeStatus,
   Thread,
+  WorkerAgent,
 } from "../shared/contracts.js";
 import { findExecutable, runCommand, safeProcessEnv } from "./process.js";
 import type { FileStore } from "./store.js";
@@ -114,7 +115,12 @@ export class LocalAgentRunner implements AgentRunner {
       "-o",
       lastMessageFile,
     ];
-    if (agent.kind === "master" && agent.provider.type === "chatgpt" && agent.provider.model) {
+    if (agent.kind === "worker") {
+      if (agent.model) args.push("-m", agent.model);
+      if (agent.reasoningEffort) {
+        args.push("-c", `model_reasoning_effort=${JSON.stringify(agent.reasoningEffort)}`);
+      }
+    } else if (agent.provider.type === "chatgpt" && agent.provider.model) {
       args.push("-m", agent.provider.model);
     }
     args.push(prompt);
@@ -134,30 +140,27 @@ export class LocalAgentRunner implements AgentRunner {
     return reply;
   }
 
-  private async invokeOpenCode(agent: Agent, invocation: AgentInvocation): Promise<string> {
+  private async invokeOpenCode(agent: WorkerAgent, invocation: AgentInvocation): Promise<string> {
     const binary = await findExecutable("opencode", this.env);
     if (!binary) throw new Error("OpenCode was not found in PATH.");
-    const result = await runCommand(
-      binary,
-      [
-        "run",
-        "--format",
-        "json",
-        "--pure",
-        "--agent",
-        "plan",
-        "--dir",
-        this.options.store.workspacePath,
-        "--file",
-        invocation.transcriptPath,
-        localHarnessPrompt(agent, invocation),
-      ],
-      {
-        cwd: this.options.store.workspacePath,
-        timeoutMs: 5 * 60_000,
-        env: safeProcessEnv(this.env),
-      },
-    );
+    const args = [
+      "run",
+      "--format",
+      "json",
+      "--pure",
+      "--agent",
+      "plan",
+      "--dir",
+      this.options.store.workspacePath,
+    ];
+    if (agent.model) args.push("-m", agent.model);
+    if (agent.reasoningEffort) args.push("--variant", agent.reasoningEffort);
+    args.push("--file", invocation.transcriptPath, localHarnessPrompt(agent, invocation));
+    const result = await runCommand(binary, args, {
+      cwd: this.options.store.workspacePath,
+      timeoutMs: 5 * 60_000,
+      env: safeProcessEnv(this.env),
+    });
     if (result.exitCode !== 0) {
       throw new Error(
         cleanProcessError(result.stderr || result.stdout, "OpenCode exited with an error."),
