@@ -1,7 +1,7 @@
 # AGENTS.md — Nexestra M9
 
-Nexestra là ứng dụng local-first một người dùng: một Node/Hono server, một React/Vite SPA và
-các file JSON/JSONL trong `.nexestra/`.
+Nexestra is a single-user, local-first application: one Node/Hono server, one React/Vite SPA, and
+JSON/JSONL files under `.nexestra/`.
 
 ## Commands
 
@@ -14,31 +14,31 @@ pnpm build
 pnpm check
 ```
 
-Node >= 24, pnpm 11. Các test phải chạy xanh khi không có Codex, OpenCode hoặc credential.
-Không chạy provider live trong test mặc định.
+Node >= 24, pnpm 11. Tests must pass without Codex, OpenCode, or credentials.
+Do not call live providers in default tests.
 
 ## Map
 
-- `src/shared/contracts.ts`: type và Zod schema dùng chung.
-- `src/server/store.ts`: state metadata, secret store và transcript append-only.
-- `src/server/dispatcher.ts`: quy tắc `@mention`, queue theo agent và retry.
-- `src/server/runtime.ts`: Codex, OpenCode và custom-provider transport.
-- `src/server/auth.ts`: ChatGPT device login do Codex CLI sở hữu.
-- `src/server/app.ts`: HTTP API và loopback-origin guard.
-- `src/web/`: SPA và visual system.
+- `src/shared/contracts.ts`: shared types and Zod schemas.
+- `src/server/store.ts`: state metadata, secret storage, and append-only transcripts.
+- `src/server/dispatcher.ts`: `@mention` rules, per-agent queues, and retries.
+- `src/server/runtime.ts`: Codex, OpenCode, and custom-provider transports.
+- `src/server/auth.ts`: ChatGPT device login owned by Codex CLI.
+- `src/server/app.ts`: HTTP API and loopback-origin guard.
+- `src/web/`: SPA and visual system.
 
 ## Rules
 
-1. Persist user message trước khi dispatch. Không mention thì không gọi agent.
-2. Mỗi thread có đúng một canonical JSONL transcript. Reply của mọi agent ghi vào cùng file.
-3. API key/OAuth token không được xuất hiện trong transcript, `state.json`, response hoặc log.
-4. OAuth ChatGPT thuộc Codex CLI. Không tự đọc `auth.json` hay lưu access/refresh token.
-5. Process harness đóng stdin, có timeout, output limit và chỉ nhận allowlist environment.
-6. Agent reply không kích hoạt mention mới. Một agent xử lý tuần tự; các agent khác có thể chạy song song.
-7. Giữ server trên loopback và kiểm tra Origin cho mutation. Không mở bind address khi chưa có auth.
-8. Thay đổi protocol parser cần fixture/test tương ứng. Unknown hoặc malformed stream line không được làm crash parser.
-9. Mọi thay đổi hành vi cần test nhỏ nhất chứng minh acceptance criterion; chạy `pnpm check` trước handoff.
-10. Documentation thuộc cùng change. Mỗi kiến trúc mới cần ADR và phải ghi known gaps trung thực.
+1. Persist each user message before dispatch. Do not invoke an agent without a mention.
+2. Each thread has exactly one canonical JSONL transcript. Every agent writes replies to that file.
+3. API keys and OAuth tokens must never appear in transcripts, `state.json`, responses, or logs.
+4. ChatGPT OAuth belongs to Codex CLI. Never read `auth.json` directly or store access/refresh tokens.
+5. Harness processes close stdin, enforce timeouts and output limits, and receive only allowlisted environment variables.
+6. Agent replies do not trigger new mentions. One agent works serially; different agents may run in parallel.
+7. Keep the server on loopback and validate Origin for mutations. Do not expose a bind address without authentication.
+8. Protocol parser changes require corresponding fixtures and tests. Unknown or malformed stream lines must not crash the parser.
+9. Every behavior change requires the smallest test that proves its acceptance criterion; run `pnpm check` before handoff.
+10. Documentation is part of the same change. Every new architecture decision requires an ADR and an honest record of known gaps.
 
-Làm việc trên branch/worktree riêng. Commit dùng conventional subject và project identity
-`nexestra <nexestra@local>`.
+Work on a dedicated branch and worktree. Use a conventional commit subject and the repository
+owner's configured Git identity; do not replace it with a bot or project identity.

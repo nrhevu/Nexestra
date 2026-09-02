@@ -45,7 +45,7 @@ export class AgentDispatcher {
 
   async retry(runId: string): Promise<AgentRun> {
     if (this.retryingRunIds.has(runId)) {
-      throw new StoreError("conflict", "Lượt chạy này đang được thử lại.");
+      throw new StoreError("conflict", "This run is already being retried.");
     }
     this.retryingRunIds.add(runId);
     try {
@@ -54,7 +54,7 @@ export class AgentDispatcher {
         const previous = data.runs.find((run) => run.id === runId);
         if (!previous) continue;
         if (previous.status !== "failed" && previous.status !== "interrupted") {
-          throw new StoreError("invalid", "Chỉ có thể thử lại một lượt đã lỗi hoặc bị gián đoạn.");
+          throw new StoreError("invalid", "Only failed or interrupted runs can be retried.");
         }
         const latest = data.runs
           .filter(
@@ -64,18 +64,18 @@ export class AgentDispatcher {
           )
           .sort((left, right) => right.attempt - left.attempt)[0];
         if (latest?.id !== previous.id) {
-          throw new StoreError("conflict", "Lượt chạy này đã có lần thử mới hơn.");
+          throw new StoreError("conflict", "A newer attempt already exists for this run.");
         }
         const trigger = data.messages.find((message) => message.id === previous.triggerMessageId);
         const agent = this.store.getAgent(previous.agentId);
         if (!trigger || !agent) {
-          throw new StoreError("not_found", "Không còn đủ dữ liệu để thử lại.");
+          throw new StoreError("not_found", "There is not enough data to retry this run.");
         }
         const [run] = await this.enqueue(trigger, [agent], previous.attempt + 1);
-        if (!run) throw new Error("Không thể tạo lượt thử lại.");
+        if (!run) throw new Error("Could not create a retry run.");
         return run;
       }
-      throw new StoreError("not_found", "Không tìm thấy lượt chạy.");
+      throw new StoreError("not_found", "Run not found.");
     } finally {
       this.retryingRunIds.delete(runId);
     }
@@ -109,7 +109,7 @@ export class AgentDispatcher {
         updatedAt: new Date().toISOString(),
       });
       const thread = this.store.getThread(run.threadId);
-      if (!thread) throw new StoreError("not_found", "Không tìm thấy thread.");
+      if (!thread) throw new StoreError("not_found", "Thread not found.");
       const invocation: AgentInvocation = {
         thread,
         trigger,
@@ -117,7 +117,7 @@ export class AgentDispatcher {
         transcriptSnapshot: await this.store.transcriptSnapshot(run.threadId),
       };
       const response = (await this.runner.invoke(agent, invocation)).trim();
-      if (!response) throw new Error("Agent trả về câu trả lời trống.");
+      if (!response) throw new Error("The agent returned an empty response.");
       await this.store.createAgentMessage(run.threadId, agent, response, trigger.id);
       await this.store.updateRun({
         ...run,
@@ -128,7 +128,7 @@ export class AgentDispatcher {
       await this.store.updateRun({
         ...run,
         status: "failed",
-        error: error instanceof Error ? error.message : "Agent gặp lỗi không xác định.",
+        error: error instanceof Error ? error.message : "The agent encountered an unknown error.",
         updatedAt: new Date().toISOString(),
       });
     } finally {

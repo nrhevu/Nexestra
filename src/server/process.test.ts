@@ -19,7 +19,7 @@ describe("runCommand", () => {
           terminationGraceMs: 60,
         },
       ),
-    ).rejects.toThrow("quá thời gian");
+    ).rejects.toThrow("timed out");
     expect(Date.now() - startedAt).toBeGreaterThanOrEqual(80);
     expect(Date.now() - startedAt).toBeLessThan(2_000);
   });

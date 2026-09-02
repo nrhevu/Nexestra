@@ -39,7 +39,7 @@ export class ChatGptAuthManager {
       return this.view(session);
     }
     const binary = await findExecutable("codex", this.env);
-    if (!binary) throw new Error("Cần cài Codex CLI trước khi kết nối ChatGPT.");
+    if (!binary) throw new Error("Install Codex CLI before connecting ChatGPT.");
     const child = spawn(binary, ["login", "--device-auth"], {
       cwd: this.store.workspacePath,
       env: safeProcessEnv(this.env),
@@ -49,7 +49,7 @@ export class ChatGptAuthManager {
     const session: LoginSession = {
       id: crypto.randomUUID(),
       status: "running",
-      output: "Đang khởi tạo đăng nhập ChatGPT…",
+      output: "Starting ChatGPT sign-in...",
       connected: false,
       child,
     };
@@ -93,7 +93,7 @@ export class ChatGptAuthManager {
     if (session.child) stopProcess(session.child.pid);
     session.child = undefined;
     session.status = "cancelled";
-    session.output = `${session.output}\nĐã hủy đăng nhập.`;
+    session.output = `${session.output}\nSign-in cancelled.`;
     return this.view(session);
   }
 

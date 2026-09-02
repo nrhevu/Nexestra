@@ -24,7 +24,7 @@ class FakeRunner implements AgentRunner {
 
   async invoke(agent: Agent, _invocation: AgentInvocation) {
     this.invocations += 1;
-    return `Xin chào từ ${agent.name}`;
+    return `Hello from ${agent.name}`;
   }
 }
 
@@ -60,19 +60,19 @@ describe("HTTP app", () => {
     await app.request(`/api/threads/${thread.id}/messages`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ content: "ghi chú thường" }),
+      body: JSON.stringify({ content: "regular note" }),
     });
     expect(runner.invocations).toBe(0);
 
     await app.request(`/api/threads/${thread.id}/messages`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ content: "@codex trả lời giúp" }),
+      body: JSON.stringify({ content: "@codex please reply" }),
     });
     await app.dispatcher.waitForIdle();
     expect(runner.invocations).toBe(1);
     const data = await store.threadData(thread.id);
-    expect(data.messages.at(-1)?.content).toBe("Xin chào từ Codex");
+    expect(data.messages.at(-1)?.content).toBe("Hello from Codex");
   });
 
   it("rejects mutating browser requests from a non-loopback origin", async () => {

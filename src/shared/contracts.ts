@@ -4,7 +4,7 @@ export const HandleSchema = z
   .string()
   .trim()
   .toLowerCase()
-  .regex(/^[a-z0-9][a-z0-9_-]{1,30}$/, "Dùng 2–31 ký tự: a-z, 0-9, _ hoặc -.");
+  .regex(/^[a-z0-9][a-z0-9_-]{1,30}$/, "Use 2–31 characters: a-z, 0-9, _ or -.");
 
 const AgentBaseSchema = z.object({
   id: z.string(),
@@ -218,7 +218,7 @@ export function handleFromName(name: string): string {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
-    .replace(/đ/g, "d")
+    .replace(/\u0111/g, "d")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 31);

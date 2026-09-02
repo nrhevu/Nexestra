@@ -30,7 +30,7 @@ export function createApp(options: CreateAppOptions) {
       const origin = context.req.header("origin");
       if (origin && !isLoopbackOrigin(origin)) {
         return context.json(
-          { error: { code: "forbidden_origin", message: "Origin không được phép." } },
+          { error: { code: "forbidden_origin", message: "Origin not allowed." } },
           403,
         );
       }
@@ -98,30 +98,27 @@ export function createApp(options: CreateAppOptions) {
   });
 
   app.post("/api/auth/chatgpt/start", async (context) => {
-    if (!auth) throw new StoreError("invalid", "OAuth ChatGPT không khả dụng trong runtime này.");
+    if (!auth) throw new StoreError("invalid", "ChatGPT OAuth is unavailable in this runtime.");
     return context.json(await auth.start(), 201);
   });
 
   app.get("/api/auth/chatgpt/:id", async (context) => {
-    if (!auth) throw new StoreError("invalid", "OAuth ChatGPT không khả dụng trong runtime này.");
+    if (!auth) throw new StoreError("invalid", "ChatGPT OAuth is unavailable in this runtime.");
     const session = await auth.get(context.req.param("id"));
-    if (!session) throw new StoreError("not_found", "Không tìm thấy phiên đăng nhập.");
+    if (!session) throw new StoreError("not_found", "Login session not found.");
     return context.json(session);
   });
 
   app.delete("/api/auth/chatgpt/:id", (context) => {
-    if (!auth) throw new StoreError("invalid", "OAuth ChatGPT không khả dụng trong runtime này.");
+    if (!auth) throw new StoreError("invalid", "ChatGPT OAuth is unavailable in this runtime.");
     const session = auth.cancel(context.req.param("id"));
-    if (!session) throw new StoreError("not_found", "Không tìm thấy phiên đăng nhập.");
+    if (!session) throw new StoreError("not_found", "Login session not found.");
     return context.json(session);
   });
 
   app.notFound((context) => {
     if (isApiPath(context.req.path)) {
-      return context.json(
-        { error: { code: "not_found", message: "API route không tồn tại." } },
-        404,
-      );
+      return context.json({ error: { code: "not_found", message: "API route not found." } }, 404);
     }
     return context.text("Not found", 404);
   });
@@ -132,7 +129,7 @@ export function createApp(options: CreateAppOptions) {
         {
           error: {
             code: "invalid_request",
-            message: error.issues[0]?.message ?? "Dữ liệu không hợp lệ.",
+            message: error.issues[0]?.message ?? "Invalid data.",
           },
         },
         400,
@@ -144,7 +141,7 @@ export function createApp(options: CreateAppOptions) {
     }
     console.error(error);
     return context.json(
-      { error: { code: "internal_error", message: error.message || "Lỗi máy chủ." } },
+      { error: { code: "internal_error", message: error.message || "Server error." } },
       500,
     );
   });
@@ -153,10 +150,7 @@ export function createApp(options: CreateAppOptions) {
     app.use("/*", serveStatic({ root: "./dist/web" }));
     app.get("/*", async (context) => {
       if (isApiPath(context.req.path)) {
-        return context.json(
-          { error: { code: "not_found", message: "API route không tồn tại." } },
-          404,
-        );
+        return context.json({ error: { code: "not_found", message: "API route not found." } }, 404);
       }
       if (/\.[a-z0-9]+$/i.test(context.req.path)) return context.text("Not found", 404);
       return context.html(await readFile(join(process.cwd(), "dist/web/index.html"), "utf8"));

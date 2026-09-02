@@ -2,9 +2,9 @@
 
 ## Product boundary
 
-M9 là control center local-first, single-user. Server bind `127.0.0.1`, SPA nói chuyện qua HTTP,
-và server gọi coding harness hoặc provider đã cấu hình. Hai navigation chính là Threads và
-Surfaces; hai surface đầu là Taskboard và Agents.
+M9 is a single-user, local-first control center. The server binds to `127.0.0.1`, the SPA
+communicates over HTTP, and the server invokes configured coding harnesses or providers. The two
+primary navigation areas are Threads and Surfaces; the first two surfaces are Taskboard and Agents.
 
 ## Components
 
@@ -21,57 +21,60 @@ ChatService ── AgentDispatcher ── LocalAgentRunner
                                   └─ OpenAI-compatible HTTP
 ```
 
-Shared Zod contracts ở `src/shared/contracts.ts` là biên giữa browser và server.
+The shared Zod contracts in `src/shared/contracts.ts` define the boundary between browser and server.
 
 ## Persistence
 
-`state.json` giữ agent profiles, thread metadata và tasks. Ghi state dùng temp file + atomic
-rename. `credentials.json` riêng biệt, mode `0600`, chỉ giữ API key custom theo agent id.
+`state.json` stores agent profiles, thread metadata, and tasks. State writes use a temporary file
+followed by an atomic rename. The separate `credentials.json` file has mode `0600` and stores only
+custom API keys by agent ID.
 
-Mỗi thread có một canonical JSONL file. Event `message.created` và `run.updated` dùng sequence
-tăng đơn điệu. User message được append + fsync trước khi queue agent. Projection khi đọc lấy
-message theo sequence và trạng thái cuối của từng run. Startup cắt bỏ duy nhất JSONL tail dang dở.
-Khi restart, run còn queued/running được hoàn tất nếu reply đã fsync, nếu chưa thì được đánh dấu
-interrupted và có thể Retry.
+Each thread has one canonical JSONL file. The `message.created` and `run.updated` events use a
+monotonically increasing sequence. User messages are appended and fsynced before agents are queued.
+Read projections select messages by sequence and the final state of each run. On startup, only an
+incomplete JSONL tail is truncated. After a restart, queued or running runs are completed if their
+replies were fsynced; otherwise, they are marked interrupted and can be retried.
 
 ## Mention and dispatch
 
-`ChatService` resolve handle không phân biệt hoa thường và loại trùng. Unknown handle chỉ là text.
-Mỗi known handle tạo một run; disabled/unavailable agent tạo failed run rõ ràng. Dispatcher có
-một promise queue cho mỗi agent, nên một agent trả lời tuần tự trong khi nhiều agent có thể chạy
-song song. Mỗi invocation khóa vào đúng trigger message id/content; retry cũ hoặc trùng bị từ chối.
-Agent output đi thẳng vào transcript và không đi qua mention parser.
+`ChatService` resolves handles case-insensitively and removes duplicates. Unknown handles remain
+plain text. Each known handle creates one run; disabled or unavailable agents create explicit failed
+runs. The dispatcher maintains one promise queue per agent, so each agent replies serially while
+different agents can run in parallel. Every invocation is tied to the exact triggering message ID
+and content; stale or duplicate retries are rejected. Agent output goes directly to the transcript
+without passing through the mention parser.
 
 ## Agent runtimes
 
-Worker profile chỉ chọn `codex` hoặc `opencode`. Chat turns luôn yêu cầu read-only/discussion mode.
-Master profile chọn:
+Worker profiles select either `codex` or `opencode`. Chat turns always require read-only discussion
+mode. Master profiles select one of the following:
 
-- ChatGPT: dùng session của Codex CLI; device login output được giữ trong memory, token không vào app.
-- Custom: OpenAI Chat Completions hoặc Responses với API root, model và API key tùy chọn.
+- ChatGPT: uses the Codex CLI session; device-login output remains in memory, and tokens never enter the app.
+- Custom: uses OpenAI Chat Completions or Responses with an API root, model, and optional API key.
 
-Child process đóng stdin, có timeout/output cap, kill process group và chỉ kế thừa environment
-allowlist để giảm nguy cơ lộ secret của server. Timeout dùng TERM rồi KILL sau grace period và chỉ
-trả lỗi sau khi process đã đóng.
+Child processes close stdin, enforce timeouts and output caps, kill the process group, and inherit
+only allowlisted environment variables to reduce the risk of exposing server secrets. A timeout
+sends TERM, then KILL after a grace period, and reports an error only after the process exits.
 
 ## Security model
 
-Ứng dụng tin user OS hiện tại và endpoint custom do user nhập. Server chỉ bind loopback và từ chối
-browser mutation có Origin ngoài loopback. OAuth token do Codex CLI quản lý. Custom API key vẫn là
-plaintext-at-rest trong file `0600`, phù hợp threat model local single-user nhưng không thay thế OS
-keychain. Custom base URL không được chứa user info/query/fragment; remote bắt buộc HTTPS, còn HTTP
-chỉ được phép trên loopback. Provider response có byte limit trước khi parse.
+The application trusts the current OS user and user-supplied custom endpoints. The server binds only
+to loopback and rejects browser mutations whose Origin is outside loopback. Codex CLI manages OAuth
+tokens. Custom API keys remain plaintext at rest in a `0600` file, which fits the local single-user
+threat model but does not replace an OS keychain. Custom base URLs may not contain user info, a
+query, or a fragment; remote endpoints require HTTPS, while HTTP is permitted only on loopback.
+Provider responses have a byte limit enforced before parsing.
 
 ## Known gaps
 
-- Chat hiện poll, chưa stream token theo thời gian thực.
-- Worker chat chạy discussion/read-only; Taskboard chưa dispatch coding job hoặc quản lý worktree.
-- OpenCode `plan` là policy của ứng dụng, chưa phải OS/container sandbox độc lập.
-- Agent profile chưa sửa toàn bộ config sau khi tạo; hiện có enable/disable và archive.
-- Device OAuth hiển thị raw hướng dẫn của Codex CLI; chưa dùng `codex app-server` JSON-RPC.
-- Custom provider chỉ hỗ trợ hai OpenAI-compatible protocol; chưa có Anthropic Messages.
-- Queue nằm trong process. Restart đánh dấu interrupted và cần user bấm Retry.
-- Agent message hiện render plain text; chưa có Markdown/code block/link preview.
-- Chưa có upload, nested reply, reaction hoặc multi-user auth.
-- Transcript là một file cho mỗi thread, không phải một file toàn workspace; đây là ranh giới giảm
-  contention và giữ đúng một nguồn ngữ cảnh chung cho mọi participant trong thread.
+- Chat currently polls instead of streaming tokens in real time.
+- Worker chat runs in read-only discussion mode; Taskboard does not yet dispatch coding jobs or manage worktrees.
+- OpenCode `plan` is an application policy, not an independent OS or container sandbox.
+- Agent profiles cannot yet edit their full configuration after creation; enable, disable, and archive are available.
+- Device OAuth displays raw Codex CLI instructions; it does not yet use `codex app-server` JSON-RPC.
+- Custom providers support only two OpenAI-compatible protocols; Anthropic Messages is not supported.
+- Queues live in process. A restart marks runs interrupted, and the user must click Retry.
+- Agent messages currently render as plain text, without Markdown, code blocks, or link previews.
+- Uploads, nested replies, reactions, and multi-user authentication are not supported.
+- Transcripts use one file per thread, not one file for the entire workspace; this boundary reduces
+  contention while preserving one shared source of context for every participant in the thread.
