@@ -11,9 +11,18 @@ Provider metadata still belongs in the event-backed settings row. Secret values
 must not: a settings event carries full post-state, so putting a key there would
 copy it into the append-only event log and every settings API response.
 
+The interaction follows OpenCode's custom-provider pattern: identify the
+provider, enter its connection and credential, configure its model, then submit
+the connection as one guided flow. OpenCode likewise keeps credentials separate
+from provider configuration. See its
+[provider documentation](https://opencode.ai/docs/providers/#custom-provider).
+
 ## Decision
 
-Settings accepts provider credentials as write-only values. The server stores
+Settings accepts provider credentials as write-only values. Custom providers
+are created through one validated request that stores metadata and credential
+together from the user's perspective, matching the connect-then-use flow of a
+local coding harness. The server stores
 them in `$NEXESTRA_HOME/credentials.json`, separate from SQLite, and atomically
 replaces that file with mode `0600`. The REST API returns only a boolean for
 credential presence; it never returns the value. A saved credential takes
@@ -52,4 +61,4 @@ Implemented by `packages/core/src/domain/settings.ts`,
 `packages/core/src/api-http.ts`,
 `apps/server/src/master/provider-credentials.ts`,
 `apps/server/src/master/llm.ts`, `apps/server/src/routes/settings.ts`, and
-`apps/web/src/settings/SettingsSurface.tsx`.
+`apps/web/src/settings/CustomProviderDialog.tsx`.

@@ -280,6 +280,7 @@ Codes: `bad_request` (400), `not_found` (404), `conflict` (409),
 |--------|-------|-------|
 | GET | `/api/health` | `{ ok, version, master }` — `master` says which model client the process started with |
 | GET / PUT | `/api/settings` | Machine-wide defaults, read-only `master`, and per-provider credential-presence booleans |
+| POST | `/api/settings/providers` | Validate, create and optionally activate a custom provider with a write-only credential |
 | PUT / DELETE | `/api/settings/providers/:id/credential` | Write or remove a provider key; the value is never returned |
 | GET | `/api/workspaces` | |
 | POST | `/api/workspaces` | `{path, name?, shortLabel?, defaultBranch?, settings?}` — the path must exist and be a git repository |
@@ -619,6 +620,7 @@ invalidating it. A refetch per line would be one HTTP request per token of
 | Board sidebar | Edit title / agent / status / model / reasoning / sandbox | `PATCH /api/tasks/:id` |
 | Memory sidebar | Edit a memory | `PATCH /api/memories/:id` |
 | Settings | Read and write defaults | `GET`/`PUT /api/settings` |
+| Settings | Add and activate a custom Master provider | `POST /api/settings/providers` |
 | Settings | Save or remove a Master provider key | `PUT`/`DELETE /api/settings/providers/:id/credential` |
 
 **(M6)** The only buttons still disabled for a later milestone are `+ Add` task
@@ -654,6 +656,7 @@ apps/web/src
                         `RunEvent[] → lines` reducer behind the xterm pane (M6)
   surfaces/board|editor|memory
   settings/SettingsSurface.tsx
+  settings/CustomProviderDialog.tsx
   lib/{api,events,master,store,format}.ts
   test/setup.ts         RTL cleanup (Vitest globals are off on purpose)
 ```
