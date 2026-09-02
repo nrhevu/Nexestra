@@ -20,7 +20,9 @@ export function workspaceRoutes(store: NexestraStore) {
         defaultBranch: input.defaultBranch ?? resolved.defaultBranch,
         settings: {
           defaultHarness: settings.defaultHarness,
-          defaultModel: settings.defaultModel,
+          // Empty means "let the harness choose"; carrying it onto the
+          // workspace as `""` would look like an explicit, impossible model.
+          ...(settings.defaultModel ? { defaultModel: settings.defaultModel } : {}),
           defaultSandbox: settings.defaultSandbox,
           concurrency: settings.concurrency,
           budgetUSD: settings.budgetUSD,

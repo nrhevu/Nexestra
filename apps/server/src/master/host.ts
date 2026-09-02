@@ -176,9 +176,12 @@ export function createServerMasterHost(options: ServerMasterHostOptions): Master
       if (execution.dispatchDefaults) return execution.dispatchDefaults(context);
       const settings = store.getSettings();
       const workspace = store.getWorkspace(workspaceId);
+      // Empty is `HARNESS_DEFAULT_MODEL` — omit the key rather than show the
+      // model an empty string, which it would faithfully put on every task.
+      const model = workspace?.settings.defaultModel || settings.defaultModel;
       return {
         harness: workspace?.settings.defaultHarness ?? settings.defaultHarness,
-        model: settings.defaultModel,
+        ...(model ? { model } : {}),
         reasoning: "medium",
         sandbox: workspace?.settings.defaultSandbox ?? settings.defaultSandbox,
       };

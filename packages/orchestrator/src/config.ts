@@ -54,6 +54,19 @@ export interface OrchestratorConfig {
   /** Overrides `Thread.budgetUSD` when set. */
   budgetUSD?: number;
   priceTable?: PriceTable;
+  /**
+   * What model a run is priced against when `RunSpec.model` is unset.
+   *
+   * Leaving the model unset is the *normal* case, not an edge case: it is what
+   * tells the adapter not to pass `-m`, so the harness uses whatever it is
+   * configured for. Pricing on `undefined` therefore charged every such run
+   * zero, which is why the board so often read `$0.00` after a real run. Given
+   * the harness id this returns the model `discover()` reported as its default,
+   * and the price table is consulted for *that*.
+   */
+  defaultModelFor?: (harness: HarnessId) => string | undefined;
+  /** Delete a task's worktree once its branch has landed. Default true. */
+  removeMergedWorktrees?: boolean;
   /** Worktrees live at `<worktreeRoot>/<threadId>/<taskId>`. */
   worktreeRoot: string;
 
@@ -88,6 +101,8 @@ export interface ResolvedConfig {
   autoMerge: boolean;
   budgetUSD: number | undefined;
   priceTable: PriceTable;
+  defaultModelFor: (harness: HarnessId) => string | undefined;
+  removeMergedWorktrees: boolean;
   worktreeRoot: string;
   runTimeoutMs: number;
   verificationTimeoutMs: number;
@@ -120,6 +135,8 @@ export function resolveConfig(config: OrchestratorConfig): ResolvedConfig {
     autoMerge: config.autoMerge ?? false,
     budgetUSD: config.budgetUSD,
     priceTable: config.priceTable ?? {},
+    defaultModelFor: config.defaultModelFor ?? (() => undefined),
+    removeMergedWorktrees: config.removeMergedWorktrees ?? true,
     worktreeRoot: config.worktreeRoot,
     runTimeoutMs: config.runTimeoutMs ?? 900_000,
     verificationTimeoutMs: config.verificationTimeoutMs ?? 600_000,

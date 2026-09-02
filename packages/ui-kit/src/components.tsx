@@ -1,6 +1,7 @@
 import type {
   ButtonHTMLAttributes,
   CSSProperties,
+  HTMLAttributes,
   InputHTMLAttributes,
   ReactNode,
   Ref,
@@ -129,8 +130,17 @@ export function StatusDot({ tone, label }: { tone: StatusTone; label?: ReactNode
 
 export type TagTone = "default" | "accent" | "info" | "warn" | "danger" | "magenta";
 
-export function Tag({ tone = "default", children }: { tone?: TagTone; children: ReactNode }) {
-  return <span className={cx("nx-tag", tone !== "default" && `nx-tag--${tone}`)}>{children}</span>;
+export interface TagProps extends HTMLAttributes<HTMLSpanElement> {
+  tone?: TagTone;
+  children: ReactNode;
+}
+
+export function Tag({ tone = "default", className, children, ...rest }: TagProps) {
+  return (
+    <span className={cx("nx-tag", tone !== "default" && `nx-tag--${tone}`, className)} {...rest}>
+      {children}
+    </span>
+  );
 }
 
 /* ----------------------------------------------------------------- Button */

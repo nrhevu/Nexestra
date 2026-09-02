@@ -102,6 +102,10 @@ export class ExecutionRuntime implements MasterBridge {
         autoMerge: settings.autoMerge,
         budgetUSD: settings.budgetUSD,
         priceTable: DEFAULT_PRICE_TABLE,
+        // Most runs leave the model unset so the harness picks; price them
+        // against whatever `discover()` said that harness defaults to.
+        defaultModelFor: (harness) => this.registry.defaultModel(harness),
+        removeMergedWorktrees: !settings.keepWorktrees,
         logger: {
           debug() {},
           warn(message, detail) {
@@ -370,9 +374,13 @@ export class ExecutionRuntime implements MasterBridge {
         const harness = this.registry.adapters[preferred]
           ? preferred
           : ((Object.keys(this.registry.adapters)[0] as HarnessId | undefined) ?? preferred);
+        // An empty `defaultModel` is `HARNESS_DEFAULT_MODEL`: omit the key so
+        // nothing downstream writes `model: ""` onto a task and the adapter
+        // leaves `-m` off the command line.
+        const model = workspace?.settings.defaultModel || settings.defaultModel;
         return {
           harness,
-          model: settings.defaultModel,
+          ...(model ? { model } : {}),
           reasoning: "medium",
           sandbox: workspace?.settings.defaultSandbox ?? settings.defaultSandbox,
         };
@@ -448,6 +456,24 @@ export class ExecutionRuntime implements MasterBridge {
     const master = this.master;
     if (!master) return;
     if (outcome === "paused" || outcome === "cancelled") return;
+
+    // Same hazard `requestReplan` guards against: a `continue` turn on a thread
+    // the Master has never seen starts its session at `intake` with an empty
+    // draft, and the first thing the model does there is `update_spec` — which
+    // would publish that empty draft over a thread assembled through the REST
+    // API. A thread with no session gets a log line instead of a turn.
+    if (!this.store.getMasterState(threadId)) {
+      this.append(threadId, "orchestrator.progress", {
+        threadId,
+        kind: "thread_idle",
+        level: outcome === "completed" ? "info" : "warn",
+        message:
+          `Execution finished (${outcome}), and no Master session owns this thread, ` +
+          "so nothing will summarise or replan it.",
+        at: new Date().toISOString(),
+      });
+      return;
+    }
 
     if (outcome !== "completed") {
       await master.applyTrigger(threadId, {

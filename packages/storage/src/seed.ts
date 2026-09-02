@@ -217,7 +217,10 @@ export function seedMock(store: NexestraStore, options: { force?: boolean } = {}
     if (first) {
       store.putSettings({
         defaultHarness: first.settings.defaultHarness,
-        defaultModel: first.settings.defaultModel,
+        // Deliberately not `first.settings.defaultModel`: the demo workspace
+        // names a model for illustration, but the machine-wide default has to
+        // stay `HARNESS_DEFAULT_MODEL` — a seeded install must not hand every
+        // account a model name its harness might reject.
         budgetUSD: first.settings.budgetUSD,
         concurrency: first.settings.concurrency,
         defaultSandbox: first.settings.defaultSandbox,

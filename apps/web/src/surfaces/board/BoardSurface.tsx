@@ -29,6 +29,7 @@ import {
   useUpdateTaskStatus,
 } from "../../lib/api.js";
 import { formatUsd, phaseTone, statusTone } from "../../lib/format.js";
+import { modelTitle, type ResolvedModel, useModelResolver } from "../../lib/model.js";
 import { useUiStore } from "../../lib/store.js";
 import { SurfaceLayout } from "../../shell/SurfaceLayout.js";
 import { BoardSidebar } from "./BoardSidebar.js";
@@ -56,6 +57,7 @@ export function BoardSurface({ workspaceId, threadId }: { workspaceId: string; t
   const control = useExecutionControl(threadId);
   const selectedTaskId = useUiStore((state) => state.selectedTaskId);
   const selectTask = useUiStore((state) => state.selectTask);
+  const modelOf = useModelResolver();
 
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
@@ -131,7 +133,7 @@ export function BoardSurface({ workspaceId, threadId }: { workspaceId: string; t
           onDragEnd={onDragEnd}
           onDragCancel={() => setDraggingId(null)}
         >
-          <div className="board">
+          <div className="board" data-testid="board">
             {tasks.isPending ? <div className="state">loading tasks…</div> : null}
             {visibleColumns.map((column) => (
               <Column
@@ -142,13 +144,14 @@ export function BoardSurface({ workspaceId, threadId }: { workspaceId: string; t
                 onSelect={selectTask}
                 draggingId={draggingId}
                 titles={titles}
+                modelOf={modelOf}
               />
             ))}
           </div>
           <DragOverlay dropAnimation={null}>
             {draggingTask ? (
               <div className="task-card task-card--overlay">
-                <TaskCardBody task={draggingTask} titles={titles} />
+                <TaskCardBody task={draggingTask} titles={titles} modelOf={modelOf} />
               </div>
             ) : null}
           </DragOverlay>
@@ -186,17 +189,18 @@ function ExecutionControls({
 
   return (
     <span className="board__controls">
-      <Tag tone={running ? "info" : paused ? "warn" : "default"}>
+      <Tag tone={running ? "info" : paused ? "warn" : "default"} data-testid="execution-state">
         {running && activeRuns > 0 ? `running · ${activeRuns} run(s)` : state}
       </Tag>
       {running ? (
-        <Button boxed disabled={busy} onClick={() => onAction("pause")}>
+        <Button boxed disabled={busy} data-testid="execution-pause" onClick={() => onAction("pause")}>
           Pause
         </Button>
       ) : (
         <Button
           tone="primary"
           boxed
+          data-testid="execution-start"
           disabled={busy || taskCount === 0 || status?.available === false}
           title={
             status?.available === false
@@ -213,6 +217,7 @@ function ExecutionControls({
       <Button
         tone="danger"
         boxed
+        data-testid="execution-cancel"
         disabled={busy || (!running && !paused)}
         onClick={() => onAction("cancel")}
       >
@@ -229,6 +234,7 @@ function Column({
   onSelect,
   draggingId,
   titles,
+  modelOf,
 }: {
   column: BoardColumn;
   tasks: readonly Task[];
@@ -236,11 +242,16 @@ function Column({
   onSelect: (id: string) => void;
   draggingId: string | null;
   titles: ReadonlyMap<string, string>;
+  modelOf: (task: Task) => ResolvedModel;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: column });
 
   return (
-    <section className={`column${isOver ? " column--over" : ""}`} ref={setNodeRef}>
+    <section
+      className={`column${isOver ? " column--over" : ""}`}
+      ref={setNodeRef}
+      data-testid={`board-column-${column}`}
+    >
       <header className="column__head">
         <span>{COLUMN_LABEL[column]}</span>
         <span className="column__count">{tasks.length}</span>
@@ -261,6 +272,7 @@ function Column({
             dragging={task.id === draggingId}
             onSelect={onSelect}
             titles={titles}
+            modelOf={modelOf}
           />
         ))}
         {tasks.length === 0 ? <div className="nx-muted">— empty —</div> : null}
@@ -275,12 +287,14 @@ function TaskCard({
   dragging,
   onSelect,
   titles,
+  modelOf,
 }: {
   task: Task;
   selected: boolean;
   dragging: boolean;
   onSelect: (id: string) => void;
   titles: ReadonlyMap<string, string>;
+  modelOf: (task: Task) => ResolvedModel;
 }) {
   const { attributes, listeners, setNodeRef } = useDraggable({ id: task.id });
 
@@ -291,16 +305,28 @@ function TaskCard({
       className={`task-card${selected ? " task-card--selected" : ""}${
         dragging ? " task-card--dragging" : ""
       }`}
+      data-testid="task-card"
+      data-task-id={task.id}
+      data-task-status={task.status}
       onClick={() => onSelect(task.id)}
       {...listeners}
       {...attributes}
     >
-      <TaskCardBody task={task} titles={titles} />
+      <TaskCardBody task={task} titles={titles} modelOf={modelOf} />
     </button>
   );
 }
 
-function TaskCardBody({ task, titles }: { task: Task; titles: ReadonlyMap<string, string> }) {
+function TaskCardBody({
+  task,
+  titles,
+  modelOf,
+}: {
+  task: Task;
+  titles: ReadonlyMap<string, string>;
+  modelOf: (task: Task) => ResolvedModel;
+}) {
+  const model = modelOf(task);
   return (
     <>
       <span className="task-card__title">
@@ -312,7 +338,16 @@ function TaskCardBody({ task, titles }: { task: Task; titles: ReadonlyMap<string
       <span className="task-card__meta">
         <StatusDot tone={statusTone(task.status)} label={task.status} />
         {task.assignedHarness ? <Tag tone="info">{task.assignedHarness}</Tag> : null}
-        {task.harnessConfig.model ? <Tag tone="magenta">{task.harnessConfig.model}</Tag> : null}
+        {model.name ? (
+          <Tag
+            tone={model.source === "task" ? "magenta" : "default"}
+            title={modelTitle(model)}
+            data-testid="task-model"
+            data-model-source={model.source}
+          >
+            {model.name}
+          </Tag>
+        ) : null}
         <Tag>{task.harnessConfig.reasoning}</Tag>
         {task.costUSD > 0 ? <Tag>{formatUsd(task.costUSD)}</Tag> : null}
         {task.attempts > 0 ? (

@@ -19,6 +19,8 @@ export function FileTree({ nodes }: { nodes: readonly FileNode[] }) {
           type="button"
           className={`tree__row${node.path === openFilePath ? " tree__row--active" : ""}`}
           style={{ paddingLeft: 8 + depth * 12 }}
+          data-testid="file-tree-row"
+          data-path={node.path}
           onClick={() => node.kind === "file" && openFile(node.path)}
         >
           <span className="tree__glyph">{node.kind === "dir" ? "▾" : "·"}</span>
@@ -34,5 +36,9 @@ export function FileTree({ nodes }: { nodes: readonly FileNode[] }) {
     );
   };
 
-  return <div className="tree">{roots.map((node) => render(node, 0))}</div>;
+  return (
+    <div className="tree" data-testid="file-tree">
+      {roots.map((node) => render(node, 0))}
+    </div>
+  );
 }

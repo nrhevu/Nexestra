@@ -25,7 +25,9 @@ export function SurfaceLayout({
       <Panel id="main" minSize="360px" className="nx-panel">
         <div className="surface">
           <header className="surface__head">
-            <span className="surface__title">{title}</span>
+            <span className="surface__title" data-testid="surface-title">
+              {title}
+            </span>
             {headerRight ? <span className="surface__head-right">{headerRight}</span> : null}
           </header>
           <div className="surface__main">{main}</div>
