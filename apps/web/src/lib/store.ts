@@ -10,7 +10,12 @@ interface UiState {
   theme: Theme;
   selectedTaskId: string | null;
   selectedMemoryId: string | null;
-  openFilePath: string;
+  /** Run the Editor surface is showing. `null` = follow the latest running one. */
+  selectedRunId: string | null;
+  /** File open in the Editor, relative to the selected run's worktree. */
+  openFilePath: string | null;
+  /** Editor shows the unified diff instead of the file. */
+  diffMode: boolean;
   paletteOpen: boolean;
   /** Bumped by ⌘/ so the Chat composer can focus itself. */
   composerFocusNonce: number;
@@ -19,7 +24,9 @@ interface UiState {
   toggleTheme: () => void;
   selectTask: (taskId: string | null) => void;
   selectMemory: (memoryId: string | null) => void;
-  openFile: (path: string) => void;
+  openRun: (runId: string | null) => void;
+  openFile: (path: string | null) => void;
+  setDiffMode: (on: boolean) => void;
   setPaletteOpen: (open: boolean) => void;
   focusComposer: () => void;
 }
@@ -40,7 +47,9 @@ export const useUiStore = create<UiState>()((set, get) => ({
   theme: readStoredTheme(),
   selectedTaskId: null,
   selectedMemoryId: null,
-  openFilePath: "src/adapters/codex.ts",
+  selectedRunId: null,
+  openFilePath: null,
+  diffMode: false,
   paletteOpen: false,
   composerFocusNonce: 0,
 
@@ -51,7 +60,11 @@ export const useUiStore = create<UiState>()((set, get) => ({
   toggleTheme: () => get().setTheme(get().theme === "dark" ? "light" : "dark"),
   selectTask: (selectedTaskId) => set({ selectedTaskId }),
   selectMemory: (selectedMemoryId) => set({ selectedMemoryId }),
-  openFile: (openFilePath) => set({ openFilePath }),
+  // A different run means a different worktree, so the open file cannot carry
+  // over — the same path may not exist there.
+  openRun: (selectedRunId) => set({ selectedRunId, openFilePath: null, diffMode: false }),
+  openFile: (openFilePath) => set({ openFilePath, diffMode: false }),
+  setDiffMode: (diffMode) => set({ diffMode }),
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
   focusComposer: () => set((state) => ({ composerFocusNonce: state.composerFocusNonce + 1 })),
 }));

@@ -2,13 +2,21 @@ import type { HarnessId, ReasoningLevel, SandboxLevel, TaskStatus } from "@nexes
 import { ReasoningLevelSchema, SandboxLevelSchema, TaskStatusSchema } from "@nexestra/core";
 import { Button, Select, StatusDot, Tag, TextInput } from "@nexestra/ui-kit";
 import { useEffect, useState } from "react";
-import { useSpec, useTasks, useUpdateTask } from "../../lib/api.js";
+import {
+  useDispatchTask,
+  useRuns,
+  useSpec,
+  useTasks,
+  useUpdateTask,
+  useVerifyTask,
+} from "../../lib/api.js";
 import { formatUsd } from "../../lib/format.js";
 import { useUiStore } from "../../lib/store.js";
 
 const HARNESS_OPTIONS = [
   { value: "codex", label: "codex" },
   { value: "opencode", label: "opencode" },
+  { value: "fake", label: "fake (simulated)" },
   { value: "acp", label: "acp (not available)" },
 ];
 
@@ -38,8 +46,12 @@ const SANDBOX_OPTIONS = SandboxLevelSchema.options.map((level) => ({
 export function BoardSidebar({ threadId }: { threadId: string }) {
   const tasks = useTasks(threadId);
   const spec = useSpec(threadId);
+  const runs = useRuns(threadId);
   const updateTask = useUpdateTask(threadId);
+  const dispatchTask = useDispatchTask(threadId);
+  const verifyTask = useVerifyTask(threadId);
   const selectedTaskId = useUiStore((state) => state.selectedTaskId);
+  const openRun = useUiStore((state) => state.openRun);
 
   const rows = tasks.data ?? [];
   const task = rows.find((item) => item.id === selectedTaskId) ?? rows[0];
@@ -82,6 +94,7 @@ export function BoardSidebar({ threadId }: { threadId: string }) {
     task: rows.find((item) => item.id === id),
   }));
   const blocking = rows.filter((item) => item.dependsOn.includes(task.id));
+  const taskRuns = (runs.data ?? []).filter((run) => run.taskId === task.id);
 
   return (
     <>
@@ -256,14 +269,58 @@ export function BoardSidebar({ threadId }: { threadId: string }) {
         )}
       </section>
 
+      <section className="sidebar__section">
+        <div className="sidebar__section-title">Runs</div>
+        {taskRuns.length === 0 ? (
+          <div className="nx-muted">nothing has run for this task yet</div>
+        ) : (
+          <ul className="sidebar__list">
+            {taskRuns.map((run) => (
+              <li key={run.id}>
+                <span className="sidebar__bullet">·</span>
+                <span>
+                  <button
+                    type="button"
+                    className="linklike"
+                    onClick={() => openRun(run.id)}
+                    title="Open this run in the Editor surface"
+                  >
+                    {run.kind}
+                  </button>{" "}
+                  <Tag tone={run.status === "succeeded" ? "accent" : "default"}>{run.status}</Tag>{" "}
+                  <span className="nx-muted">{formatUsd(run.usage.costUSD)}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
       <div className="row">
-        <Button tone="primary" title="Dispatching a run lands with the orchestrator in M4" disabled>
+        <Button
+          tone="primary"
+          boxed
+          disabled={dispatchTask.isPending}
+          title="Run this task now, out of band of the scheduler"
+          onClick={() => dispatchTask.mutate({ taskId: task.id })}
+        >
           Dispatch
         </Button>
-        <Button title="Run details land with the orchestrator in M4" disabled>
-          View run
+        <Button
+          boxed
+          disabled={verifyTask.isPending || criteria.length === 0}
+          title={
+            criteria.length === 0
+              ? "No acceptance criteria are linked to this task"
+              : "Run this task's acceptance criteria in its worktree"
+          }
+          onClick={() => verifyTask.mutate({ taskId: task.id })}
+        >
+          Verify
         </Button>
       </div>
+      {dispatchTask.isError ? <div className="form-error">{dispatchTask.error.message}</div> : null}
+      {verifyTask.isError ? <div className="form-error">{verifyTask.error.message}</div> : null}
     </>
   );
 }

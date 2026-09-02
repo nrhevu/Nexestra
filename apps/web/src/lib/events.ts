@@ -1,6 +1,14 @@
 import {
+  type Approval,
+  type Artifact,
+  type ExecutionStatus,
+  ExecutionStatusSchema,
   type Message,
   type NexestraEvent,
+  type OrchestratorProgress,
+  OrchestratorProgressSchema,
+  type Run,
+  type RunEvent,
   type Spec,
   type Task,
   type Thread,
@@ -212,21 +220,60 @@ function applyEvent(
       break;
 
     case "run.recorded":
-      if (threadId) invalidate(keys.runs(threadId));
+      if (!threadId) return;
+      client.setQueryData<Run[]>(keys.runs(threadId), (current) =>
+        upsert(current, event.payload as Run),
+      );
+      // A run that just ended has a worktree worth re-reading.
+      if (event.runId) {
+        invalidate(keys.runFiles(event.runId));
+        invalidate(keys.runDiff(event.runId));
+      }
       break;
 
+    // Appended, not invalidated: this is the terminal's feed, and a refetch per
+    // line would be one HTTP request per token of harness output.
     case "run.event_appended":
-      if (event.runId) invalidate(keys.runEvents(event.runId));
+      if (!event.runId) return;
+      client.setQueryData<RunEvent[]>(keys.runEvents(event.runId), (current) =>
+        appendRunEvent(current, event.payload as RunEvent),
+      );
       break;
 
     case "artifact.recorded":
-      if (threadId) invalidate(keys.artifacts(threadId));
+      if (!threadId) return;
+      client.setQueryData<Artifact[]>(keys.artifacts(threadId), (current) =>
+        upsert(current, event.payload as Artifact),
+      );
       break;
 
     case "approval.requested":
     case "approval.resolved":
-      invalidate(keys.approvals(workspaceId));
+      client.setQueryData<Approval[]>(keys.approvals(workspaceId), (current) =>
+        upsert(current, event.payload as Approval),
+      );
       break;
+
+    case "orchestrator.status_changed": {
+      if (!threadId) return;
+      const status = ExecutionStatusSchema.safeParse(event.payload);
+      if (status.success) {
+        client.setQueryData<ExecutionStatus>(keys.execution(threadId), status.data);
+      }
+      break;
+    }
+
+    case "orchestrator.progress": {
+      if (!threadId) return;
+      const progress = OrchestratorProgressSchema.safeParse(event.payload);
+      if (progress.success) {
+        client.setQueryData<OrchestratorProgress[]>(keys.progress(threadId), (current) => [
+          ...(current ?? []),
+          progress.data,
+        ]);
+      }
+      break;
+    }
 
     case "memory.upserted":
     case "memory.deleted":
@@ -247,6 +294,13 @@ function applyEvent(
     default:
       break;
   }
+}
+
+/** Run events are append-only and already ordered by `seq`; ignore replays. */
+function appendRunEvent(current: RunEvent[] | undefined, row: RunEvent): RunEvent[] {
+  const list = current ?? [];
+  if (list.some((item) => item.id === row.id)) return list;
+  return [...list, row];
 }
 
 function upsert<T extends { id: string }>(current: T[] | undefined, row: T): T[] {

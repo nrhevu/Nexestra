@@ -13,16 +13,28 @@ import {
 import {
   type BoardColumn,
   boardColumnForStatus,
+  type ExecutionAction,
+  type ExecutionStatus,
   statusForBoardColumn,
   type Task,
+  type TaskStatus,
 } from "@nexestra/core";
 import { Button, StatusDot, Tag } from "@nexestra/ui-kit";
 import { useMemo, useState } from "react";
-import { useTasks, useThreads, useUpdateTaskStatus } from "../../lib/api.js";
+import {
+  useExecutionControl,
+  useExecutionStatus,
+  useTasks,
+  useThreads,
+  useUpdateTaskStatus,
+} from "../../lib/api.js";
 import { formatUsd, phaseTone, statusTone } from "../../lib/format.js";
 import { useUiStore } from "../../lib/store.js";
 import { SurfaceLayout } from "../../shell/SurfaceLayout.js";
 import { BoardSidebar } from "./BoardSidebar.js";
+
+/** Statuses that mean "a harness or a verification command is on it right now". */
+const LIVE_STATUSES: readonly TaskStatus[] = ["running", "verifying"];
 
 const ALWAYS_VISIBLE: readonly BoardColumn[] = ["todo", "in_progress", "done"];
 const COLUMN_ORDER: readonly BoardColumn[] = ["todo", "in_progress", "review", "blocked", "done"];
@@ -40,6 +52,8 @@ export function BoardSurface({ workspaceId, threadId }: { workspaceId: string; t
   const thread = (threads.data ?? []).find((item) => item.id === threadId);
 
   const updateTaskStatus = useUpdateTaskStatus(threadId);
+  const execution = useExecutionStatus(threadId);
+  const control = useExecutionControl(threadId);
   const selectedTaskId = useUiStore((state) => state.selectedTaskId);
   const selectTask = useUiStore((state) => state.selectTask);
 
@@ -97,6 +111,13 @@ export function BoardSurface({ workspaceId, threadId }: { workspaceId: string; t
           {thread ? <Tag tone={phaseTone(thread.phase)}>{thread.phase}</Tag> : null}
           <span className="nx-muted">{[...board.values()].flat().length} tasks</span>
           <span className="nx-muted">{formatUsd(totalCost)}</span>
+          <ExecutionControls
+            status={execution.data}
+            taskCount={[...board.values()].flat().length}
+            busy={control.isPending}
+            onAction={(action) => control.mutate(action)}
+          />
+          {control.isError ? <span className="form-error">{control.error.message}</span> : null}
           {updateTaskStatus.isError ? (
             <span className="form-error">{updateTaskStatus.error.message}</span>
           ) : null}
@@ -136,6 +157,68 @@ export function BoardSurface({ workspaceId, threadId }: { workspaceId: string; t
       sidebarTitle="Task details"
       sidebar={<BoardSidebar threadId={threadId} />}
     />
+  );
+}
+
+/**
+ * `[Start execution]` and friends, driven by the loop's own state rather than
+ * by `Thread.phase`.
+ *
+ * They are the same three verbs the orchestrator exposes — start, pause /
+ * resume, cancel — and which of them makes sense is a pure function of
+ * `ExecutionStatus.state`, so there is no local "is it running?" flag to drift.
+ */
+function ExecutionControls({
+  status,
+  taskCount,
+  busy,
+  onAction,
+}: {
+  status: ExecutionStatus | undefined;
+  taskCount: number;
+  busy: boolean;
+  onAction: (action: ExecutionAction) => void;
+}) {
+  const state = status?.state ?? "idle";
+  const running = state === "running";
+  const paused = state === "paused";
+  const activeRuns = status?.activeRuns.length ?? 0;
+
+  return (
+    <span className="board__controls">
+      <Tag tone={running ? "info" : paused ? "warn" : "default"}>
+        {running && activeRuns > 0 ? `running · ${activeRuns} run(s)` : state}
+      </Tag>
+      {running ? (
+        <Button boxed disabled={busy} onClick={() => onAction("pause")}>
+          Pause
+        </Button>
+      ) : (
+        <Button
+          tone="primary"
+          boxed
+          disabled={busy || taskCount === 0 || status?.available === false}
+          title={
+            status?.available === false
+              ? "No harness adapter is available in the server process"
+              : taskCount === 0
+                ? "The plan has no tasks yet"
+                : "Hand the plan to the orchestrator"
+          }
+          onClick={() => onAction(paused ? "resume" : "start")}
+        >
+          {paused ? "Resume" : "Start execution"}
+        </Button>
+      )}
+      <Button
+        tone="danger"
+        boxed
+        disabled={busy || (!running && !paused)}
+        onClick={() => onAction("cancel")}
+      >
+        Cancel
+      </Button>
+    </span>
   );
 }
 
@@ -220,14 +303,26 @@ function TaskCard({
 function TaskCardBody({ task, titles }: { task: Task; titles: ReadonlyMap<string, string> }) {
   return (
     <>
-      <span className="task-card__title">{task.title}</span>
+      <span className="task-card__title">
+        {LIVE_STATUSES.includes(task.status) ? (
+          <span className="spinner" aria-hidden="true" />
+        ) : null}
+        {task.title}
+      </span>
       <span className="task-card__meta">
         <StatusDot tone={statusTone(task.status)} label={task.status} />
         {task.assignedHarness ? <Tag tone="info">{task.assignedHarness}</Tag> : null}
         {task.harnessConfig.model ? <Tag tone="magenta">{task.harnessConfig.model}</Tag> : null}
         <Tag>{task.harnessConfig.reasoning}</Tag>
         {task.costUSD > 0 ? <Tag>{formatUsd(task.costUSD)}</Tag> : null}
-        {task.attempts > 1 ? <Tag tone="warn">{task.attempts} attempts</Tag> : null}
+        {task.attempts > 0 ? (
+          <Tag tone={task.attempts > 1 ? "warn" : "default"}>
+            {task.attempts}/{task.maxAttempts} attempts
+          </Tag>
+        ) : null}
+        {task.mergeState ? (
+          <Tag tone={task.mergeState === "merged" ? "accent" : "warn"}>{task.mergeState}</Tag>
+        ) : null}
       </span>
       {task.dependsOn.length > 0 ? (
         <span className="task-card__deps">

@@ -2,6 +2,7 @@ import { Button, Checkbox, Divider, Kbd } from "@nexestra/ui-kit";
 import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { useCreateThread, useThreads } from "../lib/api.js";
+import { ApprovalQueuePanel, usePendingApprovalCount } from "./ApprovalQueuePanel.js";
 import { PromptDialog } from "./PromptDialog.js";
 import { SURFACE_ROUTES, SURFACES, type SurfaceId } from "./surfaces.js";
 
@@ -15,6 +16,7 @@ export function NavigationPanel({ workspaceId, threadId, surface }: NavigationPa
   const navigate = useNavigate();
   const threads = useThreads(workspaceId);
   const createThread = useCreateThread(workspaceId);
+  const pendingApprovals = usePendingApprovalCount(workspaceId);
   const [open, setOpen] = useState(false);
 
   return (
@@ -79,6 +81,26 @@ export function NavigationPanel({ workspaceId, threadId, surface }: NavigationPa
             }
           />
         ))}
+      </div>
+
+      <Divider />
+
+      {/*
+        The approval queue is global on purpose: the orchestrator raises gates
+        (sandbox escalation, spend, merge, manual verification, a harness asking
+        mid-run) while the user is looking at any surface, and each one blocks a
+        run until it is resolved.
+      */}
+      <div className="nav__head" id="approval-queue">
+        <span>Approvals</span>
+        {pendingApprovals > 0 ? (
+          <span className="nav__head-actions">
+            <span className="nav__badge">{pendingApprovals}</span>
+          </span>
+        ) : null}
+      </div>
+      <div className="nav__approvals nx-scroll">
+        <ApprovalQueuePanel workspaceId={workspaceId} threadId={threadId} />
       </div>
 
       <div className="nav__spacer" />

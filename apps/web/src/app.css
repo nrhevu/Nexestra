@@ -1183,3 +1183,220 @@
   display: flex;
   gap: 6px;
 }
+
+/* ------------------------------------------------------------- M6: execution */
+
+/* The approval queue lives in the navigation column, so it is visible from
+   every surface — an orchestrator gate blocks a run wherever the user is. */
+.nav__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--nx-warn);
+  color: var(--nx-bg);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.nav__approvals {
+  flex: 0 1 auto;
+  max-height: 40%;
+  overflow: auto;
+  padding: 4px 8px 8px;
+}
+
+.rail__approvals {
+  text-decoration: none;
+  border-color: var(--nx-warn);
+  color: var(--nx-warn);
+}
+
+.approval-queue {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.approval-queue__item {
+  border: 1px solid var(--nx-border);
+  border-left: 2px solid var(--nx-warn);
+  border-radius: var(--nx-radius);
+  background: var(--nx-bg-alt);
+  padding: 6px;
+}
+
+.approval-queue__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.approval-queue__title {
+  color: var(--nx-fg-strong);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.approval-queue__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.approval-queue__body {
+  margin-top: 4px;
+  color: var(--nx-fg-dim);
+  font-size: 11px;
+}
+
+.approval-queue__actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+/* Board header controls. */
+.board__controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* A card whose task a harness is working on right now. */
+.spinner {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border: 1px solid var(--nx-info);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: nx-spin 0.8s linear infinite;
+  vertical-align: baseline;
+}
+
+@keyframes nx-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}
+
+.linklike {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--nx-info);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* Orchestrator progress, interleaved into the Chat timeline. */
+.sysrow {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 1px 0 1px 4px;
+  border-left: 2px solid var(--nx-border);
+  color: var(--nx-fg-dim);
+  font-size: 11px;
+}
+
+.sysrow--warn {
+  border-left-color: var(--nx-warn);
+}
+
+.sysrow--error {
+  border-left-color: var(--nx-danger);
+  color: var(--nx-danger);
+}
+
+.sysrow__time {
+  color: var(--nx-fg-faint);
+  font-size: 10px;
+  flex: 0 0 auto;
+}
+
+.sysrow__glyph {
+  flex: 0 0 auto;
+  width: 8px;
+  color: var(--nx-fg-faint);
+}
+
+.sysrow__text {
+  flex: 1 1 auto;
+}
+
+.progress__fill--warn {
+  background: var(--nx-warn);
+}
+
+.progress__fill--over {
+  background: var(--nx-danger);
+}
+
+/* Unified diff of a run's worktree. */
+.diff {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.diff__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--nx-border);
+  flex: 0 0 auto;
+}
+
+.diff__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  margin: 0;
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre;
+  tab-size: 2;
+}
+
+.diff__line--add {
+  color: var(--nx-accent);
+}
+
+.diff__line--del {
+  color: var(--nx-danger);
+}
+
+.diff__line--hunk {
+  color: var(--nx-info);
+}
+
+.diff__line--meta {
+  color: var(--nx-fg-faint);
+}
+
+.terminal-empty {
+  padding: 6px 8px;
+}

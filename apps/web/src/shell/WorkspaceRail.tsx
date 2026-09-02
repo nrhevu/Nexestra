@@ -2,12 +2,14 @@ import { Rail } from "@nexestra/ui-kit";
 import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { ApiRequestError, useCreateWorkspace, useWorkspaces } from "../lib/api.js";
+import { usePendingApprovalCount } from "./ApprovalQueuePanel.js";
 import { PromptDialog } from "./PromptDialog.js";
 
 export function WorkspaceRail({ activeWorkspaceId }: { activeWorkspaceId: string }) {
   const workspaces = useWorkspaces();
   const createWorkspace = useCreateWorkspace();
   const navigate = useNavigate();
+  const pendingApprovals = usePendingApprovalCount(activeWorkspaceId);
   const [open, setOpen] = useState(false);
 
   const items = (workspaces.data ?? []).map((workspace) => ({
@@ -26,6 +28,18 @@ export function WorkspaceRail({ activeWorkspaceId }: { activeWorkspaceId: string
         activeId={activeWorkspaceId}
         onSelect={(workspaceId) =>
           void navigate({ to: "/w/$workspaceId", params: { workspaceId } })
+        }
+        footer={
+          pendingApprovals > 0 ? (
+            <a
+              className="nx-rail__item rail__approvals"
+              href="#approval-queue"
+              title={`${pendingApprovals} approval(s) waiting on you`}
+              aria-label={`${pendingApprovals} approvals pending`}
+            >
+              {pendingApprovals}
+            </a>
+          ) : null
         }
       >
         <button
