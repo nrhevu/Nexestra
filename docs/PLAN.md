@@ -9,6 +9,72 @@ Codex CLI 0.148.0, OpenCode 1.18.25.
 
 ---
 
+## 0. Status — cập nhật 2026-09-02
+
+> Phần này viết **sau khi implement**. Toàn bộ kế hoạch gốc giữ nguyên bên dưới
+> (§1 trở đi) để so được "định làm gì" với "đã làm gì".
+
+Repo hiện có **61 commit** (HEAD `f0341b7`), **11 workspace package**
+(2 app + 8 library + `e2e`), và `pnpm test` xanh trên máy không cài Codex,
+không cài OpenCode, không có `ANTHROPIC_API_KEY`:
+
+```
+pnpm test  →  472 passed, 6 skipped (478) trên 37 test file / 10 package
+             (ui-kit có script test nhưng chưa có test file)
+             core 16 · storage 17 · master 56 · orchestrator 52 · server 45
+             adapter-codex 121 · adapter-opencode 105 · adapter-fake 33 · web 27
+```
+
+6 test skip là các **live test** có opt-in (`NEXESTRA_LIVE_CODEX`,
+`NEXESTRA_LIVE_OPENCODE`, `ANTHROPIC_API_KEY`) — xem `docs/testing.md` §5.
+
+### 0.1 Milestone M0–M7
+
+Nhánh được merge theo thứ tự thực tế: M0 → M4 → M2 → M1 → M5 → M5(opencode) →
+M3 → M7(test infra) → M6. Adapter và Master làm song song với storage/API, nên
+số milestone **không** khớp thứ tự thời gian.
+
+| # | Milestone | Kết quả | Commit range | Bằng chứng |
+|---|-----------|---------|--------------|------------|
+| M0 | Skeleton + UI tĩnh | **done** | `22788cf..31a25b2` (10 commit, trunk) | pnpm monorepo + TS strict + Biome + Vitest; `packages/core` có zod schema cho toàn bộ §3 và `HarnessEvent` §5; `apps/web` dựng đủ 4 surface trên mock data. |
+| M1 | Server, storage, realtime | **done** | `0087f87..77fa068` (`merge: m1-storage-api`) | Drizzle schema + migration `0000_init`, `EventStore` append/replay, projection; Hono REST đầy đủ; `/ws` subscribe theo thread/workspace. `packages/storage` 17 test, gồm replay equality và migration drift. |
+| M2 | Master: intake → clarify → spec | **done** | `b7b4034..9ebf27b` (`merge: m2-master`) | `packages/master` 56 test, không cần API key. Acceptance run: một câu mơ hồ → `read_workspace` → 4 câu hỏi một lượt → spec 3 acceptance criteria có `command`/`test` → `request_approval` → plan 2 task có dependency. |
+| M3 | Planning + Task Board | **done** | `eb3bea4..0197807` (`merge: m3-master-wiring`) | Master chạy thật trong server: `StorageMasterStore`, `ServerMasterHost`, `MasterRunner`, route `master/send·cancel·state`; plan đổ thành `Task` row (task id **derive** từ `(threadId, plan task id)` nên `replan` là upsert idempotent); Chat surface stream `master.*` qua `/ws`. `apps/server` 45 test. |
+| M4 | Codex adapter + 1 task end-to-end | **done** | `af15552..509ffd9` (`merge: m4-codex-adapter`) | `@nexestra/adapter-codex` 121 test, replay **mọi** file trong `fixtures/codex/` (6 recording JSONL từ codex-cli 0.148.0, mỗi cái có `*.meta.json`); live smoke test sau `NEXESTRA_LIVE_CODEX=1`. |
+| M5 | OpenCode adapter + cross-review + verification | **done** | `2f2773d..bfe1c5c` (`merge: m5-orchestrator`) + `9670dd1..3bdacb7` (`merge: m5-opencode-adapter`) | `@nexestra/orchestrator` 52 test: DAG 4 task chạy 2 luồng, retry → pass, cross-review bounce, criterion fail rồi pass với đủ 2 evidence artifact, approval gate, budget pause, autoMerge/pending/conflict, `recover()` sau crash. `@nexestra/adapter-opencode` 105 test trên fixture SSE thật của OpenCode 1.18.25. |
+| M6 | Approvals, budget, memory graph (+ wiring) | **done** | `3d52da4..f0341b7` (`merge: m6-integration`) | `apps/server/src/execution/` nối orchestrator vào server; approval queue hiện ở mọi surface + badge trên rail; cost per run/task/thread; memory graph React Flow trên dữ liệu Master ghi thật. `execution.test.ts` là acceptance run: chỉ model (`DemoLlmClient`) và harness (fake) là stub, còn lại là production code — 4 case gồm chạy tới `done` với mọi criterion có evidence, approval chặn rồi mở, task hết attempt → replan request, và crash được `recoverAll()` vá. |
+| M7 | Hardening | **partial** | `6c27a53..c7f0f56` (`merge: m7-test-infra`) + nhánh docs này | **Xong**: `@nexestra/adapter-fake` (scenario-driven), Playwright e2e chạy trên bản build thật (6 spec), resume sau crash (`recoverAll()` trước request đầu tiên), Settings surface + `GET /api/harnesses` kiểm tra version/auth, `docs/testing.md`, và bộ tài liệu này (README, `docs/index.md`, `docs/adr/`, `CONTRIBUTING.md`, `CLAUDE.md`). **Chưa**: `e2e/tests/execution.spec.ts` vẫn skip — cổng thứ nhất (`apps/server` đọc `NEXESTRA_FAKE_HARNESS`) đã mở khi M6 wiring vào, nhưng cổng thứ hai vẫn cần `NEXESTRA_E2E_EXECUTION=1` và `startExecution()` trong file đó vẫn `throw`, chưa trỏ vào route dispatch của M6; log rotation chưa có; xem `docs/ARCHITECTURE.md` §11 cho phần còn lại. |
+
+### 0.2 Những quyết định §1 đã đổi khi làm thật
+
+| §1 | Kế hoạch | Thực tế | Lý do |
+|----|----------|---------|-------|
+| 1 | Mở UI ở `http://localhost:4242` | Dev mở ở **`http://localhost:5173`** (Vite), server vẫn ở `4242`. Vite proxy `/api` và `/ws` sang 4242; ngược lại server ở dev mode redirect mọi request không phải `/api` sang `NEXESTRA_WEB_DEV_URL`. Bản `pnpm build` + `pnpm start` thì đúng một cổng `4242`. | HMR của Vite cần cổng riêng; giữ 4242 làm "cổng chính thức" bằng redirect thay vì bắt người dùng nhớ hai số. |
+| 5 | Event-sourced, UI đọc projection | Giữ nguyên, thêm hai ngoại lệ có chủ ý: `master_messages` / `master_state` **không** phát event (scratch space của Master, không ai replay), và họ event `master.*` / `orchestrator.*` chỉ để stream — `rebuildProjections` bỏ qua chúng. Migration được **embed** vào `src/migrations.ts` bằng `scripts/embed-migrations.mjs` vì server ship dạng một bundle esbuild. | Xem [ADR 0005](adr/0005-event-sourced-store-with-projections.md), [ADR 0006](adr/0006-embedded-numbered-migrations.md). |
+| 6 | Structured outputs cho Spec/Plan | Dùng **strict tools** (`strict: true`, `additionalProperties: false`, JSON Schema sinh từ zod bằng `toStrictJsonSchema()`). `output_config.format` có trong `LlmRequest` nhưng không dùng. | Structured output không kết hợp được với tool call trong cùng một turn; strict tool đã đủ ràng buộc. [ADR 0014](adr/0014-strict-tools-instead-of-structured-outputs.md). |
+| 9 | OpenCode qua `@opencode-ai/sdk` | Qua **`fetch` tự viết** (`client.ts`) + SSE tự parse (`sse.ts`), sinh từ `fixtures/opencode/openapi.json`. | SDK version lệch với binary, không có README, và event stream phải tự cầm để chịu được event lạ + reconnect. [ADR 0010](adr/0010-drive-opencode-with-serve-and-sse-over-fetch.md). |
+| 7 | `HarnessId` = `codex \| opencode \| acp` | Thêm **`fake`**. `HarnessIdSchema = ["codex","opencode","acp","fake"]`. `NEXESTRA_FAKE_HARNESS=1` (hoặc `AppSettings.enableFakeHarness`) cho fake adapter đứng thay **cả** `codex` và `opencode`, nên plan cũ vẫn chạy được. `acp` vẫn chỉ là id, chưa có adapter. | Cần chạy trọn vòng lặp trong CI/e2e/demo mà không tốn quota. [ADR 0018](adr/0018-fake-harness-for-dev-and-tests.md). |
+| — | Spec có version | Spec là **một row/thread**, cột `version` tăng dần mỗi lần `upsertSpec` (không phải một row/version). Bản nháp giữa lúc clarify nằm ở `master_state`, bản đã validate nằm ở bảng `specs`, và evidence từ verification được ghi ngược lên bản published. | Row lịch sử đã nằm trong `events` rồi; giữ một row làm projection để mọi query "spec hiện tại" khỏi phải group-by. |
+| §10.2 | Merge tự động hay cần approval? | **Cần approval theo mặc định** — `AppSettings.autoMerge = false`. Orchestrator dựng approval `merge` rồi dừng; `apps/server` là bên thực sự chạy `mergeTaskBranch()` khi row được approve. | Đúng đề xuất trong §10.2. [ADR 0017](adr/0017-approval-gates-and-budget-rules.md). |
+| §10.1 | Master dùng Agent SDK hay Messages API? | **Messages API** + tool tự viết, giữ nguyên đề xuất. Phase machine nằm trong code, không nằm trong prompt. [ADR 0007](adr/0007-master-on-claude-opus-5-messages-api.md), [ADR 0013](adr/0013-phase-machine-outside-the-llm.md). |  |
+| §10.3 | Workspace không phải git? | **Không** — `POST /api/workspaces` từ chối path không phải git repository. | Worktree phụ thuộc git, đúng đề xuất. |
+
+### 0.3 Thêm ngoài kế hoạch
+
+- **`DemoLlmClient`** (`apps/server/src/master/demo-llm.ts`): khi không có
+  `ANTHROPIC_API_KEY`, Master vẫn chạy được bằng một script deterministic đi qua
+  đúng phase machine và đúng strict tool validation. Kế hoạch không có bước này.
+  [ADR 0019](adr/0019-demo-llm-client-without-an-api-key.md).
+- **`@nexestra/adapter-fake`**: harness giả ghi file **thật** vào worktree, nên
+  `git diff`, Editor surface và lệnh verification đều thấy thay đổi thật.
+  [ADR 0018](adr/0018-fake-harness-for-dev-and-tests.md).
+- **`e2e/`**: Playwright chạy trên `apps/web/dist` do server thật phục vụ, không
+  mock API, không stub fetch.
+- **`docs/adr/`**: 19 ADR, một cái cho mỗi quyết định §1 cộng các quyết định phát
+  sinh khi implement.
+
+---
+
 ## 1. Quyết định kiến trúc (cần chốt trước khi code)
 
 | # | Quyết định | Lựa chọn | Lý do |
