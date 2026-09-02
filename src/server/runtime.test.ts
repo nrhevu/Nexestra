@@ -115,6 +115,7 @@ describe("Worker harness arguments", () => {
       "high",
       "--file",
       invocation.transcriptPath,
+      "--",
       expect.stringContaining("@opencode"),
     ]);
   });
