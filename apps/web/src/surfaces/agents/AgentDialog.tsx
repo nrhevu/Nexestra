@@ -62,9 +62,9 @@ export function AgentDialog({
   }, [open]);
 
   useEffect(() => {
-    if (!open || form.model || modelOptions.length === 0) return;
+    if (!open || form.harness !== "nexestra" || form.model || modelOptions.length === 0) return;
     setForm((current) => ({ ...current, model: modelOptions[0]?.value ?? "" }));
-  }, [open, form.model, modelOptions]);
+  }, [open, form.harness, form.model, modelOptions]);
 
   if (!open) return null;
 
@@ -243,7 +243,11 @@ function modelsFor(
 ) {
   const models =
     harness === "nexestra"
-      ? (providerModels ?? (provider?.model ? [provider.model] : []))
+      ? providerModels && providerModels.length > 0
+        ? providerModels
+        : provider?.model
+          ? [provider.model]
+          : []
       : (harnesses?.find((entry) => entry.id === harness)?.models ?? []);
   return [...new Set(models)].map((model) => ({ value: model, label: model }));
 }
