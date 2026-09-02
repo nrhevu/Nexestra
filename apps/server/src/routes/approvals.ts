@@ -2,8 +2,9 @@ import { CreateApprovalRequestSchema, ResolveApprovalRequestSchema } from "@nexe
 import type { NexestraStore } from "@nexestra/storage";
 import { Hono } from "hono";
 import { body, conflict, required } from "../errors.js";
+import type { MasterRunner } from "../master/runner.js";
 
-export function approvalRoutes(store: NexestraStore) {
+export function approvalRoutes(store: NexestraStore, runner: MasterRunner) {
   return new Hono()
     .get("/", (c) =>
       c.json(
@@ -34,6 +35,14 @@ export function approvalRoutes(store: NexestraStore) {
         });
       }
       const input = await body(c, ResolveApprovalRequestSchema);
-      return c.json(store.resolveApproval(id, input));
+      const resolved = store.resolveApproval(id, input);
+
+      // A Master turn suspended on this approval resumes here, so Approve /
+      // Reject in the sidebar is the only gesture the user needs: the same
+      // click both records the decision and unblocks the agent.
+      if (resolved.status === "approved" || resolved.status === "rejected") {
+        await runner.resumeApproval(resolved.threadId, resolved.id, resolved.status);
+      }
+      return c.json(resolved);
     });
 }

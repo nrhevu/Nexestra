@@ -3,8 +3,11 @@ import type { NexestraStore } from "@nexestra/storage";
 import { Hono } from "hono";
 import { hasWebBuild, SERVER_VERSION, WEB_DEV_URL } from "./config.js";
 import { renderError } from "./errors.js";
+import { createMasterLlm } from "./master/llm.js";
+import { MasterRunner, type MasterRunnerOptions } from "./master/runner.js";
 import { approvalRoutes } from "./routes/approvals.js";
 import { artifactRoutes } from "./routes/artifacts.js";
+import { masterRoutes } from "./routes/master.js";
 import { memoryRoutes } from "./routes/memories.js";
 import { placeholderRoutes } from "./routes/placeholders.js";
 import { runRoutes } from "./routes/runs.js";
@@ -14,19 +17,34 @@ import { threadRoutes } from "./routes/threads.js";
 import { workspaceRoutes } from "./routes/workspaces.js";
 import { serveWebDist } from "./static.js";
 
-export function createApp(store: NexestraStore) {
+export interface CreateAppOptions {
+  /**
+   * Replace the Master runtime — a test injects `createFakeLlmClient` and a
+   * stub `ExecutionHost` here rather than reaching into the module graph.
+   */
+  readonly master?: MasterRunner | Omit<MasterRunnerOptions, "store">;
+}
+
+export function createApp(store: NexestraStore, options: CreateAppOptions = {}) {
+  const runner = resolveRunner(store, options.master);
+
   const api = new Hono()
     .get("/health", (c) => {
-      const health: HealthResponse = { ok: true, version: SERVER_VERSION };
+      const health: HealthResponse = {
+        ok: true,
+        version: SERVER_VERSION,
+        master: runner.runtime,
+      };
       return c.json(health);
     })
-    .route("/settings", settingsRoutes(store))
+    .route("/settings", settingsRoutes(store, runner))
     .route("/workspaces", workspaceRoutes(store))
     .route("/threads", threadRoutes(store))
+    .route("/threads", masterRoutes(store, runner))
     .route("/tasks", taskRoutes(store))
     .route("/runs", runRoutes(store))
     .route("/artifacts", artifactRoutes(store))
-    .route("/approvals", approvalRoutes(store))
+    .route("/approvals", approvalRoutes(store, runner))
     .route("/memories", memoryRoutes(store))
     .route("/", placeholderRoutes);
 
@@ -44,7 +62,14 @@ export function createApp(store: NexestraStore) {
     return c.redirect(`${WEB_DEV_URL}${c.req.path}`, 302);
   });
 
-  return app;
+  return Object.assign(app, { master: runner });
+}
+
+function resolveRunner(store: NexestraStore, master: CreateAppOptions["master"]): MasterRunner {
+  if (master instanceof MasterRunner) return master;
+  if (master) return new MasterRunner({ store, ...master });
+  const { client, info } = createMasterLlm();
+  return new MasterRunner({ store, llm: client, runtime: info });
 }
 
 export type NexestraApp = ReturnType<typeof createApp>;

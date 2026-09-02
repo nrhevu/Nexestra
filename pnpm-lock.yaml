@@ -26,12 +26,18 @@ importers:
 
   apps/server:
     dependencies:
+      '@anthropic-ai/sdk':
+        specifier: 0.123.0
+        version: 0.123.0(zod@4.5.4)
       '@hono/node-server':
         specifier: 2.1.1
         version: 2.1.1(hono@4.13.5)
       '@nexestra/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@nexestra/master':
+        specifier: workspace:*
+        version: link:../../packages/master
       '@nexestra/storage':
         specifier: workspace:*
         version: link:../../packages/storage

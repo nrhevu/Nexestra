@@ -12,8 +12,10 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "0.123.0",
     "@hono/node-server": "2.1.1",
     "@nexestra/core": "workspace:*",
+    "@nexestra/master": "workspace:*",
     "@nexestra/storage": "workspace:*",
     "hono": "4.13.5",
     "ws": "8.21.3",
