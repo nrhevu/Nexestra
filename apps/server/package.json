@@ -8,6 +8,7 @@
     "dev": "NEXESTRA_DEV=1 tsx watch src/index.ts",
     "build": "node scripts/build.mjs",
     "start": "node dist/index.js",
+    "smoke": "node scripts/smoke.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests"
   },
@@ -15,11 +16,13 @@
     "@anthropic-ai/sdk": "0.123.0",
     "@hono/node-server": "2.1.1",
     "@nexestra/adapter-codex": "workspace:*",
+    "@nexestra/adapter-fake": "workspace:*",
     "@nexestra/adapter-opencode": "workspace:*",
     "@nexestra/core": "workspace:*",
     "@nexestra/master": "workspace:*",
     "@nexestra/orchestrator": "workspace:*",
     "@nexestra/storage": "workspace:*",
+    "better-sqlite3": "13.0.3",
     "hono": "4.13.5",
     "ws": "8.21.3",
     "zod": "4.5.4"
