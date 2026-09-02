@@ -16,6 +16,7 @@ import {
   SendHorizontal,
   Settings,
   Sparkles,
+  Trash2,
   Unplug,
   UsersRound,
   X,
@@ -67,6 +68,7 @@ export function App() {
   const [notice, setNotice] = useState<string>();
   const [error, setError] = useState<string>();
   const [taskStatus, setTaskStatus] = useState<Task["status"]>("todo");
+  const [agentToDelete, setAgentToDelete] = useState<AgentView>();
 
   const navigate = useCallback((nextPath: string, nextRoute: RouteState, replace = false) => {
     window.history[replace ? "replaceState" : "pushState"]({}, "", nextPath);
@@ -244,6 +246,7 @@ export function App() {
                 `Archived @${agent.handle}.`,
               )
             }
+            onDelete={setAgentToDelete}
           />
         ) : (
           <Taskboard
@@ -311,6 +314,32 @@ export function App() {
         />
       )}
       {modal === "settings" && <SettingsDialog data={data} onClose={() => setModal(null)} />}
+      {agentToDelete && (
+        <DeleteAgentDialog
+          agent={agentToDelete}
+          onClose={() => setAgentToDelete(undefined)}
+          onDeleted={async () => {
+            setData((current) =>
+              current
+                ? {
+                    ...current,
+                    agents: current.agents.filter((agent) => agent.id !== agentToDelete.id),
+                    tasks: current.tasks.map((task) =>
+                      task.assigneeId === agentToDelete.id ? { ...task, assigneeId: null } : task,
+                    ),
+                  }
+                : current,
+            );
+            setAgentToDelete(undefined);
+            flash(`Deleted @${agentToDelete.handle}.`);
+            window.setTimeout(() => {
+              document.querySelector<HTMLButtonElement>("[data-create-agent]")?.focus();
+            }, 0);
+            await refresh(true);
+            if (route.threadId) await loadThread(route.threadId, true);
+          }}
+        />
+      )}
       {notice && (
         <div className="toast success-toast" role="status" aria-live="polite">
           <Check size={16} />
@@ -606,7 +635,7 @@ function ThreadView(props: {
     .join(",")}`;
   useEffect(() => {
     if (!transcriptVersion) return;
-    bottomRef.current?.scrollIntoView({ block: "end" });
+    bottomRef.current?.scrollIntoView?.({ block: "end" });
   }, [transcriptVersion]);
 
   const send = async () => {
@@ -614,11 +643,6 @@ function ThreadView(props: {
     if (!content || sending) return;
     const agentsByHandle = new Map(props.data.agents.map((agent) => [agent.handle, agent]));
     const requestedHandles = extractMentionHandles(content);
-    const unknownHandles = requestedHandles.filter((handle) => !agentsByHandle.has(handle));
-    if (unknownHandles.length > 0) {
-      setLocalError(`Unknown ${unknownHandles.map((handle) => `@${handle}`).join(", ")}.`);
-      return;
-    }
     const unavailable = requestedHandles
       .map((handle) => agentsByHandle.get(handle))
       .find((agent) => agent && !canCallAgent(agent));
@@ -689,7 +713,7 @@ function ThreadView(props: {
 
   const thread = props.threadData?.thread;
   const agentsById = new Map(props.data.agents.map((agent) => [agent.id, agent]));
-  const knownHandles = new Set(props.data.agents.map((agent) => agent.handle));
+  const currentAgentHandles = props.data.agents.map((agent) => agent.handle);
   const latestRuns = latestAttempts(props.threadData?.runs ?? []);
   if (!thread || !props.threadData) {
     return (
@@ -709,7 +733,7 @@ function ThreadView(props: {
           <UsersRound size={16} />
           <span>{props.data.agents.filter((agent) => !agent.archived).length} agents</span>
           <i />
-          Transcript chung
+          Shared transcript
         </div>
       </header>
       <div className="thread-tabs">
@@ -734,7 +758,13 @@ function ThreadView(props: {
           <div key={message.id}>
             <MessageRow
               message={message}
-              knownHandles={knownHandles}
+              knownHandles={
+                new Set([
+                  ...currentAgentHandles,
+                  ...message.mentions.map((mention) => mention.handle),
+                  ...(message.author.kind === "agent" ? [message.author.handle] : []),
+                ])
+              }
               agent={
                 message.author.kind === "agent" ? agentsById.get(message.author.id) : undefined
               }
@@ -746,6 +776,9 @@ function ThreadView(props: {
                   key={run.id}
                   run={run}
                   agent={agentsById.get(run.agentId)}
+                  historicalHandle={
+                    message.mentions.find((mention) => mention.agentId === run.agentId)?.handle
+                  }
                   onRetry={props.onRetry}
                 />
               ))}
@@ -858,19 +891,25 @@ function MessageRow({
   agent?: AgentView;
   knownHandles: ReadonlySet<string>;
 }) {
-  const isAgent = message.author.kind === "agent";
+  const agentAuthor = message.author.kind === "agent" ? message.author : undefined;
   return (
     <article className="message">
-      {isAgent && agent ? (
-        <Avatar agent={agent} />
+      {agentAuthor ? (
+        agent ? (
+          <Avatar agent={agent} />
+        ) : (
+          <HistoricalAgentAvatar name={agentAuthor.name} handle={agentAuthor.handle} />
+        )
       ) : (
         <span className="avatar avatar-purple">ME</span>
       )}
       <div>
         <div className="message-meta">
           <strong>{message.author.name}</strong>
-          {isAgent && (
-            <span className="agent-badge">{agent?.kind === "master" ? "MASTER" : "WORKER"}</span>
+          {agentAuthor && (
+            <span className="agent-badge">
+              {agent ? (agent.kind === "master" ? "MASTER" : "WORKER") : "AGENT"}
+            </span>
           )}
           <time>{formatTime(message.createdAt)}</time>
         </div>
@@ -883,20 +922,23 @@ function MessageRow({
 function RunRow({
   run,
   agent,
+  historicalHandle,
   onRetry,
 }: {
   run: AgentRun;
   agent?: AgentView;
+  historicalHandle?: string;
   onRetry: (id: string) => Promise<unknown>;
 }) {
   const [retrying, setRetrying] = useState(false);
+  const handle = agent?.handle ?? historicalHandle;
   if (run.status === "completed") return null;
   if (run.status === "queued" || run.status === "running") {
     return (
       <div className="typing-row">
         {agent ? <Avatar agent={agent} small /> : <span className="avatar avatar-blue">A</span>}
         <span>
-          <b>@{agent?.handle ?? "agent"}</b>{" "}
+          <b>{handle ? `@${handle}` : "Deleted agent"}</b>{" "}
           {run.status === "queued" ? "is waiting in the queue" : "is reading the transcript"}
         </span>
         <span className="typing-dots">
@@ -911,24 +953,28 @@ function RunRow({
     <div className="run-error">
       <CircleAlert size={15} />
       <div>
-        <strong>@{agent?.handle ?? "agent"} could not reply</strong>
+        <strong>{handle ? `@${handle}` : "Deleted agent"} could not reply</strong>
         <p>{run.error ?? "The run was interrupted."}</p>
       </div>
-      <button
-        type="button"
-        disabled={retrying}
-        onClick={async () => {
-          setRetrying(true);
-          try {
-            await onRetry(run.id);
-          } finally {
-            setRetrying(false);
-          }
-        }}
-      >
-        {retrying ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}
-        {retrying ? "Queueing…" : "Retry"}
-      </button>
+      {agent ? (
+        <button
+          type="button"
+          disabled={retrying}
+          onClick={async () => {
+            setRetrying(true);
+            try {
+              await onRetry(run.id);
+            } finally {
+              setRetrying(false);
+            }
+          }}
+        >
+          {retrying ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}
+          {retrying ? "Queueing…" : "Retry"}
+        </button>
+      ) : (
+        <span className="run-unavailable">Agent deleted</span>
+      )}
     </div>
   );
 }
@@ -938,8 +984,10 @@ function AgentsView(props: {
   onCreate: () => void;
   onToggle: (agent: AgentView) => Promise<unknown>;
   onArchive: (agent: AgentView) => Promise<unknown>;
+  onDelete: (agent: AgentView) => void;
 }) {
   const agents = props.data.agents.filter((agent) => !agent.archived);
+  const archivedAgents = props.data.agents.filter((agent) => agent.archived);
   return (
     <div className="surface-view">
       <header className="workspace-header">
@@ -950,7 +998,7 @@ function AgentsView(props: {
             Create conversational Masters or Workers backed by coding harnesses.
           </p>
         </div>
-        <button className="primary-button" type="button" onClick={props.onCreate}>
+        <button className="primary-button" type="button" data-create-agent onClick={props.onCreate}>
           <Plus size={17} />
           Create agent
         </button>
@@ -978,7 +1026,7 @@ function AgentsView(props: {
       {agents.length === 0 ? (
         <EmptyState
           icon={<Bot size={25} />}
-          title="No agents yet"
+          title={archivedAgents.length > 0 ? "No active agents" : "No agents yet"}
           body="Create a Master or Worker agent, then invoke it with @handle in a thread."
           action="Create your first agent"
           onAction={props.onCreate}
@@ -991,9 +1039,32 @@ function AgentsView(props: {
               agent={agent}
               onToggle={props.onToggle}
               onArchive={props.onArchive}
+              onDelete={props.onDelete}
             />
           ))}
         </div>
+      )}
+      {archivedAgents.length > 0 && (
+        <section className="archived-agents">
+          <header>
+            <div>
+              <p className="eyebrow">ARCHIVE</p>
+              <h2>Archived agents</h2>
+            </div>
+            <span>{archivedAgents.length}</span>
+          </header>
+          <div className="agents-grid">
+            {archivedAgents.map((agent) => (
+              <AgentCard
+                key={agent.id}
+                agent={agent}
+                onToggle={props.onToggle}
+                onArchive={props.onArchive}
+                onDelete={props.onDelete}
+              />
+            ))}
+          </div>
+        </section>
       )}
     </div>
   );
@@ -1003,10 +1074,12 @@ function AgentCard({
   agent,
   onToggle,
   onArchive,
+  onDelete,
 }: {
   agent: AgentView;
   onToggle: (agent: AgentView) => Promise<unknown>;
   onArchive: (agent: AgentView) => Promise<unknown>;
+  onDelete: (agent: AgentView) => void;
 }) {
   const workerModel = agent.kind === "worker" ? agent.model : undefined;
   const workerReasoningEffort = agent.kind === "worker" ? agent.reasoningEffort : undefined;
@@ -1025,7 +1098,7 @@ function AgentCard({
         ? `ChatGPT OAuth${agent.provider.model ? ` · ${agent.provider.model}` : ""}`
         : `${agent.provider.name} · ${agent.provider.model}`;
   return (
-    <article className="agent-card">
+    <article className={`agent-card${agent.archived ? " agent-card-archived" : ""}`}>
       <div className="agent-card-top">
         <Avatar agent={agent} large />
         <div>
@@ -1050,19 +1123,34 @@ function AgentCard({
       </p>
       <div className="agent-card-footer">
         <span>
-          {!agent.enabled
-            ? "Hidden from the mention picker"
-            : canCallAgent(agent)
-              ? "Available through @mention"
-              : `Setup required: ${agent.readinessLabel}`}
+          {agent.archived
+            ? "Archived and hidden from mentions"
+            : !agent.enabled
+              ? "Hidden from the mention picker"
+              : canCallAgent(agent)
+                ? "Available through @mention"
+                : `Setup required: ${agent.readinessLabel}`}
         </span>
         <div>
-          <button type="button" onClick={() => void onToggle(agent)}>
-            {agent.enabled ? "Disable" : "Enable"}
-          </button>
-          <button type="button" className="danger-link" onClick={() => void onArchive(agent)}>
-            <Archive size={12} />
-            Archive
+          {!agent.archived && (
+            <>
+              <button type="button" onClick={() => void onToggle(agent)}>
+                {agent.enabled ? "Disable" : "Enable"}
+              </button>
+              <button type="button" onClick={() => void onArchive(agent)}>
+                <Archive size={12} />
+                Archive
+              </button>
+            </>
+          )}
+          <button
+            type="button"
+            className="danger-link"
+            aria-label={`Delete @${agent.handle}`}
+            onClick={() => onDelete(agent)}
+          >
+            <Trash2 size={12} />
+            Delete
           </button>
         </div>
       </div>
@@ -1219,6 +1307,68 @@ function ThreadDialog({
           />
         </Field>
         <ModalActions onClose={onClose} saving={saving} submitLabel="Create thread" />
+      </form>
+    </Modal>
+  );
+}
+
+function DeleteAgentDialog({
+  agent,
+  onClose,
+  onDeleted,
+}: {
+  agent: AgentView;
+  onClose: () => void;
+  onDeleted: () => Promise<void>;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string>();
+  return (
+    <Modal
+      title={`Delete @${agent.handle}?`}
+      eyebrow="DANGER ZONE"
+      onClose={onClose}
+      closeDisabled={saving}
+    >
+      <form
+        onSubmit={async (event) => {
+          event.preventDefault();
+          setSaving(true);
+          setFormError(undefined);
+          try {
+            await api(`/api/agents/${agent.id}`, { method: "DELETE" });
+            await onDeleted();
+          } catch (caught) {
+            setFormError(messageFrom(caught));
+            setSaving(false);
+          }
+        }}
+      >
+        <div className="delete-confirmation">
+          <span>
+            <Trash2 size={20} />
+          </span>
+          <p>
+            This permanently deletes <strong>@{agent.handle}</strong> and any saved credential.
+            Existing thread messages will remain, and tasks assigned to this agent will become
+            unassigned. This action cannot be undone.
+          </p>
+        </div>
+        {formError && (
+          <p className="form-error" role="alert">
+            <CircleAlert size={14} />
+            {formError}
+          </p>
+        )}
+        <div className="modal-actions">
+          <button type="button" className="secondary-button" onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
+          <button type="submit" className="danger-button" disabled={saving}>
+            {saving ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={14} />}
+            {saving ? "Deleting…" : "Delete agent"}
+          </button>
+        </div>
       </form>
     </Modal>
   );
@@ -1737,18 +1887,22 @@ function Modal({
   title,
   eyebrow,
   onClose,
+  closeDisabled = false,
   wide = false,
   children,
 }: {
   title: string;
   eyebrow: string;
   onClose: () => void;
+  closeDisabled?: boolean;
   wide?: boolean;
   children: ReactNode;
 }) {
   const modalRef = useRef<HTMLElement>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  const closeDisabledRef = useRef(closeDisabled);
+  closeDisabledRef.current = closeDisabled;
   useEffect(() => {
     const previousActive =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -1761,12 +1915,16 @@ function Modal({
     focusable()[0]?.focus();
     const onKey = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") {
-        onCloseRef.current();
+        if (!closeDisabledRef.current) onCloseRef.current();
         return;
       }
       if (event.key !== "Tab") return;
       const items = focusable();
-      if (items.length === 0) return;
+      if (items.length === 0) {
+        event.preventDefault();
+        modalRef.current?.focus();
+        return;
+      }
       const first = items[0];
       const last = items.at(-1);
       if (!first || !last) return;
@@ -1791,14 +1949,16 @@ function Modal({
         className={wide ? "modal modal-wide" : "modal"}
         role="dialog"
         aria-modal="true"
+        aria-busy={closeDisabled || undefined}
         aria-labelledby="modal-title"
+        tabIndex={-1}
       >
         <header>
           <div>
             <p className="eyebrow">{eyebrow}</p>
             <h2 id="modal-title">{title}</h2>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close">
+          <button type="button" onClick={onClose} aria-label="Close" disabled={closeDisabled}>
             <X size={18} />
           </button>
         </header>
@@ -1896,6 +2056,11 @@ function Avatar({
       {agent.name.slice(0, 1).toUpperCase()}
     </span>
   );
+}
+
+function HistoricalAgentAvatar({ name, handle }: { name: string; handle: string }) {
+  const tone = ["coral", "blue", "gold", "green"][hashString(handle) % 4];
+  return <span className={`avatar avatar-${tone}`}>{name.slice(0, 1).toUpperCase()}</span>;
 }
 
 function latestAttempts(runs: AgentRun[]): AgentRun[] {

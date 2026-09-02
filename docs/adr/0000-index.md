@@ -3,3 +3,4 @@
 | ADR | Status | Decision |
 | --- | --- | --- |
 | [0001](0001-fresh-local-first-agent-chat.md) | Accepted | Fresh local-first agent chat with shared thread logs |
+| [0002](0002-permanent-agent-deletion.md) | Accepted | Permanent agent deletion preserves append-only history |
