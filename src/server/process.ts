@@ -37,18 +37,18 @@ export async function runCommand(
     let terminalError: Error | undefined;
     let killTimer: ReturnType<typeof setTimeout> | undefined;
     const timeout = setTimeout(() => {
-      terminate(new Error(`Agent đã quá thời gian chờ ${options.timeoutMs ?? 180_000}ms.`));
+      terminate(new Error(`Agent timed out after ${options.timeoutMs ?? 180_000}ms.`));
     }, options.timeoutMs ?? 180_000);
 
     child.stdout.on("data", (chunk: Buffer) => {
       totalBytes += chunk.byteLength;
       if (totalBytes <= maxBytes) stdout += chunk.toString("utf8");
-      else terminate(new Error("Agent trả về quá nhiều dữ liệu."));
+      else terminate(new Error("Agent returned too much data."));
     });
     child.stderr.on("data", (chunk: Buffer) => {
       totalBytes += chunk.byteLength;
       if (totalBytes <= maxBytes) stderr += chunk.toString("utf8");
-      else terminate(new Error("Agent trả về quá nhiều dữ liệu."));
+      else terminate(new Error("Agent returned too much data."));
     });
     child.on("error", (error) => finish(error));
     child.on("close", (exitCode) => {

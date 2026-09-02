@@ -42,7 +42,7 @@ async function setup() {
 describe("mention dispatch", () => {
   it("persists ordinary chat without invoking an agent", async () => {
     const { chat, dispatcher, runner, store, thread } = await setup();
-    await chat.send(thread.id, { content: "ghi chú không mention" });
+    await chat.send(thread.id, { content: "a note without a mention" });
     await dispatcher.waitForIdle();
 
     expect(runner.invocations).toHaveLength(0);
@@ -66,7 +66,7 @@ describe("mention dispatch", () => {
     }
 
     const result = await chat.send(thread.id, {
-      content: "@codex và @opencode xem giúp. @CODEX nhớ trả lời nhé.",
+      content: "@codex and @opencode please review this. @CODEX remember to reply.",
     });
     await dispatcher.waitForIdle();
 
@@ -96,13 +96,13 @@ describe("mention dispatch", () => {
       harness: "codex",
     });
 
-    const first = await chat.send(thread.id, { content: "@codex câu hỏi thứ nhất" });
-    const second = await chat.send(thread.id, { content: "@codex câu hỏi thứ hai" });
+    const first = await chat.send(thread.id, { content: "@codex first question" });
+    const second = await chat.send(thread.id, { content: "@codex second question" });
     await dispatcher.waitForIdle();
 
     expect(runner.invocations.map(({ invocation }) => invocation.trigger.content)).toEqual([
-      "@codex câu hỏi thứ nhất",
-      "@codex câu hỏi thứ hai",
+      "@codex first question",
+      "@codex second question",
     ]);
     const replies = (await store.threadData(thread.id)).messages.filter(
       (message) => message.author.kind === "agent",
@@ -124,12 +124,12 @@ describe("mention dispatch", () => {
       harness: "codex",
     });
     await store.updateAgent(agent.id, { enabled: false });
-    await chat.send(thread.id, { content: "@codex bạn còn đó không?" });
+    await chat.send(thread.id, { content: "@codex are you there?" });
     await dispatcher.waitForIdle();
 
     const [run] = (await store.threadData(thread.id)).runs;
     expect(run?.status).toBe("failed");
-    expect(run?.error).toBe("Đã tắt");
+    expect(run?.error).toBe("Disabled");
   });
 
   it("allows only one retry of the latest failed attempt", async () => {
@@ -142,7 +142,7 @@ describe("mention dispatch", () => {
       instructions: "",
       harness: "codex",
     });
-    const trigger = await store.createUserMessage(thread.id, "@codex thử lại", [
+    const trigger = await store.createUserMessage(thread.id, "@codex retry", [
       { agentId: agent.id, handle: agent.handle },
     ]);
     const now = new Date().toISOString();

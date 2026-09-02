@@ -51,7 +51,7 @@ export class LocalAgentRunner implements AgentRunner {
     let chatgpt = {
       installed: codex.installed,
       connected: false,
-      message: codex.installed ? "Chưa đăng nhập ChatGPT." : "Chưa cài Codex CLI.",
+      message: codex.installed ? "Not signed in to ChatGPT." : "Codex CLI is not installed.",
     };
     if (codex.path) {
       const status = await runCommand(codex.path, ["login", "status"], {
@@ -64,7 +64,9 @@ export class LocalAgentRunner implements AgentRunner {
       chatgpt = {
         installed: true,
         connected,
-        message: connected ? output || "Đã kết nối ChatGPT." : output || "Chưa đăng nhập ChatGPT.",
+        message: connected
+          ? output || "Connected to ChatGPT."
+          : output || "Not signed in to ChatGPT.",
       };
     }
     const value: RuntimeStatus = {
@@ -95,7 +97,7 @@ export class LocalAgentRunner implements AgentRunner {
 
   private async invokeCodex(agent: Agent, invocation: AgentInvocation): Promise<string> {
     const binary = await findExecutable("codex", this.env);
-    if (!binary) throw new Error("Không tìm thấy Codex CLI trong PATH.");
+    if (!binary) throw new Error("Codex CLI was not found in PATH.");
     const runDirectory = join(this.options.store.root, "runs", crypto.randomUUID());
     await mkdir(runDirectory, { recursive: true, mode: 0o700 });
     const lastMessageFile = join(runDirectory, "last-message.txt");
@@ -122,17 +124,19 @@ export class LocalAgentRunner implements AgentRunner {
       env: safeProcessEnv(this.env),
     });
     if (result.exitCode !== 0) {
-      throw new Error(cleanProcessError(result.stderr || result.stdout, "Codex đã dừng với lỗi."));
+      throw new Error(
+        cleanProcessError(result.stderr || result.stdout, "Codex exited with an error."),
+      );
     }
     const fileReply = await readFile(lastMessageFile, "utf8").catch(() => "");
     const reply = fileReply.trim() || parseCodexReply(result.stdout);
-    if (!reply) throw new Error("Codex không trả về nội dung cuối.");
+    if (!reply) throw new Error("Codex did not return a final response.");
     return reply;
   }
 
   private async invokeOpenCode(agent: Agent, invocation: AgentInvocation): Promise<string> {
     const binary = await findExecutable("opencode", this.env);
-    if (!binary) throw new Error("Không tìm thấy OpenCode trong PATH.");
+    if (!binary) throw new Error("OpenCode was not found in PATH.");
     const result = await runCommand(
       binary,
       [
@@ -156,24 +160,24 @@ export class LocalAgentRunner implements AgentRunner {
     );
     if (result.exitCode !== 0) {
       throw new Error(
-        cleanProcessError(result.stderr || result.stdout, "OpenCode đã dừng với lỗi."),
+        cleanProcessError(result.stderr || result.stdout, "OpenCode exited with an error."),
       );
     }
     const reply = parseOpenCodeReply(result.stdout);
-    if (!reply) throw new Error("OpenCode không trả về nội dung cuối.");
+    if (!reply) throw new Error("OpenCode did not return a final response.");
     return reply;
   }
 
   private async invokeCustom(agent: MasterAgent, invocation: AgentInvocation): Promise<string> {
-    if (agent.provider.type !== "custom") throw new Error("Provider không hợp lệ.");
+    if (agent.provider.type !== "custom") throw new Error("Invalid provider.");
     const url = providerEndpoint(agent.provider.baseUrl, agent.provider.protocol);
     const headers: Record<string, string> = { "content-type": "application/json" };
     const credential = this.options.store.getCredential(agent.id);
     if (credential) headers.authorization = `Bearer ${credential}`;
     const system = [
-      `Bạn là ${agent.name} (@${agent.handle}), Master agent nội bộ của Nexestra.`,
-      "Bạn đang trả lời trong một thread chung với người dùng và các agent khác.",
-      "Hãy trả lời đúng câu vừa @mention bạn, ngắn gọn, có hành động cụ thể, bằng ngôn ngữ của người dùng.",
+      `You are ${agent.name} (@${agent.handle}), Nexestra's internal Master agent.`,
+      "You are responding in a shared thread with the user and other agents.",
+      "Answer the exact message that just @mentioned you. Be concise, propose concrete actions, and use the user's language.",
       agent.instructions,
     ]
       .filter(Boolean)
@@ -204,19 +208,20 @@ export class LocalAgentRunner implements AgentRunner {
     const text = await readBoundedResponse(response, 1024 * 1024);
     if (!response.ok) {
       throw new Error(
-        `Provider ${agent.provider.name} trả về HTTP ${response.status}: ${text.slice(0, 500)}`,
+        `Provider ${agent.provider.name} returned HTTP ${response.status}: ${text.slice(0, 500)}`,
       );
     }
     let payload: unknown;
     try {
       payload = JSON.parse(text);
     } catch {
-      throw new Error(`Provider ${agent.provider.name} không trả về JSON hợp lệ.`);
+      throw new Error(`Provider ${agent.provider.name} did not return valid JSON.`);
     }
     const reply = parseProviderReply(payload);
-    if (!reply) throw new Error(`Provider ${agent.provider.name} không có nội dung trả lời.`);
+    if (!reply)
+      throw new Error(`Provider ${agent.provider.name} did not include response content.`);
     if (reply.length > 40_000) {
-      throw new Error(`Provider ${agent.provider.name} trả về câu trả lời quá dài.`);
+      throw new Error(`Provider ${agent.provider.name} returned a response that is too long.`);
     }
     return reply;
   }
@@ -240,20 +245,22 @@ export function agentView(
   busyAgentIds: ReadonlySet<string>,
 ): AgentView {
   let readiness: AgentReadiness = "ready";
-  let readinessLabel = "Sẵn sàng";
+  let readinessLabel = "Ready";
   if (!agent.enabled || agent.archived) {
     readiness = "disabled";
-    readinessLabel = agent.archived ? "Đã lưu trữ" : "Đã tắt";
+    readinessLabel = agent.archived ? "Archived" : "Disabled";
   } else if (busyAgentIds.has(agent.id)) {
     readiness = "busy";
-    readinessLabel = "Đang trả lời";
+    readinessLabel = "Responding";
   } else if (agent.kind === "worker" && !runtime.harnesses[agent.harness].installed) {
     readiness = "unavailable";
-    readinessLabel = `Chưa cài ${agent.harness === "codex" ? "Codex" : "OpenCode"}`;
+    readinessLabel = `${agent.harness === "codex" ? "Codex" : "OpenCode"} is not installed`;
   } else if (agent.kind === "master" && agent.provider.type === "chatgpt") {
     if (!runtime.chatgpt.installed || !runtime.chatgpt.connected) {
       readiness = "needs_setup";
-      readinessLabel = runtime.chatgpt.installed ? "Cần đăng nhập" : "Chưa cài Codex CLI";
+      readinessLabel = runtime.chatgpt.installed
+        ? "Sign-in required"
+        : "Codex CLI is not installed";
     }
   }
   return { ...agent, readiness, readinessLabel };
@@ -262,15 +269,15 @@ export function agentView(
 function localHarnessPrompt(agent: Agent, invocation: AgentInvocation): string {
   const role = agent.kind === "master" ? "Master agent" : `${agent.harness} worker`;
   return [
-    `Bạn là ${agent.name} (@${agent.handle}), ${role} trong Nexestra.`,
-    `Người dùng vừa gọi bạn trong thread #${invocation.thread.slug}.`,
-    `Message bắt buộc phải trả lời (id: ${invocation.trigger.id}):\n${invocation.trigger.content}`,
-    "Hãy trả lời đúng message trên, kể cả khi transcript có message mới hơn.",
-    `Transcript chung nằm tại: ${invocation.transcriptPath}`,
-    "Hãy đọc transcript để lấy ngữ cảnh liên quan.",
-    "Đây là lượt thảo luận: không sửa file, không chạy lệnh thay đổi trạng thái.",
-    "Chỉ trả về nội dung câu trả lời để Nexestra ghi vào thread.",
-    agent.instructions ? `Chỉ dẫn riêng:\n${agent.instructions}` : "",
+    `You are ${agent.name} (@${agent.handle}), a ${role} in Nexestra.`,
+    `The user just mentioned you in thread #${invocation.thread.slug}.`,
+    `Required message to answer (id: ${invocation.trigger.id}):\n${invocation.trigger.content}`,
+    "Answer the message above even if the transcript contains newer messages.",
+    `Shared transcript path: ${invocation.transcriptPath}`,
+    "Read the transcript for relevant context.",
+    "This is a discussion turn: do not modify files or run commands that change state.",
+    "Return only the response content so Nexestra can write it to the thread.",
+    agent.instructions ? `Agent-specific instructions:\n${agent.instructions}` : "",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -278,10 +285,10 @@ function localHarnessPrompt(agent: Agent, invocation: AgentInvocation): string {
 
 function providerUserPrompt(invocation: AgentInvocation): string {
   return [
-    `Message bắt buộc phải trả lời (id: ${invocation.trigger.id}):`,
+    `Required message to answer (id: ${invocation.trigger.id}):`,
     invocation.trigger.content,
-    "Hãy trả lời đúng message trên, kể cả khi transcript có message mới hơn.",
-    `Transcript chung của #${invocation.thread.slug}:`,
+    "Answer the message above even if the transcript contains newer messages.",
+    `Shared transcript for #${invocation.thread.slug}:`,
     invocation.transcriptSnapshot,
   ].join("\n\n");
 }
@@ -289,13 +296,13 @@ function providerUserPrompt(invocation: AgentInvocation): string {
 function providerEndpoint(baseUrl: string, protocol: "openai-chat" | "openai-responses"): string {
   const parsed = new URL(baseUrl);
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error("Custom provider chỉ hỗ trợ URL http hoặc https.");
+    throw new Error("Custom providers only support HTTP or HTTPS URLs.");
   }
   if (parsed.username || parsed.password || parsed.search || parsed.hash) {
-    throw new Error("Base URL không được chứa user info, query string hoặc fragment.");
+    throw new Error("Base URL must not include user info, a query string, or a fragment.");
   }
   if (parsed.protocol === "http:" && !isLoopbackHost(parsed.hostname)) {
-    throw new Error("Remote custom provider phải dùng HTTPS.");
+    throw new Error("Remote custom providers must use HTTPS.");
   }
   const suffix = protocol === "openai-chat" ? "chat/completions" : "responses";
   parsed.pathname = `${parsed.pathname.replace(/\/+$/, "")}/${suffix}`;
@@ -315,7 +322,7 @@ async function readBoundedResponse(response: Response, maxBytes: number): Promis
   const declaredLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
     await response.body?.cancel();
-    throw new Error("Custom provider trả về quá nhiều dữ liệu.");
+    throw new Error("Custom provider returned too much data.");
   }
   if (!response.body) return "";
   const reader = response.body.getReader();
@@ -329,7 +336,7 @@ async function readBoundedResponse(response: Response, maxBytes: number): Promis
       bytes += value.byteLength;
       if (bytes > maxBytes) {
         await reader.cancel();
-        throw new Error("Custom provider trả về quá nhiều dữ liệu.");
+        throw new Error("Custom provider returned too much data.");
       }
       text += decoder.decode(value, { stream: true });
     }

@@ -11,18 +11,18 @@ pnpm test
 pnpm build
 ```
 
-Dùng `NEXESTRA_HOME=/tmp/nexestra-dev` khi thử mutation để không đụng dữ liệu thật.
-Dùng cặp cổng riêng khi chạy nhiều worktree.
+Use `NEXESTRA_HOME=/tmp/nexestra-dev` when testing mutations to avoid touching real data.
+Use a separate port pair when running multiple worktrees.
 
 ## Change discipline
 
-- Bắt đầu từ contract trong `src/shared/contracts.ts`; không tạo type trùng ở UI/server.
-- Giữ transcript append-only. Sửa projection bằng replay, không rewrite lịch sử chat.
-- Secret chỉ đi qua `credentials.json` và request trực tiếp tới provider được chọn.
-- Inject `AgentRunner` giả trong test; không yêu cầu CLI đăng nhập hoặc request trả phí.
-- Thay đổi ít nhất đủ để đáp ứng criterion, không thêm framework hoặc abstraction dự phòng.
+- Start with the contracts in `src/shared/contracts.ts`; do not duplicate types in the UI or server.
+- Keep transcripts append-only. Repair projections by replaying events, not by rewriting chat history.
+- Secrets pass only through `credentials.json` and direct requests to the selected provider.
+- Inject a fake `AgentRunner` in tests; do not require CLI login or paid requests.
+- Make the smallest change that satisfies the criterion; do not add speculative frameworks or abstractions.
 
 ## Commit
 
-Dùng conventional commits. AI-authored commit dùng project identity và trailer được yêu cầu bởi
-repository policy.
+Use conventional commits and the repository owner's configured Git identity. Do not replace it
+with a bot or project identity.

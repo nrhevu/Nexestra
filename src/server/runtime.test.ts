@@ -57,17 +57,17 @@ describe("parseProviderReply", () => {
     if (created.kind !== "master") throw new Error("expected master agent");
     const fetchMock = vi.fn(
       async (_input: RequestInfo | URL, _init?: RequestInit) =>
-        new Response(JSON.stringify({ choices: [{ message: { content: "Đã rõ." } }] }), {
+        new Response(JSON.stringify({ choices: [{ message: { content: "Understood." } }] }), {
           status: 200,
         }),
     );
     const runner = new LocalAgentRunner({ store, fetch: fetchMock as typeof fetch });
     const [thread] = store.listThreads();
     if (!thread) throw new Error("expected seeded thread");
-    const trigger = await store.createUserMessage(thread.id, "@maya lập kế hoạch", [
+    const trigger = await store.createUserMessage(thread.id, "@maya make a plan", [
       { agentId: created.id, handle: created.handle },
     ]);
-    await store.createUserMessage(thread.id, "message mới hơn không được thay mục tiêu", []);
+    await store.createUserMessage(thread.id, "a newer message must not change the target", []);
 
     const reply = await runner.invoke(created, {
       thread,
@@ -76,14 +76,14 @@ describe("parseProviderReply", () => {
       transcriptSnapshot: await store.transcriptSnapshot(thread.id),
     });
 
-    expect(reply).toBe("Đã rõ.");
+    expect(reply).toBe("Understood.");
     const [url, init] = fetchMock.mock.calls[0] ?? [];
     if (!init) throw new Error("expected request init");
     expect(url).toBe("https://gateway.example/v1/chat/completions");
     expect((init.headers as Record<string, string>).authorization).toBe("Bearer secret-key");
-    expect(String(init.body)).toContain("@maya lập kế hoạch");
-    expect(String(init.body)).toContain(`Message bắt buộc phải trả lời (id: ${trigger.id})`);
-    expect(String(init.body)).toContain("kể cả khi transcript có message mới hơn");
+    expect(String(init.body)).toContain("@maya make a plan");
+    expect(String(init.body)).toContain(`Required message to answer (id: ${trigger.id})`);
+    expect(String(init.body)).toContain("even if the transcript contains newer messages");
 
     const oversizedRunner = new LocalAgentRunner({
       store,
@@ -100,6 +100,6 @@ describe("parseProviderReply", () => {
         transcriptPath: store.transcriptPath(thread.id),
         transcriptSnapshot: await store.transcriptSnapshot(thread.id),
       }),
-    ).rejects.toThrow("quá nhiều dữ liệu");
+    ).rejects.toThrow("too much data");
   });
 });

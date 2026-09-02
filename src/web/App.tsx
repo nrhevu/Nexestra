@@ -157,10 +157,10 @@ export function App() {
       <div className="boot-screen">
         <div className="brand-mark">N</div>
         <LoaderCircle className="spin" size={20} />
-        <p>{error ?? "Đang mở workspace…"}</p>
+        <p>{error ?? "Opening workspace…"}</p>
         {error && (
           <button type="button" onClick={() => void refresh()}>
-            Thử lại
+            Try again
           </button>
         )}
       </div>
@@ -216,7 +216,7 @@ export function App() {
             onRetry={(runId) =>
               mutate(
                 () => api(`/api/runs/${runId}/retry`, { method: "POST", body: "{}" }),
-                "Đã xếp lại lượt trả lời.",
+                "Reply queued again.",
               )
             }
           />
@@ -231,7 +231,7 @@ export function App() {
                     method: "PATCH",
                     body: JSON.stringify({ enabled: !agent.enabled }),
                   }),
-                agent.enabled ? `Đã tắt @${agent.handle}.` : `Đã bật @${agent.handle}.`,
+                agent.enabled ? `Disabled @${agent.handle}.` : `Enabled @${agent.handle}.`,
               )
             }
             onArchive={(agent) =>
@@ -241,7 +241,7 @@ export function App() {
                     method: "PATCH",
                     body: JSON.stringify({ archived: true }),
                   }),
-                `Đã lưu trữ @${agent.handle}.`,
+                `Archived @${agent.handle}.`,
               )
             }
           />
@@ -259,7 +259,7 @@ export function App() {
                     method: "PATCH",
                     body: JSON.stringify({ status }),
                   }),
-                "Đã cập nhật task.",
+                "Task updated.",
               )
             }
             onThread={openThread}
@@ -279,7 +279,7 @@ export function App() {
               await refresh();
               setModal(null);
               openThread(thread.id);
-              flash("Đã tạo thread mới.");
+              flash("Thread created.");
             } catch (caught) {
               setError(messageFrom(caught));
               throw caught;
@@ -294,7 +294,7 @@ export function App() {
           onCreated={async () => {
             await refresh();
             setModal(null);
-            flash("Đã tạo agent. Trạng thái runtime hiển thị trong directory.");
+            flash("Agent created. Its runtime status is shown in the directory.");
           }}
         />
       )}
@@ -306,7 +306,7 @@ export function App() {
           onCreated={async () => {
             await refresh();
             setModal(null);
-            flash("Đã thêm task vào board.");
+            flash("Task added to the board.");
           }}
         />
       )}
@@ -321,7 +321,7 @@ export function App() {
         <div className="toast error-toast" role="alert" aria-live="assertive">
           <CircleAlert size={16} />
           <span>{error}</span>
-          <button type="button" onClick={() => setError(undefined)} aria-label="Đóng">
+          <button type="button" onClick={() => setError(undefined)} aria-label="Close">
             <X size={15} />
           </button>
         </div>
@@ -389,16 +389,16 @@ function TopBar(props: {
         <Search size={16} />
         <input
           ref={searchRef}
-          aria-label="Tìm thread, task hoặc agent"
+          aria-label="Search threads, tasks, or agents"
           value={props.query}
           onChange={(event) => props.setQuery(event.target.value)}
-          placeholder="Tìm thread, task hoặc agent"
+          placeholder="Search threads, tasks, or agents"
         />
         <kbd>⌘/Ctrl K</kbd>
         {query && (
           <div className="search-results">
             {results.length === 0 ? (
-              <p>Không tìm thấy kết quả.</p>
+              <p>No results found.</p>
             ) : (
               results.map((result) => (
                 <button type="button" key={`${result.type}-${result.id}`} onClick={result.action}>
@@ -413,10 +413,10 @@ function TopBar(props: {
       <button
         className="profile-button"
         type="button"
-        aria-label="Mở cài đặt"
+        aria-label="Open settings"
         onClick={props.onSettings}
       >
-        VN
+        ME
         <span />
       </button>
     </header>
@@ -430,7 +430,7 @@ function Rail(props: {
   onSettings: () => void;
 }) {
   return (
-    <nav className="app-rail" aria-label="Điều hướng chính">
+    <nav className="app-rail" aria-label="Main navigation">
       <div className="brand-mark">N</div>
       <button
         className={props.view === "threads" ? "rail-item active" : "rail-item"}
@@ -456,7 +456,7 @@ function Rail(props: {
         <span className="rail-icon">
           <Settings size={20} />
         </span>
-        Cài đặt
+        Settings
       </button>
     </nav>
   );
@@ -476,7 +476,12 @@ function Sidebar(props: {
         <div>
           Nexestra <ChevronDown size={15} />
         </div>
-        <button className="icon-button" type="button" onClick={props.onCreate} aria-label="Tạo mới">
+        <button
+          className="icon-button"
+          type="button"
+          onClick={props.onCreate}
+          aria-label="Create new"
+        >
           <Plus size={18} />
         </button>
       </div>
@@ -484,11 +489,11 @@ function Sidebar(props: {
         <>
           <div className="sidebar-hint">
             <MessageSquareMore size={14} />
-            <span>Hội thoại chung</span>
+            <span>Shared conversations</span>
           </div>
           <div className="section-label">
             <span>Threads</span>
-            <button type="button" onClick={props.onCreate} aria-label="Tạo thread">
+            <button type="button" onClick={props.onCreate} aria-label="Create thread">
               <Plus size={15} />
             </button>
           </div>
@@ -531,13 +536,13 @@ function Sidebar(props: {
               type="button"
               onClick={() => props.onSurface("agents")}
             >
-              Tạo agent đầu tiên →
+              Create your first agent →
             </button>
           )}
         </>
       ) : (
         <>
-          <p className="sidebar-kicker">Không gian làm việc</p>
+          <p className="sidebar-kicker">Workspace</p>
           <div className="sidebar-list surface-list">
             <button
               className={
@@ -556,7 +561,7 @@ function Sidebar(props: {
               onClick={() => props.onSurface("agents")}
             >
               <UsersRound size={17} />
-              <span className="row-label">Quản lý agent</span>
+              <span className="row-label">Agent management</span>
               <span className="count">{visibleAgents.length}</span>
             </button>
           </div>
@@ -611,14 +616,14 @@ function ThreadView(props: {
     const requestedHandles = extractMentionHandles(content);
     const unknownHandles = requestedHandles.filter((handle) => !agentsByHandle.has(handle));
     if (unknownHandles.length > 0) {
-      setLocalError(`Không tìm thấy ${unknownHandles.map((handle) => `@${handle}`).join(", ")}.`);
+      setLocalError(`Unknown ${unknownHandles.map((handle) => `@${handle}`).join(", ")}.`);
       return;
     }
     const unavailable = requestedHandles
       .map((handle) => agentsByHandle.get(handle))
       .find((agent) => agent && !canCallAgent(agent));
     if (unavailable) {
-      setLocalError(`@${unavailable.handle} chưa thể gọi: ${unavailable.readinessLabel}.`);
+      setLocalError(`@${unavailable.handle} cannot be invoked: ${unavailable.readinessLabel}.`);
       return;
     }
     setSending(true);
@@ -689,7 +694,7 @@ function ThreadView(props: {
   if (!thread || !props.threadData) {
     return (
       <div className="surface-loading">
-        <LoaderCircle className="spin" size={20} /> Đang đọc transcript…
+        <LoaderCircle className="spin" size={20} /> Loading transcript…
       </div>
     );
   }
@@ -708,7 +713,7 @@ function ThreadView(props: {
         </div>
       </header>
       <div className="thread-tabs">
-        <span className="active">Tin nhắn</span>
+        <span className="active">Messages</span>
         <span>{thread.messageCount} messages</span>
       </div>
       <div className="message-scroll">
@@ -716,13 +721,13 @@ function ThreadView(props: {
           <span className="channel-badge">#</span>
           <h2>{thread.name}</h2>
           <p>
-            Mọi người và agent cùng dùng một transcript. Gửi tin bình thường để ghi chú; thêm{" "}
-            <mark>@agent</mark> khi bạn muốn agent trả lời.
+            People and agents share one transcript. Send a regular message to leave a note; add{" "}
+            <mark>@agent</mark> when you want an agent to reply.
           </p>
         </div>
         {props.threadData.messages.length > 0 && (
           <div className="date-divider">
-            <span>Hôm nay</span>
+            <span>Today</span>
           </div>
         )}
         {props.threadData.messages.map((message) => (
@@ -754,9 +759,9 @@ function ThreadView(props: {
             className="mention-menu"
             id="mention-suggestions"
             role="listbox"
-            aria-label="Chọn agent"
+            aria-label="Choose an agent"
           >
-            <p>Gọi agent</p>
+            <p>Mention an agent</p>
             {suggestions.map((agent, index) => (
               <button
                 type="button"
@@ -782,7 +787,7 @@ function ThreadView(props: {
         )}
         <div className="composer">
           <textarea
-            aria-label="Tin nhắn"
+            aria-label="Message"
             role="combobox"
             aria-autocomplete="list"
             aria-expanded={mentionMenuOpen && suggestions.length > 0}
@@ -800,7 +805,7 @@ function ThreadView(props: {
               setLocalError(undefined);
             }}
             onKeyDown={onKeyDown}
-            placeholder={`Nhắn #${thread.slug} — gõ @ để gọi agent`}
+            placeholder={`Message #${thread.slug} — type @ to mention an agent`}
             rows={2}
           />
           <div className="composer-toolbar">
@@ -813,25 +818,25 @@ function ThreadView(props: {
                   setActiveSuggestion(0);
                   setDraft((value) => `${value}${value && !value.endsWith(" ") ? " " : ""}@`);
                 }}
-                aria-label="Gọi agent"
+                aria-label="Mention an agent"
               >
                 @
               </button>
-              <span>Agent chỉ trả lời khi được @mention</span>
+              <span>Agents reply only when explicitly @mentioned</span>
             </div>
             <button
               className="send-button"
               type="button"
               onClick={() => void send()}
               disabled={!draft.trim() || sending}
-              aria-label="Gửi"
+              aria-label="Send"
             >
               {sending ? <LoaderCircle className="spin" size={17} /> : <SendHorizontal size={17} />}
             </button>
           </div>
         </div>
         <p>
-          <kbd>Enter</kbd> để gửi · <kbd>Shift Enter</kbd> để xuống dòng
+          <kbd>Enter</kbd> to send · <kbd>Shift Enter</kbd> for a new line
         </p>
         {localError && (
           <p className="inline-error">
@@ -859,7 +864,7 @@ function MessageRow({
       {isAgent && agent ? (
         <Avatar agent={agent} />
       ) : (
-        <span className="avatar avatar-purple">VN</span>
+        <span className="avatar avatar-purple">ME</span>
       )}
       <div>
         <div className="message-meta">
@@ -892,7 +897,7 @@ function RunRow({
         {agent ? <Avatar agent={agent} small /> : <span className="avatar avatar-blue">A</span>}
         <span>
           <b>@{agent?.handle ?? "agent"}</b>{" "}
-          {run.status === "queued" ? "đang chờ lượt" : "đang đọc transcript"}
+          {run.status === "queued" ? "is waiting in the queue" : "is reading the transcript"}
         </span>
         <span className="typing-dots">
           <i />
@@ -906,8 +911,8 @@ function RunRow({
     <div className="run-error">
       <CircleAlert size={15} />
       <div>
-        <strong>@{agent?.handle ?? "agent"} chưa thể trả lời</strong>
-        <p>{run.error ?? "Lượt chạy bị gián đoạn."}</p>
+        <strong>@{agent?.handle ?? "agent"} could not reply</strong>
+        <p>{run.error ?? "The run was interrupted."}</p>
       </div>
       <button
         type="button"
@@ -922,7 +927,7 @@ function RunRow({
         }}
       >
         {retrying ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}
-        {retrying ? "Đang xếp lượt…" : "Thử lại"}
+        {retrying ? "Queueing…" : "Retry"}
       </button>
     </div>
   );
@@ -940,17 +945,19 @@ function AgentsView(props: {
       <header className="workspace-header">
         <div>
           <p className="eyebrow">SURFACE</p>
-          <h1>Quản lý agent</h1>
-          <p className="subtitle">Tạo Master hội thoại hoặc Worker phản hồi qua coding harness.</p>
+          <h1>Agent management</h1>
+          <p className="subtitle">
+            Create conversational Masters or Workers backed by coding harnesses.
+          </p>
         </div>
         <button className="primary-button" type="button" onClick={props.onCreate}>
           <Plus size={17} />
-          Tạo agent
+          Create agent
         </button>
       </header>
       <div className="stat-strip">
         <div>
-          <span>Agent hoạt động</span>
+          <span>Active agents</span>
           <strong>{agents.filter((agent) => agent.enabled).length}</strong>
         </div>
         <div>
@@ -962,7 +969,7 @@ function AgentsView(props: {
           <strong>{agents.filter((agent) => agent.kind === "worker").length}</strong>
         </div>
         <div>
-          <span>Đang trả lời</span>
+          <span>Responding</span>
           <strong className="accent-number">
             {agents.filter((agent) => agent.readiness === "busy").length}
           </strong>
@@ -971,9 +978,9 @@ function AgentsView(props: {
       {agents.length === 0 ? (
         <EmptyState
           icon={<Bot size={25} />}
-          title="Chưa có agent nào"
-          body="Tạo một Master agent hoặc Worker agent, sau đó gọi agent bằng @handle trong thread."
-          action="Tạo agent đầu tiên"
+          title="No agents yet"
+          body="Create a Master or Worker agent, then invoke it with @handle in a thread."
+          action="Create your first agent"
           onAction={props.onCreate}
         />
       ) : (
@@ -1028,24 +1035,24 @@ function AgentCard({
       <p className="agent-description">
         {agent.description ||
           (agent.kind === "master"
-            ? "Master agent đọc ngữ cảnh chung và phản hồi trong thread."
-            : "Worker agent đọc repo và phản hồi qua harness đã chọn.")}
+            ? "Master agent reads shared context and responds in the thread."
+            : "Worker agent reads the repository and responds through its selected harness.")}
       </p>
       <div className="agent-card-footer">
         <span>
           {!agent.enabled
-            ? "Đã ẩn khỏi mention picker"
+            ? "Hidden from the mention picker"
             : canCallAgent(agent)
-              ? "Có thể gọi bằng @mention"
-              : `Cần thiết lập: ${agent.readinessLabel}`}
+              ? "Available through @mention"
+              : `Setup required: ${agent.readinessLabel}`}
         </span>
         <div>
           <button type="button" onClick={() => void onToggle(agent)}>
-            {agent.enabled ? "Tắt" : "Bật"}
+            {agent.enabled ? "Disable" : "Enable"}
           </button>
           <button type="button" className="danger-link" onClick={() => void onArchive(agent)}>
             <Archive size={12} />
-            Lưu trữ
+            Archive
           </button>
         </div>
       </div>
@@ -1060,9 +1067,9 @@ function Taskboard(props: {
   onThread: (id: string) => void;
 }) {
   const columns: { status: Task["status"]; title: string }[] = [
-    { status: "todo", title: "Cần làm" },
-    { status: "in_progress", title: "Đang làm" },
-    { status: "done", title: "Hoàn thành" },
+    { status: "todo", title: "To do" },
+    { status: "in_progress", title: "In progress" },
+    { status: "done", title: "Done" },
   ];
   const agents = new Map(props.data.agents.map((agent) => [agent.id, agent]));
   return (
@@ -1071,13 +1078,11 @@ function Taskboard(props: {
         <div>
           <p className="eyebrow">SURFACE</p>
           <h1>Taskboard</h1>
-          <p className="subtitle">
-            Board để tổ chức công việc; chỉ @mention trong chat mới kích hoạt agent.
-          </p>
+          <p className="subtitle">Organize work here; only an @mention in chat invokes an agent.</p>
         </div>
         <button className="primary-button" type="button" onClick={() => props.onCreate("todo")}>
           <Plus size={17} />
-          Tạo task
+          Create task
         </button>
       </header>
       <div className="board">
@@ -1092,12 +1097,12 @@ function Taskboard(props: {
                 <button
                   type="button"
                   onClick={() => props.onCreate(column.status)}
-                  aria-label={`Tạo task trong ${column.title}`}
+                  aria-label={`Create a task in ${column.title}`}
                 >
                   <Plus size={16} />
                 </button>
               </header>
-              {tasks.length === 0 && <p className="column-empty">Chưa có task</p>}
+              {tasks.length === 0 && <p className="column-empty">No tasks yet</p>}
               {tasks.map((task) => (
                 <TaskCard
                   key={task.id}
@@ -1141,7 +1146,7 @@ function TaskCard({
               <span>@{agent.handle}</span>
             </>
           ) : (
-            <span>Chưa giao</span>
+            <span>Unassigned</span>
           )}
         </div>
         <div className="task-actions">
@@ -1154,7 +1159,7 @@ function TaskCard({
             type="button"
             disabled={position === 0}
             onClick={() => void onMove(task, statuses[position - 1] ?? task.status)}
-            aria-label="Chuyển sang trái"
+            aria-label="Move left"
           >
             <ArrowLeft size={13} />
           </button>
@@ -1162,7 +1167,7 @@ function TaskCard({
             type="button"
             disabled={position === statuses.length - 1}
             onClick={() => void onMove(task, statuses[position + 1] ?? task.status)}
-            aria-label="Chuyển sang phải"
+            aria-label="Move right"
           >
             <ArrowRight size={13} />
           </button>
@@ -1182,7 +1187,7 @@ function ThreadDialog({
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
   return (
-    <Modal title="Tạo thread" eyebrow="NEW THREAD" onClose={onClose}>
+    <Modal title="Create thread" eyebrow="NEW THREAD" onClose={onClose}>
       <form
         onSubmit={async (event) => {
           event.preventDefault();
@@ -1194,7 +1199,7 @@ function ThreadDialog({
           }
         }}
       >
-        <Field label="Tên thread" hint="Ví dụ: product-room">
+        <Field label="Thread name" hint="For example: product-room">
           <input
             value={name}
             onChange={(event) => setName(event.target.value)}
@@ -1203,7 +1208,7 @@ function ThreadDialog({
             maxLength={80}
           />
         </Field>
-        <ModalActions onClose={onClose} saving={saving} submitLabel="Tạo thread" />
+        <ModalActions onClose={onClose} saving={saving} submitLabel="Create thread" />
       </form>
     </Modal>
   );
@@ -1281,7 +1286,7 @@ function AgentDialog({
   };
 
   return (
-    <Modal title="Tạo agent" eyebrow="AGENT DIRECTORY" onClose={onClose} wide>
+    <Modal title="Create agent" eyebrow="AGENT DIRECTORY" onClose={onClose} wide>
       <form onSubmit={submit}>
         <div className="segmented">
           <button
@@ -1293,7 +1298,7 @@ function AgentDialog({
             <Bot size={16} />
             <span>
               <strong>Worker</strong>
-              <small>Codex hoặc OpenCode</small>
+              <small>Codex or OpenCode</small>
             </span>
           </button>
           <button
@@ -1305,12 +1310,12 @@ function AgentDialog({
             <Sparkles size={16} />
             <span>
               <strong>Master</strong>
-              <small>Hội thoại trong Nexestra</small>
+              <small>Conversations in Nexestra</small>
             </span>
           </button>
         </div>
         <div className="form-grid">
-          <Field label="Tên hiển thị">
+          <Field label="Display name">
             <input
               value={name}
               onChange={(event) => updateName(event.target.value)}
@@ -1319,7 +1324,7 @@ function AgentDialog({
               maxLength={60}
             />
           </Field>
-          <Field label="Handle" hint="Dùng để @mention">
+          <Field label="Handle" hint="Used for @mentions">
             <div className="handle-input">
               <span>@</span>
               <input
@@ -1335,8 +1340,8 @@ function AgentDialog({
             </div>
           </Field>
         </div>
-        <Field label="Mô tả" optional>
-          <input name="description" placeholder="Agent này phụ trách điều gì?" maxLength={240} />
+        <Field label="Description" optional>
+          <input name="description" placeholder="What does this agent handle?" maxLength={240} />
         </Field>
         {kind === "worker" ? (
           <Field label="Harness">
@@ -1348,7 +1353,7 @@ function AgentDialog({
                   <small>
                     {data.runtime.harnesses.codex.installed
                       ? data.runtime.harnesses.codex.version
-                      : "Chưa cài"}
+                      : "Not installed"}
                   </small>
                 </span>
               </label>
@@ -1359,7 +1364,7 @@ function AgentDialog({
                   <small>
                     {data.runtime.harnesses.opencode.installed
                       ? data.runtime.harnesses.opencode.version
-                      : "Chưa cài"}
+                      : "Not installed"}
                   </small>
                 </span>
               </label>
@@ -1405,12 +1410,12 @@ function AgentDialog({
                 <div>
                   <strong>
                     {data.runtime.chatgpt.connected || login?.connected
-                      ? "ChatGPT đã kết nối"
-                      : "Kết nối tài khoản ChatGPT"}
+                      ? "ChatGPT connected"
+                      : "Connect a ChatGPT account"}
                   </strong>
                   <p>
-                    Nexestra dùng phiên đăng nhập do Codex CLI quản lý và không đọc hoặc lưu OAuth
-                    token.
+                    Nexestra uses the session managed by Codex CLI and never reads or stores OAuth
+                    tokens.
                   </p>
                 </div>
                 <button
@@ -1430,14 +1435,14 @@ function AgentDialog({
                   }}
                 >
                   {login?.status === "running"
-                    ? "Đang chờ…"
+                    ? "Waiting…"
                     : data.runtime.chatgpt.connected
-                      ? "Kiểm tra"
-                      : "Kết nối"}
+                      ? "Check"
+                      : "Connect"}
                 </button>
                 {login?.output && <pre>{login.output}</pre>}
-                <Field label="Model" optional hint="Để trống để dùng mặc định của Codex">
-                  <input name="model" placeholder="Mặc định" />
+                <Field label="Model" optional hint="Leave blank to use the Codex default">
+                  <input name="model" placeholder="Default" />
                 </Field>
               </div>
             ) : (
@@ -1445,11 +1450,11 @@ function AgentDialog({
             )}
           </>
         )}
-        <Field label="Chỉ dẫn riêng" optional>
+        <Field label="Custom instructions" optional>
           <textarea
             name="instructions"
             rows={3}
-            placeholder="Vai trò, cách trả lời, giới hạn của agent…"
+            placeholder="Role, response style, and agent boundaries…"
             maxLength={8000}
           />
         </Field>
@@ -1459,7 +1464,7 @@ function AgentDialog({
             {formError}
           </p>
         )}
-        <ModalActions onClose={onClose} saving={saving} submitLabel="Tạo agent" />
+        <ModalActions onClose={onClose} saving={saving} submitLabel="Create agent" />
       </form>
     </Modal>
   );
@@ -1469,7 +1474,7 @@ function CustomProviderFields() {
   return (
     <div className="custom-provider">
       <div className="form-grid">
-        <Field label="Tên provider">
+        <Field label="Provider name">
           <input name="providerName" placeholder="Local gateway" required />
         </Field>
         <Field label="Protocol">
@@ -1479,14 +1484,14 @@ function CustomProviderFields() {
           </select>
         </Field>
       </div>
-      <Field label="Base URL" hint="API root: HTTPS cho remote; HTTP chỉ dùng được với localhost">
+      <Field label="Base URL" hint="API root: use HTTPS remotely; HTTP is limited to localhost">
         <input name="baseUrl" type="url" placeholder="https://api.example.com/v1" required />
       </Field>
       <div className="form-grid">
         <Field label="Model ID">
           <input name="model" placeholder="model-name" required />
         </Field>
-        <Field label="API key" optional hint="Có thể bỏ trống cho local endpoint">
+        <Field label="API key" optional hint="May be left blank for a local endpoint">
           <input
             name="apiKey"
             type="password"
@@ -1496,7 +1501,8 @@ function CustomProviderFields() {
         </Field>
       </div>
       <p className="security-note">
-        Chỉ dùng endpoint bạn tin cậy. API key được lưu riêng với quyền chỉ user hiện tại đọc được.
+        Use only an endpoint you trust. API keys are stored separately and are readable only by the
+        current OS user.
       </p>
     </div>
   );
@@ -1516,7 +1522,7 @@ function TaskDialog({
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string>();
   return (
-    <Modal title="Tạo task" eyebrow="TASKBOARD" onClose={onClose}>
+    <Modal title="Create task" eyebrow="TASKBOARD" onClose={onClose}>
       <form
         onSubmit={async (event) => {
           event.preventDefault();
@@ -1542,23 +1548,23 @@ function TaskDialog({
           }
         }}
       >
-        <Field label="Tiêu đề">
-          <input name="title" placeholder="Việc cần hoàn thành" required maxLength={160} />
+        <Field label="Title">
+          <input name="title" placeholder="Work item to complete" required maxLength={160} />
         </Field>
-        <Field label="Mô tả" optional>
-          <textarea name="description" rows={3} placeholder="Kết quả mong muốn…" />
+        <Field label="Description" optional>
+          <textarea name="description" rows={3} placeholder="Desired outcome…" />
         </Field>
         <div className="form-grid">
-          <Field label="Cột">
+          <Field label="Column">
             <select name="status" defaultValue={initialStatus}>
-              <option value="todo">Cần làm</option>
-              <option value="in_progress">Đang làm</option>
-              <option value="done">Hoàn thành</option>
+              <option value="todo">To do</option>
+              <option value="in_progress">In progress</option>
+              <option value="done">Done</option>
             </select>
           </Field>
-          <Field label="Giao cho" optional>
+          <Field label="Assignee" optional>
             <select name="assigneeId" defaultValue="">
-              <option value="">Chưa giao</option>
+              <option value="">Unassigned</option>
               {data.agents
                 .filter((agent) => !agent.archived)
                 .map((agent) => (
@@ -1569,9 +1575,9 @@ function TaskDialog({
             </select>
           </Field>
         </div>
-        <Field label="Liên kết thread" optional>
+        <Field label="Linked thread" optional>
           <select name="threadId" defaultValue="">
-            <option value="">Không liên kết</option>
+            <option value="">No linked thread</option>
             {data.threads.map((thread) => (
               <option key={thread.id} value={thread.id}>
                 # {thread.name}
@@ -1585,7 +1591,7 @@ function TaskDialog({
             {formError}
           </p>
         )}
-        <ModalActions onClose={onClose} saving={saving} submitLabel="Tạo task" />
+        <ModalActions onClose={onClose} saving={saving} submitLabel="Create task" />
       </form>
     </Modal>
   );
@@ -1594,14 +1600,14 @@ function TaskDialog({
 function SettingsDialog({ data, onClose }: { data: BootstrapData; onClose: () => void }) {
   const [copied, setCopied] = useState(false);
   return (
-    <Modal title="Workspace local" eyebrow="SETTINGS" onClose={onClose}>
+    <Modal title="Local workspace" eyebrow="SETTINGS" onClose={onClose}>
       <div className="settings-list">
         <div>
           <span>Workspace</span>
           <code>{data.workspacePath}</code>
         </div>
         <div>
-          <span>Dữ liệu</span>
+          <span>Data</span>
           <code>{data.dataPath}</code>
           <button
             type="button"
@@ -1611,7 +1617,7 @@ function SettingsDialog({ data, onClose }: { data: BootstrapData; onClose: () =>
             }}
           >
             <Copy size={13} />
-            {copied ? "Đã chép" : "Sao chép"}
+            {copied ? "Copied" : "Copy"}
           </button>
         </div>
         <div>
@@ -1619,7 +1625,7 @@ function SettingsDialog({ data, onClose }: { data: BootstrapData; onClose: () =>
           <strong className={data.runtime.harnesses.codex.installed ? "ready-text" : "muted-text"}>
             {data.runtime.harnesses.codex.installed
               ? data.runtime.harnesses.codex.version
-              : "Chưa cài"}
+              : "Not installed"}
           </strong>
         </div>
         <div>
@@ -1629,19 +1635,19 @@ function SettingsDialog({ data, onClose }: { data: BootstrapData; onClose: () =>
           >
             {data.runtime.harnesses.opencode.installed
               ? data.runtime.harnesses.opencode.version
-              : "Chưa cài"}
+              : "Not installed"}
           </strong>
         </div>
         <div>
           <span>ChatGPT</span>
           <strong className={data.runtime.chatgpt.connected ? "ready-text" : "muted-text"}>
-            {data.runtime.chatgpt.connected ? "Đã kết nối" : "Chưa kết nối"}
+            {data.runtime.chatgpt.connected ? "Connected" : "Not connected"}
           </strong>
         </div>
       </div>
       <div className="modal-actions">
         <button type="button" className="primary-button" onClick={onClose}>
-          Xong
+          Done
         </button>
       </div>
     </Modal>
@@ -1713,7 +1719,7 @@ function Modal({
             <p className="eyebrow">{eyebrow}</p>
             <h2 id="modal-title">{title}</h2>
           </div>
-          <button type="button" onClick={onClose} aria-label="Đóng">
+          <button type="button" onClick={onClose} aria-label="Close">
             <X size={18} />
           </button>
         </header>
@@ -1738,7 +1744,7 @@ function Field({
     <fieldset className="field">
       <legend>
         {label}
-        {optional && <em>Tùy chọn</em>}
+        {optional && <em>Optional</em>}
       </legend>
       {children}
       {hint && <small>{hint}</small>}
@@ -1758,7 +1764,7 @@ function ModalActions({
   return (
     <div className="modal-actions">
       <button type="button" className="secondary-button" onClick={onClose}>
-        Hủy
+        Cancel
       </button>
       <button type="submit" className="primary-button" disabled={saving}>
         {saving && <LoaderCircle className="spin" size={15} />}
@@ -1860,13 +1866,13 @@ function hashString(value: string): number {
 }
 
 function formatTime(value: string): string {
-  return new Intl.DateTimeFormat("vi-VN", { hour: "2-digit", minute: "2-digit" }).format(
+  return new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(
     new Date(value),
   );
 }
 
 function messageFrom(error: unknown): string {
-  return error instanceof Error ? error.message : "Đã có lỗi xảy ra.";
+  return error instanceof Error ? error.message : "Something went wrong.";
 }
 
 function routeFromLocation(): RouteState {

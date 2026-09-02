@@ -1,65 +1,65 @@
 # Nexestra
 
-Nexestra là workspace local-first để con người trò chuyện và làm việc cùng coding agent.
-Bản M9 được viết lại từ đầu, tập trung vào hai luồng chính:
+Nexestra is a local-first workspace where people can chat and work with coding agents.
+Milestone M9 is a fresh rebuild focused on two primary workflows:
 
-- tạo **Worker agent** chạy bằng Codex hoặc OpenCode;
-- tạo **Master agent** dùng ChatGPT OAuth qua Codex CLI hoặc một endpoint OpenAI-compatible;
-- trò chuyện trong thread chung và chỉ gọi agent khi có `@handle`;
-- quản lý task và agent trong hai surface đầu tiên: Taskboard và Agents.
+- create **Worker agents** powered by Codex or OpenCode;
+- create **Master agents** using ChatGPT OAuth through Codex CLI or an OpenAI-compatible endpoint;
+- chat in shared threads and invoke agents only with an `@handle`;
+- manage tasks and agents in the first two surfaces: Taskboard and Agents.
 
-## Chạy local
+## Run locally
 
-Yêu cầu Node.js 24+ và pnpm 11.
+Requires Node.js 24+ and pnpm 11.
 
 ```bash
 pnpm install
 pnpm dev
 ```
 
-Mở `http://127.0.0.1:5173`. Backend chỉ bind vào loopback tại cổng `4242`.
-Có thể đổi cổng bằng `NEXESTRA_PORT`.
+Open `http://127.0.0.1:5173`. The backend binds only to loopback on port `4242`.
+Change the port with `NEXESTRA_PORT`.
 
-Dữ liệu mặc định nằm trong `.nexestra/` của repo đang chạy:
+By default, data is stored in `.nexestra/` in the running repository:
 
 ```text
 .nexestra/
-├── state.json          # agent, thread metadata và task
-├── credentials.json    # API key custom, mode 0600
+├── state.json          # agent and thread metadata, plus tasks
+├── credentials.json    # custom API keys, mode 0600
 └── threads/
-    └── <thread-id>.jsonl  # transcript append-only chung của thread
+    └── <thread-id>.jsonl  # the thread's shared append-only transcript
 ```
 
-Đặt `NEXESTRA_HOME=/đường/dẫn/khác` nếu muốn tách data khỏi repo.
+Set `NEXESTRA_HOME=/another/path` to keep data outside the repository.
 
-## Cách gọi agent
+## Invoking agents
 
-Tin nhắn không có mention chỉ được lưu vào transcript. Tin nhắn có `@maya`, `@codex`,
-hoặc nhiều handle sẽ tạo một lượt chạy cho mỗi agent được gọi. Reply của agent được ghi lại
-vào chính file transcript đó. Reply của agent không tự kích hoạt agent khác, tránh vòng lặp.
+Messages without a mention are only saved to the transcript. A message containing `@maya`,
+`@codex`, or multiple handles creates one run for each invoked agent. Agent replies are recorded
+in the same transcript file. Agent replies do not trigger other agents, which prevents loops.
 
-Worker chạy ở chế độ thảo luận read-only trong MVP. Taskboard hiện chỉ tổ chức công việc và
-không tự dispatch agent.
+Workers run in read-only discussion mode in the MVP. The Taskboard currently organizes work but
+does not dispatch agents automatically.
 
 ## Provider
 
-- **ChatGPT OAuth:** cài Codex CLI và chạy `codex login`, hoặc bấm Kết nối trong form tạo
-  Master. OAuth token do Codex CLI quản lý; Nexestra không đọc hoặc lưu token.
-- **Custom:** nhập API root, model và chọn OpenAI Chat Completions hoặc OpenAI Responses.
-  API key có thể để trống cho local endpoint. Remote endpoint bắt buộc dùng HTTPS; HTTP chỉ được
-  chấp nhận trên loopback.
+- **ChatGPT OAuth:** install Codex CLI and run `codex login`, or click Connect in the Master
+  creation form. Codex CLI manages OAuth tokens; Nexestra never reads or stores them.
+- **Custom:** enter an API root and model, then select OpenAI Chat Completions or OpenAI Responses.
+  The API key may be left blank for a local endpoint. Remote endpoints must use HTTPS; HTTP is
+  accepted only on loopback.
 
-## Kiểm tra
+## Verification
 
 ```bash
 pnpm lint
 pnpm typecheck
 pnpm test
 pnpm build
-# hoặc chạy toàn bộ:
+# or run everything:
 pnpm check
 ```
 
-Các test mặc định không gọi provider trả phí và không cần tài khoản Codex/OpenCode.
+Default tests do not call paid providers and do not require a Codex or OpenCode account.
 
-Xem [kiến trúc](docs/ARCHITECTURE.md) và [các giới hạn hiện tại](docs/ARCHITECTURE.md#known-gaps).
+See the [architecture](docs/ARCHITECTURE.md) and [current limitations](docs/ARCHITECTURE.md#known-gaps).

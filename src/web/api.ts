@@ -22,7 +22,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const body = (await response.json().catch(() => ({}))) as T & ApiErrorBody;
   if (!response.ok) {
     throw new ApiError(
-      body.error?.message ?? `Yêu cầu thất bại (HTTP ${response.status}).`,
+      body.error?.message ?? `Request failed (HTTP ${response.status}).`,
       response.status,
     );
   }

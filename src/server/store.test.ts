@@ -22,17 +22,17 @@ describe("FileStore", () => {
       instructions: "",
       harness: "codex",
     });
-    const user = await store.createUserMessage(thread.id, "@codex xin chào", [
+    const user = await store.createUserMessage(thread.id, "@codex hello", [
       { agentId: agent.id, handle: agent.handle },
     ]);
-    await store.createAgentMessage(thread.id, agent, "Chào bạn.", user.id);
+    await store.createAgentMessage(thread.id, agent, "Hello.", user.id);
 
     const data = await store.threadData(thread.id);
     expect(data.messages.map((message) => message.author.kind)).toEqual(["user", "agent"]);
     expect(data.messages[1]?.triggerMessageId).toBe(user.id);
     const transcript = await readFile(store.transcriptPath(thread.id), "utf8");
-    expect(transcript).toContain("@codex xin chào");
-    expect(transcript).toContain("Chào bạn.");
+    expect(transcript).toContain("@codex hello");
+    expect(transcript).toContain("Hello.");
   });
 
   it("never writes a custom provider key to public state or transcripts", async () => {
@@ -128,8 +128,8 @@ describe("FileStore", () => {
     const store = await openStore();
     const [thread] = store.listThreads();
     if (!thread) throw new Error("expected seeded thread");
-    const first = await store.createUserMessage(thread.id, "một", []);
-    const second = await store.createUserMessage(thread.id, "hai", []);
+    const first = await store.createUserMessage(thread.id, "one", []);
+    const second = await store.createUserMessage(thread.id, "two", []);
     const now = new Date().toISOString();
     await store.updateRun({
       id: crypto.randomUUID(),
@@ -152,11 +152,11 @@ describe("FileStore", () => {
     const store = await openStore();
     const [thread] = store.listThreads();
     if (!thread) throw new Error("expected seeded thread");
-    const first = await store.createUserMessage(thread.id, "trước crash", []);
+    const first = await store.createUserMessage(thread.id, "before crash", []);
     await appendFile(store.transcriptPath(thread.id), '{"type":"message.created","sequence":2');
 
     const reopened = await FileStore.open({ root: store.root, workspacePath: store.workspacePath });
-    const second = await reopened.createUserMessage(thread.id, "sau crash", []);
+    const second = await reopened.createUserMessage(thread.id, "after crash", []);
     const data = await reopened.threadData(thread.id);
 
     expect(data.messages.map((message) => message.id)).toEqual([first.id, second.id]);
@@ -175,7 +175,7 @@ describe("FileStore", () => {
       instructions: "",
       harness: "codex",
     });
-    const trigger = await store.createUserMessage(thread.id, "@codex trả lời", [
+    const trigger = await store.createUserMessage(thread.id, "@codex reply", [
       { agentId: agent.id, handle: agent.handle },
     ]);
     const now = new Date().toISOString();
@@ -190,7 +190,7 @@ describe("FileStore", () => {
       updatedAt: now,
     };
     await store.updateRun(run);
-    await store.createAgentMessage(thread.id, agent, "reply đã sync", trigger.id);
+    await store.createAgentMessage(thread.id, agent, "synced reply", trigger.id);
 
     const reopened = await FileStore.open({ root: store.root, workspacePath: store.workspacePath });
     const data = await reopened.threadData(thread.id);

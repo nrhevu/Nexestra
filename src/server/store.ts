@@ -154,7 +154,7 @@ export class FileStore {
     const input = CreateAgentSchema.parse(rawInput);
     return this.withWrite(async () => {
       if (this.state.agents.some((agent) => agent.handle === input.handle)) {
-        throw new StoreError("conflict", `@${input.handle} đã được dùng.`);
+        throw new StoreError("conflict", `@${input.handle} is already in use.`);
       }
       const now = new Date().toISOString();
       const base = {
@@ -207,7 +207,7 @@ export class FileStore {
     return this.withWrite(async () => {
       const index = this.state.agents.findIndex((agent) => agent.id === id);
       const current = this.state.agents[index];
-      if (!current) throw new StoreError("not_found", "Không tìm thấy agent.");
+      if (!current) throw new StoreError("not_found", "Agent not found.");
       const updated = AgentSchema.parse({
         ...current,
         ...input,
@@ -247,7 +247,7 @@ export class FileStore {
     return this.appendMessage(threadId, {
       id: crypto.randomUUID(),
       threadId,
-      author: { kind: "user", id: "local-user", name: "Bạn" },
+      author: { kind: "user", id: "local-user", name: "You" },
       content,
       mentions,
       createdAt: new Date().toISOString(),
@@ -343,7 +343,7 @@ export class FileStore {
     return this.withWrite(async () => {
       const index = this.state.tasks.findIndex((task) => task.id === id);
       const current = this.state.tasks[index];
-      if (!current) throw new StoreError("not_found", "Không tìm thấy task.");
+      if (!current) throw new StoreError("not_found", "Task not found.");
       const assigneeId = input.assigneeId === undefined ? current.assigneeId : input.assigneeId;
       const threadId = input.threadId === undefined ? current.threadId : input.threadId;
       this.validateReferences(assigneeId, threadId);
@@ -419,7 +419,9 @@ export class FileStore {
       } catch (error) {
         const isPartialTail = index === lines.length - 1 && !text.endsWith("\n");
         if (isPartialTail) continue;
-        throw new Error(`Transcript ${threadId} hỏng tại dòng ${index + 1}.`, { cause: error });
+        throw new Error(`Transcript ${threadId} is corrupted at line ${index + 1}.`, {
+          cause: error,
+        });
       }
     }
     return events.sort((left, right) => left.sequence - right.sequence);
@@ -466,7 +468,7 @@ export class FileStore {
         await this.updateRun({
           ...run,
           status: hasReply ? "completed" : "interrupted",
-          error: hasReply ? undefined : "Server đã khởi động lại trước khi agent trả lời.",
+          error: hasReply ? undefined : "The server restarted before the agent replied.",
           updatedAt: new Date().toISOString(),
         });
       }
@@ -478,16 +480,16 @@ export class FileStore {
       assigneeId &&
       !this.state.agents.some((agent) => agent.id === assigneeId && !agent.archived)
     ) {
-      throw new StoreError("invalid", "Agent được giao không tồn tại hoặc đã lưu trữ.");
+      throw new StoreError("invalid", "The assigned agent does not exist or has been archived.");
     }
     if (threadId && !this.state.threads.some((thread) => thread.id === threadId)) {
-      throw new StoreError("invalid", "Thread được liên kết không tồn tại.");
+      throw new StoreError("invalid", "The linked thread does not exist.");
     }
   }
 
   private requireThread(id: string): Thread {
     const thread = this.state.threads.find((entry) => entry.id === id);
-    if (!thread) throw new StoreError("not_found", "Không tìm thấy thread.");
+    if (!thread) throw new StoreError("not_found", "Thread not found.");
     return thread;
   }
 
@@ -548,7 +550,7 @@ function uniqueSlug(name: string, threads: Thread[]): string {
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
       .toLowerCase()
-      .replace(/đ/g, "d")
+      .replace(/\u0111/g, "d")
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "")
       .slice(0, 48) || "thread";
@@ -564,16 +566,16 @@ function uniqueSlug(name: string, threads: Thread[]): string {
 function normaliseBaseUrl(value: string): string {
   const url = new URL(value);
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new StoreError("invalid", "Custom provider chỉ hỗ trợ URL HTTP hoặc HTTPS.");
+    throw new StoreError("invalid", "Custom providers only support HTTP or HTTPS URLs.");
   }
   if (url.username || url.password || url.search || url.hash) {
     throw new StoreError(
       "invalid",
-      "Base URL không được chứa user info, query string hoặc fragment.",
+      "The base URL must not contain user info, a query string, or a fragment.",
     );
   }
   if (url.protocol === "http:" && !isLoopbackHost(url.hostname)) {
-    throw new StoreError("invalid", "Remote custom provider phải dùng HTTPS.");
+    throw new StoreError("invalid", "Remote custom providers must use HTTPS.");
   }
   url.pathname = url.pathname.replace(/\/+$/, "");
   return url.toString().replace(/\/$/, "");
@@ -655,7 +657,7 @@ async function readJson<T>(file: string, schema: z.ZodType<T>, fallback: T): Pro
     return schema.parse(JSON.parse(await readFile(file, "utf8")));
   } catch (error) {
     if (isNodeError(error, "ENOENT")) return fallback;
-    throw new Error(`Không thể đọc ${file}.`, { cause: error });
+    throw new Error(`Unable to read ${file}.`, { cause: error });
   }
 }
 
