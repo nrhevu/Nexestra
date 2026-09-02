@@ -21,6 +21,17 @@ export const TaskStatusSchema = z.enum([
 ]);
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 
+/**
+ * Where a finished task stands with respect to its worktree branch (M5).
+ *
+ * `undefined` means "nothing to merge" — the task produced no commit, or the
+ * orchestrator was configured without a merge step. A task can be `done` and
+ * still carry `pending`: the work is verified, the merge is waiting on an
+ * Approval of kind `merge`.
+ */
+export const TaskMergeStateSchema = z.enum(["pending", "merged", "conflict"]);
+export type TaskMergeState = z.infer<typeof TaskMergeStateSchema>;
+
 /** Column identifiers used by the Task Board surface. */
 export const BoardColumnSchema = z.enum(["todo", "in_progress", "review", "blocked", "done"]);
 export type BoardColumn = z.infer<typeof BoardColumnSchema>;
@@ -94,6 +105,8 @@ export const TaskSchema = EntityBaseSchema.extend({
   maxAttempts: z.number().int().positive().default(3),
   acceptanceCriteriaIds: z.array(IdSchema).default([]),
   costUSD: z.number().nonnegative().default(0),
+  /** Set by the orchestrator once the task's branch is ready to land (M5). */
+  mergeState: TaskMergeStateSchema.optional(),
   /** Manual ordering inside a board column. */
   order: z.number().int().nonnegative().default(0),
 });

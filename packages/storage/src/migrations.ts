@@ -39,4 +39,8 @@ export const MIGRATIONS: readonly Migration[] = [
       "CREATE TABLE `workspaces` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`name` text NOT NULL,\n\t`rootPath` text NOT NULL,\n\t`shortLabel` text NOT NULL,\n\t`defaultBranch` text DEFAULT 'main' NOT NULL,\n\t`settings` text NOT NULL,\n\t`createdAt` text NOT NULL,\n\t`updatedAt` text NOT NULL\n);",
     ],
   },
+  {
+    tag: "0001_task_merge_state",
+    statements: ["ALTER TABLE `tasks` ADD `mergeState` text;"],
+  },
 ];

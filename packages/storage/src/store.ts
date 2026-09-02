@@ -507,6 +507,7 @@ export class NexestraStore {
     maxAttempts?: number;
     acceptanceCriteriaIds?: string[];
     costUSD?: number;
+    mergeState?: Task["mergeState"];
     order?: number;
     id?: string;
     createdAt?: string;
@@ -534,6 +535,7 @@ export class NexestraStore {
       maxAttempts: input.maxAttempts ?? 3,
       acceptanceCriteriaIds: input.acceptanceCriteriaIds ?? [],
       costUSD: input.costUSD ?? 0,
+      mergeState: input.mergeState,
       order,
       createdAt: at,
       updatedAt: input.updatedAt ?? at,
