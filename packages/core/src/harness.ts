@@ -81,6 +81,18 @@ export const HarnessEventTypeSchema = z.enum([
 ]);
 export type HarnessEventType = z.infer<typeof HarnessEventTypeSchema>;
 
+/**
+ * What a `kind: "review"` run should look at. Optional and additive: adapters
+ * that have no review mode ignore it, and Codex maps it onto
+ * `codex exec review --uncommitted | --base <ref> | --commit <sha>`.
+ */
+export const ReviewTargetSchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("uncommitted") }),
+  z.object({ mode: z.literal("base"), ref: z.string().min(1) }),
+  z.object({ mode: z.literal("commit"), sha: z.string().min(1) }),
+]);
+export type ReviewTarget = z.infer<typeof ReviewTargetSchema>;
+
 /** Everything an adapter needs to start one run (PLAN.md §5). */
 export const RunSpecSchema = z.object({
   taskId: z.string().min(1),
@@ -97,6 +109,8 @@ export const RunSpecSchema = z.object({
   outputSchema: JsonSchemaSchema.optional(),
   timeoutMs: z.number().int().positive(),
   budgetUSD: z.number().nonnegative().optional(),
+  /** Only meaningful when `kind === "review"`; defaults to the uncommitted diff. */
+  reviewTarget: ReviewTargetSchema.optional(),
 });
 export type RunSpec = z.infer<typeof RunSpecSchema>;
 
@@ -110,6 +124,8 @@ export const HarnessInfoSchema = z.object({
   supportedVersionRange: z.string().optional(),
   models: z.array(z.string()).default([]),
   defaultModel: z.string().optional(),
+  /** Sandbox levels this harness actually accepts on this machine. */
+  sandboxModes: z.array(SandboxLevelSchema).default([]),
   authOk: z.boolean().default(false),
   warnings: z.array(z.string()).default([]),
   detectedAt: TimestampSchema.optional(),
