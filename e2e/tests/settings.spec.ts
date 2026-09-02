@@ -38,13 +38,15 @@ test("reports honest provider readiness and the detected harnesses", async ({ pa
 test("saves and removes an API key from the provider form", async ({ page }) => {
   await page.goto("/settings");
 
-  const openai = page.locator(".provider-card").filter({ hasText: "OpenAI" });
-  await openai.getByLabel("API key").fill("e2e-provider-secret");
+  const openai = page
+    .locator(".provider-card")
+    .filter({ has: page.getByText("OpenAI", { exact: true }) });
+  await openai.getByLabel("API key", { exact: true }).fill("e2e-provider-secret");
   await page.getByRole("button", { name: "Save changes" }).click();
 
   await expect(openai.getByText("credential saved")).toBeVisible();
   await expect(page.locator(".provider-status")).toContainText("ready");
-  await expect(openai.getByLabel("API key")).toHaveValue("");
+  await expect(openai.getByLabel("API key", { exact: true })).toHaveValue("");
 
   await openai.getByRole("button", { name: "Remove saved key" }).click();
   await expect(openai.getByText("credential missing")).toBeVisible();

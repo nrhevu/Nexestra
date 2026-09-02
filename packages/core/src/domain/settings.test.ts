@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { masterProviderAuth, MasterProviderSchema } from "./settings.js";
+import { MasterProviderSchema, masterProviderAuth } from "./settings.js";
 
 const provider = {
   id: "custom",
