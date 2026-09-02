@@ -35,6 +35,9 @@ import { index, integer, primaryKey, real, sqliteTable, text } from "drizzle-orm
 
 const json = <T>(name: string) => text(name, { mode: "json" }).$type<T>();
 
+/** Roles the Anthropic Messages API accepts in a request's message list. */
+export type MasterMessageRole = "user" | "assistant" | "system";
+
 export const workspaces = sqliteTable("workspaces", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -284,6 +287,41 @@ export const events = sqliteTable(
   ],
 );
 
+/**
+ * The Master's raw conversation with the model, one row per message param
+ * (M3). `content` holds the API content blocks **verbatim** — thinking blocks
+ * with their signatures, compaction blocks, tool_use and tool_result — because
+ * `@nexestra/master` replays them into the next request and extracting only
+ * the text would break adaptive thinking continuity and server-side
+ * compaction.
+ *
+ * This is the agent's working memory, not a projection: it is not rebuilt from
+ * `events` and a thread replay leaves it alone. The user-visible transcript
+ * lives in `messages`.
+ */
+export const masterMessages = sqliteTable(
+  "master_messages",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspaceId").notNull(),
+    threadId: text("threadId").notNull(),
+    /** Monotonic per thread; the read order of the conversation. */
+    seq: integer("seq").notNull(),
+    role: text("role").notNull().$type<MasterMessageRole>(),
+    content: json<unknown>("content").notNull(),
+    createdAt: text("createdAt").notNull(),
+  },
+  (table) => [index("master_messages_thread_idx").on(table.threadId, table.seq)],
+);
+
+/** One row per thread: the serialised `MasterThreadState` (M3). */
+export const masterState = sqliteTable("master_state", {
+  threadId: text("threadId").primaryKey(),
+  workspaceId: text("workspaceId").notNull(),
+  state: json<unknown>("state").notNull(),
+  updatedAt: text("updatedAt").notNull(),
+});
+
 /** Machine-wide settings; a single row keyed `app`. */
 export const settings = sqliteTable("settings", {
   key: text("key").primaryKey(),
@@ -304,6 +342,8 @@ export type ApprovalRow = typeof approvals.$inferSelect;
 export type MemoryRow = typeof memories.$inferSelect;
 export type MemoryLinkRow = typeof memoryLinks.$inferSelect;
 export type EventRow = typeof events.$inferSelect;
+export type MasterMessageRow = typeof masterMessages.$inferSelect;
+export type MasterStateRow = typeof masterState.$inferSelect;
 
 /** Every table a thread-scoped rebuild must clear before replaying. */
 export const THREAD_SCOPED_TABLES = [

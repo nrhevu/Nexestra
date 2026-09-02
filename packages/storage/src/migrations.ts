@@ -39,4 +39,12 @@ export const MIGRATIONS: readonly Migration[] = [
       "CREATE TABLE `workspaces` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`name` text NOT NULL,\n\t`rootPath` text NOT NULL,\n\t`shortLabel` text NOT NULL,\n\t`defaultBranch` text DEFAULT 'main' NOT NULL,\n\t`settings` text NOT NULL,\n\t`createdAt` text NOT NULL,\n\t`updatedAt` text NOT NULL\n);",
     ],
   },
+  {
+    tag: "0001_master_runtime",
+    statements: [
+      "CREATE TABLE `master_messages` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`workspaceId` text NOT NULL,\n\t`threadId` text NOT NULL,\n\t`seq` integer NOT NULL,\n\t`role` text NOT NULL,\n\t`content` text NOT NULL,\n\t`createdAt` text NOT NULL\n);",
+      "CREATE INDEX `master_messages_thread_idx` ON `master_messages` (`threadId`,`seq`);",
+      "CREATE TABLE `master_state` (\n\t`threadId` text PRIMARY KEY NOT NULL,\n\t`workspaceId` text NOT NULL,\n\t`state` text NOT NULL,\n\t`updatedAt` text NOT NULL\n);",
+    ],
+  },
 ];

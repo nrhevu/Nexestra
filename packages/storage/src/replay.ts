@@ -235,6 +235,18 @@ function applyEvent(store: NexestraStore, event: NexestraEvent): void {
       // Workspace-level state is not part of a thread rebuild.
       break;
 
+    case "master.started":
+    case "master.text_delta":
+    case "master.tool_call":
+    case "master.tool_result":
+    case "master.question":
+    case "master.usage":
+    case "master.error":
+    case "master.done":
+      // Narration of a Master turn: no projection row hangs off it. The durable
+      // results of the turn arrive as ordinary entity events.
+      break;
+
     default: {
       const exhaustive: never = event.type;
       throw new Error(`unhandled event type ${String(exhaustive)}`);
