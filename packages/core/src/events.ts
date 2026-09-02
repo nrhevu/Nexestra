@@ -11,6 +11,10 @@ import { IdSchema, TimestampSchema } from "./domain/common.js";
  * any need for the replayer to know how a patch was applied.
  */
 export const NexestraEventTypeSchema = z.enum([
+  // agent
+  "agent.created",
+  "agent.updated",
+  "agent.deleted",
   // workspace
   "workspace.created",
   "workspace.updated",
@@ -117,6 +121,8 @@ export type NexestraEvent = z.infer<typeof NexestraEventSchema>;
 
 /** Event types that carry an entity snapshot as their payload. */
 export const ENTITY_SNAPSHOT_EVENTS: readonly NexestraEventType[] = [
+  "agent.created",
+  "agent.updated",
   "workspace.created",
   "workspace.updated",
   "thread.created",

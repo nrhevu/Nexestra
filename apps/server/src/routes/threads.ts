@@ -7,7 +7,7 @@ import {
 } from "@nexestra/core";
 import type { NexestraStore } from "@nexestra/storage";
 import { Hono } from "hono";
-import { body, required } from "../errors.js";
+import { badRequest, body, required } from "../errors.js";
 
 export function threadRoutes(store: NexestraStore) {
   const thread = (id: string) => required(store.getThread(id), "thread");
@@ -18,6 +18,7 @@ export function threadRoutes(store: NexestraStore) {
     .post("/", async (c) => {
       const input = await body(c, CreateThreadRequestSchema);
       required(store.getWorkspace(input.workspaceId), "workspace");
+      if (input.agentId) validateMasterAgent(store, input.workspaceId, input.agentId);
       return c.json(store.createThread(input), 201);
     })
 
@@ -25,8 +26,10 @@ export function threadRoutes(store: NexestraStore) {
 
     .patch("/:threadId", async (c) => {
       const id = c.req.param("threadId");
-      thread(id);
-      return c.json(store.updateThread(id, await body(c, UpdateThreadRequestSchema)));
+      const current = thread(id);
+      const patch = await body(c, UpdateThreadRequestSchema);
+      if (patch.agentId) validateMasterAgent(store, current.workspaceId, patch.agentId);
+      return c.json(store.updateThread(id, patch));
     })
 
     .get("/:threadId/messages", (c) => {
@@ -74,4 +77,11 @@ export function threadRoutes(store: NexestraStore) {
         store.readThreadEvents(id, after === undefined ? undefined : Number.parseInt(after, 10)),
       );
     });
+}
+
+function validateMasterAgent(store: NexestraStore, workspaceId: string, agentId: string): void {
+  const agent = required(store.getAgent(agentId), "agent");
+  if (agent.workspaceId !== workspaceId || agent.harness !== "nexestra" || !agent.enabled) {
+    throw badRequest("Select an enabled Nexestra agent from this workspace.");
+  }
 }

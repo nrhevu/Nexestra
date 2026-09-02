@@ -7,6 +7,7 @@ import { ExecutionRuntime, type ExecutionRuntimeOptions } from "./execution/runt
 import { createMasterLlm } from "./master/llm.js";
 import { ProviderCredentialStore, providerCredentialPath } from "./master/provider-credentials.js";
 import { MasterRunner, type MasterRunnerOptions } from "./master/runner.js";
+import { agentRoutes } from "./routes/agents.js";
 import { approvalRoutes } from "./routes/approvals.js";
 import { artifactRoutes } from "./routes/artifacts.js";
 import { executionRoutes } from "./routes/execution.js";
@@ -70,6 +71,7 @@ export function createApp(store: NexestraStore, options: CreateAppOptions = {}) 
       return c.json(health);
     })
     .route("/settings", settingsRoutes(store, runner, credentials, options.providerFetch))
+    .route("/agents", agentRoutes(store))
     .route("/workspaces", workspaceRoutes(store))
     .route("/threads", threadRoutes(store))
     .route("/threads", masterRoutes(store, runner))
@@ -118,12 +120,24 @@ function resolveRunner(
   const runtime = createMasterLlm({
     settings: () => store.getSettings(),
     credentials,
+    selection: (threadId) => {
+      const agentId = store.getThread(threadId)?.agentId;
+      const agent = agentId ? store.getAgent(agentId) : null;
+      if (!agent?.enabled || agent.harness !== "nexestra" || !agent.providerId || !agent.model) {
+        return undefined;
+      }
+      return {
+        providerId: agent.providerId,
+        model: agent.model,
+        ...(agent.instructions ? { instructions: agent.instructions } : {}),
+      };
+    },
     ...(providerFetch ? { fetch: providerFetch } : {}),
   });
   return new MasterRunner({
     store,
     llm: runtime.client,
-    runtime: () => runtime.info(),
+    runtime: (threadId) => runtime.info(threadId),
     execution: execution.host,
   });
 }

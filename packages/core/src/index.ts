@@ -2,6 +2,7 @@
 
 export * from "./api.js";
 export * from "./api-http.js";
+export * from "./domain/agent.js";
 export * from "./domain/approval.js";
 export * from "./domain/artifact.js";
 export * from "./domain/common.js";

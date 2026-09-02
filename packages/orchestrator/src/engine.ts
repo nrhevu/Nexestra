@@ -14,6 +14,7 @@
  */
 import type {
   AcceptanceCriterion,
+  Agent,
   HarnessAdapter,
   HarnessEvent,
   HarnessId,
@@ -100,6 +101,8 @@ interface LiveRun {
   controller: AbortController;
   startedAt: string;
 }
+
+type WorkerAgent = Agent & { harness: "codex" | "opencode" };
 
 /** A task is ready when every dependency is done and it has not started yet. */
 export function selectReadyTasks(tasks: readonly Task[]): Task[] {
@@ -453,6 +456,7 @@ export class ThreadEngine {
     for (;;) {
       if (signal.aborted) return;
       let task = this.requireTask(taskId);
+      const agent = this.workerAgentFor(task);
       const limit = Math.min(task.maxAttempts, this.config.maxAttempts);
 
       if (task.attempts >= limit) {
@@ -494,7 +498,9 @@ export class ThreadEngine {
         failures,
         reviewFindings,
         verification,
-        ...(options.instructions ? { extra: options.instructions } : {}),
+        ...(agent?.instructions || options.instructions
+          ? { extra: [agent?.instructions, options.instructions].filter(Boolean).join("\n\n") }
+          : {}),
       });
       const runSpec = buildRunSpec({
         task,
@@ -502,7 +508,14 @@ export class ThreadEngine {
         cwd: worktree.path,
         instructions,
         config: this.config,
-        ...(options.harnessConfig ? { overrides: options.harnessConfig } : {}),
+        ...(agent?.model || options.harnessConfig
+          ? {
+              overrides: {
+                ...(agent?.model ? { model: agent.model } : {}),
+                ...options.harnessConfig,
+              },
+            }
+          : {}),
       });
 
       const gate = evaluateGate(runSpec, task.harnessConfig, this.config);
@@ -1301,7 +1314,8 @@ export class ThreadEngine {
   }
 
   private harnessFor(task: Task, override?: HarnessId): { id: HarnessId; adapter: HarnessAdapter } {
-    const wanted = override ?? task.assignedHarness;
+    const agent = this.workerAgentFor(task);
+    const wanted = override ?? agent?.harness ?? task.assignedHarness;
     if (wanted) {
       const adapter = this.adapters[wanted];
       if (adapter) return { id: wanted, adapter };
@@ -1310,6 +1324,17 @@ export class ThreadEngine {
     const first = Object.entries(this.adapters).find(([, adapter]) => adapter !== undefined);
     if (!first?.[1]) throw new Error("no harness adapters registered");
     return { id: first[0] as HarnessId, adapter: first[1] };
+  }
+
+  private workerAgentFor(task: Task): WorkerAgent | undefined {
+    if (!task.agentId) return undefined;
+    const agent = this.store.getAgent(task.agentId);
+    if (!agent) throw new Error(`agent "${task.agentId}" is not configured`);
+    if (!agent.enabled) throw new Error(`agent "${agent.name}" is disabled`);
+    if (agent.harness === "nexestra") {
+      throw new Error(`Nexestra agent "${agent.name}" cannot execute a coding task`);
+    }
+    return { ...agent, harness: agent.harness };
   }
 
   /** A harness other than the executor, for the cross-review pass. */

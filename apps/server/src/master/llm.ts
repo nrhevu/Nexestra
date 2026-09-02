@@ -12,7 +12,13 @@ export interface MasterLlmRuntime {
   /** A stable proxy; each turn resolves the latest persisted provider settings. */
   readonly client: LlmClient;
   /** Read-only status for health checks and the Settings surface. */
-  info(): MasterRuntimeInfo;
+  info(threadId?: string): MasterRuntimeInfo;
+}
+
+export interface MasterAgentSelection {
+  readonly providerId: string;
+  readonly model: string;
+  readonly instructions?: string;
 }
 
 export interface CreateMasterLlmOptions {
@@ -20,6 +26,8 @@ export interface CreateMasterLlmOptions {
   readonly credentials?: ProviderCredentialReader;
   readonly env?: NodeJS.ProcessEnv;
   readonly fetch?: typeof globalThis.fetch;
+  /** Resolve the Nexestra agent assigned to a thread, if one is selected. */
+  readonly selection?: (threadId: string) => MasterAgentSelection | undefined;
 }
 
 export interface ProviderCredentialReader {
@@ -43,13 +51,20 @@ export function createMasterLlm(options: CreateMasterLlmOptions = {}): MasterLlm
   const env = options.env ?? process.env;
   const clients = new Map<string, LlmClient>();
 
-  const resolve = (): ResolvedProvider => resolveProvider(readSettings(), env, options.credentials);
+  const resolve = (threadId?: string): ResolvedProvider =>
+    resolveProvider(
+      readSettings(),
+      env,
+      options.credentials,
+      threadId ? options.selection?.(threadId) : undefined,
+    );
   const client: LlmClient = {
     get model() {
       return resolve().provider?.model ?? "unconfigured";
     },
     async *stream(request) {
-      const selected = resolve();
+      const profile = request.threadId ? options.selection?.(request.threadId) : undefined;
+      const selected = resolveProvider(readSettings(), env, options.credentials, profile);
       if (!selected.provider || !selected.ready) {
         throw new Error(
           selected.message ??
@@ -63,14 +78,26 @@ export function createMasterLlm(options: CreateMasterLlmOptions = {}): MasterLlm
         current = clientFor(selected.provider, selected.credential, options.fetch);
         clients.set(cacheKey, current);
       }
-      for await (const event of current.stream(request)) yield event;
+      const effectiveRequest = profile?.instructions
+        ? {
+            ...request,
+            systemSuffix: [
+              request.systemSuffix,
+              "# Selected agent instructions",
+              profile.instructions,
+            ]
+              .filter(Boolean)
+              .join("\n\n"),
+          }
+        : request;
+      for await (const event of current.stream(effectiveRequest)) yield event;
     },
   };
 
   return {
     client,
-    info() {
-      return runtimeInfo(resolve());
+    info(threadId) {
+      return runtimeInfo(resolve(threadId));
     },
   };
 }
@@ -79,16 +106,28 @@ export function resolveProvider(
   settings: AppSettings,
   env: NodeJS.ProcessEnv = process.env,
   credentials?: ProviderCredentialReader,
+  selection?: MasterAgentSelection,
 ): ResolvedProvider {
   const enabled = settings.masterProviders.filter((provider) => provider.enabled);
-  let provider = settings.activeMasterProviderId
-    ? enabled.find((entry) => entry.id === settings.activeMasterProviderId)
-    : enabled.find(
-        (entry) =>
-          credentialFor(entry, env, credentials) !== undefined ||
-          masterProviderAuth(entry) === "none",
-      );
+  let provider = selection
+    ? enabled.find((entry) => entry.id === selection.providerId)
+    : settings.activeMasterProviderId
+      ? enabled.find((entry) => entry.id === settings.activeMasterProviderId)
+      : enabled.find(
+          (entry) =>
+            credentialFor(entry, env, credentials) !== undefined ||
+            masterProviderAuth(entry) === "none",
+        );
 
+  if (!provider && selection) {
+    return {
+      provider: null,
+      credential: undefined,
+      credentialPresent: false,
+      ready: false,
+      message: `The selected agent provider "${selection.providerId}" is missing or disabled.`,
+    };
+  }
   if (!provider && settings.activeMasterProviderId) {
     return {
       provider: null,
@@ -108,6 +147,8 @@ export function resolveProvider(
       message: "No Master provider is configured.",
     };
   }
+
+  if (selection) provider = { ...provider, model: selection.model };
 
   const credential = credentialFor(provider, env, credentials);
   const credentialPresent = credential !== undefined || masterProviderAuth(provider) === "none";

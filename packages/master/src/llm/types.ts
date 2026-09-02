@@ -22,6 +22,8 @@ export type LlmToolResultBlock = Anthropic.Beta.BetaToolResultBlockParam;
 export type LlmToolUseBlock = Anthropic.Beta.BetaToolUseBlock;
 
 export interface LlmRequest {
+  /** Conversation identity for callers that resolve a model profile per thread. */
+  readonly threadId?: string;
   /** Stable, cached prefix. */
   readonly system: string;
   /** Volatile per-turn context appended after the cached prefix. */

@@ -41,7 +41,9 @@ export const MIGRATIONS: readonly Migration[] = [
   },
   {
     tag: "0001_task_merge_state",
-    statements: ["ALTER TABLE `tasks` ADD `mergeState` text;"],
+    statements: [
+      "ALTER TABLE `tasks` ADD `mergeState` text;",
+    ],
   },
   {
     tag: "0002_master_runtime",
@@ -49,6 +51,15 @@ export const MIGRATIONS: readonly Migration[] = [
       "CREATE TABLE `master_messages` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`workspaceId` text NOT NULL,\n\t`threadId` text NOT NULL,\n\t`seq` integer NOT NULL,\n\t`role` text NOT NULL,\n\t`content` text NOT NULL,\n\t`createdAt` text NOT NULL\n);",
       "CREATE INDEX `master_messages_thread_idx` ON `master_messages` (`threadId`,`seq`);",
       "CREATE TABLE `master_state` (\n\t`threadId` text PRIMARY KEY NOT NULL,\n\t`workspaceId` text NOT NULL,\n\t`state` text NOT NULL,\n\t`updatedAt` text NOT NULL\n);",
+    ],
+  },
+  {
+    tag: "0003_first_vindicator",
+    statements: [
+      "CREATE TABLE `agents` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`workspaceId` text NOT NULL,\n\t`name` text NOT NULL,\n\t`description` text DEFAULT '' NOT NULL,\n\t`instructions` text DEFAULT '' NOT NULL,\n\t`harness` text NOT NULL,\n\t`providerId` text,\n\t`model` text,\n\t`enabled` integer DEFAULT true NOT NULL,\n\t`createdAt` text NOT NULL,\n\t`updatedAt` text NOT NULL\n);",
+      "CREATE INDEX `agents_workspace_idx` ON `agents` (`workspaceId`,`createdAt`);",
+      "ALTER TABLE `tasks` ADD `agentId` text;",
+      "ALTER TABLE `threads` ADD `agentId` text;",
     ],
   },
 ];

@@ -1,5 +1,6 @@
 import type {
   AcceptanceCriterion,
+  Agent,
   Artifact,
   Decision,
   HarnessConfig,
@@ -49,6 +50,24 @@ export const workspaces = sqliteTable("workspaces", {
   updatedAt: text("updatedAt").notNull(),
 });
 
+export const agents = sqliteTable(
+  "agents",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspaceId").notNull(),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    instructions: text("instructions").notNull().default(""),
+    harness: text("harness").notNull().$type<Agent["harness"]>(),
+    providerId: text("providerId"),
+    model: text("model"),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    createdAt: text("createdAt").notNull(),
+    updatedAt: text("updatedAt").notNull(),
+  },
+  (table) => [index("agents_workspace_idx").on(table.workspaceId, table.createdAt)],
+);
+
 export const threads = sqliteTable(
   "threads",
   {
@@ -57,6 +76,7 @@ export const threads = sqliteTable(
     title: text("title").notNull(),
     phase: text("phase").notNull().$type<Thread["phase"]>(),
     summary: text("summary").notNull().default(""),
+    agentId: text("agentId"),
     specId: text("specId"),
     planId: text("planId"),
     budgetUSD: real("budgetUSD").notNull().default(20),
@@ -133,6 +153,7 @@ export const tasks = sqliteTable(
     title: text("title").notNull(),
     description: text("description").notNull().default(""),
     dependsOn: json<string[]>("dependsOn").notNull(),
+    agentId: text("agentId"),
     assignedHarness: text("assignedHarness").$type<Task["assignedHarness"]>(),
     harnessConfig: json<HarnessConfig>("harnessConfig").notNull(),
     status: text("status").notNull().$type<Task["status"]>(),
@@ -331,6 +352,7 @@ export const settings = sqliteTable("settings", {
 });
 
 export type WorkspaceRow = typeof workspaces.$inferSelect;
+export type AgentRow = typeof agents.$inferSelect;
 export type ThreadRow = typeof threads.$inferSelect;
 export type MessageRow = typeof messages.$inferSelect;
 export type SpecRow = typeof specs.$inferSelect;

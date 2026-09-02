@@ -42,6 +42,34 @@ describe("Master provider resolution", () => {
     expect(selected.ready).toBe(true);
   });
 
+  it("uses a thread agent's provider and model instead of the global selection", () => {
+    const settings = AppSettingsSchema.parse({
+      activeMasterProviderId: "openai",
+      masterProviders: [
+        {
+          id: "openai",
+          name: "OpenAI",
+          protocol: "openai-responses",
+          baseUrl: "https://api.openai.com/v1",
+          model: "global-model",
+          auth: "api-key",
+        },
+      ],
+    });
+    const selected = resolveProvider(
+      settings,
+      {},
+      { get: () => "secret" },
+      {
+        providerId: "openai",
+        model: "agent-model",
+      },
+    );
+
+    expect(selected.provider?.model).toBe("agent-model");
+    expect(selected.ready).toBe(true);
+  });
+
   it("supports a custom loopback Responses provider without a credential", async () => {
     let called = "";
     const settings = AppSettingsSchema.parse({

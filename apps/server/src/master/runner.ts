@@ -62,7 +62,7 @@ const MAX_AUTO_CONTINUE_STEPS = 3;
 export interface MasterRunnerOptions {
   readonly store: NexestraStore;
   readonly llm: LlmClient;
-  readonly runtime: MasterRuntimeInfo | (() => MasterRuntimeInfo);
+  readonly runtime: MasterRuntimeInfo | ((threadId?: string) => MasterRuntimeInfo);
   /** Defaults to `NotYetAvailableExecutionHost` until the orchestrator lands. */
   readonly execution?: ExecutionHost;
   readonly prompts?: MasterPromptSet;
@@ -95,9 +95,7 @@ export class MasterRunner {
   }
 
   get runtime(): MasterRuntimeInfo {
-    return typeof this.options.runtime === "function"
-      ? this.options.runtime()
-      : this.options.runtime;
+    return this.runtimeFor();
   }
 
   isBusy(threadId: string): boolean {
@@ -185,7 +183,7 @@ export class MasterRunner {
       usage: state.usage,
       budgetUSD: state.budgetUSD,
       lastOutcome: this.outcomes.get(threadId) ?? null,
-      runtime: this.runtime,
+      runtime: this.runtimeFor(threadId),
     };
   }
 
@@ -224,6 +222,12 @@ export class MasterRunner {
   }
 
   /* --------------------------------------------------------------- internals */
+
+  private runtimeFor(threadId?: string): MasterRuntimeInfo {
+    return typeof this.options.runtime === "function"
+      ? this.options.runtime(threadId)
+      : this.options.runtime;
+  }
 
   private sessionFor(threadId: string): MasterSession {
     const existing = this.sessions.get(threadId);

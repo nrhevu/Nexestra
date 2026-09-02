@@ -33,6 +33,8 @@ export const ThreadSchema = EntityBaseSchema.extend({
   title: z.string().min(1),
   phase: ThreadPhaseSchema,
   summary: z.string().default(""),
+  /** Nexestra agent profile used by the Master for this conversation. */
+  agentId: IdSchema.optional(),
   /** Current frozen spec, if any. */
   specId: IdSchema.optional(),
   /** Current plan, if any. */

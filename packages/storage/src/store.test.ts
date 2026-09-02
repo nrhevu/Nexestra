@@ -47,6 +47,28 @@ describe("commands append events", () => {
     expect(events[0]?.seq).toBe(0);
   });
 
+  it("persists reusable agents with workspace-level events", () => {
+    const { workspace } = fixture();
+    const agent = store.createAgent({
+      workspaceId: workspace.id,
+      name: "Planner",
+      harness: "nexestra",
+      providerId: "openai",
+      model: "gpt-test",
+      instructions: "Focus on architecture.",
+    });
+
+    expect(store.getAgent(agent.id)).toEqual(agent);
+    expect(store.listAgents(workspace.id)).toEqual([agent]);
+    expect(store.events.readWorkspace(workspace.id).map((event) => event.type)).toContain(
+      "agent.created",
+    );
+
+    expect(store.updateAgent(agent.id, { name: "Lead planner" }).name).toBe("Lead planner");
+    store.deleteAgent(agent.id);
+    expect(store.getAgent(agent.id)).toBeNull();
+  });
+
   it("sequences thread events monotonically from zero", () => {
     const { thread } = fixture();
     store.addMessage({ threadId: thread.id, content: "hello" });

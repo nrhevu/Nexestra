@@ -1,4 +1,6 @@
 import {
+  type Agent,
+  AgentSchema,
   type Approval,
   ApprovalSchema,
   type AppSettings,
@@ -37,6 +39,7 @@ import { type NexestraDatabase, type OpenDatabaseOptions, openDatabase } from ".
 import { EventStore } from "./event-store.js";
 import { newId, now } from "./ids.js";
 import {
+  fromAgent,
   fromApproval,
   fromArtifact,
   fromMemory,
@@ -48,6 +51,7 @@ import {
   fromTask,
   fromThread,
   fromWorkspace,
+  toAgent,
   toApproval,
   toArtifact,
   toMemory,
@@ -194,6 +198,100 @@ export class NexestraStore {
 
   // --------------------------------------------------------------- threads
 
+  // ---------------------------------------------------------------- agents
+
+  listAgents(workspaceId?: string): Agent[] {
+    const query = this.db.select().from(t.agents);
+    const rows = workspaceId
+      ? query.where(eq(t.agents.workspaceId, workspaceId)).orderBy(asc(t.agents.createdAt)).all()
+      : query.orderBy(asc(t.agents.createdAt)).all();
+    return rows.map(toAgent);
+  }
+
+  getAgent(id: string): Agent | null {
+    const row = this.db.select().from(t.agents).where(eq(t.agents.id, id)).get();
+    return row ? toAgent(row) : null;
+  }
+
+  createAgent(input: {
+    workspaceId: string;
+    name: string;
+    description?: string;
+    instructions?: string;
+    harness: Agent["harness"];
+    providerId?: string;
+    model?: string;
+    enabled?: boolean;
+    id?: string;
+    createdAt?: string;
+    updatedAt?: string;
+  }): Agent {
+    if (!this.getWorkspace(input.workspaceId)) {
+      throw new NotFoundError("workspace", input.workspaceId);
+    }
+    const at = input.createdAt ?? now();
+    const agent = AgentSchema.parse({
+      id: input.id ?? newId("agent"),
+      workspaceId: input.workspaceId,
+      name: input.name,
+      description: input.description ?? "",
+      instructions: input.instructions ?? "",
+      harness: input.harness,
+      providerId: input.providerId,
+      model: input.model,
+      enabled: input.enabled ?? true,
+      createdAt: at,
+      updatedAt: input.updatedAt ?? at,
+    });
+
+    return this.events.transaction(() => {
+      this.db.insert(t.agents).values(fromAgent(agent)).run();
+      this.events.append({
+        workspaceId: agent.workspaceId,
+        type: "agent.created",
+        payload: agent,
+        createdAt: agent.createdAt,
+      });
+      return agent;
+    });
+  }
+
+  updateAgent(
+    id: string,
+    patch: Partial<Omit<Agent, "id" | "workspaceId" | "createdAt" | "updatedAt">>,
+  ): Agent {
+    const current = this.getAgent(id);
+    if (!current) throw new NotFoundError("agent", id);
+    const agent = AgentSchema.parse({
+      ...current,
+      ...stripUndefined(patch),
+      updatedAt: now(),
+    });
+
+    return this.events.transaction(() => {
+      this.db.update(t.agents).set(fromAgent(agent)).where(eq(t.agents.id, id)).run();
+      this.events.append({
+        workspaceId: agent.workspaceId,
+        type: "agent.updated",
+        payload: agent,
+      });
+      return agent;
+    });
+  }
+
+  deleteAgent(id: string): void {
+    const current = this.getAgent(id);
+    if (!current) throw new NotFoundError("agent", id);
+    this.events.transaction(() => {
+      this.db.delete(t.agents).where(eq(t.agents.id, id)).run();
+      this.events.append({
+        workspaceId: current.workspaceId,
+        type: "agent.deleted",
+        payload: { id },
+      });
+    });
+  }
+
   listThreads(workspaceId?: string): Thread[] {
     const query = this.db.select().from(t.threads);
     const rows = workspaceId
@@ -211,6 +309,7 @@ export class NexestraStore {
     workspaceId: string;
     title: string;
     summary?: string;
+    agentId?: string;
     phase?: ThreadPhase;
     budgetUSD?: number;
     id?: string;
@@ -231,6 +330,7 @@ export class NexestraStore {
       title: input.title,
       phase: input.phase ?? "intake",
       summary: input.summary ?? "",
+      agentId: input.agentId,
       specId: input.specId,
       planId: input.planId,
       budgetUSD: input.budgetUSD ?? this.getSettings().budgetUSD,
@@ -261,6 +361,7 @@ export class NexestraStore {
     patch: {
       title?: string;
       summary?: string;
+      agentId?: string | null;
       phase?: ThreadPhase;
       budgetUSD?: number;
       costUSD?: number;
@@ -274,7 +375,8 @@ export class NexestraStore {
     const at = now();
     const thread = ThreadSchema.parse({
       ...current,
-      ...stripUndefined(patch),
+      ...stripUndefined({ ...patch, agentId: undefined }),
+      ...(patch.agentId !== undefined ? { agentId: patch.agentId ?? undefined } : {}),
       updatedAt: at,
       lastActivityAt: at,
     });
@@ -500,6 +602,7 @@ export class NexestraStore {
     planId?: string;
     description?: string;
     dependsOn?: string[];
+    agentId?: string;
     assignedHarness?: Task["assignedHarness"];
     harnessConfig?: Partial<Task["harnessConfig"]>;
     status?: Task["status"];
@@ -528,6 +631,7 @@ export class NexestraStore {
       title: input.title,
       description: input.description ?? "",
       dependsOn: input.dependsOn ?? [],
+      agentId: input.agentId,
       assignedHarness: input.assignedHarness,
       harnessConfig: input.harnessConfig ?? {},
       status: input.status ?? "todo",
@@ -558,15 +662,19 @@ export class NexestraStore {
   updateTask(
     id: string,
     patch: Partial<
-      Omit<Task, "id" | "workspaceId" | "threadId" | "createdAt" | "updatedAt" | "harnessConfig">
-    > & { harnessConfig?: Partial<Task["harnessConfig"]> },
+      Omit<
+        Task,
+        "id" | "workspaceId" | "threadId" | "createdAt" | "updatedAt" | "harnessConfig" | "agentId"
+      >
+    > & { agentId?: string | null; harnessConfig?: Partial<Task["harnessConfig"]> },
   ): Task {
     const current = this.getTask(id);
     if (!current) throw new NotFoundError("task", id);
 
     const task = TaskSchema.parse({
       ...current,
-      ...stripUndefined(patch),
+      ...stripUndefined({ ...patch, agentId: undefined }),
+      ...(patch.agentId !== undefined ? { agentId: patch.agentId ?? undefined } : {}),
       harnessConfig: patch.harnessConfig
         ? { ...current.harnessConfig, ...patch.harnessConfig }
         : current.harnessConfig,

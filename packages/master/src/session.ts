@@ -248,6 +248,7 @@ export function createMasterSession(config: MasterSessionConfig): MasterSession 
       let final: LlmMessage | null = null;
       try {
         for await (const event of config.llm.stream({
+          threadId: config.threadId,
           system: systemPromptFor(state.phase, prompts),
           systemSuffix: renderContext(state),
           messages: history,
@@ -290,7 +291,7 @@ export function createMasterSession(config: MasterSessionConfig): MasterSession 
         return;
       }
 
-      const turnUsage = toUsageTotals(final.usage, config.llm.model);
+      const turnUsage = toUsageTotals(final.usage, final.model || config.llm.model);
       state = { ...state, usage: addUsage(state.usage, turnUsage) };
       yield { type: "usage", turn: turnUsage, thread: state.usage, budgetUSD: state.budgetUSD };
 

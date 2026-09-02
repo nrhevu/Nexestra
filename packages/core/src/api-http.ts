@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AgentConfigurationSchema, AgentFieldsSchema } from "./domain/agent.js";
 import { ApprovalKindSchema, ApprovalStatusSchema } from "./domain/approval.js";
 import { HarnessIdSchema, IdSchema, SandboxLevelSchema } from "./domain/common.js";
 import { MemoryLinkTypeSchema, MemorySourceSchema, MemoryTypeSchema } from "./domain/memory.js";
@@ -69,6 +70,7 @@ export const CreateThreadRequestSchema = z.object({
   workspaceId: IdSchema,
   title: z.string().min(1),
   summary: z.string().optional(),
+  agentId: IdSchema.optional(),
   phase: ThreadPhaseSchema.optional(),
   budgetUSD: z.number().nonnegative().optional(),
 });
@@ -77,10 +79,31 @@ export type CreateThreadRequest = z.infer<typeof CreateThreadRequestSchema>;
 export const UpdateThreadRequestSchema = z.object({
   title: z.string().min(1).optional(),
   summary: z.string().optional(),
+  agentId: IdSchema.nullable().optional(),
   phase: ThreadPhaseSchema.optional(),
   budgetUSD: z.number().nonnegative().optional(),
 });
 export type UpdateThreadRequest = z.infer<typeof UpdateThreadRequestSchema>;
+
+// ------------------------------------------------------------------ agents
+
+export const CreateAgentRequestSchema = z
+  .object({
+    workspaceId: IdSchema,
+    ...AgentConfigurationSchema.shape,
+  })
+  .superRefine((agent, context) => {
+    const parsed = AgentConfigurationSchema.safeParse(agent);
+    if (parsed.success) return;
+    for (const issue of parsed.error.issues) {
+      if (issue.code !== "custom") continue;
+      context.addIssue({ code: "custom", path: issue.path, message: issue.message });
+    }
+  });
+export type CreateAgentRequest = z.infer<typeof CreateAgentRequestSchema>;
+
+export const UpdateAgentRequestSchema = AgentFieldsSchema.partial();
+export type UpdateAgentRequest = z.infer<typeof UpdateAgentRequestSchema>;
 
 // ---------------------------------------------------------------- messages
 
@@ -124,6 +147,7 @@ export const CreateTaskRequestSchema = z.object({
   title: z.string().min(1),
   description: z.string().optional(),
   dependsOn: z.array(IdSchema).optional(),
+  agentId: IdSchema.optional(),
   assignedHarness: HarnessIdSchema.optional(),
   harnessConfig: HarnessConfigSchema.partial().optional(),
   status: TaskStatusSchema.optional(),
@@ -136,6 +160,7 @@ export const UpdateTaskRequestSchema = z.object({
   title: z.string().min(1).optional(),
   description: z.string().optional(),
   dependsOn: z.array(IdSchema).optional(),
+  agentId: IdSchema.nullable().optional(),
   assignedHarness: HarnessIdSchema.nullable().optional(),
   harnessConfig: HarnessConfigSchema.partial().optional(),
   status: TaskStatusSchema.optional(),

@@ -98,6 +98,8 @@ export const TaskSchema = EntityBaseSchema.extend({
   description: z.string().default(""),
   /** Ids of tasks that must reach `done` first (DAG edges). */
   dependsOn: z.array(IdSchema).default([]),
+  /** Reusable Codex/OpenCode agent profile assigned to this task. */
+  agentId: IdSchema.optional(),
   assignedHarness: HarnessIdSchema.optional(),
   harnessConfig: HarnessConfigSchema,
   status: TaskStatusSchema,

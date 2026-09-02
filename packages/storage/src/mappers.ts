@@ -1,4 +1,5 @@
 import type {
+  Agent,
   Approval,
   Artifact,
   Memory,
@@ -14,6 +15,7 @@ import type {
   Workspace,
 } from "@nexestra/core";
 import type {
+  AgentRow,
   ApprovalRow,
   ArtifactRow,
   EventRow,
@@ -58,6 +60,38 @@ export function fromWorkspace(workspace: Workspace): WorkspaceRow {
   };
 }
 
+export function toAgent(row: AgentRow): Agent {
+  return {
+    id: row.id,
+    workspaceId: row.workspaceId,
+    name: row.name,
+    description: row.description,
+    instructions: row.instructions,
+    harness: row.harness,
+    providerId: opt(row.providerId),
+    model: opt(row.model),
+    enabled: row.enabled,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+export function fromAgent(agent: Agent): AgentRow {
+  return {
+    id: agent.id,
+    workspaceId: agent.workspaceId,
+    name: agent.name,
+    description: agent.description,
+    instructions: agent.instructions,
+    harness: agent.harness,
+    providerId: agent.providerId ?? null,
+    model: agent.model ?? null,
+    enabled: agent.enabled,
+    createdAt: agent.createdAt,
+    updatedAt: agent.updatedAt,
+  };
+}
+
 export function toThread(row: ThreadRow): Thread {
   return {
     id: row.id,
@@ -65,6 +99,7 @@ export function toThread(row: ThreadRow): Thread {
     title: row.title,
     phase: row.phase,
     summary: row.summary,
+    agentId: opt(row.agentId),
     specId: opt(row.specId),
     planId: opt(row.planId),
     budgetUSD: row.budgetUSD,
@@ -82,6 +117,7 @@ export function fromThread(thread: Thread): ThreadRow {
     title: thread.title,
     phase: thread.phase,
     summary: thread.summary,
+    agentId: thread.agentId ?? null,
     specId: thread.specId ?? null,
     planId: thread.planId ?? null,
     budgetUSD: thread.budgetUSD,
@@ -162,6 +198,7 @@ export function toTask(row: TaskRow): Task {
     title: row.title,
     description: row.description,
     dependsOn: row.dependsOn,
+    agentId: opt(row.agentId),
     assignedHarness: opt(row.assignedHarness),
     harnessConfig: row.harnessConfig,
     status: row.status,
@@ -185,6 +222,7 @@ export function fromTask(task: Task): TaskRow {
     title: task.title,
     description: task.description,
     dependsOn: task.dependsOn,
+    agentId: task.agentId ?? null,
     assignedHarness: task.assignedHarness ?? null,
     harnessConfig: task.harnessConfig,
     status: task.status,

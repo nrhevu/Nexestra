@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  AgentSchema,
   type ApiError,
   ApprovalSchema,
   HealthResponseSchema,
@@ -149,6 +150,74 @@ describe("threads and messages", () => {
     const response = await get("/api/threads/nope");
     expect(response.status).toBe(404);
     expect(((await response.json()) as ApiError).error.code).toBe("not_found");
+  });
+});
+
+describe("agents", () => {
+  it("creates agents and assigns the right kind to chat and tasks", async () => {
+    const masterResponse = await send("/api/agents", "POST", {
+      workspaceId: WORKSPACE,
+      name: "Research lead",
+      harness: "nexestra",
+      providerId: "openai",
+      model: "gpt-agent",
+      instructions: "Research before planning.",
+    });
+    expect(masterResponse.status, await masterResponse.clone().text()).toBe(201);
+    const master = AgentSchema.parse(await masterResponse.json());
+    const worker = AgentSchema.parse(
+      await (
+        await send("/api/agents", "POST", {
+          workspaceId: WORKSPACE,
+          name: "Codex builder",
+          harness: "codex",
+          model: "codex-agent-model",
+        })
+      ).json(),
+    );
+
+    expect(
+      AgentSchema.array().parse(await (await get(`/api/agents?workspaceId=${WORKSPACE}`)).json()),
+    ).toHaveLength(2);
+
+    const thread = ThreadSchema.parse(
+      await (await send(`/api/threads/${THREAD}`, "PATCH", { agentId: master.id })).json(),
+    );
+    expect(thread.agentId).toBe(master.id);
+    const state = (await (await get(`/api/threads/${THREAD}/master/state`)).json()) as {
+      runtime: { model: string; providerId?: string };
+    };
+    expect(state.runtime).toEqual(
+      expect.objectContaining({ model: "gpt-agent", providerId: "openai" }),
+    );
+
+    const task = store.listTasks(THREAD)[0];
+    expect(task).toBeDefined();
+    const assigned = TaskSchema.parse(
+      await (await send(`/api/tasks/${task?.id}`, "PATCH", { agentId: worker.id })).json(),
+    );
+    expect(assigned.agentId).toBe(worker.id);
+    expect(assigned.assignedHarness).toBe("codex");
+    expect(assigned.harnessConfig.model).toBe("codex-agent-model");
+  });
+
+  it("rejects using a worker as Master or deleting an assigned agent", async () => {
+    const workerResponse = await send("/api/agents", "POST", {
+      workspaceId: WORKSPACE,
+      name: "OpenCode builder",
+      harness: "opencode",
+    });
+    expect(workerResponse.status, await workerResponse.clone().text()).toBe(201);
+    const worker = AgentSchema.parse(await workerResponse.json());
+
+    expect((await send(`/api/threads/${THREAD}`, "PATCH", { agentId: worker.id })).status).toBe(
+      400,
+    );
+    const task = store.listTasks(THREAD)[0];
+    expect((await send(`/api/tasks/${task?.id}`, "PATCH", { agentId: worker.id })).status).toBe(
+      200,
+    );
+    expect((await send(`/api/agents/${worker.id}`, "DELETE")).status).toBe(409);
   });
 });
 

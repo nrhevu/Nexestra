@@ -231,6 +231,9 @@ function applyEvent(store: NexestraStore, event: NexestraEvent): void {
 
     case "workspace.created":
     case "workspace.updated":
+    case "agent.created":
+    case "agent.updated":
+    case "agent.deleted":
     case "settings.updated":
       // Workspace-level state is not part of a thread rebuild.
       break;
