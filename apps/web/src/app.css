@@ -870,6 +870,12 @@
   font-weight: 650;
 }
 
+.custom-provider-dialog__model-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--nx-space-2);
+}
+
 @media (max-width: 720px) {
   .provider-card__grid {
     grid-template-columns: 1fr;

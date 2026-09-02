@@ -69,6 +69,10 @@ export {
   OPENAI_MASTER_MODEL,
   type OpenAiLlmClientOptions,
 } from "./llm/openai.js";
+export {
+  createOpenAiChatLlmClient,
+  type OpenAiChatLlmClientOptions,
+} from "./llm/openai-chat.js";
 export type {
   LlmClient,
   LlmContentBlock,

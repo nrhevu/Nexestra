@@ -23,6 +23,8 @@ import { serveWebDist } from "./static.js";
 export interface CreateAppOptions {
   /** Replace local provider credential persistence in tests. */
   readonly credentials?: ProviderCredentialStore;
+  /** Replace outbound provider requests in tests. */
+  readonly providerFetch?: typeof globalThis.fetch;
   /**
    * Replace the Master runtime — a test injects `createFakeLlmClient` here
    * rather than reaching into the module graph.
@@ -49,7 +51,13 @@ export function createApp(store: NexestraStore, options: CreateAppOptions = {}) 
   const credentials =
     options.credentials ?? new ProviderCredentialStore(providerCredentialPath(store.file));
   const execution = resolveExecution(store, options.execution);
-  const runner = resolveRunner(store, options.master, execution, credentials);
+  const runner = resolveRunner(
+    store,
+    options.master,
+    execution,
+    credentials,
+    options.providerFetch,
+  );
   execution.attachMaster(runner);
 
   const api = new Hono()
@@ -61,7 +69,7 @@ export function createApp(store: NexestraStore, options: CreateAppOptions = {}) 
       };
       return c.json(health);
     })
-    .route("/settings", settingsRoutes(store, runner, credentials))
+    .route("/settings", settingsRoutes(store, runner, credentials, options.providerFetch))
     .route("/workspaces", workspaceRoutes(store))
     .route("/threads", threadRoutes(store))
     .route("/threads", masterRoutes(store, runner))
@@ -103,12 +111,14 @@ function resolveRunner(
   master: CreateAppOptions["master"],
   execution: ExecutionRuntime,
   credentials: ProviderCredentialStore,
+  providerFetch?: typeof globalThis.fetch,
 ): MasterRunner {
   if (master instanceof MasterRunner) return master;
   if (master) return new MasterRunner({ store, execution: execution.host, ...master });
   const runtime = createMasterLlm({
     settings: () => store.getSettings(),
     credentials,
+    ...(providerFetch ? { fetch: providerFetch } : {}),
   });
   return new MasterRunner({
     store,

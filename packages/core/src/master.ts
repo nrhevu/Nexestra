@@ -175,7 +175,9 @@ export const MasterRuntimeInfoSchema = z.object({
   apiKeyPresent: z.boolean(),
   providerId: z.string().nullable().optional(),
   providerName: z.string().optional(),
-  protocol: z.enum(["openai-responses", "anthropic-messages"]).optional(),
+  protocol: z
+    .enum(["openai-responses", "openai-chat-completions", "anthropic-messages"])
+    .optional(),
   credentialEnv: z.string().optional(),
   credentialPresent: z.boolean().optional(),
   ready: z.boolean().optional(),

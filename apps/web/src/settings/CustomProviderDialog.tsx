@@ -1,10 +1,11 @@
 import { type MasterProvider, type MasterProviderAuth, MasterProviderSchema } from "@nexestra/core";
 import { Button, Checkbox, Select, TextInput } from "@nexestra/ui-kit";
 import { type FormEvent, useEffect, useState } from "react";
-import { useCreateMasterProvider } from "../lib/api.js";
+import { useCreateMasterProvider, useDiscoverProviderModels } from "../lib/api.js";
 
 const PROTOCOL_OPTIONS = [
   { value: "openai-responses", label: "OpenAI Responses API" },
+  { value: "openai-chat-completions", label: "OpenAI-compatible Chat Completions" },
   { value: "anthropic-messages", label: "Anthropic Messages API" },
 ];
 
@@ -48,19 +49,28 @@ export function CustomProviderDialog({
   onClose,
 }: CustomProviderDialogProps) {
   const createProvider = useCreateMasterProvider();
+  const discoverModels = useDiscoverProviderModels();
   const [form, setForm] = useState<ProviderForm>(EMPTY_FORM);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset only when the dialog opens
   useEffect(() => {
     if (!open) return;
     setForm(EMPTY_FORM);
     setErrors({});
+    discoverModels.reset();
   }, [open]);
 
   if (!open) return null;
 
   const setField = <K extends keyof ProviderForm>(field: K, value: ProviderForm[K]) => {
-    setForm((current) => ({ ...current, [field]: value }));
+    const invalidatesModels = ["protocol", "baseUrl", "auth", "apiKey"].includes(field);
+    if (invalidatesModels) discoverModels.reset();
+    setForm((current) => ({
+      ...current,
+      [field]: value,
+      ...(invalidatesModels ? { model: "" } : {}),
+    }));
     setErrors((current) => {
       if (!current[field]) return current;
       const next = { ...current };
@@ -71,7 +81,48 @@ export function CustomProviderDialog({
 
   const close = () => {
     createProvider.reset();
+    discoverModels.reset();
     onClose();
+  };
+
+  const loadModels = () => {
+    const nextErrors: Record<string, string> = {};
+    const baseUrl = form.baseUrl.trim().replace(/\/+$/, "");
+    const candidate = MasterProviderSchema.safeParse({
+      id: form.providerId.trim() || "provider",
+      name: form.name.trim() || "Provider",
+      protocol: form.protocol,
+      baseUrl,
+      model: form.model.trim() || "pending",
+      auth: form.auth,
+      enabled: true,
+    });
+    if (!candidate.success) {
+      for (const issue of candidate.error.issues) {
+        const field = issue.path[0];
+        if (field === "baseUrl") nextErrors.baseUrl ??= issue.message;
+      }
+    }
+    if (form.auth === "api-key" && !form.apiKey.trim()) {
+      nextErrors.apiKey = "Enter the API key before loading models.";
+    }
+    if (Object.keys(nextErrors).length > 0) {
+      setErrors((current) => ({ ...current, ...nextErrors }));
+      return;
+    }
+    discoverModels.mutate(
+      {
+        protocol: form.protocol,
+        baseUrl,
+        auth: form.auth,
+        ...(form.auth === "api-key" ? { credential: form.apiKey.trim() } : {}),
+      },
+      {
+        onSuccess: ({ models }) => {
+          setField("model", models[0] ?? "");
+        },
+      },
+    );
   };
 
   const submit = (event: FormEvent) => {
@@ -233,15 +284,44 @@ export function CustomProviderDialog({
 
           <div className="custom-provider-dialog__section">
             <span className="custom-provider-dialog__label">Master model</span>
-            <TextInput
-              id="custom-provider-model"
-              label="Model ID"
-              value={form.model}
-              placeholder="provider-model-id"
-              aria-invalid={Boolean(errors.model)}
-              onChange={(event) => setField("model", event.target.value)}
-            />
-            <span className="nx-muted">The exact model identifier sent to this endpoint.</span>
+            {discoverModels.data ? (
+              <Select
+                id="custom-provider-model"
+                label="Model"
+                value={form.model}
+                options={discoverModels.data.models.map((model) => ({
+                  value: model,
+                  label: model,
+                }))}
+                onChange={(event) => setField("model", event.target.value)}
+              />
+            ) : (
+              <TextInput
+                id="custom-provider-model"
+                label="Model ID"
+                value={form.model}
+                placeholder="Load models or enter an exact model ID"
+                aria-invalid={Boolean(errors.model)}
+                onChange={(event) => setField("model", event.target.value)}
+              />
+            )}
+            <div className="custom-provider-dialog__model-actions">
+              <Button
+                type="button"
+                onClick={loadModels}
+                disabled={discoverModels.isPending || createProvider.isPending}
+              >
+                {discoverModels.isPending ? "Loading…" : "Load models"}
+              </Button>
+              <span className="nx-muted">
+                {discoverModels.data
+                  ? `${discoverModels.data.models.length} models available`
+                  : "Tests the connection and reads the provider catalogue."}
+              </span>
+            </div>
+            {discoverModels.isError ? (
+              <span className="form-error">{discoverModels.error.message}</span>
+            ) : null}
             {errors.model ? <span className="form-error">{errors.model}</span> : null}
           </div>
 

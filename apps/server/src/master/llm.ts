@@ -2,7 +2,11 @@
 import type { AppSettings, MasterProvider, MasterRuntimeInfo } from "@nexestra/core";
 import { DEFAULT_APP_SETTINGS, masterProviderAuth } from "@nexestra/core";
 import type { LlmClient } from "@nexestra/master";
-import { createAnthropicLlmClient, createOpenAiLlmClient } from "@nexestra/master";
+import {
+  createAnthropicLlmClient,
+  createOpenAiChatLlmClient,
+  createOpenAiLlmClient,
+} from "@nexestra/master";
 
 export interface MasterLlmRuntime {
   /** A stable proxy; each turn resolves the latest persisted provider settings. */
@@ -147,6 +151,14 @@ function clientFor(
       ...(fetchImpl ? { fetch: fetchImpl } : {}),
     });
   }
+  if (provider.protocol === "openai-chat-completions") {
+    return createOpenAiChatLlmClient({
+      apiKey: credential,
+      baseUrl: provider.baseUrl,
+      model: provider.model,
+      ...(fetchImpl ? { fetch: fetchImpl } : {}),
+    });
+  }
   return createAnthropicLlmClient({
     apiKey: credential,
     baseUrl: provider.baseUrl,
@@ -158,7 +170,7 @@ function runtimeInfo(selected: ResolvedProvider): MasterRuntimeInfo {
   const provider = selected.provider;
   return {
     client:
-      provider?.protocol === "openai-responses"
+      provider?.protocol === "openai-responses" || provider?.protocol === "openai-chat-completions"
         ? "openai"
         : provider?.protocol === "anthropic-messages"
           ? "anthropic"

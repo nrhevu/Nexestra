@@ -1,13 +1,17 @@
 import { z } from "zod";
 import { HarnessIdSchema, SandboxLevelSchema } from "./common.js";
 
-export const MasterProviderProtocolSchema = z.enum(["openai-responses", "anthropic-messages"]);
+export const MasterProviderProtocolSchema = z.enum([
+  "openai-responses",
+  "openai-chat-completions",
+  "anthropic-messages",
+]);
 export type MasterProviderProtocol = z.infer<typeof MasterProviderProtocolSchema>;
 
 export const MasterProviderAuthSchema = z.enum(["api-key", "none"]);
 export type MasterProviderAuth = z.infer<typeof MasterProviderAuthSchema>;
 
-const ProviderBaseUrlSchema = z.url().refine(
+export const ProviderBaseUrlSchema = z.url().refine(
   (value) => {
     const url = new URL(value);
     return (

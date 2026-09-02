@@ -13,6 +13,7 @@ import {
   type CreateMessageRequest,
   type CreateThreadRequest,
   type CreateWorkspaceRequest,
+  type DiscoverProviderModelsRequest,
   type DispatchTaskRequest,
   type DispatchTaskResponse,
   DispatchTaskResponseSchema,
@@ -42,6 +43,8 @@ import {
   OrchestratorProgressSchema,
   type Plan,
   PlanSchema,
+  type ProviderModelList,
+  ProviderModelListSchema,
   type Run,
   type RunControlRequest,
   type RunControlResponse,
@@ -590,6 +593,36 @@ export function useCreateMasterProvider(): UseMutationResult<
     onSuccess: (settings) => {
       client.setQueryData(keys.settings(), settings);
     },
+  });
+}
+
+export function useDiscoverProviderModels(): UseMutationResult<
+  ProviderModelList,
+  Error,
+  DiscoverProviderModelsRequest
+> {
+  return useMutation({
+    mutationFn: (input) =>
+      request("/settings/providers/discover-models", ProviderModelListSchema, {
+        method: "POST",
+        json: input,
+      }),
+  });
+}
+
+export function useProviderModels(
+  providerId: string,
+  enabled = true,
+): UseQueryResult<ProviderModelList> {
+  return useQuery({
+    queryKey: ["provider-models", providerId],
+    queryFn: () =>
+      getJson(
+        `/settings/providers/${encodeURIComponent(providerId)}/models`,
+        ProviderModelListSchema,
+      ),
+    enabled: enabled && providerId.length > 0,
+    staleTime: STALE,
   });
 }
 

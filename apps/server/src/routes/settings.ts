@@ -2,6 +2,7 @@ import type { AppSettingsResponse } from "@nexestra/core";
 import {
   AppSettingsSchema,
   CreateMasterProviderRequestSchema,
+  DiscoverProviderModelsRequestSchema,
   masterProviderAuth,
   SaveProviderCredentialRequestSchema,
 } from "@nexestra/core";
@@ -10,6 +11,7 @@ import { Hono } from "hono";
 import { badRequest, body, conflict, required } from "../errors.js";
 import { credentialFor } from "../master/llm.js";
 import type { ProviderCredentialStore } from "../master/provider-credentials.js";
+import { discoverProviderModels } from "../master/provider-models.js";
 import type { MasterRunner } from "../master/runner.js";
 
 /**
@@ -25,6 +27,7 @@ export function settingsRoutes(
   store: NexestraStore,
   runner: MasterRunner,
   credentials: ProviderCredentialStore,
+  providerFetch?: typeof globalThis.fetch,
 ) {
   const respond = (settings: ReturnType<NexestraStore["getSettings"]>): AppSettingsResponse => {
     const providerCredentials = Object.fromEntries(
@@ -46,6 +49,44 @@ export function settingsRoutes(
         if (masterProviderAuth(provider) === "none") credentials.delete(provider.id);
       }
       return c.json(respond(settings));
+    })
+    .post("/providers/discover-models", async (c) => {
+      const input = await body(c, DiscoverProviderModelsRequestSchema);
+      if (input.auth === "api-key" && !input.credential) {
+        throw badRequest("Enter an API key before loading models.");
+      }
+      if (input.auth === "none" && input.credential) {
+        throw badRequest("A no-auth provider cannot use an API key.");
+      }
+      try {
+        return c.json(
+          await discoverProviderModels({
+            ...input,
+            ...(providerFetch ? { fetch: providerFetch } : {}),
+          }),
+        );
+      } catch (error) {
+        throw badRequest(error instanceof Error ? error.message : String(error));
+      }
+    })
+    .get("/providers/:providerId/models", async (c) => {
+      const provider = required(
+        store.getSettings().masterProviders.find((entry) => entry.id === c.req.param("providerId")),
+        "provider",
+      );
+      try {
+        return c.json(
+          await discoverProviderModels({
+            protocol: provider.protocol,
+            baseUrl: provider.baseUrl,
+            auth: masterProviderAuth(provider),
+            credential: credentialFor(provider, process.env, credentials),
+            ...(providerFetch ? { fetch: providerFetch } : {}),
+          }),
+        );
+      } catch (error) {
+        throw badRequest(error instanceof Error ? error.message : String(error));
+      }
     })
     .post("/providers", async (c) => {
       const input = await body(c, CreateMasterProviderRequestSchema);

@@ -11,7 +11,9 @@ import { PlanEdgeSchema } from "./domain/plan.js";
 import {
   AppSettingsSchema,
   MasterProviderAuthSchema,
+  MasterProviderProtocolSchema,
   MasterProviderSchema,
+  ProviderBaseUrlSchema,
 } from "./domain/settings.js";
 import {
   AcceptanceCriterionSchema,
@@ -232,6 +234,21 @@ export const CreateMasterProviderRequestSchema = z.object({
   activate: z.boolean().default(true),
 });
 export type CreateMasterProviderRequest = z.infer<typeof CreateMasterProviderRequestSchema>;
+
+/** Test an unsaved provider connection and return the models it exposes. */
+export const DiscoverProviderModelsRequestSchema = z.object({
+  protocol: MasterProviderProtocolSchema,
+  baseUrl: ProviderBaseUrlSchema,
+  auth: MasterProviderAuthSchema,
+  /** Write-only; required for an API-key connection. */
+  credential: z.string().trim().min(1).max(16_384).optional(),
+});
+export type DiscoverProviderModelsRequest = z.infer<typeof DiscoverProviderModelsRequestSchema>;
+
+export const ProviderModelListSchema = z.object({
+  models: z.array(z.string().min(1)),
+});
+export type ProviderModelList = z.infer<typeof ProviderModelListSchema>;
 
 /** Write-only body for `PUT /api/settings/providers/:id/credential`. */
 export const SaveProviderCredentialRequestSchema = z.object({

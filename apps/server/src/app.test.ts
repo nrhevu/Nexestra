@@ -391,6 +391,26 @@ describe("settings", () => {
     );
   });
 
+  it("discovers selectable models without returning the credential", async () => {
+    let authorization: string | null = null;
+    app = createApp(store, {
+      providerFetch: async (_input, init) => {
+        authorization = new Headers(init?.headers).get("authorization");
+        return Response.json({ data: [{ id: "model-b" }, { id: "model-a" }] });
+      },
+    });
+    const response = await send("/api/settings/providers/discover-models", "POST", {
+      protocol: "openai-chat-completions",
+      baseUrl: "https://models.example/v1",
+      auth: "api-key",
+      credential: "discovery-secret",
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ models: ["model-a", "model-b"] });
+    expect(authorization).toBe("Bearer discovery-secret");
+  });
+
   it("rejects duplicate, missing-key and contradictory custom providers", async () => {
     const provider = {
       id: "custom-master",
