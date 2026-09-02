@@ -53,6 +53,7 @@ test("creates a Nexestra agent with provider/model and selects it for chat", asy
   await dialog.getByRole("button", { name: "Create agent", exact: true }).click();
 
   const card = page.locator(".agent-card").filter({ hasText: "Research lead" });
+  await expect(card).toContainText("credential required");
   await card.getByRole("button", { name: "Use in this chat" }).click();
   await expect(card).toContainText("Active in chat");
 

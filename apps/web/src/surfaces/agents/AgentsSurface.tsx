@@ -1,7 +1,19 @@
-import type { Agent } from "@nexestra/core";
+import {
+  type Agent,
+  type AppSettingsResponse,
+  type HarnessInfo,
+  masterProviderAuth,
+} from "@nexestra/core";
 import { Button, StatusDot, Tag } from "@nexestra/ui-kit";
 import { useState } from "react";
-import { useAgents, useDeleteAgent, useThreads, useUpdateThread } from "../../lib/api.js";
+import {
+  useAgents,
+  useDeleteAgent,
+  useHarnesses,
+  useSettings,
+  useThreads,
+  useUpdateThread,
+} from "../../lib/api.js";
 import { SurfaceLayout } from "../../shell/SurfaceLayout.js";
 import { AgentDialog } from "./AgentDialog.js";
 
@@ -13,6 +25,8 @@ export function AgentsSurface({
   threadId: string;
 }) {
   const agents = useAgents(workspaceId);
+  const harnesses = useHarnesses();
+  const settings = useSettings();
   const threads = useThreads(workspaceId);
   const updateThread = useUpdateThread(workspaceId);
   const deleteAgent = useDeleteAgent(workspaceId);
@@ -60,6 +74,7 @@ export function AgentsSurface({
                   agent={agent}
                   selected={selected?.id === agent.id}
                   active={thread?.agentId === agent.id}
+                  status={agentStatus(agent, settings.data, harnesses.data)}
                   onSelect={() => setSelectedId(agent.id)}
                   onUse={() => updateThread.mutate({ threadId, patch: { agentId: agent.id } })}
                 />
@@ -73,6 +88,7 @@ export function AgentsSurface({
             <AgentDetails
               agent={selected}
               active={thread?.agentId === selected.id}
+              status={agentStatus(selected, settings.data, harnesses.data)}
               deleting={deleteAgent.isPending}
               error={deleteAgent.error?.message ?? updateThread.error?.message ?? null}
               onDelete={() => deleteAgent.mutate(selected.id)}
@@ -97,12 +113,14 @@ function AgentCard({
   agent,
   selected,
   active,
+  status,
   onSelect,
   onUse,
 }: {
   agent: Agent;
   selected: boolean;
   active: boolean;
+  status: AgentStatus;
   onSelect: () => void;
   onUse: () => void;
 }) {
@@ -118,7 +136,7 @@ function AgentCard({
       <div className="agent-card__meta">
         <Tag tone={agent.harness === "nexestra" ? "magenta" : "info"}>{agent.harness}</Tag>
         <span>{agent.model ?? "harness default"}</span>
-        <StatusDot tone={agent.enabled ? "done" : "idle"} label={agent.enabled ? "ready" : "off"} />
+        <StatusDot tone={status.tone} label={status.label} />
       </div>
       {agent.harness === "nexestra" ? (
         <Button onClick={onUse} disabled={active}>
@@ -134,6 +152,7 @@ function AgentCard({
 function AgentDetails({
   agent,
   active,
+  status,
   deleting,
   error,
   onDelete,
@@ -142,6 +161,7 @@ function AgentDetails({
 }: {
   agent: Agent;
   active: boolean;
+  status: AgentStatus;
   deleting: boolean;
   error: string | null;
   onDelete: () => void;
@@ -158,7 +178,9 @@ function AgentDetails({
         <span className="kv__k">model</span>
         <span className="kv__v">{agent.model ?? "default"}</span>
         <span className="kv__k">status</span>
-        <span className="kv__v">{agent.enabled ? "enabled" : "disabled"}</span>
+        <span className="kv__v">
+          <StatusDot tone={status.tone} label={status.label} />
+        </span>
       </div>
       <section className="sidebar__section">
         <div className="sidebar__section-title">Instructions</div>
@@ -181,4 +203,35 @@ function AgentDetails({
       {error ? <div className="form-error">{error}</div> : null}
     </>
   );
+}
+
+interface AgentStatus {
+  tone: "idle" | "done" | "warn" | "error";
+  label: string;
+}
+
+function agentStatus(
+  agent: Agent,
+  settings: AppSettingsResponse | undefined,
+  harnesses: readonly HarnessInfo[] | undefined,
+): AgentStatus {
+  if (!agent.enabled) return { tone: "idle", label: "off" };
+  if (agent.harness === "nexestra") {
+    if (!settings) return { tone: "idle", label: "checking" };
+    const provider = settings.masterProviders.find(
+      (entry) => entry.id === agent.providerId && entry.enabled,
+    );
+    if (!provider) return { tone: "error", label: "provider unavailable" };
+    const ready =
+      masterProviderAuth(provider) === "none" || settings.providerCredentials[provider.id] === true;
+    return ready
+      ? { tone: "done", label: "ready" }
+      : { tone: "warn", label: "credential required" };
+  }
+  if (!harnesses) return { tone: "idle", label: "checking" };
+  const harness = harnesses.find((entry) => entry.id === agent.harness);
+  if (!harness?.available) return { tone: "error", label: "not installed" };
+  return harness.authOk
+    ? { tone: "done", label: "ready" }
+    : { tone: "warn", label: "authentication required" };
 }
