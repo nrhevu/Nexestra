@@ -10,17 +10,20 @@ installation look successful while producing work that no real model or
 harness had performed.
 
 The Master also needs to support OpenAI and compatible private endpoints, not
-only one hard-coded Anthropic model. OpenAI's public API authenticates with API
-keys or workload identity tokens; it does not document a third-party "Sign in
-with ChatGPT" OAuth grant. Nexestra therefore cannot honestly exchange a
-ChatGPT subscription login for API access.
+only one hard-coded Anthropic model. OpenAI's public API authentication contract
+accepts bearer credentials from API keys or workload identity federation; it
+does not define a generic "Sign in with ChatGPT" subscription grant. Nexestra
+therefore cannot honestly exchange a ChatGPT web session for API access. See
+the official
+[API authentication reference](https://developers.openai.com/api/reference/overview#authentication).
 
 ## Decision
 
 Persist a registry of Master provider metadata in `AppSettings`:
 
 - provider id and display name;
-- `openai-responses` or `anthropic-messages` protocol;
+- `openai-responses`, `openai-chat-completions` or `anthropic-messages`
+  protocol (Chat Completions added during the ADR 0023 agent-profile work);
 - base URL and model;
 - an authentication mode (added by ADR 0022; the original environment-variable
   reference remains only for compatibility);

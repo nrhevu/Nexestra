@@ -53,9 +53,12 @@ never enter SQLite, the append-only event log, or an API response; the browser
 receives only a configured/missing boolean. Environment variables remain a
 compatibility fallback for older installations, but are not part of the setup
 flow.
-OpenAI does not expose ChatGPT subscription OAuth for third-party applications,
-so Nexestra uses official API credentials rather than pretending that a ChatGPT
-web login authorizes API calls. Harness auth is each harness's own business;
+OpenAI's public API authentication contract accepts API keys or workload
+identity tokens, not a ChatGPT subscription web session. Nexestra therefore
+uses an API key for an OpenAI Master rather than presenting a misleading
+"Continue with ChatGPT" flow. See the official
+[OpenAI API authentication reference](https://developers.openai.com/api/reference/overview#authentication).
+Harness auth is each harness's own business;
 selecting a Codex worker agent can use a Codex CLI authenticated by
 `codex login`, but that login does not turn the CLI into Nexestra's Master.
 `GET /api/harnesses` reports what `discover()` found (for OpenCode that means
