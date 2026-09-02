@@ -77,7 +77,7 @@ export class LocalAgentRunner implements AgentRunner {
         opencode: { installed: opencode.installed, version: opencode.version },
       },
     };
-    this.cachedStatus = { value, expiresAt: Date.now() + 5_000 };
+    this.cachedStatus = { value, expiresAt: Date.now() + 30_000 };
     return structuredClone(value);
   }
 

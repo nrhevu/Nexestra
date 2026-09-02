@@ -23,9 +23,12 @@ import {
 import {
   type FormEvent,
   type KeyboardEvent,
+  memo,
   type ReactNode,
   useCallback,
+  useDeferredValue,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -64,7 +67,6 @@ export function App() {
   const [data, setData] = useState<BootstrapData>();
   const [threadData, setThreadData] = useState<ThreadData>();
   const [modal, setModal] = useState<ModalName>(null);
-  const [query, setQuery] = useState("");
   const [notice, setNotice] = useState<string>();
   const [error, setError] = useState<string>();
   const [taskStatus, setTaskStatus] = useState<Task["status"]>("todo");
@@ -76,7 +78,6 @@ export function App() {
   const navigate = useCallback((nextPath: string, nextRoute: RouteState, replace = false) => {
     window.history[replace ? "replaceState" : "pushState"]({}, "", nextPath);
     setRoute(nextRoute);
-    setQuery("");
   }, []);
 
   const refresh = useCallback(async (quiet = false, workspaceId = workspaceIdRef.current) => {
@@ -99,8 +100,10 @@ export function App() {
       const next = await api<ThreadData>(`/api/threads/${threadId}`);
       setThreadData(next);
       if (!quiet) setError(undefined);
+      return next;
     } catch (caught) {
       if (!quiet) setError(messageFrom(caught));
+      return undefined;
     }
   }, []);
 
@@ -114,30 +117,78 @@ export function App() {
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
 
+  const routeThreadExists = Boolean(
+    route.threadId && data?.threads.some((thread) => thread.id === route.threadId),
+  );
   useEffect(() => {
     if (route.view !== "threads") return;
-    const requested =
-      route.threadId && data?.threads.some((thread) => thread.id === route.threadId);
-    const threadId = requested ? route.threadId : data?.threads[0]?.id;
+    const threadId = routeThreadExists ? route.threadId : data?.threads[0]?.id;
     if (!threadId) return;
     if (threadId !== route.threadId) {
       navigate(`/threads/${threadId}`, { view: "threads", surface: route.surface, threadId }, true);
-      return;
     }
-    void loadThread(threadId);
-  }, [data?.threads, loadThread, navigate, route]);
+  }, [data?.threads, navigate, route, routeThreadExists]);
+
+  useEffect(() => {
+    if (route.view !== "threads" || !route.threadId || !routeThreadExists) return;
+    void loadThread(route.threadId);
+  }, [loadThread, route.threadId, route.view, routeThreadExists]);
 
   const hasActiveThreadRuns = threadData?.runs.some(
     (run) => run.status === "queued" || run.status === "running",
   );
+  const isPollingActiveThread = Boolean(
+    hasActiveThreadRuns &&
+      route.view === "threads" &&
+      route.threadId &&
+      route.threadId === threadData?.thread.id,
+  );
+  const isLoadingCurrentThread = Boolean(
+    route.view === "threads" && route.threadId && route.threadId !== threadData?.thread.id,
+  );
   useEffect(() => {
-    const delay = hasActiveThreadRuns ? 1_000 : 5_000;
+    if (!isPollingActiveThread || !route.threadId) return;
+    const threadId = route.threadId;
+    let requestInFlight = false;
     const timer = window.setInterval(() => {
-      void refresh(true);
-      if (route.view === "threads" && route.threadId) void loadThread(route.threadId, true);
-    }, delay);
+      if (requestInFlight) return;
+      requestInFlight = true;
+      void loadThread(threadId, true)
+        .then((next) => {
+          const stillActive = next?.runs.some(
+            (run) => run.status === "queued" || run.status === "running",
+          );
+          if (next && !stillActive) void refresh(true);
+        })
+        .finally(() => {
+          requestInFlight = false;
+        });
+    }, 1_000);
     return () => window.clearInterval(timer);
-  }, [hasActiveThreadRuns, loadThread, refresh, route.threadId, route.view]);
+  }, [isPollingActiveThread, loadThread, refresh, route.threadId]);
+
+  const hasBackgroundRuns =
+    Boolean(data?.activeRuns.length) && !isPollingActiveThread && !isLoadingCurrentThread;
+  useEffect(() => {
+    if (!hasBackgroundRuns || !data) return;
+    const workspaceId = data.workspace.id;
+    let requestInFlight = false;
+    const timer = window.setInterval(() => {
+      if (requestInFlight) return;
+      requestInFlight = true;
+      void api<{ activeRuns: AgentRun[] }>(
+        `/api/activity?workspaceId=${encodeURIComponent(workspaceId)}`,
+      )
+        .then((activity) => {
+          if (activity.activeRuns.length === 0) void refresh(true, workspaceId);
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          requestInFlight = false;
+        });
+    }, 1_000);
+    return () => window.clearInterval(timer);
+  }, [data, hasBackgroundRuns, refresh]);
 
   const openThread = (threadId: string) =>
     navigate(`/threads/${threadId}`, { view: "threads", surface: route.surface, threadId });
@@ -191,9 +242,8 @@ export function App() {
   return (
     <main className="app-shell">
       <TopBar
+        key={`${data.workspace.id}:${route.view}:${route.threadId ?? route.surface}`}
         data={data}
-        query={query}
-        setQuery={setQuery}
         onThread={openThread}
         onSurface={openSurface}
         onSettings={() => setModal("settings")}
@@ -409,12 +459,12 @@ export function App() {
 
 function TopBar(props: {
   data: BootstrapData;
-  query: string;
-  setQuery: (value: string) => void;
   onThread: (id: string) => void;
   onSurface: (surface: Surface) => void;
   onSettings: () => void;
 }) {
+  const [queryText, setQueryText] = useState("");
+  const deferredQueryText = useDeferredValue(queryText);
   const searchRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     const onShortcut = (event: globalThis.KeyboardEvent) => {
@@ -426,7 +476,7 @@ function TopBar(props: {
     window.addEventListener("keydown", onShortcut);
     return () => window.removeEventListener("keydown", onShortcut);
   }, []);
-  const query = props.query.trim().toLowerCase();
+  const query = deferredQueryText.trim().toLowerCase();
   const results = query
     ? [
         ...props.data.threads
@@ -462,8 +512,8 @@ function TopBar(props: {
         <input
           ref={searchRef}
           aria-label="Search threads, tasks, or agents"
-          value={props.query}
-          onChange={(event) => props.setQuery(event.target.value)}
+          value={queryText}
+          onChange={(event) => setQueryText(event.target.value)}
           placeholder="Search threads, tasks, or agents"
         />
         <kbd>⌘/Ctrl K</kbd>
@@ -473,7 +523,14 @@ function TopBar(props: {
               <p>No results found.</p>
             ) : (
               results.map((result) => (
-                <button type="button" key={`${result.type}-${result.id}`} onClick={result.action}>
+                <button
+                  type="button"
+                  key={`${result.type}-${result.id}`}
+                  onClick={() => {
+                    result.action();
+                    setQueryText("");
+                  }}
+                >
                   <span>{result.label}</span>
                   <small>{result.type}</small>
                 </button>
@@ -685,10 +742,13 @@ function ThreadView(props: {
   const [localError, setLocalError] = useState<string>();
   const [mentionMenuOpen, setMentionMenuOpen] = useState(true);
   const [activeSuggestion, setActiveSuggestion] = useState(0);
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const mentionAgents = props.data.agents
-    .filter((agent) => agent.enabled && !agent.archived)
-    .sort((left, right) => Number(canCallAgent(right)) - Number(canCallAgent(left)));
+  const mentionAgents = useMemo(
+    () =>
+      props.data.agents
+        .filter((agent) => agent.enabled && !agent.archived)
+        .sort((left, right) => Number(canCallAgent(right)) - Number(canCallAgent(left))),
+    [props.data.agents],
+  );
   const mentionMatch = draft.match(/(^|\s)@([a-zA-Z0-9_-]*)$/);
   const mentionQuery = mentionMatch?.[2]?.toLowerCase();
   const suggestions = mentionMatch
@@ -701,16 +761,6 @@ function ThreadView(props: {
     activeAgent && canCallAgent(activeAgent)
       ? activeSuggestion
       : suggestions.findIndex(canCallAgent);
-
-  const transcriptVersion = `${props.threadData?.messages.length ?? 0}:${(
-    props.threadData?.runs ?? []
-  )
-    .map((run) => `${run.id}-${run.status}`)
-    .join(",")}`;
-  useEffect(() => {
-    if (!transcriptVersion) return;
-    bottomRef.current?.scrollIntoView?.({ block: "end" });
-  }, [transcriptVersion]);
 
   const send = async () => {
     const content = draft.trim();
@@ -786,9 +836,6 @@ function ThreadView(props: {
   };
 
   const thread = props.threadData?.thread;
-  const agentsById = new Map(props.data.agents.map((agent) => [agent.id, agent]));
-  const currentAgentHandles = props.data.agents.map((agent) => agent.handle);
-  const latestRuns = latestAttempts(props.threadData?.runs ?? []);
   if (!thread || !props.threadData) {
     return (
       <div className="surface-loading">
@@ -814,52 +861,13 @@ function ThreadView(props: {
         <span className="active">Messages</span>
         <span>{thread.messageCount} messages</span>
       </div>
-      <div className="message-scroll">
-        <div className="thread-intro">
-          <span className="channel-badge">#</span>
-          <h2>{thread.name}</h2>
-          <p>
-            People and agents share one transcript. Send a regular message to leave a note; add{" "}
-            <mark>@agent</mark> when you want an agent to reply.
-          </p>
-        </div>
-        {props.threadData.messages.length > 0 && (
-          <div className="date-divider">
-            <span>Today</span>
-          </div>
-        )}
-        {props.threadData.messages.map((message) => (
-          <div key={message.id}>
-            <MessageRow
-              message={message}
-              knownHandles={
-                new Set([
-                  ...currentAgentHandles,
-                  ...message.mentions.map((mention) => mention.handle),
-                  ...(message.author.kind === "agent" ? [message.author.handle] : []),
-                ])
-              }
-              agent={
-                message.author.kind === "agent" ? agentsById.get(message.author.id) : undefined
-              }
-            />
-            {latestRuns
-              .filter((run) => run.triggerMessageId === message.id)
-              .map((run) => (
-                <RunRow
-                  key={run.id}
-                  run={run}
-                  agent={agentsById.get(run.agentId)}
-                  historicalHandle={
-                    message.mentions.find((mention) => mention.agentId === run.agentId)?.handle
-                  }
-                  onRetry={props.onRetry}
-                />
-              ))}
-          </div>
-        ))}
-        <div ref={bottomRef} />
-      </div>
+      <ThreadTranscript
+        thread={thread}
+        messages={props.threadData.messages}
+        runs={props.threadData.runs}
+        agents={props.data.agents}
+        onRetry={props.onRetry}
+      />
       <div className="composer-wrap">
         {mentionMenuOpen && suggestions.length > 0 && (
           <div
@@ -955,6 +963,85 @@ function ThreadView(props: {
     </div>
   );
 }
+
+const ThreadTranscript = memo(function ThreadTranscript({
+  thread,
+  messages,
+  runs,
+  agents,
+  onRetry,
+}: {
+  thread: Thread;
+  messages: Message[];
+  runs: AgentRun[];
+  agents: AgentView[];
+  onRetry: (runId: string) => Promise<unknown>;
+}) {
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const agentsById = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
+  const currentAgentHandles = useMemo(() => agents.map((agent) => agent.handle), [agents]);
+  const runsByTrigger = useMemo(() => {
+    const grouped = new Map<string, AgentRun[]>();
+    for (const run of latestAttempts(runs)) {
+      const triggerRuns = grouped.get(run.triggerMessageId) ?? [];
+      triggerRuns.push(run);
+      grouped.set(run.triggerMessageId, triggerRuns);
+    }
+    return grouped;
+  }, [runs]);
+  const transcriptVersion = `${messages.length}:${runs
+    .map((run) => `${run.id}-${run.status}`)
+    .join(",")}`;
+  useEffect(() => {
+    if (!transcriptVersion) return;
+    bottomRef.current?.scrollIntoView?.({ block: "end" });
+  }, [transcriptVersion]);
+
+  return (
+    <div className="message-scroll">
+      <div className="thread-intro">
+        <span className="channel-badge">#</span>
+        <h2>{thread.name}</h2>
+        <p>
+          People and agents share one transcript. Send a regular message to leave a note; add{" "}
+          <mark>@agent</mark> when you want an agent to reply.
+        </p>
+      </div>
+      {messages.length > 0 && (
+        <div className="date-divider">
+          <span>Today</span>
+        </div>
+      )}
+      {messages.map((message) => (
+        <div key={message.id}>
+          <MessageRow
+            message={message}
+            knownHandles={
+              new Set([
+                ...currentAgentHandles,
+                ...message.mentions.map((mention) => mention.handle),
+                ...(message.author.kind === "agent" ? [message.author.handle] : []),
+              ])
+            }
+            agent={message.author.kind === "agent" ? agentsById.get(message.author.id) : undefined}
+          />
+          {(runsByTrigger.get(message.id) ?? []).map((run) => (
+            <RunRow
+              key={run.id}
+              run={run}
+              agent={agentsById.get(run.agentId)}
+              historicalHandle={
+                message.mentions.find((mention) => mention.agentId === run.agentId)?.handle
+              }
+              onRetry={onRetry}
+            />
+          ))}
+        </div>
+      ))}
+      <div ref={bottomRef} />
+    </div>
+  );
+});
 
 function MessageRow({
   message,

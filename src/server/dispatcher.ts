@@ -14,6 +14,7 @@ export class AgentDispatcher {
   private readonly pendingEnqueues = new Map<string, number>();
   private readonly deletingAgentIds = new Set<string>();
   private readonly retryingRunIds = new Set<string>();
+  private readonly liveRuns = new Map<string, AgentRun>();
 
   constructor(
     private readonly store: FileStore,
@@ -22,6 +23,15 @@ export class AgentDispatcher {
 
   busyAgentIds(): ReadonlySet<string> {
     return new Set(this.busy);
+  }
+
+  activeRuns(workspaceId?: string): AgentRun[] {
+    return [...this.liveRuns.values()]
+      .filter((run) => {
+        if (workspaceId === undefined) return true;
+        return this.store.getThread(run.threadId)?.workspaceId === workspaceId;
+      })
+      .map((run) => structuredClone(run));
   }
 
   hasPendingWork(agentId: string): boolean {
@@ -75,9 +85,10 @@ export class AgentDispatcher {
           createdAt: now,
           updatedAt: now,
         };
-        await this.store.updateRun(run);
-        runs.push(run);
-        this.enqueueRun(run, agent, trigger);
+        const queued = await this.store.updateRun(run);
+        this.liveRuns.set(queued.id, queued);
+        runs.push(queued);
+        this.enqueueRun(queued, agent, trigger);
       }
       return runs;
     } finally {
@@ -145,11 +156,12 @@ export class AgentDispatcher {
       const runtime = await this.runner.runtimeStatus();
       const readiness = agentView(agent, runtime, new Set());
       if (readiness.readiness !== "ready") throw new Error(readiness.readinessLabel);
-      await this.store.updateRun({
+      const running = await this.store.updateRun({
         ...run,
         status: "running",
         updatedAt: new Date().toISOString(),
       });
+      this.liveRuns.set(running.id, running);
       const thread = this.store.getThread(run.threadId);
       if (!thread) throw new StoreError("not_found", "Thread not found.");
       const invocation: AgentInvocation = {
@@ -174,6 +186,7 @@ export class AgentDispatcher {
         updatedAt: new Date().toISOString(),
       });
     } finally {
+      this.liveRuns.delete(run.id);
       this.busy.delete(agent.id);
     }
   }
