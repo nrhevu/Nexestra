@@ -22,12 +22,13 @@ Persist a registry of Master provider metadata in `AppSettings`:
 - provider id and display name;
 - `openai-responses` or `anthropic-messages` protocol;
 - base URL and model;
-- the *name* of an optional server environment variable containing the secret;
+- an authentication mode (added by ADR 0022; the original environment-variable
+  reference remains only for compatibility);
 - enabled state and the active provider id.
 
 The server resolves this registry at the start of every Master turn, so a saved
-provider change applies without a restart. Secrets stay in the process
-environment and are never returned by the API or stored in SQLite. Remote base
+provider change applies without a restart. Secrets are never returned by the
+API or stored in SQLite. ADR 0022 defines their local persistence. Remote base
 URLs must use HTTPS; plain HTTP is accepted only for loopback-compatible local
 providers. Provider URLs cannot embed credentials, query parameters or
 fragments. The unauthenticated app server likewise rejects non-loopback bind
@@ -59,7 +60,8 @@ model clients remain test dependencies injected through existing seams.
 
 ## Status
 
-Accepted in M8. Supersedes [0007](0007-master-on-claude-opus-5-messages-api.md),
+Accepted in M8 and amended by [0022](0022-local-provider-credential-store.md).
+Supersedes [0007](0007-master-on-claude-opus-5-messages-api.md),
 the production parts of [0018](0018-fake-harness-for-dev-and-tests.md), and
 [0019](0019-demo-llm-client-without-an-api-key.md).
 

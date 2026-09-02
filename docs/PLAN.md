@@ -49,7 +49,7 @@ số milestone **không** khớp thứ tự thời gian.
 | M5 | OpenCode adapter + cross-review + verification | **done** | `2f2773d..bfe1c5c` (`merge: m5-orchestrator`) + `9670dd1..3bdacb7` (`merge: m5-opencode-adapter`) | `@nexestra/orchestrator` 52 test: DAG 4 task chạy 2 luồng, retry → pass, cross-review bounce, criterion fail rồi pass với đủ 2 evidence artifact, approval gate, budget pause, autoMerge/pending/conflict, `recover()` sau crash. `@nexestra/adapter-opencode` 105 test trên fixture SSE thật của OpenCode 1.18.25. |
 | M6 | Approvals, budget, memory graph (+ wiring) | **done** | `3d52da4..f0341b7` (`merge: m6-integration`) | `apps/server/src/execution/` nối orchestrator vào server; approval queue hiện ở mọi surface + badge trên rail; cost per run/task/thread; memory graph React Flow trên dữ liệu Master ghi thật. `execution.test.ts` là acceptance run: chỉ model (`DemoLlmClient`) và harness (fake) là stub, còn lại là production code — 4 case gồm chạy tới `done` với mọi criterion có evidence, approval chặn rồi mở, task hết attempt → replan request, và crash được `recoverAll()` vá. |
 | M7 | Hardening | **partial** | `6c27a53..c7f0f56` (`merge: m7-test-infra`) + nhánh docs này | **Xong**: `@nexestra/adapter-fake` (scenario-driven), Playwright e2e chạy trên bản build thật (6 spec), resume sau crash (`recoverAll()` trước request đầu tiên), Settings surface + `GET /api/harnesses` kiểm tra version/auth, `docs/testing.md`, và bộ tài liệu này (README, `docs/index.md`, `docs/adr/`, `CONTRIBUTING.md`, `CLAUDE.md`). **Chưa**: `e2e/tests/execution.spec.ts` vẫn skip — cổng thứ nhất (`apps/server` đọc `NEXESTRA_FAKE_HARNESS`) đã mở khi M6 wiring vào, nhưng cổng thứ hai vẫn cần `NEXESTRA_E2E_EXECUTION=1` và `startExecution()` trong file đó vẫn `throw`, chưa trỏ vào route dispatch của M6; log rotation chưa có; xem `docs/ARCHITECTURE.md` §11 cho phần còn lại. |
-| M8 | Production hardening | **done** | `m8-product-hardening` | Provider registry OpenAI/Anthropic/custom; no production demo/fake/seed paths; Master project-memory search; real-only harness discovery; Slack-inspired shell; production-bundle Playwright acceptance. [ADR 0020](adr/0020-production-master-provider-registry.md), [ADR 0021](adr/0021-slack-inspired-project-workspace.md). |
+| M8 | Production hardening | **done** | `m8-product-hardening` | Provider registry OpenAI/Anthropic/custom with in-app credentials; no production demo/fake/seed paths; Master project-memory search; real-only harness discovery; Slack-inspired shell; production-bundle Playwright acceptance. [ADR 0020](adr/0020-production-master-provider-registry.md), [ADR 0021](adr/0021-slack-inspired-project-workspace.md), [ADR 0022](adr/0022-local-provider-credential-store.md). |
 
 ### 0.2 Những quyết định §1 đã đổi khi làm thật
 
@@ -76,7 +76,7 @@ số milestone **không** khớp thứ tự thời gian.
   [ADR 0018](adr/0018-fake-harness-for-dev-and-tests.md).
 - **`e2e/`**: Playwright chạy trên `apps/web/dist` do server thật phục vụ, không
   mock API, không stub fetch.
-- **`docs/adr/`**: 21 ADR, một cái cho mỗi quyết định §1 cộng các quyết định phát
+- **`docs/adr/`**: 22 ADR, một cái cho mỗi quyết định §1 cộng các quyết định phát
   sinh khi implement.
 
 ---

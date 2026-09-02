@@ -425,14 +425,17 @@ until the model writes a real one); `master_state` holds the draft.
 latest persisted provider settings at the start of each turn. It supports the
 `openai-responses` and `anthropic-messages` protocols, custom HTTPS base URLs,
 editable models, and loopback HTTP endpoints. Provider metadata stores only an
-environment-variable name; the secret value remains in the server process.
+authentication mode. Keys entered in Settings are persisted outside SQLite in
+`credentials.json`, are preferred over the legacy environment fallback, and
+are never returned by the API. A provider removed from settings, or switched to
+`none`, has its saved key removed.
 
 The OpenAI implementation maps the canonical tool/history format to Responses
 API items, uses strict function schemas, exposes web search as a native tool,
 and sends `store: false`. With no ready provider, the proxy throws a clear
 configuration error and Settings reports which credential is missing. It does
 not substitute `DemoLlmClient`; that client remains an injected integration
-test helper. See ADR 0020.
+test helper. See ADRs 0020 and 0022.
 
 ---
 

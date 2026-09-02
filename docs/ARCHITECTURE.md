@@ -93,6 +93,7 @@ so there are no module cycles at zod-evaluation time.
 ```
 ~/.nexestra/                 (NEXESTRA_HOME overrides)
   nexestra.db                SQLite, WAL mode
+  credentials.json           Master provider secrets, mode 0600
   data/                      artifact bytes (written from M4)
 ```
 
@@ -278,7 +279,8 @@ Codes: `bad_request` (400), `not_found` (404), `conflict` (409),
 | Method | Route | Notes |
 |--------|-------|-------|
 | GET | `/api/health` | `{ ok, version, master }` — `master` says which model client the process started with |
-| GET / PUT | `/api/settings` | Machine-wide defaults, plus the read-only `master` runtime block |
+| GET / PUT | `/api/settings` | Machine-wide defaults, read-only `master`, and per-provider credential-presence booleans |
+| PUT / DELETE | `/api/settings/providers/:id/credential` | Write or remove a provider key; the value is never returned |
 | GET | `/api/workspaces` | |
 | POST | `/api/workspaces` | `{path, name?, shortLabel?, defaultBranch?, settings?}` — the path must exist and be a git repository |
 | GET / PATCH | `/api/workspaces/:id` | |
@@ -483,16 +485,19 @@ user instead of the turn crashing, and does not believe a run started.
 
 `AppSettings.masterProviders` is the persisted registry for OpenAI Responses,
 Anthropic Messages and protocol-compatible custom endpoints. Each entry stores
-metadata plus the name of a server environment variable; its secret value
-never reaches SQLite or the browser. `activeMasterProviderId` selects the
-provider, and changes apply on the next turn without restarting the server.
+only metadata and an `api-key` or `none` authentication mode. The Settings API
+saves keys separately in `credentials.json` with mode `0600`; reads return only
+credential-presence booleans. Keys never reach SQLite or the event log and are
+never echoed back to the browser. `activeMasterProviderId` selects the provider,
+and changes apply on the next turn without restarting the server. Legacy
+environment-variable references remain a lower-priority compatibility fallback.
 
 The OpenAI client sends `store: false` and translates the canonical durable
 history and strict Master tools into Responses API items. The built-in model is
 `chat-latest` and is editable (for example to `gpt-5.6`). The Anthropic client
 supports a configurable base URL and Claude model. With no ready provider,
 health/settings report `configuration required` and a Master turn fails
-honestly; there is no scripted fallback. See ADR 0020.
+honestly; there is no scripted fallback. See ADRs 0020 and 0022.
 
 The Master's prompts are Markdown read at run time, which the esbuild bundle
 does not carry. `scripts/build.mjs` copies them into `dist/prompts` and
@@ -614,6 +619,7 @@ invalidating it. A refetch per line would be one HTTP request per token of
 | Board sidebar | Edit title / agent / status / model / reasoning / sandbox | `PATCH /api/tasks/:id` |
 | Memory sidebar | Edit a memory | `PATCH /api/memories/:id` |
 | Settings | Read and write defaults | `GET`/`PUT /api/settings` |
+| Settings | Save or remove a Master provider key | `PUT`/`DELETE /api/settings/providers/:id/credential` |
 
 **(M6)** The only buttons still disabled for a later milestone are `+ Add` task
 on the board and `Open source` in the memory sidebar.
@@ -819,7 +825,8 @@ never silently lost.
   `gpt-5.1-codex-mini`) with a 400. Leaving the model unset works everywhere;
   `KNOWN_CODEX_MODELS` is a static hint, not detection.
 - **Agentic Master work requires a configured provider.** Without a usable
-  server-side credential, the app remains usable for persisted project data but
+  saved credential (or a deliberate no-auth endpoint), the app remains usable
+  for persisted project data but
   does not generate questions, specs or plans.
 - **One process owns the store.** The approval gate waits on the in-process
   `EventStore` fan-out, so a second process resolving an approval in the same

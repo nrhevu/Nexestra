@@ -24,8 +24,8 @@ pnpm --filter @nexestra/storage db:generate  # after editing storage/src/schema.
 ```
 
 All four gates must be green before a merge. `pnpm test` must stay green with no
-Codex, no OpenCode and no `ANTHROPIC_API_KEY` installed — 472 passing, 6 skipped
-(the skips are opt-in live tests).
+Codex, no OpenCode and no saved provider credential; paid or logged-in live
+tests are opt-in and skipped by default.
 
 Useful switches while developing: `NEXESTRA_HARNESSES=codex` (one real adapter,
 so no cross-review),

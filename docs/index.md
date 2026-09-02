@@ -39,6 +39,8 @@ is depth on one part of it.
    the process lives in code and the schemas are strict tools.
 4. [`adr/0020`](adr/0020-production-master-provider-registry.md) — OpenAI,
    Anthropic and custom provider resolution, secrets and the no-fallback rule.
+5. [`adr/0022`](adr/0022-local-provider-credential-store.md) — write-only
+   provider credentials configured in the app and stored outside SQLite.
 
 ### Working on the orchestration loop
 

@@ -300,9 +300,10 @@ the real endpoint accepts what the adapter sends — not of model judgement.
 | `NEXESTRA_LIVE_OPENCODE_MODEL` | overrides that model (default `openai/gpt-5.4-mini`) | — |
 | `ANTHROPIC_API_KEY` (or `ANTHROPIC_AUTH_TOKEN`) | the Master's Anthropic live turn | `ANTHROPIC_API_KEY=sk-ant-… pnpm --filter @nexestra/master test` |
 
-The e2e suite deliberately strips OpenAI and Anthropic credentials from the
-server environment, so exporting one in your shell cannot silently turn the
-Playwright run into a paid, non-deterministic run.
+The e2e suite starts a scratch `NEXESTRA_HOME` with no saved credentials and
+also strips OpenAI and Anthropic credentials from the server environment, so a
+developer's real configuration cannot silently turn Playwright into a paid,
+non-deterministic run.
 
 ---
 

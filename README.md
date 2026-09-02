@@ -32,18 +32,25 @@ model. Without a configured provider, Settings and Chat report that the Master
 is not ready while workspace, memory and task-management features remain
 available.
 
-Configure the Master from **Settings → Master provider**. The built-ins are:
+Configure the Master from **Settings → Master provider**. Select a built-in or
+add a custom provider, choose its authentication mode, paste its API key, and
+save. A server restart is not required.
 
 | You have | What runs |
 |----------|-----------|
-| `OPENAI_API_KEY` | OpenAI Responses with `chat-latest` by default (or select `gpt-5.6`) |
-| `ANTHROPIC_API_KEY` (or `ANTHROPIC_AUTH_TOKEN`) | Anthropic Messages with Claude Opus 5 |
-| a compatible endpoint | Add a custom OpenAI Responses or Anthropic Messages provider, model and credential environment variable |
+| an OpenAI API key | OpenAI Responses with `chat-latest` by default (or select `gpt-5.6`) |
+| an Anthropic API key | Anthropic Messages with Claude Opus 5 |
+| a compatible endpoint | Add a custom OpenAI Responses or Anthropic Messages provider, base URL, model and API key |
+| a trusted no-auth local endpoint | Add a custom provider with `No authentication`; loopback HTTP is allowed |
 | `codex` on `PATH`, after `codex login` | Real Codex runs the tasks |
 | `opencode` too, after `opencode auth login` | A second real harness can cross-review task results |
 
-Provider keys are read from the **server's** environment and never reach the
-browser or SQLite — only the environment-variable name and whether it is set do.
+Provider keys are sent only to the loopback server and saved in
+`~/.nexestra/credentials.json` with current-user-only file permissions. They
+never enter SQLite, the append-only event log, or an API response; the browser
+receives only a configured/missing boolean. Environment variables remain a
+compatibility fallback for older installations, but are not part of the setup
+flow.
 OpenAI does not expose ChatGPT subscription OAuth for third-party applications,
 so Nexestra uses official API credentials rather than pretending that a ChatGPT
 web login authorizes API calls. Harness auth is each harness's own business;
@@ -67,8 +74,8 @@ NEXESTRA_HARNESSES=codex pnpm dev # one adapter ⇒ no cross-review ⇒ no secon
 | 3 | **Editor / Agent workspace** | One run from three angles: its worktree file tree, a file in CodeMirror, the unified diff against the branch it was cut from, and its event stream in a terminal |
 | 4 | **Memory Graph** | What the Master decided and learned, as typed nodes and edges, editable |
 
-Plus **Settings** (`⌘,`): detected harnesses, the Master runtime it started
-with, defaults, budget, concurrency, theme. `⌘1`…`⌘4` switch surfaces, `⌘/`
+Plus **Settings** (`⌘,`): detected harnesses, Master providers and credentials,
+defaults, budget, concurrency, theme. `⌘1`…`⌘4` switch surfaces, `⌘/`
 focuses the composer, `⌘K` is the command palette.
 
 The approval queue lives in the navigation column with a count badge on the
@@ -122,9 +129,8 @@ worktree and captured the exit code, never because the harness said so.
 | `NEXESTRA_DEV` | unset | `1` forces the redirect-to-Vite behaviour (set by the server's `dev` script) |
 | `NEXESTRA_WEB_DEV_URL` | `http://localhost:5173` | Where dev-mode non-API requests are redirected |
 | `NEXESTRA_HARNESSES` | all | Comma-separated real adapters to register: `codex`, `opencode` |
-| `OPENAI_API_KEY` | unset | Credential for the built-in OpenAI Master provider |
-| `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` | unset | Credential for the built-in Anthropic Master provider |
-| custom provider variable | unset | Any environment-variable name configured in Settings; its value stays server-side |
+| `OPENAI_API_KEY` | unset | Legacy fallback for OpenAI; prefer entering the key in Settings |
+| `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` | unset | Legacy fallback for Anthropic; prefer entering the key in Settings |
 | `NEXESTRA_LIVE_CODEX` | unset | `1` runs the opt-in Codex live tests |
 | `NEXESTRA_LIVE_CODEX_MODEL` | adapter default | Model for those |
 | `NEXESTRA_LIVE_OPENCODE` | unset | `1` runs the opt-in OpenCode live tests |
@@ -188,6 +194,7 @@ to keep in sync.
 ```
 ~/.nexestra/            # NEXESTRA_HOME overrides this
   nexestra.db           # SQLite (WAL); projections + the append-only event log
+  credentials.json      # Master provider keys, mode 0600; never returned by the API
   data/                 # artifact bytes: diffs, harness logs, verification evidence
   worktrees/            # <threadId>/<taskId> — one git worktree per task
 ```
@@ -225,8 +232,9 @@ Migrations are applied at startup from the array embedded in
 - **`gpt-5.1-codex` is not a safe default for every account.** It is what
   `AppSettings.defaultModel` says, but a Codex CLI signed in with a ChatGPT
   account rejects it with a 400. Leaving the model unset works everywhere.
-- **A Master provider is required for agentic planning.** With no usable
-  server-side credential, the runtime reports `configuration required` and does
+- **A Master provider is required for agentic planning.** With no usable saved
+  credential (or a deliberate no-auth endpoint), the runtime reports
+  `configuration required` and does
   not fabricate a plan.
 - **Usage events are treated as increments.** A harness reporting cumulative
   totals per turn would over-count; Codex emits one per turn, so this is correct
