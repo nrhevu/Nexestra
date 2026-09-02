@@ -1,14 +1,16 @@
-# Architecture — state after M3
+# Architecture — state after M6
 
 `docs/PLAN.md` describes where Nexestra is going. This file describes what is
 actually in the repository right now, so a reader can tell implemented code
 from planned code at a glance.
 
-**Milestone reached: M3 — the Master is wired up.** A vague sentence in the
-Chat surface now becomes clarifying questions, a spec with verifiable
-acceptance criteria, an approval, and a task DAG on the board — all persisted,
-all streamed over the same WebSocket as everything else. What is still missing
-is execution: nothing spawns a harness yet (§10).
+**Milestone reached: M6 — the loop is closed.** A vague sentence in the Chat
+surface becomes clarifying questions, a spec with verifiable acceptance
+criteria, an approved plan, and then *real work*: harness runs in real git
+worktrees, a cross-review by a second harness, acceptance criteria proved by
+running them, retries with the failure attached, replan requests back to the
+Master, and a merge the user approves — all persisted, all streamed over the
+same WebSocket as everything else (§11).
 
 ---
 
@@ -18,7 +20,11 @@ is execution: nothing spawns a harness yet (§10).
 |---------|-----------------|----------|
 | `@nexestra/core` | **implemented** | Zod schemas + inferred types for the whole domain model (PLAN.md §3), the `HarnessEvent` union / `RunSpec` / `HarnessAdapter` contract (§5), the persisted event catalogue, the REST request/error schemas, the `/ws` protocol, and the `mock/` fixtures used for seeding and tests. |
 | `@nexestra/storage` | **implemented** | Drizzle schema, migrations, `EventStore`, the command surface (`NexestraStore`), projection replay and `seedMock()`. |
-| `@nexestra/server` | **implemented** | Hono app on `127.0.0.1:4242`: the `/api` REST surface over the store, a subscribing `/ws`, static serving of `apps/web/dist` in production, **and the Master runtime** (§6) — the runner, the store and host adapters, the `ExecutionHost` seam and the demo model. |
+| `@nexestra/server` | **implemented** | Hono app on `127.0.0.1:4242`: the `/api` REST surface over the store, a subscribing `/ws`, static serving of `apps/web/dist` in production, **the Master runtime** (§6) and **the execution runtime** (§11) — the harness registry, the orchestrator, the `MasterBridge` and the worktree readers. |
+| `@nexestra/master` | **implemented** | The Master agent: the phase machine, the tool surface per phase, spec and plan construction, and the three seams (`LlmClient`, `MasterHost`, `MasterStore`). |
+| `@nexestra/orchestrator` | **implemented** | The dispatch / review / verify loop: scheduler over the task DAG, worktree per task, cross-review, acceptance criteria run as real commands, retry, replan, approval gates, budget, merge, recovery. |
+| `@nexestra/adapter-codex` | **implemented** | `codex exec --json` → `HarnessEvent`, plus the git worktree primitives everything else reuses. |
+| `@nexestra/adapter-opencode` | **implemented** | `opencode serve` + SSE → `HarnessEvent`, with permission replies and per-workspace server management. |
 | `@nexestra/web` | **implemented** | React 19 SPA: shell layout, four surfaces, settings, keyboard shortcuts, command palette — all on `/api`, with TanStack Query mutations and a `/ws` connection that folds events into the cache, including a live Master turn. |
 | `@nexestra/ui-kit` | **implemented** | Terminal-like component set plus the CSS-variable design tokens for the dark and light palettes. |
 | `@nexestra/master` | **implemented** | The Master agent (M2): the phase machine, the per-phase tool surface, strict tool schemas, spec and plan bookkeeping, budget rules, the `LlmClient` / `MasterHost` / `MasterStore` seams and the Anthropic client. A library — no HTTP, no database, no processes. See `docs/master.md`. |
@@ -64,7 +70,9 @@ Outside `domain/`:
 | File | Exports |
 |------|---------|
 | `harness.ts` | The adapter contract verbatim from PLAN.md §5 |
-| `events.ts` | **(M1)** `NexestraEventType` (the catalogue below), `NexestraEvent`, `ENTITY_SNAPSHOT_EVENTS` |
+| `events.ts` | **(M1)** `NexestraEventType` (the catalogue below), `NexestraEvent`, `ENTITY_SNAPSHOT_EVENTS`, `MASTER_EVENT_TYPES`, `ORCHESTRATOR_EVENT_TYPES` |
+| `execution.ts` | **(M6)** The serialised half of the orchestrator's contracts: `ExecutionStatus`, `OrchestratorProgress`, `RunDiff`, and one request/response schema per execution route |
+| `pricing.ts` | **(M6)** `ModelPrice`, `PriceTable`, `DEFAULT_PRICE_TABLE` — token → USD, with an unknown model costing zero |
 | `api-http.ts` | **(M1)** `ApiError` plus one request schema per mutating route |
 | `ws.ts` | **(M1)** `WsClientMessage`, `WsServerMessage`, `WS_HEARTBEAT_INTERVAL_MS` |
 | `api.ts` | `HealthResponse`, `FileNode` / `FileContent`, and the deprecated M0 `ServerFrame` / `ClientFrame` |
@@ -198,10 +206,15 @@ which is what makes replay a plain upsert.
 | `master.usage` | thread | `{threadId, turnId, turn, thread, budgetUSD}` | `MasterRunner` |
 | `master.error` | thread | `{threadId, turnId, error}` | `MasterRunner` |
 | `master.done` | thread | `{threadId, turnId, outcome, phase}` | `MasterRunner` |
+| `orchestrator.progress` **(M6)** | thread | `OrchestratorProgress` | `ExecutionRuntime.notify` |
+| `orchestrator.status_changed` **(M6)** | thread | `ExecutionStatus` | `ExecutionRuntime.notify` |
 
-The `master.*` family is the one exception to the snapshot rule: these events
-narrate a turn so the WebSocket can stream it, but no projection hangs off
-them and `rebuildProjections` skips them. Everything durable a turn produces
+The `master.*` and `orchestrator.*` families are the exceptions to the snapshot
+rule: these events narrate a turn or a run so the WebSocket can stream it, but
+no projection hangs off them and `rebuildProjections` skips them. Everything
+durable the loop produces still arrives as an ordinary entity event —
+`run.recorded`, `run.event_appended`, `task.status_changed`,
+`artifact.recorded`, `spec.upserted`, `approval.*`. Everything durable a turn produces
 still arrives as an ordinary entity event — `spec.upserted` / `spec.frozen`,
 `plan.upserted`, `task.created`, `approval.requested`, `memory.upserted`,
 `thread.phase_changed`, and `message.added` for the final assistant message.
@@ -280,8 +293,17 @@ Codes: `bad_request` (400), `not_found` (404), `conflict` (409),
 | POST | `/api/tasks/reorder` | `{threadId, taskIds[]}` — index becomes `Task.order` |
 | GET / PATCH / DELETE | `/api/tasks/:id` | |
 | POST | `/api/tasks/:id/status` | `{status, order?}` — what a board drag calls |
+| POST | `/api/threads/:id/execution/(start\|pause\|resume\|cancel)` | **(M6)** Drives the orchestrator; answers an `ExecutionStatus`. `start` also accepts the plan (`planning → executing`) |
+| GET | `/api/threads/:id/execution/status` | **(M6)** `ExecutionStatus`: loop state, task counts, live runs, pending approvals, cost against budget |
+| POST | `/api/tasks/:id/dispatch` | **(M6)** `{kind?, harness?, instructions?}` — runs one task now, out of band of the scheduler |
+| POST | `/api/tasks/:id/verify` | **(M6)** `{criterionIds?}` — runs the task's acceptance criteria and records evidence |
 | GET | `/api/runs?threadId=` | |
 | GET | `/api/runs/:id`, `/api/runs/:id/events?afterSeq=` | |
+| POST | `/api/runs/:id/control` | **(M6)** `cancel` / `steer` / `pause` / `resume` / `answer_permission` on a live run |
+| GET | `/api/runs/:id/files` | **(M6)** The run's worktree as a flat `FileNode[]`, marked against the base branch |
+| GET | `/api/runs/:id/files/content?path=` | **(M6)** One file's text; refuses a path outside the worktree |
+| GET | `/api/runs/:id/diff` | **(M6)** `RunDiff` — the unified diff of the worktree against the branch it was cut from |
+| GET | `/api/harnesses?refresh=1` | **(M6)** `discover()` per registered adapter, cached; `refresh=1` re-detects |
 | GET | `/api/artifacts?threadId=`, `/api/artifacts/:id` | |
 | GET | `/api/artifacts/:id/content` | Reads `~/.nexestra/data`, falls back to the inline preview and says which in `source` |
 | GET | `/api/approvals?workspaceId=&threadId=&status=` | |
@@ -294,8 +316,9 @@ Codes: `bad_request` (400), `not_found` (404), `conflict` (409),
 | POST | `/api/memories/:id/links` | `{targetId, type, note?}` |
 | DELETE | `/api/memories/:id/links/:targetId?type=` | |
 
-Runs and artifacts are read-only over HTTP: the orchestrator writes them
-through the store from M4.
+Runs and artifacts are written only by the orchestrator, through the store —
+`/api/runs/:id/control` forwards a `RunControl` to the adapter that owns the
+live process; it does not write a row itself.
 
 `POST …/master/send` is deliberately fire-and-forget. It validates the body,
 queues the turn and returns; the turn itself streams over `/ws`, so no HTTP
@@ -304,15 +327,12 @@ reloads mid-turn rejoins by subscribing rather than by retrying.
 
 ### 4.1 Still mocked
 
-Grouped in `src/routes/placeholders.ts` so it is obvious what is not real:
+Nothing. `src/routes/placeholders.ts` was deleted in M6: the Editor's file
+tree, file contents and terminal are a real run's worktree and event stream,
+and `GET /api/harnesses` shells out.
 
-| Route | Becomes real in |
-|-------|-----------------|
-| `GET /api/files`, `/api/files/content?path=` | M4 (worktree file tree) |
-| `GET /api/terminal` | M4 (run stdout) |
-| `GET /api/harnesses` | M4 / M5 (`codex` / `opencode` detection) |
-
----
+`@nexestra/core/mock` still exists — it is what `seedMock()` writes and what
+the core schema tests parse — but no route serves it any more.
 
 ## 5. WebSocket protocol (`/ws`)
 
@@ -446,12 +466,13 @@ persisted `Task.id` (`ServerMasterHost` translates the model's plan ids first,
 and rejects an unknown one itself), and `context.workspacePath` is the
 absolute, validated repository root.
 
-Until the orchestrator lands, the server injects
-`createNotYetAvailableExecutionHost()`, which rejects every call with a message
-explaining that Nexestra can plan work but not run it yet. The session turns a
-rejection into a `tool_result` with `is_error: true`, so the Master relays the
-limitation to the user instead of the turn crashing — and, crucially, it does
-not believe a run started.
+**(M6)** The server now injects an adapter over `orchestrator.host` (§11).
+`createNotYetAvailableExecutionHost()` still exists — it is the fallback for a
+`MasterRunner` constructed without an execution host, and what the M3 tests
+still use — and it rejects every call with a message explaining that Nexestra
+can plan work but not run it. The session turns a rejection into a
+`tool_result` with `is_error: true`, so the Master relays the limitation to the
+user instead of the turn crashing, and does not believe a run started.
 
 ### 6.4 Which model
 
@@ -489,7 +510,19 @@ the package sources.
   `continue`, which is what carries the thread into `planning` and gets the
   plan proposed without the user having to prod it.
 
-### 6.6 Resuming an approval
+### 6.6 The Master's draft spec and the loop's evidence
+
+Two copies of the spec exist and they have different owners. The *wording* is
+the Master's and lives in `master_state`; `satisfied` and `evidenceArtifactId`
+are facts produced by running a criterion, which the orchestrator writes onto
+the published spec in `specs`.
+
+`StorageMasterStore.loadState` folds the published evidence back onto the draft
+on every load. Without it the phase guard for `all_criteria_verified` reads a
+snapshot taken before any verification ran, and a thread that proved everything
+can never reach `done`.
+
+### 6.7 Resuming an approval
 
 `request_approval` suspends the turn with a pending tool call.
 `POST /api/approvals/:id/resolve` records the decision and then asks the runner
@@ -543,6 +576,17 @@ parsed.
   lands, so nothing is rendered twice and a reload falls back to
   `GET /master/state`.
 
+**(M6)** Two execution reads follow the same pattern as the Master's: the query
+is the durable copy that makes a reload correct, and `/ws` keeps it fresh.
+`useExecutionStatus` is seeded by `GET …/execution/status` and then *replaced*
+by each `orchestrator.status_changed`; `useThreadProgress` reads the
+`orchestrator.progress` rows back out of the thread's event log and appends new
+ones as they arrive.
+
+`run.event_appended` is **appended** to `keys.runEvents(runId)` rather than
+invalidating it. A refetch per line would be one HTTP request per token of
+harness output, and the terminal writes only the tail it has not written yet.
+
 ### Interactions that persist
 
 | Surface | Interaction | Route |
@@ -554,13 +598,17 @@ parsed.
 | Chat | Stop a turn | `POST /api/threads/:id/master/cancel` |
 | Chat / sidebar | Approve / reject — records the decision **and** resumes the suspended turn | `POST /api/approvals/:id/resolve` |
 | Board | Drag a card between columns (optimistic, rolled back on failure) | `POST /api/tasks/:id/status` |
+| Board header | `[Start execution]` / `[Pause]` / `[Resume]` / `[Cancel]` **(M6)** | `POST /api/threads/:id/execution/…` |
+| Board sidebar | `[Dispatch]` / `[Verify]` a single task **(M6)** | `POST /api/tasks/:id/dispatch` / `…/verify` |
+| Editor | `[Cancel run]` **(M6)** | `POST /api/runs/:id/control` |
+| Navigation | Approve / reject anything in the queue **(M6)** | `POST /api/approvals/:id/resolve` |
+| Settings | `[Refresh detection]` **(M6)** | `GET /api/harnesses?refresh=1` |
 | Board sidebar | Edit title / agent / status / model / reasoning / sandbox | `PATCH /api/tasks/:id` |
 | Memory sidebar | Edit a memory | `PATCH /api/memories/:id` |
 | Settings | Read and write defaults | `GET`/`PUT /api/settings` |
 
-Buttons that need a later milestone (`Dispatch`, `View run`, `View changes`,
-`Open source`, `+ Add` task) are **disabled** and their tooltip says which
-milestone they land in.
+**(M6)** The only buttons still disabled for a later milestone are `+ Add` task
+on the board and `Open source` in the memory sidebar.
 
 ---
 
@@ -581,10 +629,15 @@ apps/web/src
     surfaces.ts         surface descriptors and their route paths
     useShellKeyboard.ts ⌘1..⌘4, ⌘/, ⌘K, ⌘,
     CommandPalette.tsx  ⌘K palette
+    ApprovalQueue.tsx   every pending approval, of every kind (M6)
+    ApprovalQueuePanel  the queue wired to the workspace, plus the rail badge
   surfaces/chat/        ChatSurface, ChatSidebar and the M3 cards:
                         QuestionCard (ask_user), SpecCard (inline + sidebar),
                         PlanCard (plan_preview), ToolCallCard (collapsed),
                         ApprovalBanner
+  surfaces/editor/      EditorSurface + useActiveRun, FileTree, CodePane,
+                        DiffPane, TerminalPane and `terminal.ts` — the pure
+                        `RunEvent[] → lines` reducer behind the xterm pane (M6)
   surfaces/board|editor|memory
   settings/SettingsSurface.tsx
   lib/{api,events,master,store,format}.ts
@@ -610,9 +663,9 @@ the main pane.
 
 | Surface | Main | Sidebar | Libraries |
 |---------|------|---------|-----------|
-| Chat | Timeline + the live turn (streaming text, collapsed tool cards), question card, spec card, plan preview, approval banner above the composer | Approval queue, the live Spec, Decisions (spec + `decision` memories), References, Master usage | — |
-| Task Board | TODO / IN PROGRESS / DONE columns (REVIEW and BLOCKED appear when occupied), drag between columns; cards carry harness / model / reasoning tags and a "blocked by ‹title›" line | Editable title, agent, status, model, reasoning, sandbox; both directions of the dependency edge; criteria + evidence | `@dnd-kit/core` |
-| Editor | File tree, code editor, terminal pane (all still fixtures) | Active run, current task, progress, artifacts | `@uiw/react-codemirror`, `@xterm/xterm` |
+| Chat | Timeline + the live turn (streaming text, collapsed tool cards), question card, spec card, plan preview, approval banner above the composer, and the orchestrator's progress interleaved by time as compact system rows | Cost against budget, the thread's approvals, the live Spec, Decisions (spec + `decision` memories), References, Master usage | — |
+| Task Board | TODO / IN PROGRESS / DONE columns (REVIEW and BLOCKED appear when occupied), drag between columns; cards carry harness / model / reasoning tags, a spinner while a harness is on them, attempts, cost and `mergeState`; the header carries the loop's state and its three verbs | Editable title, agent, status, model, reasoning, sandbox; both directions of the dependency edge; criteria + evidence; the task's runs; `[Dispatch]` / `[Verify]` | `@dnd-kit/core` |
+| Editor | One `Run`, from three angles: its worktree file tree, a file in CodeMirror, the unified diff behind `[View changes]`, and its event stream in xterm. The run is picked in the header and defaults to the newest running one | Harness, model, kind, session, tokens, cost; the current task; progress measured in **criteria satisfied**; artifacts; `[View changes]` / `[Cancel run]` | `@uiw/react-codemirror`, `@xterm/xterm` |
 | Memory Graph | Nodes coloured by `Memory.type`, typed edges, dagre layout | Selected memory with inline edit | `@xyflow/react`, `@dagrejs/dagre` |
 
 ---
@@ -638,28 +691,140 @@ the main pane.
     acceptance test, because it is what someone without an API key meets;
   - `apps/web` runs component tests in jsdom (Vitest + React Testing Library),
     aliased to the workspace sources exactly as the app is, so a test cannot
-    pass against a stale build.
+    pass against a stale build — the two M3 cards, the **approval queue** and
+    the **run terminal reducer**;
+  - `apps/server/src/execution/execution.test.ts` **(M6)** is the acceptance
+    run: only the model (`DemoLlmClient`) and the harness
+    (`createFakeHarnessAdapter`) are stubbed, and everything between them is
+    production code — the phase machine, `ServerMasterHost`, the real
+    `ThreadEngine`, real git worktrees on a temp repository, real verification
+    commands run through a shell, the SQLite writes and the event log. Four
+    cases: a vague sentence carried to `done` with the DAG respected and every
+    criterion carrying evidence; an approval gate that blocks the pipeline and
+    is released by the REST route; a task that burns its attempts and ends as a
+    replan request; and a crash repaired by `recoverAll()` on the next start.
 - `pnpm typecheck` runs `tsc --noEmit` per package in parallel.
 - `pnpm build` produces `apps/web/dist` and `apps/server/dist/index.js`.
 
 ---
 
-## 10. Known gaps going into M4
+## 10. The execution runtime (`apps/server/src/execution`) **(M6)**
 
-- **Nothing runs.** `ExecutionHost` is the `NotYetAvailableExecutionHost`, so
-  the Master can plan work and then has to say it cannot start it. `runs` and
-  `run_events` are still only written by seeding, and the Editor surface still
-  renders fixtures for the file tree, the diff and the terminal. The
-  orchestrator implements the interface in M4.
-- `@nexestra/adapter-codex` is finished and tested but unreferenced: no code
-  path constructs it yet.
-- Harness detection in Settings is a fixture; nothing shells out yet.
+`@nexestra/orchestrator` is a library with three seams — the harnesses
+(`HarnessAdapter`), the Master (`MasterBridge`) and the world (`NexestraStore`).
+M6 is the server filling all three in.
+
+```
+POST /api/threads/:id/execution/start
+        │
+        ▼
+   ExecutionRuntime ─────────────────────────────► Orchestrator
+        │  (is the MasterBridge)                        │
+        │                                               ├── HarnessAdapter  codex | opencode | fake
+        ├── notify()  ──► orchestrator.* store events    ├── git worktree per task
+        │             └─► MasterSession.applyTrigger     └── NexestraStore   runs, events, artifacts
+        ├── requestReplan() ──► MasterRunner.send({kind:"continue"})
+        └── host ──────────────► the Master's six execution tools
+        │
+        ▼
+   store events  ──►  EventStore  ──►  /ws  ──►  every surface
+```
+
+| File | Responsibility |
+|------|----------------|
+| `harnesses.ts` | Builds the adapter registry and caches `discover()` (it shells out). `NEXESTRA_FAKE_HARNESS=1` / `AppSettings.enableFakeHarness` substitutes the scripted adapter for every id; `NEXESTRA_HARNESSES=codex` registers only what is named. `dispose()` is what kills the OpenCode servers. |
+| `runtime.ts` | `ExecutionRuntime`: owns the orchestrator, **is** the `MasterBridge`, exposes the `ExecutionHost` the Master's host delegates to, sweeps `recover()` at startup, lands approved merges, and disposes everything on a signal. |
+| `progress.ts` | `OrchestratorEvent` → one `OrchestratorProgress` line. The browser never has to know the loop's union. |
+| `files.ts` | The Editor's data: a run's worktree as a tree (marked against the base branch), one file's text, and the unified diff. |
+| `fake-script.ts` | What the simulated harness "does" — it writes a real Markdown file per task, so the diff, the commit and the verification commands all see a tree that genuinely changed. |
+
+### 10.1 Configuration
+
+`AppSettings` supplies `concurrency`, `maxAttempts`, `autoMerge`, `budgetUSD`
+and `enableFakeHarness`; `DEFAULT_PRICE_TABLE` from `@nexestra/core` turns
+tokens into dollars. Worktrees live at
+`$NEXESTRA_HOME/worktrees/<threadId>/<taskId>`.
+
+An **unknown model costs zero** rather than a guess — including a run with no
+`model` set at all, which uses the harness's own default. That is a deliberate
+choice: a wrong number would pause a thread on money it never spent, and the
+visible `$0.00` is honest about not knowing.
+
+### 10.2 The bridge: what the loop does to `Thread.phase`
+
+The orchestrator never writes `Thread.phase` — that machine belongs to the
+Master. `notify()` translates:
+
+| Event | Trigger | Phase |
+|-------|---------|-------|
+| `thread_started` | `plan_accepted` (only from `planning`) | `executing` |
+| `thread_idle` / `completed` | `all_tasks_done` | `verifying` |
+| …every criterion has evidence | `all_criteria_verified` | `done`, then a `continue` asking for the summary |
+| …some do not | *(none)* | stays `verifying`, with a `continue` naming what is missing |
+| `thread_idle` / `failed`, `blocked`, `budget_exceeded` | `blocked` | `blocked` |
+| `thread_idle` / `paused`, `cancelled` | *(none)* | the user did that on purpose |
+
+Triggers are queued on the same chain as `send()`, so one can never interleave
+with a turn that is halfway through rewriting the state.
+
+`requestReplan()` sends a `continue` carrying the whole `ReplanEvidence`.
+It **refuses** on a thread with no `master_state`: a `continue` on a thread the
+Master has never seen starts its session at `intake`, where the first thing it
+does is `update_spec` — republishing an empty draft over the real spec. Such a
+thread gets an error line on the log instead.
+
+### 10.3 Startup and shutdown
+
+`recoverAll()` runs **before the first request**: it enumerates threads with a
+`running` or `pending` run and calls `orchestrator.recover()` on each, which
+marks the runs `interrupted`, resets their tasks and prunes worktrees no live
+task claims. `recover()` is per thread by design, so the sweep lives here.
+
+`SIGINT` / `SIGTERM` closes the WebSocket server, then `dispose()`: the
+orchestrator cancels every live run (`adapter.control(runId, {action:"cancel"})`,
+which kills the Codex process groups), then the registry disposes the adapters,
+which shuts down the OpenCode servers this process started.
+
+### 10.4 Merging
+
+The loop raises a `merge` Approval and stops — landing a branch belongs to
+whoever owns the checkout, which is this process. `ExecutionRuntime` subscribes
+to `approval.resolved`, and an approved `merge` runs `mergeTaskBranch()` behind
+a single queue, then writes `mergeState` and says what happened on the log.
+`mergeTaskBranch` refuses rather than forces: a dirty tree or a different
+branch checked out leaves the branch alone and explains why, so an approval is
+never silently lost.
+
+---
+
+## 11. Known gaps going into M7
+
+- **`pause()` does not suspend a live run.** It stops dispatching; runs already
+  in flight finish. Suspending mid-run needs `codex app-server`, which the
+  Codex adapter does not use.
+- **Cost is often `$0.00`.** Pricing keys on the model name, so a task that
+  leaves `model` unset — using the harness's own default — is priced at zero
+  even though tokens were spent. Set a model to get a number.
+- **`gpt-5.1-codex` is not a safe default for every account.** It is what
+  `AppSettings.defaultModel` says and what the planning prompt shows the model,
+  but a Codex CLI signed in with a ChatGPT account rejects it (and
+  `gpt-5.1-codex-mini`) with a 400. Leaving the model unset works everywhere;
+  `KNOWN_CODEX_MODELS` is a static hint, not detection.
+- **The demo model does not really supervise.** It records a decision and waits
+  while the orchestrator runs the plan; it cannot replan, and a thread it drives
+  reaches `done` because the loop proved the criteria, not because the model
+  checked. That is the point of a scripted stand-in, but it means the `verifying`
+  and `executing` phases are only lightly exercised without an API key.
+- **One process owns the store.** The approval gate waits on the in-process
+  `EventStore` fan-out, so a second process resolving an approval in the same
+  SQLite file would not release the waiter.
 - The Master runtime lives in the server process, so a restart drops the live
   sessions. State is rebuilt from `master_state` on the next `send()`, but a
   turn that was in flight is lost rather than resumed.
-- `master.*` events accumulate in the log with nothing pruning them. Text is
-  coalesced, but a long thread will still carry thousands of rows the UI only
-  needs while the turn is live.
+- `master.*` and `orchestrator.*` events accumulate in the log with nothing
+  pruning them. Text is coalesced and progress is one row per loop event, but a
+  long thread will still carry thousands of rows the UI only needs while the
+  work is live.
 - The demo model is a script, not a fallback model: it produces a sensible
   shape for any request but does not understand any of them.
 - `rebuildProjections` is thread-scoped and exposed as a library function only;
@@ -668,9 +833,11 @@ the main pane.
 - The seeded demo workspace points at `/Users/dev/Works/Nexestra`, which does
   not exist. It is fixture data, not something the path validation ever saw —
   workspaces created from the UI are validated.
-- Artifact bytes are never written, so `/api/artifacts/:id/content` always
-  answers from the inline preview.
 - The web bundle is still a single ~1.6 MB chunk. Code-splitting per surface is
   worth doing once the surfaces stop changing.
-- `apps/web` has component tests for the two M3 cards only; the surfaces
-  themselves are untested, and Playwright coverage is still planned for M7.
+- `apps/web` has component tests for the two M3 cards, the approval queue and
+  the terminal reducer; the surfaces themselves are untested, and Playwright
+  coverage is still planned for M7.
+- **A cancelled run leaves its worktree behind** until the next `recover()`
+  prunes worktrees no live task claims. Nothing cleans up after a thread that
+  finishes normally either, so `$NEXESTRA_HOME/worktrees` grows.

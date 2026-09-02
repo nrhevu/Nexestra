@@ -319,63 +319,96 @@ anything that resolves the row — the REST route, the UI, a test — releases i
 
 ---
 
-## 7. How `apps/server` should wire it
+## 7. How `apps/server` wires it (M6 — done)
 
-1. **One orchestrator per process**, built from the process-wide store and the
-   adapters that `discover()` reported as available:
+Implemented in `apps/server/src/execution/`. The five points below are the
+plan; the file names are what actually does them.
 
-   ```ts
-   const orchestrator = createOrchestrator({ store, adapters, master: bridge, config });
-   ```
+1. **One orchestrator per process** (`runtime.ts`), built from the process-wide
+   store, the harness registry and `AppSettings` (`concurrency`, `maxAttempts`,
+   `autoMerge`, `budgetUSD`, plus `DEFAULT_PRICE_TABLE` from `@nexestra/core`).
+   Worktrees live under `$NEXESTRA_HOME/worktrees/<threadId>/<taskId>`.
 
-2. **`MasterBridge` on top of the Master session.** `notify` forwards to the
-   WebSocket and translates the interesting events into phase triggers:
+2. **The adapter registry** (`harnesses.ts`) constructs `createCodexAdapter()`
+   and `createOpenCodeAdapter()` and caches their `discover()` results, which
+   shell out. Two switches change what is registered:
 
-   ```ts
-   const bridge: MasterBridge = {
-     notify(event) {
-       if (event.type === "thread_idle") {
-         session(event.threadId).applyTrigger(
-           event.outcome === "completed" ? "all_tasks_done" : "blocked",
-         );
-       }
-     },
-     async requestReplan(taskId, reason, evidence) {
-       for await (const _ of session(threadId).send({
-         kind: "continue",
-         note: `Task ${taskId} failed: ${reason}`,
-       })) { /* forward */ }
-     },
-   };
-   ```
+   | Switch | Effect |
+   |--------|--------|
+   | `NEXESTRA_FAKE_HARNESS=1`, or `AppSettings.enableFakeHarness` | `createFakeHarnessAdapter()` stands in for `codex`, `opencode` **and** `fake`, so an existing plan still runs. `discover()` says so in its warnings. |
+   | `NEXESTRA_HARNESSES=codex` | Register only these ids. One adapter ⇒ no cross-review ⇒ no second model billed. |
 
-3. **`MasterHost` delegates the execution half:**
+   The env var wins over the setting: it is a per-process override, the setting
+   is the durable default.
 
-   ```ts
-   const host: MasterHost = {
-     ...createFsWorkspaceReader({ root: workspace.rootPath }),
-     recordMemory, requestApproval, summarize,          // server's own
-     dispatchTask: orchestrator.host.dispatchTask,
-     readRunEvents: orchestrator.host.readRunEvents,
-     readArtifact: orchestrator.host.readArtifact,
-     controlRun: orchestrator.host.controlRun,
-     runVerification: orchestrator.host.runVerification,
-     markCriterion: orchestrator.host.markCriterion,
-   };
-   ```
+3. **`ExecutionRuntime` is the `MasterBridge`.** `notify()` does two things
+   with every `OrchestratorEvent`:
 
-4. **`recover()` every active thread at startup**, before serving traffic, and
-   `close()` on `SIGINT`/`SIGTERM`.
+   - flattens it into an `OrchestratorProgress` row and appends it as an
+     `orchestrator.progress` store event, so the existing `/ws` fan-out carries
+     it to the Chat surface with no new transport. Events that change the
+     board's picture also append `orchestrator.status_changed` carrying a whole
+     `ExecutionStatus`;
+   - translates the two that matter into phase triggers on the Master's
+     session, because the loop never writes `Thread.phase` itself:
 
-5. **Routes**: `POST /api/threads/:id/start|pause|resume|cancel`,
-   `POST /api/tasks/:id/dispatch`, `POST /api/runs/:id/control`,
-   `POST /api/tasks/:id/verify`. Everything they change already reaches the UI
-   as store events — the routes only need to answer with `status(threadId)`.
+     | Event | Trigger | Result |
+     |-------|---------|--------|
+     | `thread_started` | `plan_accepted` (only from `planning`) | `executing` |
+     | `thread_idle` / `completed` | `all_tasks_done` | `verifying` |
+     | …then, if every criterion has evidence | `all_criteria_verified` | `done`, followed by a `continue` asking for a summary |
+     | …if some do not | *(none)* | stays `verifying`, with a `continue` naming what is missing |
+     | `thread_idle` / anything else | `blocked` | `blocked` |
+     | `paused`, `cancelled` | *(none)* | the user did it on purpose |
 
-6. **Nothing else has to broadcast.** The loop writes through the store, the
+   `requestReplan()` sends a `continue` turn carrying the whole
+   `ReplanEvidence` — attempts, last error, blocking findings, verification
+   outcomes, run and artifact ids — so the model's `replan` tool can decide.
+   **It refuses to do so on a thread with no `master_state`**: a `continue` on a
+   thread the Master has never seen starts its session at `intake`, where the
+   first thing it does is `update_spec`, republishing an empty draft over the
+   real spec. Such a thread gets an error line on the log instead.
+
+4. **`MasterHost` delegates the execution half** to `orchestrator.host`,
+   through the thin `ExecutionHost` adapter in `runtime.ts` that adds the
+   server's `ExecutionContext` and supplies `dispatchDefaults` (the harness the
+   planning prompt is told to prefer — the configured default when it is
+   registered, otherwise whatever is). `createNotYetAvailableExecutionHost()`
+   still exists for a `MasterRunner` built without one, but the server no
+   longer injects it.
+
+5. **Lifecycle.** `recoverAll()` runs before the first request: it enumerates
+   threads that still have a `running` or `pending` run and calls `recover()`
+   on each, since `recover()` is per thread by design. `SIGINT` / `SIGTERM`
+   calls `dispose()`, which cancels every live run (killing the Codex process
+   groups through `adapter.control`) and then disposes the adapters, which is
+   what stops the OpenCode servers.
+
+6. **Routes** (`routes/execution.ts`, `routes/runs.ts`, `routes/tasks.ts`,
+   `routes/harnesses.ts`):
+
+   | Method | Route | Answers |
+   |--------|-------|---------|
+   | POST | `/api/threads/:id/execution/(start\|pause\|resume\|cancel)` | `ExecutionStatus` |
+   | GET | `/api/threads/:id/execution/status` | `ExecutionStatus` |
+   | POST | `/api/tasks/:id/dispatch` | `{runId, taskId, harness, kind, worktreePath?}` |
+   | POST | `/api/tasks/:id/verify` | `{taskId, outcomes[]}` |
+   | POST | `/api/runs/:id/control` | `{runId, ok, note?}` — `cancel` / `steer` / `pause` / `resume` / `answer_permission` |
+   | GET | `/api/runs/:id/files`, `…/files/content?path=`, `…/diff` | the run's worktree |
+   | GET | `/api/harnesses?refresh=1` | `HarnessInfo[]` |
+
+   `start` is also where the plan is accepted, because pressing
+   `[Start execution]` *is* the user accepting it.
+
+7. **Merging.** The loop raises a `merge` Approval and stops; landing the
+   branch belongs to whoever owns the checkout, which is the server. It
+   subscribes to `approval.resolved`, and an approved `merge` runs
+   `mergeTaskBranch()` behind a single queue, then writes `mergeState`
+   (`merged` / `conflict`) and says what happened on the log. A refusal — dirty
+   tree, wrong branch checked out — leaves the branch alone and says why.
+
+8. **Nothing else has to broadcast.** The loop writes through the store, the
    store emits, `ws.ts` fans out.
-
----
 
 ## 8. Tests
 
@@ -407,8 +440,6 @@ it onto the spec criterion and fast-forwards the branch onto `main`.
 
 ## 9. Known gaps
 
-- **Not wired up yet.** `apps/server` does not import this package; §7 is the
-  plan, not the state.
 - **`pause()` does not suspend a live run.** It stops dispatching; the runs in
   flight finish. Suspending mid-run needs `codex app-server`, which the Codex
   adapter does not use yet.
@@ -421,7 +452,15 @@ it onto the spec criterion and fast-forwards the branch onto `main`.
   `EventStore` fan-out, so a second process resolving an approval in the same
   SQLite file would not release the waiter.
 - **`recover()` is per thread.** There is no "recover everything" sweep; the
-  server has to enumerate its active threads.
+  server enumerates its active threads itself (`ExecutionRuntime.recoverAll`).
 - **Merge is a plain `git merge`.** No rebase strategy, no auto-resolution, and
   the base branch must be checked out and clean or the merge is refused
   (`unavailable`) and turned into an Approval.
+- **An approved `merge` Approval is not landed by this package.** It raises the
+  gate and returns; `apps/server` performs the merge when the row is approved
+  (§7.7). A caller that embeds the orchestrator without that wiring gets a
+  branch that is verified, committed, and never merged.
+- **Pricing keys on the model name.** A run with no `model` in its
+  `HarnessConfig` uses the harness's own default, which the orchestrator cannot
+  name, so it is priced at zero — visibly `$0.00` in the UI even though tokens
+  were spent. Set the model explicitly to get a cost.
