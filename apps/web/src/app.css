@@ -776,11 +776,98 @@
 .provider-new {
   margin-top: 8px;
   border-style: dashed;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
 }
 
 .provider-new__title {
-  margin-bottom: 10px;
+  margin-bottom: 3px;
   color: var(--nx-fg-strong);
+  font-weight: 600;
+}
+
+.custom-provider-dialog {
+  z-index: 1;
+  width: min(620px, calc(100vw - 32px));
+  max-height: min(780px, 86vh);
+  display: flex;
+  flex-direction: column;
+}
+
+.custom-provider-dialog__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--nx-border);
+}
+
+.custom-provider-dialog__head > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.custom-provider-dialog__head strong {
+  color: var(--nx-fg-strong);
+  font-size: 15px;
+}
+
+.custom-provider-dialog__head span:not(.custom-provider-dialog__mark) {
+  color: var(--nx-fg-dim);
+}
+
+.custom-provider-dialog__mark {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  border-radius: 8px;
+  background: var(--nx-accent);
+  color: var(--nx-sidebar-fg);
+  font-size: 17px;
+}
+
+.custom-provider-dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 18px;
+  overflow-y: auto;
+}
+
+.custom-provider-dialog__intro {
+  margin: 0;
+  color: var(--nx-fg-dim);
+  line-height: 1.55;
+}
+
+.custom-provider-dialog__fields {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.custom-provider-dialog__fields > div,
+.custom-provider-dialog__section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.custom-provider-dialog__section {
+  padding-top: 18px;
+  border-top: 1px solid var(--nx-border);
+}
+
+.custom-provider-dialog__label {
+  margin-bottom: 4px;
+  color: var(--nx-fg-strong);
+  font-size: 12px;
+  font-weight: 650;
 }
 
 @media (max-width: 720px) {
@@ -789,6 +876,11 @@
   }
 
   .provider-card__head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .provider-new {
     align-items: flex-start;
     flex-direction: column;
   }

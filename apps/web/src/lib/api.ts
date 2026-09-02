@@ -8,6 +8,7 @@ import {
   type Artifact,
   ArtifactContentSchema,
   ArtifactSchema,
+  type CreateMasterProviderRequest,
   type CreateMemoryRequest,
   type CreateMessageRequest,
   type CreateThreadRequest,
@@ -568,6 +569,24 @@ export function useSaveProviderCredential(): UseMutationResult<
           ...(credential === null ? {} : { json: { credential } }),
         },
       ),
+    onSuccess: (settings) => {
+      client.setQueryData(keys.settings(), settings);
+    },
+  });
+}
+
+export function useCreateMasterProvider(): UseMutationResult<
+  AppSettingsResponse,
+  Error,
+  CreateMasterProviderRequest
+> {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input) =>
+      request("/settings/providers", AppSettingsResponseSchema, {
+        method: "POST",
+        json: input,
+      }),
     onSuccess: (settings) => {
       client.setQueryData(keys.settings(), settings);
     },

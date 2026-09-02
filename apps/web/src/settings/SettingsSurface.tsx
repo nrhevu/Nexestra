@@ -3,7 +3,6 @@ import {
   AppSettingsSchema,
   HarnessIdSchema,
   type MasterProvider,
-  MasterProviderSchema,
   masterProviderAuth,
   SandboxLevelSchema,
 } from "@nexestra/core";
@@ -19,6 +18,7 @@ import {
   useWorkspaces,
 } from "../lib/api.js";
 import { useUiStore } from "../lib/store.js";
+import { CustomProviderDialog } from "./CustomProviderDialog.js";
 
 const HARNESS_OPTIONS = HarnessIdSchema.options
   .filter((id) => id === "codex" || id === "opencode")
@@ -33,16 +33,6 @@ const PROVIDER_AUTH_OPTIONS = [
   { value: "none", label: "No authentication" },
 ];
 
-const EMPTY_PROVIDER: MasterProvider = {
-  id: "",
-  name: "",
-  protocol: "openai-responses",
-  baseUrl: "https://",
-  model: "",
-  auth: "api-key",
-  enabled: true,
-};
-
 /** Reads and writes `/api/settings`, and shows what `discover()` found (M6). */
 export function SettingsSurface() {
   const harnesses = useHarnesses();
@@ -56,8 +46,7 @@ export function SettingsSurface() {
   const router = useRouter();
 
   const [draft, setDraft] = useState<AppSettings | null>(null);
-  const [providerDraft, setProviderDraft] = useState<MasterProvider>(EMPTY_PROVIDER);
-  const [providerDraftCredential, setProviderDraftCredential] = useState("");
+  const [customProviderOpen, setCustomProviderOpen] = useState(false);
   const [credentialDrafts, setCredentialDrafts] = useState<Record<string, string>>({});
   const [providerError, setProviderError] = useState<string | null>(null);
   useEffect(() => {
@@ -85,36 +74,6 @@ export function SettingsSurface() {
         provider.id === id ? { ...provider, ...change } : provider,
       ),
     });
-  };
-
-  const addProvider = () => {
-    if (!draft) return;
-    const normalised = {
-      ...providerDraft,
-      id: providerDraft.id.trim(),
-      name: providerDraft.name.trim(),
-      baseUrl: providerDraft.baseUrl.trim().replace(/\/+$/, ""),
-      model: providerDraft.model.trim(),
-    };
-    const parsed = MasterProviderSchema.safeParse(normalised);
-    if (!parsed.success) {
-      setProviderError(parsed.error.issues[0]?.message ?? "Invalid provider");
-      return;
-    }
-    if (draft.masterProviders.some((provider) => provider.id === parsed.data.id)) {
-      setProviderError(`Provider id "${parsed.data.id}" already exists.`);
-      return;
-    }
-    patch({ masterProviders: [...draft.masterProviders, parsed.data] });
-    if (masterProviderAuth(parsed.data) === "api-key" && providerDraftCredential.trim()) {
-      setCredentialDrafts((current) => ({
-        ...current,
-        [parsed.data.id]: providerDraftCredential,
-      }));
-    }
-    setProviderDraft(EMPTY_PROVIDER);
-    setProviderDraftCredential("");
-    setProviderError(null);
   };
 
   const removeProvider = (id: string) => {
@@ -357,79 +316,15 @@ export function SettingsSurface() {
                 </div>
 
                 <section className="provider-new">
-                  <div className="provider-new__title">Add custom provider</div>
-                  <div className="provider-card__grid">
-                    <TextInput
-                      label="Provider id"
-                      placeholder="company-models"
-                      value={providerDraft.id}
-                      onChange={(event) =>
-                        setProviderDraft((current) => ({ ...current, id: event.target.value }))
-                      }
-                    />
-                    <TextInput
-                      label="Display name"
-                      placeholder="Company Models"
-                      value={providerDraft.name}
-                      onChange={(event) =>
-                        setProviderDraft((current) => ({ ...current, name: event.target.value }))
-                      }
-                    />
-                    <Select
-                      label="Protocol"
-                      value={providerDraft.protocol}
-                      options={PROVIDER_PROTOCOL_OPTIONS}
-                      onChange={(event) =>
-                        setProviderDraft((current) => ({
-                          ...current,
-                          protocol: event.target.value as MasterProvider["protocol"],
-                        }))
-                      }
-                    />
-                    <TextInput
-                      label="Model"
-                      placeholder="model-id"
-                      value={providerDraft.model}
-                      onChange={(event) =>
-                        setProviderDraft((current) => ({ ...current, model: event.target.value }))
-                      }
-                    />
-                    <TextInput
-                      label="Base URL"
-                      placeholder="https://models.example/v1"
-                      value={providerDraft.baseUrl}
-                      onChange={(event) =>
-                        setProviderDraft((current) => ({ ...current, baseUrl: event.target.value }))
-                      }
-                    />
-                    <Select
-                      label="Authentication"
-                      value={masterProviderAuth(providerDraft)}
-                      options={PROVIDER_AUTH_OPTIONS}
-                      onChange={(event) =>
-                        setProviderDraft((current) => ({
-                          ...current,
-                          auth: event.target.value as "api-key" | "none",
-                        }))
-                      }
-                    />
-                    {masterProviderAuth(providerDraft) === "api-key" ? (
-                      <TextInput
-                        label="API key"
-                        type="password"
-                        autoComplete="new-password"
-                        placeholder="Paste provider API key"
-                        value={providerDraftCredential}
-                        onChange={(event) => setProviderDraftCredential(event.target.value)}
-                      />
-                    ) : null}
+                  <div>
+                    <div className="provider-new__title">Connect another provider</div>
+                    <div className="nx-muted">
+                      Add its endpoint, credential and Master model in one guided step.
+                    </div>
                   </div>
-                  <div className="row">
-                    <Button boxed tone="primary" onClick={addProvider}>
-                      Add provider
-                    </Button>
-                    {providerError ? <span className="form-error">{providerError}</span> : null}
-                  </div>
+                  <Button boxed tone="primary" onClick={() => setCustomProviderOpen(true)}>
+                    Add custom provider
+                  </Button>
                 </section>
               </>
             ) : null}
@@ -615,6 +510,11 @@ export function SettingsSurface() {
           </div>
         </div>
       </div>
+      <CustomProviderDialog
+        open={customProviderOpen}
+        existingProviderIds={new Set(draft?.masterProviders.map((provider) => provider.id) ?? [])}
+        onClose={() => setCustomProviderOpen(false)}
+      />
     </div>
   );
 }
