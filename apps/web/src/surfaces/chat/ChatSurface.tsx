@@ -1,9 +1,9 @@
 import type { Message, MessageAttachment } from "@nexestra/core";
 import { Button, Composer, KeyHint, Tag } from "@nexestra/ui-kit";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useMessages, useThreads } from "../../lib/api.js";
+import { useEffect, useRef, useState } from "react";
+import { useMessages, useSendMessage, useThreads } from "../../lib/api.js";
 import { formatTime, formatUsd, phaseTone } from "../../lib/format.js";
-import { type LocalMessage, useUiStore } from "../../lib/store.js";
+import { useUiStore } from "../../lib/store.js";
 import { SurfaceLayout } from "../../shell/SurfaceLayout.js";
 import { ChatSidebar } from "./ChatSidebar.js";
 
@@ -17,8 +17,7 @@ export function ChatSurface({ workspaceId, threadId }: ChatSurfaceProps) {
   const messages = useMessages(threadId);
   const thread = (threads.data ?? []).find((item) => item.id === threadId);
 
-  const localMessages = useUiStore((state) => state.localMessages);
-  const appendLocalMessage = useUiStore((state) => state.appendLocalMessage);
+  const sendMessage = useSendMessage(threadId);
   const composerFocusNonce = useUiStore((state) => state.composerFocusNonce);
 
   const [draft, setDraft] = useState("");
@@ -29,11 +28,7 @@ export function ChatSurface({ workspaceId, threadId }: ChatSurfaceProps) {
     if (composerFocusNonce > 0) composerRef.current?.focus();
   }, [composerFocusNonce]);
 
-  const timeline = useMemo(() => {
-    const remote = messages.data ?? [];
-    const local = localMessages.filter((message) => message.threadId === threadId);
-    return [...remote, ...local];
-  }, [messages.data, localMessages, threadId]);
+  const timeline = messages.data ?? [];
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: scroll to the bottom whenever the timeline grows
   useEffect(() => {
@@ -41,17 +36,12 @@ export function ChatSurface({ workspaceId, threadId }: ChatSurfaceProps) {
     if (node) node.scrollTop = node.scrollHeight;
   }, [timeline.length]);
 
+  /** Stores a user message. Master does not reply yet — that lands in M2. */
   const send = () => {
     const content = draft.trim();
-    if (!content) return;
-    appendLocalMessage({
-      id: `local_${Date.now()}`,
-      threadId,
-      role: "user",
-      content,
-      createdAt: new Date().toISOString(),
-    });
+    if (!content || sendMessage.isPending) return;
     setDraft("");
+    sendMessage.mutate({ role: "user", content }, { onError: () => setDraft(content) });
   };
 
   return (
@@ -74,7 +64,7 @@ export function ChatSurface({ workspaceId, threadId }: ChatSurfaceProps) {
           <div className="chat__timeline" ref={timelineRef}>
             {messages.isPending ? <div className="state">loading messages…</div> : null}
             {messages.isError ? (
-              <div className="state">could not reach /api/mock — is the server running?</div>
+              <div className="state">could not reach /api — is the Nexestra server running?</div>
             ) : null}
             {timeline.map((message) => (
               <MessageBlock key={message.id} message={message} />
@@ -114,10 +104,8 @@ export function ChatSurface({ workspaceId, threadId }: ChatSurfaceProps) {
   );
 }
 
-function MessageBlock({ message }: { message: Message | LocalMessage }) {
-  const attachments: MessageAttachment[] = "attachments" in message ? message.attachments : [];
-  const references = "references" in message ? message.references : [];
-  const toolCalls = "toolCalls" in message ? message.toolCalls : [];
+function MessageBlock({ message }: { message: Message }) {
+  const { attachments, references, toolCalls } = message;
 
   return (
     <article className="msg">

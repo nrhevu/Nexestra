@@ -80,7 +80,7 @@ export function EditorSidebar({ threadId }: { threadId: string }) {
         </ul>
       </section>
 
-      <Button tone="primary" title="Not wired up in M0">
+      <Button tone="primary" title="The worktree diff lands with the Codex adapter in M4" disabled>
         View changes
       </Button>
     </>

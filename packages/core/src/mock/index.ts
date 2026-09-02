@@ -1,6 +1,7 @@
 /**
- * Realistic sample data for M0. The web app renders this (served through
- * `GET /api/mock/*`) until the real event store lands in M1.
+ * Realistic sample data. From M1 this is no longer served directly: it is what
+ * `seedMock()` writes into the store on a fresh install, and what the schema
+ * tests parse.
  *
  * Everything here is validated against the domain schemas at module load, so a
  * drift between the schemas and the fixtures fails loudly instead of silently

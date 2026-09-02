@@ -1,8 +1,14 @@
 import { Rail } from "@nexestra/ui-kit";
-import { useWorkspaces } from "../lib/api.js";
+import { useNavigate } from "@tanstack/react-router";
+import { useState } from "react";
+import { ApiRequestError, useCreateWorkspace, useWorkspaces } from "../lib/api.js";
+import { PromptDialog } from "./PromptDialog.js";
 
 export function WorkspaceRail({ activeWorkspaceId }: { activeWorkspaceId: string }) {
   const workspaces = useWorkspaces();
+  const createWorkspace = useCreateWorkspace();
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
 
   const items = (workspaces.data ?? []).map((workspace) => ({
     id: workspace.id,
@@ -10,16 +16,57 @@ export function WorkspaceRail({ activeWorkspaceId }: { activeWorkspaceId: string
     title: `${workspace.name} — ${workspace.rootPath}`,
   }));
 
+  const error =
+    createWorkspace.error instanceof ApiRequestError ? createWorkspace.error.message : null;
+
   return (
-    <Rail items={items} activeId={activeWorkspaceId}>
-      <button
-        type="button"
-        className="nx-rail__item"
-        title="Add workspace (not wired up in M0)"
-        aria-label="Add workspace"
+    <>
+      <Rail
+        items={items}
+        activeId={activeWorkspaceId}
+        onSelect={(workspaceId) =>
+          void navigate({ to: "/w/$workspaceId", params: { workspaceId } })
+        }
       >
-        +
-      </button>
-    </Rail>
+        <button
+          type="button"
+          className="nx-rail__item"
+          title="Add a workspace"
+          aria-label="Add workspace"
+          onClick={() => {
+            createWorkspace.reset();
+            setOpen(true);
+          }}
+        >
+          +
+        </button>
+      </Rail>
+
+      <PromptDialog
+        open={open}
+        title="New workspace"
+        label="Repository path"
+        hint="An absolute path to a git repository on this machine, e.g. /Users/you/Works/my-app."
+        placeholder="/Users/you/Works/my-app"
+        submitLabel="Add workspace"
+        error={error}
+        busy={createWorkspace.isPending}
+        onClose={() => setOpen(false)}
+        onSubmit={(path) => {
+          createWorkspace.mutate(
+            { path },
+            {
+              onSuccess: (workspace) => {
+                setOpen(false);
+                void navigate({
+                  to: "/w/$workspaceId",
+                  params: { workspaceId: workspace.id },
+                });
+              },
+            },
+          );
+        }}
+      />
+    </>
   );
 }

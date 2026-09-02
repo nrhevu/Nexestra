@@ -9,6 +9,7 @@ import { useEffect } from "react";
 import { useThreads, useWorkspaces } from "./lib/api.js";
 import { SettingsSurface } from "./settings/SettingsSurface.js";
 import { AppShell } from "./shell/AppShell.js";
+import { EmptyWorkspace } from "./shell/EmptyWorkspace.js";
 import { SURFACE_ROUTES } from "./shell/surfaces.js";
 import { BoardSurface } from "./surfaces/board/BoardSurface.js";
 import { ChatSurface } from "./surfaces/chat/ChatSurface.js";
@@ -17,7 +18,11 @@ import { MemorySurface } from "./surfaces/memory/MemorySurface.js";
 
 const rootRoute = createRootRoute({ component: Outlet });
 
-/** `/` picks the first workspace and its first thread, then lands on Chat. */
+/**
+ * `/` picks the first workspace and its first thread, then lands on Chat. With
+ * a workspace but no thread it falls through to `/w/:workspaceId`, which offers
+ * to create one; with no workspace at all it says so instead of spinning.
+ */
 function IndexRedirect() {
   const workspaces = useWorkspaces();
   const workspaceId = workspaces.data?.[0]?.id;
@@ -26,15 +31,24 @@ function IndexRedirect() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (workspaceId && threadId) {
+    if (!workspaceId) return;
+    if (threadId) {
       void navigate({
         to: SURFACE_ROUTES.chat,
         params: { workspaceId, threadId },
         replace: true,
       });
+    } else if (!threads.isPending) {
+      void navigate({ to: "/w/$workspaceId", params: { workspaceId }, replace: true });
     }
-  }, [workspaceId, threadId, navigate]);
+  }, [workspaceId, threadId, threads.isPending, navigate]);
 
+  if (workspaces.isError) {
+    return <div className="state">could not reach the Nexestra server on /api</div>;
+  }
+  if (!workspaces.isPending && !workspaceId) {
+    return <EmptyWorkspace workspaceId="" />;
+  }
   return <div className="state">connecting to the Nexestra server…</div>;
 }
 
@@ -48,6 +62,16 @@ const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/settings",
   component: SettingsSurface,
+});
+
+/** `/w/:workspaceId` — a workspace with no thread selected (or none at all). */
+const workspaceRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/w/$workspaceId",
+  component: function WorkspaceRoute() {
+    const { workspaceId } = workspaceRoute.useParams();
+    return <EmptyWorkspace workspaceId={workspaceId} />;
+  },
 });
 
 const threadRoute = createRoute({
@@ -111,6 +135,7 @@ const memoryRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   settingsRoute,
+  workspaceRoute,
   threadRoute.addChildren([chatRoute, boardRoute, editorRoute, memoryRoute]),
 ]);
 

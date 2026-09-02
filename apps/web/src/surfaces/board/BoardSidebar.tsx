@@ -1,6 +1,7 @@
-import { type TaskStatus, TaskStatusSchema } from "@nexestra/core";
+import { type HarnessId, type TaskStatus, TaskStatusSchema } from "@nexestra/core";
 import { Button, Select, StatusDot, Tag, TextInput } from "@nexestra/ui-kit";
-import { useSpec, useTasks } from "../../lib/api.js";
+import { useEffect, useState } from "react";
+import { useSpec, useTasks, useUpdateTask } from "../../lib/api.js";
 import { formatUsd } from "../../lib/format.js";
 import { useUiStore } from "../../lib/store.js";
 
@@ -18,16 +19,28 @@ const STATUS_OPTIONS = TaskStatusSchema.options.map((status) => ({
 export function BoardSidebar({ threadId }: { threadId: string }) {
   const tasks = useTasks(threadId);
   const spec = useSpec(threadId);
+  const updateTask = useUpdateTask(threadId);
   const selectedTaskId = useUiStore((state) => state.selectedTaskId);
-  const overrides = useUiStore((state) => state.taskStatusOverrides);
-  const setTaskStatus = useUiStore((state) => state.setTaskStatus);
 
   const rows = tasks.data ?? [];
   const task = rows.find((item) => item.id === selectedTaskId) ?? rows[0];
 
+  // Local draft so typing is smooth; the title is saved on blur or Enter.
+  const [title, setTitle] = useState(task?.title ?? "");
+  useEffect(() => setTitle(task?.title ?? ""), [task?.title]);
+
   if (!task) return <div className="nx-muted">Select a task to see its details.</div>;
 
-  const status: TaskStatus = overrides[task.id] ?? task.status;
+  const saveTitle = () => {
+    const next = title.trim();
+    if (!next || next === task.title) {
+      setTitle(task.title);
+      return;
+    }
+    updateTask.mutate({ taskId: task.id, patch: { title: next } });
+  };
+
+  const status: TaskStatus = task.status;
   const criteria = (spec.data?.acceptanceCriteria ?? []).filter((criterion) =>
     task.acceptanceCriteriaIds.includes(criterion.id),
   );
@@ -37,9 +50,14 @@ export function BoardSidebar({ threadId }: { threadId: string }) {
       <TextInput
         id="task-title"
         label="Title"
-        defaultValue={task.title}
         key={`title-${task.id}`}
-        readOnly
+        value={title}
+        onChange={(event) => setTitle(event.target.value)}
+        onBlur={saveTitle}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur();
+          if (event.key === "Escape") setTitle(task.title);
+        }}
       />
 
       <Select
@@ -47,7 +65,12 @@ export function BoardSidebar({ threadId }: { threadId: string }) {
         label="Assigned agent"
         value={task.assignedHarness ?? "codex"}
         options={HARNESS_OPTIONS}
-        onChange={() => undefined}
+        onChange={(event) =>
+          updateTask.mutate({
+            taskId: task.id,
+            patch: { assignedHarness: event.target.value as HarnessId },
+          })
+        }
       />
 
       <Select
@@ -55,8 +78,15 @@ export function BoardSidebar({ threadId }: { threadId: string }) {
         label="Status"
         value={status}
         options={STATUS_OPTIONS}
-        onChange={(event) => setTaskStatus(task.id, event.target.value as TaskStatus)}
+        onChange={(event) =>
+          updateTask.mutate({
+            taskId: task.id,
+            patch: { status: event.target.value as TaskStatus },
+          })
+        }
       />
+
+      {updateTask.isError ? <div className="form-error">{updateTask.error.message}</div> : null}
 
       <section className="sidebar__section">
         <div className="sidebar__section-title">Summary</div>
@@ -129,11 +159,13 @@ export function BoardSidebar({ threadId }: { threadId: string }) {
         )}
       </section>
 
-      <div style={{ display: "flex", gap: 6 }}>
-        <Button tone="primary" title="Not wired up in M0">
+      <div className="row">
+        <Button tone="primary" title="Dispatching a run lands with the orchestrator in M4" disabled>
           Dispatch
         </Button>
-        <Button title="Not wired up in M0">View run</Button>
+        <Button title="Run details land with the orchestrator in M4" disabled>
+          View run
+        </Button>
       </div>
     </>
   );

@@ -1,6 +1,8 @@
 import { Button, Checkbox, Divider, Kbd } from "@nexestra/ui-kit";
 import { useNavigate } from "@tanstack/react-router";
-import { useThreads } from "../lib/api.js";
+import { useState } from "react";
+import { useCreateThread, useThreads } from "../lib/api.js";
+import { PromptDialog } from "./PromptDialog.js";
 import { SURFACE_ROUTES, SURFACES, type SurfaceId } from "./surfaces.js";
 
 export interface NavigationPanelProps {
@@ -12,13 +14,22 @@ export interface NavigationPanelProps {
 export function NavigationPanel({ workspaceId, threadId, surface }: NavigationPanelProps) {
   const navigate = useNavigate();
   const threads = useThreads(workspaceId);
+  const createThread = useCreateThread(workspaceId);
+  const [open, setOpen] = useState(false);
 
   return (
     <nav className="nav" aria-label="Navigation">
       <div className="nav__head">
         <span>Threads</span>
         <span className="nav__head-actions">
-          <Button title="New thread (not wired up in M0)" aria-label="New thread">
+          <Button
+            title="New thread"
+            aria-label="New thread"
+            onClick={() => {
+              createThread.reset();
+              setOpen(true);
+            }}
+          >
             +
           </Button>
         </span>
@@ -80,6 +91,32 @@ export function NavigationPanel({ workspaceId, threadId, surface }: NavigationPa
           onChange={() => navigate({ to: "/settings" })}
         />
       </div>
+
+      <PromptDialog
+        open={open}
+        title="New thread"
+        label="Title"
+        hint="A short name for the piece of work you want Master to take on."
+        placeholder="Add a CLI to the todo app"
+        submitLabel="Create thread"
+        error={createThread.error?.message ?? null}
+        busy={createThread.isPending}
+        onClose={() => setOpen(false)}
+        onSubmit={(title) => {
+          createThread.mutate(
+            { title },
+            {
+              onSuccess: (thread) => {
+                setOpen(false);
+                void navigate({
+                  to: SURFACE_ROUTES.chat,
+                  params: { workspaceId, threadId: thread.id },
+                });
+              },
+            },
+          );
+        }}
+      />
     </nav>
   );
 }
