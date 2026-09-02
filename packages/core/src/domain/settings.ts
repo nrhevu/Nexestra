@@ -1,6 +1,66 @@
 import { z } from "zod";
 import { HarnessIdSchema, SandboxLevelSchema } from "./common.js";
 
+export const MasterProviderProtocolSchema = z.enum(["openai-responses", "anthropic-messages"]);
+export type MasterProviderProtocol = z.infer<typeof MasterProviderProtocolSchema>;
+
+const ProviderBaseUrlSchema = z.url().refine(
+  (value) => {
+    const url = new URL(value);
+    return (
+      url.protocol === "https:" ||
+      (url.protocol === "http:" && ["127.0.0.1", "localhost", "::1"].includes(url.hostname))
+    );
+  },
+  { message: "provider URLs must use HTTPS, except for loopback HTTP endpoints" },
+);
+
+/**
+ * A server-side model provider for the Master.
+ *
+ * Secrets are deliberately referenced by environment-variable name. They are
+ * never persisted in SQLite or returned to the browser.
+ */
+export const MasterProviderSchema = z.object({
+  id: z
+    .string()
+    .min(1)
+    .max(64)
+    .regex(/^[a-z0-9][a-z0-9_-]*$/, "use lowercase letters, numbers, dashes or underscores"),
+  name: z.string().min(1).max(80),
+  protocol: MasterProviderProtocolSchema,
+  baseUrl: ProviderBaseUrlSchema,
+  model: z.string().min(1).max(160),
+  apiKeyEnv: z
+    .string()
+    .regex(/^[A-Z_][A-Z0-9_]*$/, "use an uppercase environment-variable name")
+    .optional(),
+  enabled: z.boolean().default(true),
+});
+export type MasterProvider = z.infer<typeof MasterProviderSchema>;
+
+export const DEFAULT_MASTER_PROVIDERS: readonly MasterProvider[] =
+  MasterProviderSchema.array().parse([
+    {
+      id: "openai",
+      name: "OpenAI",
+      protocol: "openai-responses",
+      baseUrl: "https://api.openai.com/v1",
+      model: "chat-latest",
+      apiKeyEnv: "OPENAI_API_KEY",
+      enabled: true,
+    },
+    {
+      id: "anthropic",
+      name: "Anthropic",
+      protocol: "anthropic-messages",
+      baseUrl: "https://api.anthropic.com",
+      model: "claude-opus-5",
+      apiKeyEnv: "ANTHROPIC_API_KEY",
+      enabled: true,
+    },
+  ]);
+
 /**
  * Machine-wide defaults edited from the Settings surface and stored in the
  * `settings` table (one JSON row). A workspace may still override any of these
@@ -20,6 +80,13 @@ import { HarnessIdSchema, SandboxLevelSchema } from "./common.js";
 export const HARNESS_DEFAULT_MODEL = "";
 
 export const AppSettingsSchema = z.object({
+  /** Providers the Master may use. The active provider can be changed without a restart. */
+  masterProviders: z
+    .array(MasterProviderSchema)
+    .max(20)
+    .default([...DEFAULT_MASTER_PROVIDERS]),
+  /** `null` selects the first enabled provider whose credential is available. */
+  activeMasterProviderId: z.string().min(1).nullable().default(null),
   defaultHarness: HarnessIdSchema.default("codex"),
   /** Empty means `HARNESS_DEFAULT_MODEL` — let the harness choose. */
   defaultModel: z.string().default(HARNESS_DEFAULT_MODEL),
@@ -51,11 +118,7 @@ export const AppSettingsSchema = z.object({
    * everything.
    */
   streamRetentionDays: z.number().int().min(0).max(365).default(14),
-  /**
-   * Register the orchestrator's scripted `fake` adapter alongside the real
-   * harnesses, so the whole loop can be driven without spending quota.
-   * `NEXESTRA_FAKE_HARNESS=1` forces it on for one process.
-   */
+  /** @deprecated Kept only so older settings rows still parse. Ignored by production. */
   enableFakeHarness: z.boolean().default(false),
 });
 export type AppSettings = z.infer<typeof AppSettingsSchema>;

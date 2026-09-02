@@ -13,6 +13,7 @@ import type { ThreadPhase } from "@nexestra/core";
 export const MASTER_TOOL_NAMES = [
   "read_workspace",
   "search_code",
+  "search_memory",
   "web_search",
   "ask_user",
   "update_spec",
@@ -43,6 +44,7 @@ export const MASTER_TOOLS_BY_PHASE: Record<ThreadPhase, readonly MasterToolName[
   intake: [
     "read_workspace",
     "search_code",
+    "search_memory",
     "web_search",
     "ask_user",
     "update_spec",
@@ -54,11 +56,12 @@ export const MASTER_TOOLS_BY_PHASE: Record<ThreadPhase, readonly MasterToolName[
     "record_memory",
     "read_workspace",
     "search_code",
+    "search_memory",
     "web_search",
     "request_approval",
   ],
   spec_frozen: ["request_approval", "record_memory", "summarize"],
-  planning: ["propose_plan", "record_memory", "read_workspace", "search_code"],
+  planning: ["propose_plan", "record_memory", "read_workspace", "search_code", "search_memory"],
   executing: [
     "dispatch_task",
     "read_run_events",
@@ -67,10 +70,17 @@ export const MASTER_TOOLS_BY_PHASE: Record<ThreadPhase, readonly MasterToolName[
     "request_approval",
     "replan",
     "record_memory",
+    "search_memory",
   ],
-  verifying: ["run_verification", "read_artifact", "mark_criterion", "record_memory"],
-  done: ["summarize", "record_memory"],
-  blocked: ["summarize", "request_approval", "record_memory"],
+  verifying: [
+    "run_verification",
+    "read_artifact",
+    "mark_criterion",
+    "record_memory",
+    "search_memory",
+  ],
+  done: ["summarize", "record_memory", "search_memory"],
+  blocked: ["summarize", "request_approval", "record_memory", "search_memory"],
   cancelled: [],
 };
 

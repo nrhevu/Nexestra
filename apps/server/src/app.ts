@@ -100,8 +100,13 @@ function resolveRunner(
 ): MasterRunner {
   if (master instanceof MasterRunner) return master;
   if (master) return new MasterRunner({ store, execution: execution.host, ...master });
-  const { client, info } = createMasterLlm();
-  return new MasterRunner({ store, llm: client, runtime: info, execution: execution.host });
+  const runtime = createMasterLlm({ settings: () => store.getSettings() });
+  return new MasterRunner({
+    store,
+    llm: runtime.client,
+    runtime: () => runtime.info(),
+    execution: execution.host,
+  });
 }
 
 export type NexestraApp = ReturnType<typeof createApp>;

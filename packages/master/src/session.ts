@@ -69,6 +69,7 @@ import {
   RequestApprovalInputSchema,
   RunVerificationInputSchema,
   SearchCodeInputSchema,
+  SearchMemoryInputSchema,
   SummarizeInputSchema,
   UpdateSpecInputSchema,
 } from "./tools/schemas.js";
@@ -483,6 +484,13 @@ export function createMasterSession(config: MasterSessionConfig): MasterSession 
         const parsed = SearchCodeInputSchema.safeParse(use.input);
         if (!parsed.success) return { ...invalid(callId, parsed.error), state };
         const result = await config.host.searchCode(parsed.data);
+        return { result: jsonResult(callId, result), events: [], state };
+      }
+
+      case "search_memory": {
+        const parsed = SearchMemoryInputSchema.safeParse(use.input);
+        if (!parsed.success) return { ...invalid(callId, parsed.error), state };
+        const result = await config.host.searchMemory(parsed.data);
         return { result: jsonResult(callId, result), events: [], state };
       }
 

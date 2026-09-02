@@ -22,13 +22,6 @@ export const WEB_DEV_URL = process.env.NEXESTRA_WEB_DEV_URL ?? "http://localhost
 export const DEV_MODE = process.env.NEXESTRA_DEV === "1";
 
 /**
- * Load `@nexestra/core`'s fixtures into an empty database so a fresh install
- * has something to look at: `NEXESTRA_SEED_MOCK=1` or `--seed-mock`.
- */
-export const SEED_MOCK =
-  process.env.NEXESTRA_SEED_MOCK === "1" || process.argv.includes("--seed-mock");
-
-/**
  * Serve `apps/web/dist` only in production. In dev the SPA lives on the Vite
  * server, so a stale `dist/` must never shadow it.
  */

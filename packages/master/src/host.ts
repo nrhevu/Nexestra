@@ -34,6 +34,7 @@ import type {
   RequestApprovalInput,
   RunVerificationInput,
   SearchCodeInput,
+  SearchMemoryInput,
   SummarizeInput,
 } from "./tools/schemas.js";
 
@@ -71,6 +72,12 @@ export interface SearchCodeResult {
   readonly truncated: boolean;
   /** `"ripgrep"` when rg was available, `"walk"` for the JS fallback. */
   readonly engine: "ripgrep" | "walk";
+}
+
+export interface SearchMemoryResult {
+  readonly memories: readonly Memory[];
+  readonly total: number;
+  readonly truncated: boolean;
 }
 
 /* --------------------------------------------------------------- write side */
@@ -145,6 +152,7 @@ export interface TaskDispatchDefaults {
 export interface MasterHost {
   readWorkspace(input: ReadWorkspaceInput): Promise<ReadWorkspaceResult>;
   searchCode(input: SearchCodeInput): Promise<SearchCodeResult>;
+  searchMemory(input: SearchMemoryInput): Promise<SearchMemoryResult>;
 
   recordMemory(input: RecordMemoryInput): Promise<Memory>;
   requestApproval(input: RequestApprovalInput): Promise<ApprovalRequestResult>;

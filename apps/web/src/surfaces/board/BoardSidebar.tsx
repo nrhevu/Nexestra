@@ -16,7 +16,6 @@ import { useUiStore } from "../../lib/store.js";
 const HARNESS_OPTIONS = [
   { value: "codex", label: "codex" },
   { value: "opencode", label: "opencode" },
-  { value: "fake", label: "fake (simulated)" },
   { value: "acp", label: "acp (not available)" },
 ];
 

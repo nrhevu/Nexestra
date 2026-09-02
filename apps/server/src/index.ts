@@ -5,7 +5,7 @@ import { HOST, hasWebBuild, PORT, SERVER_VERSION, WEB_DEV_URL } from "./config.j
 import { openServerStore } from "./store.js";
 import { attachWebSocket } from "./ws.js";
 
-const { store, seeded } = openServerStore();
+const { store } = openServerStore();
 const app = createApp(store);
 
 /**
@@ -23,12 +23,10 @@ const server = serve({ fetch: app.fetch, hostname: HOST, port: PORT }, (info) =>
     .filter((harness) => harness.available)
     .map((harness) => `${harness.id}@${harness.version ?? "?"}`)
     .join(", ");
-  const harnesses =
-    (available || "none available — install codex or opencode") +
-    (app.execution.registry.simulated ? "  (simulated)" : "");
+  const harnesses = available || "none available — install codex or opencode";
   process.stdout.write(
     `nexestra server ${SERVER_VERSION} → http://${HOST}:${info.port}  (${mode})\n` +
-      `  database  ${store.file}${seeded ? "  (seeded with mock data)" : ""}\n` +
+      `  database  ${store.file}\n` +
       `  harnesses ${harnesses}\n` +
       (recovered.length > 0 ? `  recovered ${recovered.length} thread(s) after a restart\n` : "") +
       `  health    http://${HOST}:${info.port}/api/health\n` +

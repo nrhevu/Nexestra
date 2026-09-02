@@ -49,8 +49,6 @@ try {
       NEXESTRA_HOME: home,
       NEXESTRA_HOST: "127.0.0.1",
       NEXESTRA_PORT: String(port),
-      NEXESTRA_SEED_MOCK: "0",
-      NEXESTRA_MASTER_LLM: "demo",
       NEXESTRA_DEV: "",
     },
   });

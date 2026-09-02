@@ -42,7 +42,6 @@ import type { ExecutionContext, ExecutionHost } from "../master/execution-host.j
 import type { MasterRunner } from "../master/runner.js";
 import {
   createHarnessRegistry,
-  fakeHarnessRequested,
   type HarnessRegistry,
   type HarnessRegistryOptions,
 } from "./harnesses.js";
@@ -54,8 +53,6 @@ export interface ExecutionRuntimeOptions {
   readonly worktreeRoot?: string;
   /** Replace or force the harness registry — what the tests inject. */
   readonly harnesses?: HarnessRegistry | HarnessRegistryOptions;
-  /** Overrides the settings / env decision about the simulated harness. */
-  readonly fake?: boolean;
   /** Register only these harness ids. Defaults to `NEXESTRA_HARNESSES`. */
   readonly only?: readonly HarnessId[];
   /** Ask the Master to summarise once a thread reaches `done`. Default on. */
@@ -83,10 +80,6 @@ export class ExecutionRuntime implements MasterBridge {
     this.registry = isRegistry(options.harnesses)
       ? options.harnesses
       : createHarnessRegistry({
-          // The env var is a per-process override and wins; the setting is the
-          // durable default. `??` on the setting alone would never reach the
-          // env, because `enableFakeHarness` is always present (it defaults).
-          fake: options.fake ?? (fakeHarnessRequested() || settings.enableFakeHarness),
           ...(options.only ? { only: options.only } : {}),
           ...(options.harnesses ?? {}),
         });

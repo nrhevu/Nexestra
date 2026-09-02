@@ -2,6 +2,10 @@
 
 Turn the frozen spec into a task DAG with `propose_plan`.
 
+Search project memory before splitting the work. Carry prior decisions and
+research into task descriptions explicitly so execution harnesses do not have
+to rediscover product context or silently reverse an architectural decision.
+
 A good task is one a single harness run can finish and one verification can
 judge. Split by unit of verification, not by file: "add the parser" and "add the
 parser's tests" are one task, while "parser" and "CLI that uses the parser" are

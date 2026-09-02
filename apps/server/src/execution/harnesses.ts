@@ -4,20 +4,9 @@
  *
  * Two responsibilities, deliberately kept in one place:
  *
- * 1. **Construction.** `codex` and `opencode` come from their adapter
- *    packages. `@nexestra/adapter-fake` is registered instead when
- *    `NEXESTRA_FAKE_HARNESS=1` or `AppSettings.enableFakeHarness` is on — and
- *    when it is, it *stands in for* `codex` and `opencode` too, so a plan that
- *    names a real harness still runs end to end without spending a single
- *    token. Nothing is hidden: `discover()` on a stand-in says so in its
- *    warnings, and the Settings surface renders them.
- *
- *    The stand-in is the *scenario-driven* fake, not a fixed script, which is
- *    what lets a caller choose what a run does from the task itself: a task
- *    whose instructions carry `[scenario: permission_request]` really does
- *    raise a permission request through the whole server path. That is how the
- *    Playwright suite drives failure, retry and approval flows without a
- *    harness installed (`docs/testing.md`).
+ * 1. **Construction.** `codex` and `opencode` come from their real adapter
+ *    packages. Tests may inject adapters through `options.adapters`; production
+ *    has no flag or setting that substitutes simulated execution.
  * 2. **Discovery.** `discover()` shells out (`codex --version`,
  *    `opencode serve`), so it is run once and cached. `GET /api/harnesses`
  *    reads the cache; `refresh()` re-runs it.
@@ -28,10 +17,8 @@
  */
 
 import { createCodexAdapter } from "@nexestra/adapter-codex";
-import type { FakeScenario } from "@nexestra/adapter-fake";
-import { createFakeAdapter, scenarioFromInstructions } from "@nexestra/adapter-fake";
 import { createOpenCodeAdapter } from "@nexestra/adapter-opencode";
-import type { HarnessAdapter, HarnessId, HarnessInfo, RunSpec } from "@nexestra/core";
+import type { HarnessAdapter, HarnessId, HarnessInfo } from "@nexestra/core";
 import { HarnessIdSchema } from "@nexestra/core";
 
 /** Adapters may hold long-lived resources; OpenCode does, Codex does not. */
@@ -40,8 +27,6 @@ export type DisposableHarnessAdapter = HarnessAdapter & {
 };
 
 export interface HarnessRegistryOptions {
-  /** Turn the scripted stand-in on. Defaults to the env / settings decision. */
-  readonly fake?: boolean;
   /** Keep only these ids. Defaults to `NEXESTRA_HARNESSES`, else all of them. */
   readonly only?: readonly HarnessId[];
   /** Replace the whole map — what the tests inject. */
@@ -50,8 +35,6 @@ export interface HarnessRegistryOptions {
 
 export interface HarnessRegistry {
   readonly adapters: Partial<Record<HarnessId, HarnessAdapter>>;
-  /** True when the registered adapters are the scripted stand-in. */
-  readonly simulated: boolean;
   /** Cached `discover()` results, one entry per known harness id. */
   list(): Promise<HarnessInfo[]>;
   /** Re-run `discover()` and replace the cache. */
@@ -70,12 +53,6 @@ export interface HarnessRegistry {
    */
   defaultModel(id: HarnessId): string | undefined;
   dispose(): Promise<void>;
-}
-
-/** `NEXESTRA_FAKE_HARNESS=1` — the env half of the decision. */
-export function fakeHarnessRequested(): boolean {
-  const value = process.env.NEXESTRA_FAKE_HARNESS;
-  return value === "1" || value === "true";
 }
 
 /**
@@ -99,9 +76,8 @@ export function requestedHarnessIds(): readonly HarnessId[] | undefined {
 }
 
 export function createHarnessRegistry(options: HarnessRegistryOptions = {}): HarnessRegistry {
-  const simulated = options.adapters ? false : (options.fake ?? false);
   const adapters: Partial<Record<HarnessId, DisposableHarnessAdapter>> =
-    options.adapters ?? restrict(buildAdapters(simulated), options.only ?? requestedHarnessIds());
+    options.adapters ?? restrict(buildAdapters(), options.only ?? requestedHarnessIds());
 
   let cache: Promise<HarnessInfo[]> | null = null;
   let latest: readonly HarnessInfo[] = [];
@@ -111,7 +87,7 @@ export function createHarnessRegistry(options: HarnessRegistryOptions = {}): Har
     for (const id of HarnessIdSchema.options) {
       const adapter = adapters[id];
       if (!adapter) {
-        results.push(unavailable(id, simulated));
+        results.push(unavailable(id));
         continue;
       }
       results.push(await safeDiscover(id, adapter));
@@ -122,7 +98,6 @@ export function createHarnessRegistry(options: HarnessRegistryOptions = {}): Har
 
   return {
     adapters,
-    simulated,
     list() {
       cache ??= describe();
       return cache;
@@ -147,16 +122,7 @@ export function createHarnessRegistry(options: HarnessRegistryOptions = {}): Har
 
 /* ---------------------------------------------------------------- internals */
 
-function buildAdapters(simulated: boolean): Partial<Record<HarnessId, DisposableHarnessAdapter>> {
-  if (simulated) {
-    // Separate instances per id: the cross-review pass picks a harness *other*
-    // than the executor, and identity is how the engine tells them apart.
-    return {
-      fake: fakeAdapter("fake"),
-      codex: fakeAdapter("codex"),
-      opencode: fakeAdapter("opencode"),
-    };
-  }
+function buildAdapters(): Partial<Record<HarnessId, DisposableHarnessAdapter>> {
   return {
     codex: createCodexAdapter(),
     opencode: createOpenCodeAdapter(),
@@ -171,45 +137,6 @@ function restrict(
   const kept: Partial<Record<HarnessId, DisposableHarnessAdapter>> = {};
   for (const id of only) if (adapters[id]) kept[id] = adapters[id];
   return kept;
-}
-
-/** Model the simulated harness reports; priced like a mid-range model. */
-export const SIMULATED_MODEL = "nexestra/simulated";
-
-function fakeAdapter(id: HarnessId): DisposableHarnessAdapter {
-  return createFakeAdapter({
-    id,
-    scenarioFor,
-    info: {
-      version: "simulated",
-      models: [SIMULATED_MODEL],
-      defaultModel: SIMULATED_MODEL,
-      binaryPath: "(simulated harness, no process is spawned)",
-      warnings: [
-        `Simulated harness: NEXESTRA_FAKE_HARNESS is on, so no ${id} process is spawned. ` +
-          "Runs write the files their instructions name into the worktree, report a " +
-          "plausible cost, and never call a model.",
-      ],
-    },
-  });
-}
-
-/**
- * Which scenario a simulated run plays.
- *
- * `undefined` means "read the instructions", which is the fake's own default
- * and the whole point of the marker: a task that says
- * `[scenario: retryable_failure_then_success]` exercises the retry path end to
- * end. The one thing that cannot be left to the instructions is a **review**
- * run, because the review prompt quotes the task description — so a marker
- * meant for the execute run would otherwise be replayed by the reviewer, which
- * would then answer with files instead of findings. A review therefore only
- * honours the two review scenarios and falls back to `review_clean`.
- */
-function scenarioFor(spec: RunSpec): FakeScenario | undefined {
-  if (spec.kind !== "review") return undefined;
-  const marked = scenarioFromInstructions(spec.instructions);
-  return marked === "review_with_findings" ? marked : "review_clean";
 }
 
 /** A `discover()` that throws must not take the whole registry down with it. */
@@ -230,12 +157,12 @@ async function safeDiscover(id: HarnessId, adapter: HarnessAdapter): Promise<Har
   }
 }
 
-function unavailable(id: HarnessId, simulated: boolean): HarnessInfo {
+function unavailable(id: HarnessId): HarnessInfo {
   const warnings =
     id === "acp"
       ? ["Not implemented yet — planned after the first two adapters ship."]
-      : simulated
-        ? ["Not registered: this process is running with the simulated harness."]
+      : id === "fake"
+        ? ["Test-only adapter; it is never registered by the production server."]
         : ["Not registered in this process."];
   return {
     id,

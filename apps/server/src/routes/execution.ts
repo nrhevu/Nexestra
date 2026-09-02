@@ -38,8 +38,7 @@ export function executionRoutes(store: NexestraStore, execution: ExecutionRuntim
 
       if (parsed.data === "start" && !execution.available) {
         throw conflict(
-          "no harness adapter is available in this process — install Codex or OpenCode, " +
-            "or turn on the simulated harness in Settings",
+          "no harness adapter is available in this process — install and authenticate Codex or OpenCode",
         );
       }
 

@@ -48,6 +48,7 @@ export type {
   RunVerificationResult,
   SearchCodeMatch,
   SearchCodeResult,
+  SearchMemoryResult,
   TaskDispatchDefaults,
   VerificationOutcome,
   WorkspaceEntry,
@@ -62,6 +63,12 @@ export {
   MASTER_MODEL,
 } from "./llm/anthropic.js";
 export { createFakeLlmClient, type FakeLlmClient, type FakeTurn } from "./llm/fake.js";
+export {
+  createOpenAiLlmClient,
+  OPENAI_BASE_URL,
+  OPENAI_MASTER_MODEL,
+  type OpenAiLlmClientOptions,
+} from "./llm/openai.js";
 export type {
   LlmClient,
   LlmContentBlock,
@@ -149,6 +156,7 @@ export type {
   RequestApprovalInput,
   RunVerificationInput,
   SearchCodeInput,
+  SearchMemoryInput,
   SpecPatch,
   SummarizeInput,
   UpdateSpecInput,
@@ -168,6 +176,7 @@ export {
   RequestApprovalInputSchema,
   RunVerificationInputSchema,
   SearchCodeInputSchema,
+  SearchMemoryInputSchema,
   SpecPatchSchema,
   SummarizeInputSchema,
   UpdateSpecInputSchema,

@@ -19,6 +19,7 @@ import type {
   ReadWorkspaceResult,
   RunVerificationResult,
   SearchCodeResult,
+  SearchMemoryResult,
   TaskDispatchDefaults,
   VerificationOutcome,
   WorkspaceEntry,
@@ -35,6 +36,7 @@ import type {
   RequestApprovalInput,
   RunVerificationInput,
   SearchCodeInput,
+  SearchMemoryInput,
   SummarizeInput,
 } from "./tools/schemas.js";
 
@@ -47,6 +49,7 @@ export interface FakeHostOptions {
   readonly workspaceId?: string;
   /** Virtual workspace: relative path → file content. */
   readonly files?: Readonly<Record<string, string>>;
+  readonly memories?: readonly Memory[];
   /** Resolve approvals immediately instead of suspending the turn. */
   readonly autoApprove?: boolean | ((input: RequestApprovalInput) => "approved" | "rejected");
   readonly artifacts?: Readonly<Record<string, { kind: string; title: string; content: string }>>;
@@ -77,7 +80,7 @@ export function createFakeHost(options: FakeHostOptions = {}): FakeHost {
   const workspaceId = options.workspaceId ?? "ws_fake";
   const files = options.files ?? {};
   const calls: FakeHostCall[] = [];
-  const memories: Memory[] = [];
+  const memories: Memory[] = [...(options.memories ?? [])];
   const approvals: { id: string; request: RequestApprovalInput }[] = [];
   const plans: MasterPlanProposal[] = [];
   const phaseChanges: { from: string; to: string; reason: string }[] = [];
@@ -163,6 +166,27 @@ export function createFakeHost(options: FakeHostOptions = {}): FakeHost {
         matches: matches.slice(0, limit),
         truncated: matches.length > limit,
         engine: "walk",
+      };
+    },
+
+    async searchMemory(input: SearchMemoryInput): Promise<SearchMemoryResult> {
+      record("searchMemory", input);
+      const query = input.query?.toLocaleLowerCase();
+      const filtered = memories
+        .filter((memory) => !input.types || input.types.includes(memory.type))
+        .filter((memory) => {
+          if (!query) return true;
+          return [memory.title, memory.content, ...memory.tags]
+            .join("\n")
+            .toLocaleLowerCase()
+            .includes(query);
+        })
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      const limit = input.limit ?? 20;
+      return {
+        memories: filtered.slice(0, limit),
+        total: filtered.length,
+        truncated: filtered.length > limit,
       };
     },
 

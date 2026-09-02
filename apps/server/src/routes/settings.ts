@@ -9,10 +9,10 @@ import type { MasterRunner } from "../master/runner.js";
  * Machine-wide defaults edited from the Settings surface.
  *
  * The response also carries `master`: which model client the process actually
- * started with, and whether an API key was found. It rides along here rather
+ * will use on its next turn, and whether its server-side credential was found.
+ * It rides along here rather
  * than on its own route so the surface can render the truth in one request —
- * and it is read-only, because swapping the model client means restarting the
- * server, not writing a row.
+ * and it is read-only; provider configuration itself lives in `AppSettings`.
  */
 export function settingsRoutes(store: NexestraStore, runner: MasterRunner) {
   const respond = (settings: ReturnType<NexestraStore["getSettings"]>): AppSettingsResponse => ({

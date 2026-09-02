@@ -4,8 +4,8 @@
  * Three things make this run reproducible:
  *
  * - a scratch `NEXESTRA_HOME`, so the suite never touches `~/.nexestra`;
- * - `NEXESTRA_SEED_MOCK=0` and no `ANTHROPIC_API_KEY`, so the database starts
- *   empty and the Master runs on the deterministic `DemoLlmClient`;
+ * - no provider credentials, so the database starts empty and Master reports
+ *   its honest unconfigured state;
  * - `apps/web/dist` served by the server itself, so no Vite is involved and a
  *   test is looking at exactly what `pnpm build` produces.
  *
@@ -59,17 +59,12 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     NEXESTRA_HOME: options.home,
     NEXESTRA_HOST: "127.0.0.1",
     NEXESTRA_PORT: String(E2E_PORT),
-    NEXESTRA_SEED_MOCK: "0",
-    // The Master must be the deterministic demo client, whatever the developer
-    // happens to have exported in their shell.
-    NEXESTRA_MASTER_LLM: "demo",
-    // The agreed switch for running the loop on `@nexestra/adapter-fake`.
-    NEXESTRA_FAKE_HARNESS: "1",
     ...options.env,
   };
   for (const key of [
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
+    "OPENAI_API_KEY",
     "NEXESTRA_DEV",
     "NEXESTRA_WEB_DEV_URL",
   ]) {

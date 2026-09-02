@@ -288,6 +288,33 @@ describe("settings", () => {
     expect(after.defaultHarness).toBe("codex");
     expect(store.getSettings().concurrency).toBe(5);
   });
+
+  it("activates a persisted custom Master provider without a restart", async () => {
+    const response = await send("/api/settings", "PUT", {
+      activeMasterProviderId: "local-master",
+      masterProviders: [
+        {
+          id: "local-master",
+          name: "Local Master",
+          protocol: "openai-responses",
+          baseUrl: "http://127.0.0.1:11434/v1",
+          model: "planner",
+          enabled: true,
+        },
+      ],
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(
+      expect.objectContaining({
+        activeMasterProviderId: "local-master",
+        master: expect.objectContaining({
+          providerId: "local-master",
+          model: "planner",
+          ready: true,
+        }),
+      }),
+    );
+  });
 });
 
 describe("events", () => {

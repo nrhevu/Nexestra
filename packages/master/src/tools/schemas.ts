@@ -46,6 +46,17 @@ export const SearchCodeInputSchema = z.object({
 });
 export type SearchCodeInput = z.infer<typeof SearchCodeInputSchema>;
 
+export const SearchMemoryInputSchema = z.object({
+  query: z
+    .string()
+    .min(1)
+    .describe("Words to match against memory titles, content and tags. Omit to list recent memory.")
+    .optional(),
+  types: z.array(MemoryTypeSchema).describe("Restrict results to these memory types.").optional(),
+  limit: z.number().int().min(1).max(50).optional(),
+});
+export type SearchMemoryInput = z.infer<typeof SearchMemoryInputSchema>;
+
 /* -------------------------------------------------------------- clarifying */
 
 export const AskUserQuestionSchema = z.object({

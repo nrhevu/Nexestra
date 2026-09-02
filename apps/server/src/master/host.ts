@@ -43,6 +43,8 @@ import type {
   RunVerificationResult,
   SearchCodeInput,
   SearchCodeResult,
+  SearchMemoryInput,
+  SearchMemoryResult,
   SummarizeInput,
   TaskDispatchDefaults,
 } from "@nexestra/master";
@@ -104,6 +106,27 @@ export function createServerMasterHost(options: ServerMasterHostOptions): Master
 
     searchCode(input: SearchCodeInput): Promise<SearchCodeResult> {
       return reader.searchCode(input);
+    },
+
+    async searchMemory(input: SearchMemoryInput): Promise<SearchMemoryResult> {
+      const query = input.query?.toLocaleLowerCase();
+      const filtered = store
+        .listMemories({ workspaceId })
+        .filter((memory) => !input.types || input.types.includes(memory.type))
+        .filter((memory) => {
+          if (!query) return true;
+          return [memory.title, memory.content, ...memory.tags]
+            .join("\n")
+            .toLocaleLowerCase()
+            .includes(query);
+        })
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      const limit = input.limit ?? 20;
+      return {
+        memories: filtered.slice(0, limit),
+        total: filtered.length,
+        truncated: filtered.length > limit,
+      };
     },
 
     /* ------------------------------------------------------------ write side */

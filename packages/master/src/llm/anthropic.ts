@@ -35,6 +35,7 @@ export interface AnthropicLlmClientOptions {
   /** Pre-built SDK client. Omit to construct one from the ambient credentials. */
   readonly client?: Anthropic;
   readonly apiKey?: string;
+  readonly baseUrl?: string;
   readonly model?: string;
   /** Turn off compaction for short-lived sessions. Default: on. */
   readonly compaction?: boolean;
@@ -44,7 +45,11 @@ export interface AnthropicLlmClientOptions {
 
 export function createAnthropicLlmClient(options: AnthropicLlmClientOptions = {}): LlmClient {
   const client =
-    options.client ?? new Anthropic(options.apiKey === undefined ? {} : { apiKey: options.apiKey });
+    options.client ??
+    new Anthropic({
+      ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
+      ...(options.baseUrl === undefined ? {} : { baseURL: options.baseUrl }),
+    });
   const model = options.model ?? MASTER_MODEL;
   const compaction = options.compaction !== false;
   const thinkingSummaries = options.thinkingSummaries !== false;

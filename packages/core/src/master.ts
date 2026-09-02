@@ -169,10 +169,17 @@ export type MasterPending = z.infer<typeof MasterPendingSchema>;
 
 /** Which model client the server actually runs on. Never carries the key. */
 export const MasterRuntimeInfoSchema = z.object({
-  client: z.enum(["anthropic", "demo"]),
+  client: z.enum(["anthropic", "demo", "openai", "unconfigured"]),
   model: z.string(),
-  /** True when `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` is set. */
+  /** Kept for wire compatibility; means the selected provider's credential is present. */
   apiKeyPresent: z.boolean(),
+  providerId: z.string().nullable().optional(),
+  providerName: z.string().optional(),
+  protocol: z.enum(["openai-responses", "anthropic-messages"]).optional(),
+  credentialEnv: z.string().optional(),
+  credentialPresent: z.boolean().optional(),
+  ready: z.boolean().optional(),
+  message: z.string().optional(),
 });
 export type MasterRuntimeInfo = z.infer<typeof MasterRuntimeInfoSchema>;
 

@@ -21,6 +21,7 @@ import {
   RequestApprovalInputSchema,
   RunVerificationInputSchema,
   SearchCodeInputSchema,
+  SearchMemoryInputSchema,
   SummarizeInputSchema,
   UpdateSpecInputSchema,
 } from "./schemas.js";
@@ -46,6 +47,13 @@ export const MASTER_TOOL_DEFINITIONS: readonly MasterToolDefinition[] = [
     description:
       "Search file contents across the workspace and return matching lines with their file and line number. Cheaper than reading trees when you already know what you are looking for.",
     schema: SearchCodeInputSchema,
+    suspends: false,
+  },
+  {
+    name: "search_memory",
+    description:
+      "Search durable memory from every thread in this project. Use it before asking or deciding so prior research, decisions, architecture facts and lessons are reused instead of rediscovered.",
+    schema: SearchMemoryInputSchema,
     suspends: false,
   },
   {
