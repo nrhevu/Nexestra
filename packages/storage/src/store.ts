@@ -555,7 +555,9 @@ export class NexestraStore {
 
   updateTask(
     id: string,
-    patch: Partial<Omit<Task, "id" | "workspaceId" | "threadId" | "createdAt" | "updatedAt">>,
+    patch: Partial<
+      Omit<Task, "id" | "workspaceId" | "threadId" | "createdAt" | "updatedAt" | "harnessConfig">
+    > & { harnessConfig?: Partial<Task["harnessConfig"]> },
   ): Task {
     const current = this.getTask(id);
     if (!current) throw new NotFoundError("task", id);

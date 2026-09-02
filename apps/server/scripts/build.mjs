@@ -13,7 +13,16 @@ await build({
   target: "node24",
   sourcemap: true,
   logLevel: "info",
-  external: ["hono", "hono/*", "@hono/node-server", "ws", "zod"],
+  external: [
+    "hono",
+    "hono/*",
+    "@hono/node-server",
+    "ws",
+    "zod",
+    "drizzle-orm",
+    "drizzle-orm/*",
+    "better-sqlite3",
+  ],
   banner: {
     js: [
       "import { createRequire as __nexestraCreateRequire } from 'node:module';",
