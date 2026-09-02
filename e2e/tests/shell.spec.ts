@@ -1,5 +1,5 @@
 /**
- * (a) The shell renders and the four surfaces are reachable — by mouse and by
+ * (a) The shell renders and the five surfaces are reachable — by mouse and by
  * keyboard. This is the M0 acceptance criterion, still true against the real
  * server (PLAN.md §8 M0).
  */
@@ -10,7 +10,8 @@ import { expect, test } from "../src/fixtures.js";
 const SURFACES = [
   { route: "chat", label: "Workspace / Chat", title: /^Chat — / },
   { route: "board", label: "Task Board", title: /^Task Board — / },
-  { route: "editor", label: "Editor / Agent", title: /^Editor — / },
+  { route: "agents", label: "Agents", title: /^Agents — / },
+  { route: "editor", label: "Editor / Runs", title: /^Editor — / },
   { route: "memory", label: "Memory Graph", title: /^Memory Graph$/ },
 ] as const;
 
@@ -33,7 +34,7 @@ test("renders the shell chrome", async ({ page }) => {
   await expect(page.getByRole("textbox", { name: /Message Master/ })).toBeVisible();
 });
 
-test("navigates the four surfaces from the navigation panel", async ({ page }) => {
+test("navigates the five surfaces from the navigation panel", async ({ page }) => {
   await page.goto(`${fixture.route}/chat`);
 
   for (const surface of SURFACES) {
@@ -43,7 +44,7 @@ test("navigates the four surfaces from the navigation panel", async ({ page }) =
   }
 });
 
-test("switches surface with ⌘1..⌘4", async ({ page }) => {
+test("switches surface with ⌘1..⌘5", async ({ page }) => {
   await page.goto(`${fixture.route}/chat`);
   await expect(surfaceTitle(page)).toHaveText(SURFACES[0].title);
 

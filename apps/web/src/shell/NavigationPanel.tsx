@@ -15,6 +15,7 @@ export interface NavigationPanelProps {
 const SURFACE_ICONS: Record<SurfaceId, string> = {
   chat: "⌁",
   board: "☷",
+  agents: "@",
   editor: "</>",
   memory: "◇",
 };

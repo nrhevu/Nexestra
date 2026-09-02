@@ -3,6 +3,7 @@ import { ReasoningLevelSchema, SandboxLevelSchema, TaskStatusSchema } from "@nex
 import { Button, Select, StatusDot, Tag, TextInput } from "@nexestra/ui-kit";
 import { useEffect, useState } from "react";
 import {
+  useAgents,
   useDispatchTask,
   useRuns,
   useSpec,
@@ -54,6 +55,7 @@ export function BoardSidebar({ threadId }: { threadId: string }) {
 
   const rows = tasks.data ?? [];
   const task = rows.find((item) => item.id === selectedTaskId) ?? rows[0];
+  const agents = useAgents(task?.workspaceId ?? "");
 
   // Local drafts so typing is smooth; saved on blur or Enter.
   const [title, setTitle] = useState(task?.title ?? "");
@@ -85,6 +87,10 @@ export function BoardSidebar({ threadId }: { threadId: string }) {
   };
 
   const status: TaskStatus = task.status;
+  const workerAgents = (agents.data ?? []).filter(
+    (agent) => agent.enabled && agent.harness !== "nexestra",
+  );
+  const assignedAgent = workerAgents.find((agent) => agent.id === task.agentId);
   const criteria = (spec.data?.acceptanceCriteria ?? []).filter((criterion) =>
     task.acceptanceCriteriaIds.includes(criterion.id),
   );
@@ -111,10 +117,30 @@ export function BoardSidebar({ threadId }: { threadId: string }) {
       />
 
       <Select
+        id="task-agent"
+        label="Agent profile"
+        value={task.agentId ?? ""}
+        options={[
+          { value: "", label: "Custom harness settings" },
+          ...workerAgents.map((agent) => ({
+            value: agent.id,
+            label: `${agent.name} · ${agent.harness}`,
+          })),
+        ]}
+        onChange={(event) =>
+          updateTask.mutate({
+            taskId: task.id,
+            patch: { agentId: event.target.value || null },
+          })
+        }
+      />
+
+      <Select
         id="task-harness"
-        label="Assigned agent"
-        value={task.assignedHarness ?? "codex"}
+        label="Harness"
+        value={assignedAgent?.harness ?? task.assignedHarness ?? "codex"}
         options={HARNESS_OPTIONS}
+        disabled={Boolean(assignedAgent)}
         onChange={(event) =>
           updateTask.mutate({
             taskId: task.id,
@@ -142,6 +168,7 @@ export function BoardSidebar({ threadId }: { threadId: string }) {
         key={`model-${task.id}`}
         value={model}
         placeholder="workspace default"
+        disabled={Boolean(assignedAgent)}
         onChange={(event) => setModel(event.target.value)}
         onBlur={saveModel}
         onKeyDown={(event) => {

@@ -1,7 +1,8 @@
 import type { Message, MessageAttachment, OrchestratorProgress, Task } from "@nexestra/core";
-import { Button, Composer, KeyHint, StatusDot, Tag } from "@nexestra/ui-kit";
+import { Button, Composer, KeyHint, Select, StatusDot, Tag } from "@nexestra/ui-kit";
 import { useEffect, useRef, useState } from "react";
 import {
+  useAgents,
   useApprovals,
   useMasterCancel,
   useMasterSend,
@@ -12,6 +13,7 @@ import {
   useTasks,
   useThreadProgress,
   useThreads,
+  useUpdateThread,
 } from "../../lib/api.js";
 import { formatTime, formatUsd, phaseTone } from "../../lib/format.js";
 import { useMasterStream } from "../../lib/master.js";
@@ -41,6 +43,7 @@ export interface ChatSurfaceProps {
  */
 export function ChatSurface({ workspaceId, threadId }: ChatSurfaceProps) {
   const threads = useThreads(workspaceId);
+  const agents = useAgents(workspaceId);
   const messages = useMessages(threadId);
   const spec = useSpec(threadId);
   const tasks = useTasks(threadId);
@@ -52,8 +55,13 @@ export function ChatSurface({ workspaceId, threadId }: ChatSurfaceProps) {
   const send = useMasterSend(threadId);
   const cancel = useMasterCancel(threadId);
   const resolveApproval = useResolveApproval(workspaceId);
+  const updateThread = useUpdateThread(workspaceId);
 
   const thread = (threads.data ?? []).find((item) => item.id === threadId);
+  const masterAgents = (agents.data ?? []).filter(
+    (agent) => agent.enabled && agent.harness === "nexestra",
+  );
+  const activeAgent = masterAgents.find((agent) => agent.id === thread?.agentId);
   const composerFocusNonce = useUiStore((state) => state.composerFocusNonce);
 
   const [draft, setDraft] = useState("");
@@ -123,6 +131,22 @@ export function ChatSurface({ workspaceId, threadId }: ChatSurfaceProps) {
       headerRight={
         thread ? (
           <>
+            <Select
+              id="chat-master-agent"
+              aria-label="Master agent"
+              value={thread.agentId ?? ""}
+              disabled={busy || updateThread.isPending}
+              options={[
+                { value: "", label: "Global Master" },
+                ...masterAgents.map((agent) => ({ value: agent.id, label: agent.name })),
+              ]}
+              onChange={(event) =>
+                updateThread.mutate({
+                  threadId,
+                  patch: { agentId: event.target.value || null },
+                })
+              }
+            />
             <Tag tone={phaseTone(thread.phase)}>{thread.phase}</Tag>
             <span className="nx-muted">
               {formatUsd(thread.costUSD)} / {formatUsd(thread.budgetUSD)}
@@ -233,7 +257,9 @@ export function ChatSurface({ workspaceId, threadId }: ChatSurfaceProps) {
                 </>
               ) : (
                 <>
-                  <span className="nx-composer__token">@agent</span>
+                  <span className="nx-composer__token">
+                    @{activeAgent?.name ?? "global-master"}
+                  </span>
                   <span className="nx-composer__token">#ref</span>
                   <span className="nx-composer__token">/command</span>
                   <span>⌘Enter to send · Shift+Enter for a new line</span>

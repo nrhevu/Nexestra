@@ -1,4 +1,6 @@
 import {
+  type Agent,
+  AgentSchema,
   ApiErrorSchema,
   type Approval,
   ApprovalSchema,
@@ -8,6 +10,7 @@ import {
   type Artifact,
   ArtifactContentSchema,
   ArtifactSchema,
+  type CreateAgentRequest,
   type CreateMasterProviderRequest,
   type CreateMemoryRequest,
   type CreateMessageRequest,
@@ -61,6 +64,7 @@ import {
   type TaskStatus,
   type Thread,
   ThreadSchema,
+  type UpdateAgentRequest,
   type UpdateMemoryRequest,
   type UpdateTaskRequest,
   type UpdateThreadRequest,
@@ -85,6 +89,7 @@ const STALE = 30_000;
 
 /** One place every query key is built, so cache updates cannot drift. */
 export const keys = {
+  agents: (workspaceId: string) => ["agents", workspaceId] as const,
   workspaces: () => ["workspaces"] as const,
   threads: (workspaceId: string) => ["threads", workspaceId] as const,
   thread: (threadId: string) => ["thread", threadId] as const,
@@ -173,6 +178,15 @@ export function useThreads(workspaceId: string): UseQueryResult<Thread[]> {
   return useQuery({
     queryKey: keys.threads(workspaceId),
     queryFn: () => getJson(`/threads${query({ workspaceId })}`, z.array(ThreadSchema)),
+    enabled: workspaceId.length > 0,
+    staleTime: STALE,
+  });
+}
+
+export function useAgents(workspaceId: string): UseQueryResult<Agent[]> {
+  return useQuery({
+    queryKey: keys.agents(workspaceId),
+    queryFn: () => getJson(`/agents${query({ workspaceId })}`, z.array(AgentSchema)),
     enabled: workspaceId.length > 0,
     staleTime: STALE,
   });
@@ -408,6 +422,52 @@ export function useCreateThread(
   });
 }
 
+export function useCreateAgent(
+  workspaceId: string,
+): UseMutationResult<Agent, Error, Omit<CreateAgentRequest, "workspaceId">> {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input) =>
+      request("/agents", AgentSchema, {
+        method: "POST",
+        json: { ...input, workspaceId },
+      }),
+    onSuccess: (agent) => {
+      client.setQueryData<Agent[]>(keys.agents(workspaceId), (current) =>
+        upsertById(current, agent),
+      );
+    },
+  });
+}
+
+export function useUpdateAgent(
+  workspaceId: string,
+): UseMutationResult<Agent, Error, { agentId: string; patch: UpdateAgentRequest }> {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ agentId, patch }) =>
+      request(`/agents/${agentId}`, AgentSchema, { method: "PATCH", json: patch }),
+    onSuccess: (agent) => {
+      client.setQueryData<Agent[]>(keys.agents(workspaceId), (current) =>
+        upsertById(current, agent),
+      );
+      void client.invalidateQueries({ queryKey: ["provider-models"] });
+    },
+  });
+}
+
+export function useDeleteAgent(workspaceId: string): UseMutationResult<void, Error, string> {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (agentId) => request(`/agents/${agentId}`, z.undefined(), { method: "DELETE" }),
+    onSuccess: (_result, agentId) => {
+      client.setQueryData<Agent[]>(keys.agents(workspaceId), (current) =>
+        current?.filter((agent) => agent.id !== agentId),
+      );
+    },
+  });
+}
+
 export function useUpdateThread(
   workspaceId: string,
 ): UseMutationResult<Thread, Error, { threadId: string; patch: UpdateThreadRequest }> {
@@ -415,8 +475,9 @@ export function useUpdateThread(
   return useMutation({
     mutationFn: ({ threadId, patch }: { threadId: string; patch: UpdateThreadRequest }) =>
       request(`/threads/${threadId}`, ThreadSchema, { method: "PATCH", json: patch }),
-    onSuccess: () => {
+    onSuccess: (thread) => {
       void client.invalidateQueries({ queryKey: keys.threads(workspaceId) });
+      void client.invalidateQueries({ queryKey: keys.masterState(thread.id) });
     },
   });
 }

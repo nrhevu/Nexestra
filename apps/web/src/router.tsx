@@ -11,6 +11,7 @@ import { SettingsSurface } from "./settings/SettingsSurface.js";
 import { AppShell } from "./shell/AppShell.js";
 import { EmptyWorkspace } from "./shell/EmptyWorkspace.js";
 import { SURFACE_ROUTES } from "./shell/surfaces.js";
+import { AgentsSurface } from "./surfaces/agents/AgentsSurface.js";
 import { BoardSurface } from "./surfaces/board/BoardSurface.js";
 import { ChatSurface } from "./surfaces/chat/ChatSurface.js";
 import { EditorSurface } from "./surfaces/editor/EditorSurface.js";
@@ -119,6 +120,19 @@ const editorRoute = createRoute({
   },
 });
 
+const agentsRoute = createRoute({
+  getParentRoute: () => threadRoute,
+  path: "agents",
+  component: function AgentsRoute() {
+    const { workspaceId, threadId } = agentsRoute.useParams();
+    return (
+      <AppShell workspaceId={workspaceId} threadId={threadId} surface="agents">
+        <AgentsSurface workspaceId={workspaceId} threadId={threadId} />
+      </AppShell>
+    );
+  },
+});
+
 const memoryRoute = createRoute({
   getParentRoute: () => threadRoute,
   path: "memory",
@@ -136,7 +150,7 @@ const routeTree = rootRoute.addChildren([
   indexRoute,
   settingsRoute,
   workspaceRoute,
-  threadRoute.addChildren([chatRoute, boardRoute, editorRoute, memoryRoute]),
+  threadRoute.addChildren([chatRoute, boardRoute, agentsRoute, editorRoute, memoryRoute]),
 ]);
 
 export const router = createRouter({

@@ -1,5 +1,6 @@
 import { Button, StatusDot, Tag } from "@nexestra/ui-kit";
 import {
+  useAgents,
   useApprovals,
   useArtifacts,
   useExecutionStatus,
@@ -23,6 +24,7 @@ import { SpecCard } from "./SpecCard.js";
  */
 export function ChatSidebar({ workspaceId, threadId }: { workspaceId: string; threadId: string }) {
   const spec = useSpec(threadId);
+  const agents = useAgents(workspaceId);
   const memories = useMemories(workspaceId);
   const artifacts = useArtifacts(threadId);
   const approvals = useApprovals(workspaceId);
@@ -42,6 +44,7 @@ export function ChatSidebar({ workspaceId, threadId }: { workspaceId: string; th
   // Two costs, deliberately: the Master's own tokens and everything the
   // harnesses spent. The budget belongs to the thread and covers both.
   const thread = (threads.data ?? []).find((item) => item.id === threadId);
+  const activeAgent = (agents.data ?? []).find((agent) => agent.id === thread?.agentId);
   const budgetUSD = execution.data?.budgetUSD ?? thread?.budgetUSD ?? 0;
   const spentUSD = execution.data?.costUSD ?? thread?.costUSD ?? 0;
   const ratio = budgetUSD > 0 ? Math.min(1, spentUSD / budgetUSD) : 0;
@@ -184,6 +187,14 @@ export function ChatSidebar({ workspaceId, threadId }: { workspaceId: string; th
         <section className="sidebar__section">
           <div className="sidebar__section-title">Master</div>
           <div className="kv">
+            <span className="kv__k">agent</span>
+            <span className="kv__v">{activeAgent?.name ?? "Global Master"}</span>
+            <span className="kv__k">provider</span>
+            <span className="kv__v">
+              {masterState.data?.runtime.providerName ?? masterState.data?.runtime.client}
+            </span>
+            <span className="kv__k">model</span>
+            <span className="kv__v">{masterState.data?.runtime.model || "—"}</span>
             <span className="kv__k">client</span>
             <span className="kv__v">{masterState.data?.runtime.client}</span>
             <span className="kv__k">questions</span>

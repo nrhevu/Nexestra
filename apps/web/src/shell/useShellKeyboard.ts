@@ -9,7 +9,7 @@ export interface ShellKeyboardTarget {
 }
 
 /**
- * ⌘1..⌘4 switch surface, ⌘/ focuses the composer, ⌘K opens the palette,
+ * ⌘1..⌘5 switch surface, ⌘/ focuses the composer, ⌘K opens the palette,
  * ⌘, opens Settings (PLAN.md §7).
  */
 export function useShellKeyboard({ workspaceId, threadId }: ShellKeyboardTarget): void {
