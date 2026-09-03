@@ -42,6 +42,11 @@ by the login flow. In React, search input owns its local state and the transcrip
 boundary. Runs are grouped by trigger in one pass, so typing does not rebuild message rows and a
 transcript refresh does not perform a messages-by-runs nested scan.
 
+Message content is stored and transported as unchanged Markdown. The browser renders it with
+GitHub Flavored Markdown and KaTeX inside the memoized transcript boundary. Raw HTML parsing is not
+enabled, the Markdown renderer removes unsafe URL schemes, and HTTP(S) links use isolated tabs.
+Mention highlighting is applied to rendered text nodes while links and code remain untouched.
+
 ## Persistence
 
 `state.json` stores workspaces, agent profiles, thread metadata, and tasks. Every agent, thread, and
@@ -163,7 +168,7 @@ Full access mode is deliberately explicit because it bypasses that sandbox.
   use syntax supported directly by Node 24.
 - ChatGPT/Codex native tool calls are not yet mirrored into Nexestra's per-tool activity history.
 - Queues live in process. A restart marks runs interrupted, and the user must click Retry.
-- Agent messages currently render as plain text, without Markdown, code blocks, or link previews.
+- Markdown code blocks do not yet have syntax highlighting, and web links are not unfurled.
 - Artifact deletion, nested replies, reactions, and multi-user authentication are not supported.
 - Transcripts use one file per thread, not one file for the entire workspace; this boundary reduces
   contention while preserving one shared source of context for every participant in the thread.

@@ -45,6 +45,11 @@ Messages without a mention are only saved to the transcript. A message containin
 `@codex`, or multiple handles creates one run for each invoked agent. Agent replies are recorded
 in the same transcript file. Agent replies do not trigger other agents, which prevents loops.
 
+Messages render as safe GitHub Flavored Markdown with headings, emphasis, lists, task lists, tables,
+quotes, links, inline code, fenced code blocks, and KaTeX math. Raw HTML is shown as text instead of
+executed, unsafe link schemes are disabled, and external HTTP(S) links open in a new tab. The exact
+Markdown source remains unchanged in the shared transcript and agent context.
+
 The composer accepts up to 10 files per message, with a 20 MB per-file and 50 MB combined limit.
 Safe raster images render inline; other files download rather than execute in the browser. Every
 thread has a **Files & links** view with search and type filters. Nexestra automatically indexes

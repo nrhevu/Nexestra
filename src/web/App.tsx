@@ -30,8 +30,10 @@ import {
 import {
   type FormEvent,
   type KeyboardEvent,
+  lazy,
   memo,
   type ReactNode,
+  Suspense,
   useCallback,
   useDeferredValue,
   useEffect,
@@ -53,6 +55,8 @@ import type {
 } from "../shared/contracts.js";
 import { extractMentionHandles, handleFromName } from "../shared/contracts.js";
 import { api } from "./api.js";
+
+const RichMessage = lazy(() => import("./RichMessage.js"));
 
 type PrimaryView = "threads" | "surfaces";
 type Surface = "taskboard" | "agents";
@@ -1262,7 +1266,11 @@ function MessageRow({
           )}
           <time>{formatTime(message.createdAt)}</time>
         </div>
-        {message.content && <p>{highlightMentions(message.content, knownHandles)}</p>}
+        {message.content && (
+          <Suspense fallback={<p className="message-markdown-fallback">{message.content}</p>}>
+            <RichMessage content={message.content} knownHandles={knownHandles} />
+          </Suspense>
+        )}
         {artifacts.length > 0 && <MessageArtifacts artifacts={artifacts} />}
       </div>
     </article>
@@ -2874,32 +2882,6 @@ function masterAccessLabel(agent: Extract<AgentView, { kind: "master" }>): strin
   if (agent.accessMode === "full") return "Full access";
   if (agent.accessMode === "auto") return "Auto";
   return "Ask for permission";
-}
-
-function highlightMentions(content: string, knownHandles: ReadonlySet<string>): ReactNode[] {
-  const nodes: ReactNode[] = [];
-  const pattern = /@[a-zA-Z0-9][a-zA-Z0-9_-]{1,30}/g;
-  let cursor = 0;
-  for (const match of content.matchAll(pattern)) {
-    const index = match.index;
-    if (index > cursor) {
-      nodes.push(<span key={`text-${cursor}`}>{content.slice(cursor, index)}</span>);
-    }
-    const handle = match[0].slice(1).toLowerCase();
-    nodes.push(
-      <mark
-        className={knownHandles.has(handle) ? undefined : "unresolved"}
-        key={`mention-${index}`}
-      >
-        {match[0]}
-      </mark>,
-    );
-    cursor = index + match[0].length;
-  }
-  if (cursor < content.length) {
-    nodes.push(<span key={`text-${cursor}`}>{content.slice(cursor)}</span>);
-  }
-  return nodes;
 }
 
 function hashString(value: string): number {
