@@ -120,20 +120,29 @@ interactive questions. LSP is deliberately excluded. Each profile selects one ac
 allows contextual tools directly and pauses edits, shell, web, and extensions. Auto allows all
 built-ins and pauses custom or MCP tools. Full access removes tool approval prompts. An asked tool
 is written to the thread and pauses its run until the user decides; a question pauses in a distinct
-input state until the local user responds. File tools reject absolute paths, traversal, escaping
-symlinks, credential paths, oversized files, and oversized results. The one exception is `read`,
-which accepts the exact absolute paths of artifacts from the message that triggered the current
-invocation; that allowlist does not extend to search or mutation tools. Tool loops stop after twelve
-rounds or three identical calls.
+input state until the local user responds. Multiple calls from one model step execute concurrently,
+and a run stays paused until all outstanding approvals or questions are resolved. File tools accept
+relative paths and absolute paths inside the repository, reject traversal and escaping symlinks,
+and protect Nexestra data and credentials. `read` also accepts exact absolute paths allowlisted from
+the triggering message, loaded skill, or saved large tool output; that allowlist does not extend to
+search or mutation tools. Tool loops stop after twelve rounds or three consecutive identical calls.
 
 One tool session is created per custom-provider invocation. It reads optional
 `nexestra.config.json`, discovers skills and OpenCode-style custom modules, connects configured MCP
 servers, and closes all MCP clients after the provider finishes. Local MCP uses stdio; remote MCP
 uses Streamable HTTP. Custom and MCP tools receive normalized names and share the `external`
-permission boundary. Workspace permission patterns may narrow, but never widen, the access mode.
+permission boundary. Workspace permission patterns use last-match-wins ordering and may narrow, but
+never widen, the access mode.
 Search/list tools use ripgrep's `.gitignore` and `.ignore` behavior plus configured patterns, with
 hard exclusions for app data and credentials. Web fetch validates DNS and every redirect against
 private address ranges before reading a capped textual response.
+
+Built-in schemas expose OpenCode-compatible argument names. Read can list directories, streams
+large UTF-8 files with line and byte caps, and reports offsets for continuation. Shell defaults to
+120 seconds and accepts a repository `workdir`. Results over 2,000 lines or 50 KB are reduced to a
+head or tail preview; the full redacted result is stored in the protected run directory and added
+to the current invocation's exact read allowlist. Custom-provider requests retry transient network,
+408, 409, 429, and 5xx failures with bounded backoff and `Retry-After` support.
 
 Harness and shell child processes close stdin, enforce timeouts and output caps, kill the process group, and inherit
 only allowlisted environment variables to reduce the risk of exposing server secrets. A timeout
@@ -149,8 +158,9 @@ tokens. Custom API keys remain plaintext at rest in a `0600` file, which fits th
 threat model but does not replace an OS keychain. Custom base URLs may not contain user info, a
 query, or a fragment; remote endpoints require HTTPS, while HTTP is permitted only on loopback.
 Provider responses have a byte limit enforced before parsing.
-Only redacted tool metadata and non-content summaries are persisted; full file and shell output is transient and
-known custom-provider credentials are redacted. Custom-provider shell commands still run with the
+Only redacted tool metadata and non-content summaries enter the canonical transcript. Large redacted
+tool results are stored as private `0600` run files so the same invocation can continue reading
+them; known custom-provider credentials are redacted. Custom-provider shell commands still run with the
 current OS user's authority, so Ask is the default and broader modes should only be selected for
 trusted providers. ChatGPT Auto access instead relies on the Codex workspace-write sandbox; its
 Full access mode is deliberately explicit because it bypasses that sandbox.
@@ -165,9 +175,16 @@ Full access mode is deliberately explicit because it bypasses that sandbox.
 - Workspaces cannot yet be renamed, reordered, or deleted.
 - Device OAuth displays raw Codex CLI instructions; it does not yet use `codex app-server` JSON-RPC.
 - Custom providers support only two OpenAI-compatible protocols; Anthropic Messages is not supported.
-- Remote MCP supports Streamable HTTP and environment-backed headers, but not interactive OAuth.
+- Remote MCP supports Streamable HTTP, environment-backed headers, and separate startup, catalog,
+  and execution timeouts, but not interactive OAuth. MCP prompts, resources, and resource templates
+  are not exposed to the model.
 - Custom tool modules are trusted local code loaded into the server process; TypeScript modules must
   use syntax supported directly by Node 24.
+- Custom-tool `metadata()` and nested `ask()` calls are compatibility no-ops after the tool-level
+  access check; rich custom-tool attachments are not yet indexed as thread artifacts.
+- Exact edit does not yet include OpenCode's fuzzy replacement fallbacks, formatter integration, or
+  file diagnostics. Binary/image/PDF reads do not produce tool-result attachments.
+- Skill discovery supports local `SKILL.md` trees but not remote catalogs or flat Markdown skills.
 - ChatGPT/Codex native tool calls are not yet mirrored into Nexestra's per-tool activity history.
 - Queues live in process. A restart marks runs interrupted, and the user must click Retry.
 - Markdown code blocks do not yet have syntax highlighting, and web links are not unfurled.

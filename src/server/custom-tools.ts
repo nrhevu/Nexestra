@@ -8,22 +8,35 @@ import type { MasterToolContext, ToolDefinition } from "./harness-tool-types.js"
 
 interface CustomToolShape {
   description: string;
-  args?: {
-    parseAsync?: (input: unknown) => Promise<unknown>;
-    parse?: (input: unknown) => unknown;
-  };
+  args?: Record<string, unknown> | z.ZodType;
   parameters?: Record<string, unknown>;
   timeoutMs?: number;
   execute: (input: Record<string, unknown>, context: CustomToolExecutionContext) => unknown;
 }
 
+interface CustomToolResult {
+  output: string;
+  title?: string;
+  metadata?: Record<string, unknown>;
+  attachments?: unknown[];
+}
+
 interface CustomToolExecutionContext {
   agent: string;
+  sessionID: string;
+  messageID: string;
   runId: string;
   threadId: string;
   directory: string;
   worktree: string;
   abort: AbortSignal;
+  metadata(input: { title?: string; metadata?: Record<string, unknown> }): void;
+  ask(input: {
+    permission: string;
+    patterns: string[];
+    always: string[];
+    metadata: Record<string, unknown>;
+  }): Promise<void>;
 }
 
 export async function loadCustomTools(
@@ -64,8 +77,11 @@ async function customToolLocations(
   const home = env.HOME || homedir();
   const xdg = env.XDG_CONFIG_HOME || join(home, ".config");
   const requested = [
+    join(context.workspacePath, ".opencode", "tool"),
     join(context.workspacePath, ".opencode", "tools"),
+    join(context.workspacePath, ".nexestra", "tool"),
     join(context.workspacePath, ".nexestra", "tools"),
+    join(xdg, "opencode", "tool"),
     join(xdg, "opencode", "tools"),
     ...config.customTools.directories.map((path) =>
       isAbsolute(path) ? path : resolve(context.workspacePath, path),
@@ -105,7 +121,8 @@ function toToolDefinition(
   custom: CustomToolShape,
   baseContext: MasterToolContext,
 ): ToolDefinition {
-  const parameters = custom.parameters ?? schemaToJson(custom.args) ?? emptyObjectSchema();
+  const argsSchema = customArgsSchema(custom.args);
+  const parameters = custom.parameters ?? schemaToJson(argsSchema) ?? emptyObjectSchema();
   return {
     type: "function",
     name,
@@ -113,11 +130,7 @@ function toToolDefinition(
     parameters,
     permission: "external",
     parse: async (input) => {
-      const parsed = custom.args?.parseAsync
-        ? await custom.args.parseAsync(input)
-        : custom.args?.parse
-          ? custom.args.parse(input)
-          : input;
+      const parsed = argsSchema ? await argsSchema.parseAsync(input) : input;
       if (!isRecord(parsed)) throw new Error("Custom tool arguments must be an object.");
       return parsed;
     },
@@ -129,18 +142,24 @@ function toToolDefinition(
           Promise.resolve(
             custom.execute(input, {
               agent: baseContext.agent.handle,
+              sessionID: baseContext.runId,
+              messageID: baseContext.messageId ?? baseContext.runId,
               runId: baseContext.runId,
               threadId: baseContext.threadId,
               directory: baseContext.workspacePath,
               worktree: baseContext.workspacePath,
               abort: controller.signal,
+              metadata: () => undefined,
+              ask: async () => undefined,
             }),
           ),
           timeoutMs,
           `Custom tool ${name} timed out.`,
           controller,
         );
-        return typeof output === "string" ? output : JSON.stringify(output, null, 2);
+        if (typeof output === "string") return output;
+        if (isCustomToolResult(output)) return output.output;
+        return JSON.stringify(output, null, 2);
       } finally {
         controller.abort();
       }
@@ -148,13 +167,29 @@ function toToolDefinition(
   };
 }
 
-function schemaToJson(schema: CustomToolShape["args"]): Record<string, unknown> | undefined {
+function customArgsSchema(args: CustomToolShape["args"]): z.ZodType | undefined {
+  if (!args) return undefined;
+  if (isZodType(args)) return args;
+  const entries = Object.entries(args);
+  if (!entries.every(([, value]) => isZodType(value))) return undefined;
+  return z.object(args as z.ZodRawShape);
+}
+
+function schemaToJson(schema: z.ZodType | undefined): Record<string, unknown> | undefined {
   if (!schema) return undefined;
   try {
-    return z.toJSONSchema(schema as z.ZodType) as Record<string, unknown>;
+    return z.toJSONSchema(schema, { io: "input" }) as Record<string, unknown>;
   } catch {
     return undefined;
   }
+}
+
+function isZodType(value: unknown): value is z.ZodType {
+  return isRecord(value) && "_zod" in value;
+}
+
+function isCustomToolResult(value: unknown): value is CustomToolResult {
+  return isRecord(value) && typeof value.output === "string";
 }
 
 function isCustomTool(value: unknown): value is CustomToolShape {

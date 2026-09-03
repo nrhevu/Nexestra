@@ -52,9 +52,15 @@ export async function loadMcpTools(
   for (const [serverName, server] of Object.entries(config.mcp.servers)) {
     if (server.disabled) continue;
     try {
-      const open = await connectServer(server, context);
+      const timeout = mcpTimeouts(config.mcp.timeout, server.timeout);
+      if (server.type === "remote" && server.oauth) {
+        warnings.push(
+          `MCP server ${serverName} has OAuth settings, but Nexestra cannot run its interactive OAuth flow.`,
+        );
+      }
+      const open = await connectServer(server, context, timeout.startup);
       clients.push(open);
-      const listed = await open.client.listTools(undefined, { timeout: server.timeout });
+      const listed = await open.client.listTools(undefined, { timeout: timeout.catalog });
       for (const tool of listed.tools.slice(0, 200)) {
         const name = normalizeToolName(`${serverName}_${tool.name}`);
         tools.push({
@@ -72,7 +78,7 @@ export async function loadMcpTools(
           execute: async (input) => {
             const result = await open.client.callTool(
               { name: tool.name, arguments: input, _meta: { sessionID: context.runId } },
-              { timeout: server.timeout, toolDefinition: tool },
+              { timeout: timeout.execution, toolDefinition: tool },
             );
             const output = mcpResultText(result);
             if (result.isError) throw new Error(output || `${name} returned an error.`);
@@ -96,6 +102,7 @@ export async function loadMcpTools(
 async function connectServer(
   server: McpServerConfig,
   context: MasterToolContext,
+  startupTimeout: number,
 ): Promise<OpenClient> {
   const client = new Client({ name: "nexestra", version: "0.1.0" });
   const sourceEnv = context.env ?? process.env;
@@ -126,7 +133,7 @@ async function connectServer(
         maxBufferSize: 1024 * 1024,
       });
       transport.stderr?.on("data", () => undefined);
-      await client.connect(transport, { timeout: server.timeout });
+      await client.connect(transport, { timeout: startupTimeout });
       return { client, close: () => client.close() };
     }
 
@@ -141,12 +148,26 @@ async function connectServer(
       requestInit: { headers },
       fetch: boundedMcpFetch(context.fetch ?? globalThis.fetch) as never,
     });
-    await client.connect(transport, { timeout: server.timeout });
+    await client.connect(transport, { timeout: startupTimeout });
     return { client, close: () => client.close() };
   } catch (error) {
     await client.close().catch(() => undefined);
     throw error;
   }
+}
+
+function mcpTimeouts(
+  defaults: { startup: number; catalog: number; execution: number },
+  override: McpServerConfig["timeout"],
+): { startup: number; catalog: number; execution: number } {
+  if (typeof override === "number") {
+    return { startup: override, catalog: override, execution: override };
+  }
+  return {
+    startup: override?.startup ?? defaults.startup,
+    catalog: override?.catalog ?? defaults.catalog,
+    execution: override?.execution ?? defaults.execution,
+  };
 }
 
 function validateRemoteUrl(value: string): URL {

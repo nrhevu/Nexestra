@@ -11,3 +11,4 @@
 | [0007](0007-master-access-modes.md) | Accepted | Replace per-tool profile permissions with three access modes |
 | [0008](0008-thread-artifacts.md) | Accepted | Thread-scoped uploads and indexed artifact references |
 | [0009](0009-safe-rich-markdown.md) | Accepted | Safe rich Markdown rendering for thread messages |
+| [0010](0010-opencode-compatible-master-semantics.md) | Accepted | Align provider-neutral Master behavior with OpenCode tool semantics |

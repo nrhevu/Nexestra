@@ -17,6 +17,7 @@ export async function discoverSkills(context: MasterToolContext): Promise<Harnes
   const home = env.HOME || homedir();
   const xdg = env.XDG_CONFIG_HOME || join(home, ".config");
   const roots = [
+    join(context.workspacePath, ".opencode", "skill"),
     join(context.workspacePath, ".opencode", "skills"),
     join(context.workspacePath, ".claude", "skills"),
     join(context.workspacePath, ".agents", "skills"),
@@ -45,10 +46,31 @@ export async function discoverSkills(context: MasterToolContext): Promise<Harnes
   return [...skills.values()].sort((left, right) => left.name.localeCompare(right.name));
 }
 
-export async function readSkill(skill: HarnessSkill): Promise<string> {
+export async function readSkill(skill: HarnessSkill, context?: MasterToolContext): Promise<string> {
   const info = await lstat(skill.path);
   if (!info.isFile() || info.size > MAX_SKILL_BYTES) throw new Error("Skill is too large to load.");
-  return readFile(skill.path, "utf8");
+  const source = await readFile(skill.path, "utf8");
+  const directory = resolve(skill.path, "..");
+  const files = await supportingFiles(directory);
+  if (context) {
+    context.readableArtifactPaths ??= [];
+    context.readableArtifactPaths.push(...files);
+  }
+  return [
+    `<skill_content name="${escapeXml(skill.name)}">`,
+    `# Skill: ${skill.name}`,
+    "",
+    stripFrontmatter(source).trim(),
+    "",
+    `Base directory for this skill: ${directory}`,
+    "Relative paths in this skill are relative to this base directory.",
+    "Note: file list is sampled.",
+    "",
+    "<skill_files>",
+    ...files.map((file) => `<file>${escapeXml(file)}</file>`),
+    "</skill_files>",
+    "</skill_content>",
+  ].join("\n");
 }
 
 export function skillDescription(skills: HarnessSkill[]): string {
@@ -57,12 +79,18 @@ export function skillDescription(skills: HarnessSkill[]): string {
   }
   const catalog = skills
     .slice(0, 50)
-    .map((skill) => `${skill.name}: ${skill.description}`)
-    .join("; ");
-  return `Load detailed instructions from an installed skill by name. Available skills: ${catalog}`.slice(
-    0,
-    4_000,
-  );
+    .flatMap((skill) => [
+      "  <skill>",
+      `    <name>${escapeXml(skill.name)}</name>`,
+      `    <description>${escapeXml(skill.description)}</description>`,
+      "  </skill>",
+    ]);
+  return [
+    "Load detailed instructions from an installed skill by name.",
+    "<available_skills>",
+    ...catalog,
+    "</available_skills>",
+  ].join("\n");
 }
 
 async function skillFiles(root: string, allowedRoots: string[]): Promise<string[]> {
@@ -75,23 +103,67 @@ async function skillFiles(root: string, allowedRoots: string[]): Promise<string[
     ) {
       return [];
     }
-    const entries = await readdir(resolved, { withFileTypes: true });
-    return entries
-      .filter((entry) => entry.isDirectory() && SKILL_NAME.test(entry.name))
-      .slice(0, 200)
-      .map((entry) => join(resolved, entry.name, "SKILL.md"));
+    const files: string[] = [];
+    await walkSkillFiles(resolved, 0, files);
+    return files;
   } catch (error) {
     if (isNodeError(error, "ENOENT")) return [];
     throw error;
   }
 }
 
+async function walkSkillFiles(directory: string, depth: number, files: string[]): Promise<void> {
+  if (depth > 5 || files.length >= 200) return;
+  const entries = await readdir(directory, { withFileTypes: true });
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    if (files.length >= 200) return;
+    const path = join(directory, entry.name);
+    if (entry.isFile() && entry.name === "SKILL.md") {
+      files.push(path);
+    } else if (entry.isDirectory()) {
+      await walkSkillFiles(path, depth + 1, files);
+    }
+  }
+}
+
+async function supportingFiles(directory: string): Promise<string[]> {
+  const files: string[] = [];
+  async function walk(current: string, depth: number): Promise<void> {
+    if (depth > 5 || files.length >= 10) return;
+    const entries = await readdir(current, { withFileTypes: true });
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+      if (files.length >= 10) return;
+      const path = join(current, entry.name);
+      if (entry.isFile() && path !== join(directory, "SKILL.md")) files.push(path);
+      else if (entry.isDirectory()) await walk(path, depth + 1);
+    }
+  }
+  await walk(directory, 0);
+  return files;
+}
+
+function stripFrontmatter(source: string): string {
+  const normalized = source.replaceAll("\r\n", "\n");
+  if (!normalized.startsWith("---\n")) return normalized;
+  const end = normalized.indexOf("\n---", 4);
+  return end < 0 ? normalized : normalized.slice(end + 4).replace(/^\n/, "");
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
 function parseFrontmatter(source: string): { name: string; description: string } | undefined {
-  if (!source.startsWith("---\n")) return undefined;
-  const end = source.indexOf("\n---", 4);
+  const normalized = source.replaceAll("\r\n", "\n");
+  if (!normalized.startsWith("---\n")) return undefined;
+  const end = normalized.indexOf("\n---", 4);
   if (end < 0) return undefined;
   const values = new Map<string, string>();
-  for (const line of source.slice(4, end).split("\n")) {
+  for (const line of normalized.slice(4, end).split("\n")) {
     const match = /^([a-zA-Z][a-zA-Z0-9_-]*):\s*(.+)$/.exec(line);
     if (!match?.[1] || !match[2]) continue;
     values.set(match[1], unquote(match[2].trim()));

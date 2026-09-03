@@ -20,7 +20,7 @@ describe("Master harness tools", () => {
     );
     await expect(call(context, "glob", { pattern: "**/*.ts" })).resolves.toContain("src/alpha.ts");
     await expect(call(context, "grep", { query: "alpha", path: "src" })).resolves.toContain(
-      "src/alpha.ts:1",
+      "Line 1: export const alpha",
     );
     await expect(call(context, "read", { path: "src/alpha.ts" })).resolves.toContain(
       "export const alpha",
@@ -44,6 +44,41 @@ describe("Master harness tools", () => {
     );
     expect(await readFile(join(context.workspacePath, "src", "beta.ts"), "utf8")).toContain(
       "beta = 3",
+    );
+  });
+
+  it("accepts OpenCode tool arguments, absolute workspace paths, directories, and CRLF edits", async () => {
+    const context = await toolContext("full");
+    const sourceDirectory = join(context.workspacePath, "src");
+    const sourceFile = join(sourceDirectory, "alpha.ts");
+    await mkdir(sourceDirectory);
+    await writeFile(sourceFile, "export const alpha = 1;\r\nexport const beta = 2;\r\n");
+
+    await expect(
+      call(context, "grep", { pattern: "alpha", include: "*.ts", path: "src" }),
+    ).resolves.toContain("Line 1: export const alpha");
+    await expect(call(context, "read", { filePath: sourceDirectory })).resolves.toContain(
+      "<type>directory</type>",
+    );
+    await expect(call(context, "read", { filePath: sourceFile })).resolves.toContain(
+      "1: export const alpha",
+    );
+    await expect(
+      call(context, "edit", {
+        filePath: sourceFile,
+        oldString: "alpha = 1;\nexport const beta",
+        newString: "alpha = 3;\nexport const beta",
+      }),
+    ).resolves.toContain("Updated");
+    await expect(
+      call(context, "write", { filePath: "src/generated.ts", content: "export {};\n" }),
+    ).resolves.toContain("Wrote src/generated.ts");
+    await expect(
+      call(context, "bash", { command: "pwd", workdir: "src", timeout: 5_000 }),
+    ).resolves.toContain(sourceDirectory);
+
+    expect(await readFile(sourceFile, "utf8")).toBe(
+      "export const alpha = 3;\r\nexport const beta = 2;\r\n",
     );
   });
 
@@ -95,13 +130,44 @@ describe("Master harness tools", () => {
     await writeFile(repositoryFile, "repository context\n");
     context.readableArtifactPaths = [attached];
 
-    await expect(call(context, "read", { path: attached })).resolves.toContain("attached context");
-    await expect(call(context, "read", { path: unlisted })).resolves.toContain(
-      "reference an attached artifact",
+    await expect(call(context, "read", { filePath: attached })).resolves.toContain(
+      "attached context",
     );
-    await expect(call(context, "read", { path: repositoryFile })).resolves.toContain(
-      "reference an attached artifact",
+    await expect(call(context, "read", { filePath: unlisted })).resolves.toContain("protected");
+    await expect(call(context, "read", { filePath: repositoryFile })).resolves.toContain(
+      "repository context",
     );
+    await expect(call(context, "read", { filePath: context.dataPath })).resolves.toContain(
+      "protected",
+    );
+  });
+
+  it("caps large outputs, saves the full result, and lets read continue from it", async () => {
+    const context = await toolContext("full");
+    const largeFile = join(context.workspacePath, "large.txt");
+    await writeFile(
+      largeFile,
+      `${Array.from({ length: 1_100 }, () => "x".repeat(1_024)).join("\n")}\n`,
+    );
+    const session = await createMasterToolSession(context);
+    try {
+      await expect(
+        callSession(session, "read", { filePath: largeFile, limit: 2 }),
+      ).resolves.toContain("Showing lines 1-2 of 1100");
+      const output = await callSession(session, "bash", {
+        command:
+          "for i in {1..3000}; do printf 'line-%04d payload payload payload\\n' \"$i\"; done",
+      });
+      expect(output).toContain("output was truncated");
+      expect(output).toContain("line-3000");
+      const savedPath = /Full output saved to: (.+)/.exec(output)?.[1];
+      expect(savedPath).toBeTruthy();
+      await expect(
+        callSession(session, "read", { filePath: savedPath, offset: 2_990, limit: 20 }),
+      ).resolves.toContain("line-3000");
+    } finally {
+      await session.close();
+    }
   });
 
   it("pauses ask permissions and records only redacted tool metadata", async () => {
@@ -189,16 +255,21 @@ describe("Master harness tools", () => {
     await mkdir(skillDirectory, { recursive: true });
     await writeFile(
       join(skillDirectory, "SKILL.md"),
-      "---\nname: review-code\ndescription: Review changes carefully.\n---\n\nCheck the diff.\n",
+      "---\r\nname: review-code\r\ndescription: Review changes carefully.\r\n---\r\n\r\nCheck the diff.\r\n",
     );
+    await writeFile(join(skillDirectory, "checklist.md"), "Inspect tests.\n");
     const session = await createMasterToolSession(context);
     try {
       expect(session.definitions.find((tool) => tool.name === "skill")?.description).toContain(
         "review-code",
       );
-      await expect(callSession(session, "skill", { name: "review-code" })).resolves.toContain(
-        "Check the diff",
-      );
+      const skill = await callSession(session, "skill", { name: "review-code" });
+      expect(skill).toContain("Check the diff");
+      expect(skill).not.toContain("description: Review changes carefully.");
+      expect(skill).toContain(`<file>${join(skillDirectory, "checklist.md")}</file>`);
+      await expect(
+        callSession(session, "read", { filePath: join(skillDirectory, "checklist.md") }),
+      ).resolves.toContain("Inspect tests");
       await expect(
         callSession(session, "todowrite", {
           todos: [{ id: "one", content: "Inspect code", status: "in_progress", priority: "high" }],
@@ -225,26 +296,47 @@ describe("Master harness tools", () => {
     await expect(call(context, "glob", { pattern: "**/*" })).resolves.toContain("ignored.log");
   });
 
-  it("loads OpenCode-style custom tool modules with external permission", async () => {
+  it("loads OpenCode tool-helper modules, named exports, context, and rich results", async () => {
     const context = await toolContext("full");
-    const directory = join(context.workspacePath, ".opencode", "tools");
+    const directory = join(context.workspacePath, ".opencode", "tool");
     await mkdir(directory, { recursive: true });
+    await symlink(
+      join(process.cwd(), "node_modules"),
+      join(context.workspacePath, "node_modules"),
+      "dir",
+    );
     await writeFile(
       join(directory, "greet.mjs"),
       [
-        "export default {",
+        "import { tool } from '@opencode-ai/plugin';",
+        "export default tool({",
         "  description: 'Greet a person.',",
-        "  parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },",
-        "  execute(args, context) { return 'Hello ' + args.name + ' from @' + context.agent },",
-        "};",
+        "  args: { name: tool.schema.string() },",
+        "  async execute(args, context) {",
+        "    context.metadata({ title: 'Greeting' });",
+        "    await context.ask({ permission: 'external', patterns: [], always: [], metadata: {} });",
+        "    return { output: 'Hello ' + args.name + ' from @' + context.agent + ' in ' + context.sessionID + '/' + context.messageID, title: 'Greeting' };",
+        "  },",
+        "});",
+        "export const farewell = tool({",
+        "  description: 'Say goodbye.',",
+        "  args: {},",
+        "  async execute() { return 'Goodbye'; },",
+        "});",
       ].join("\n"),
     );
     const session = await createMasterToolSession(context);
     try {
       expect(session.definitions.some((tool) => tool.name === "greet")).toBe(true);
+      expect(session.definitions.some((tool) => tool.name === "greet_farewell")).toBe(true);
+      expect(
+        session.definitions.find((definition) => definition.name === "greet")?.parameters,
+      ).toMatchObject({ required: ["name"] });
       await expect(callSession(session, "greet", { name: "Ada" })).resolves.toBe(
-        "Hello Ada from @master",
+        "Hello Ada from @master in run/message",
       );
+      await expect(callSession(session, "greet", { name: 42 })).resolves.toContain("Tool error");
+      await expect(callSession(session, "greet_farewell", {})).resolves.toBe("Goodbye");
     } finally {
       await session.close();
     }
@@ -392,6 +484,7 @@ async function toolContext(accessMode: MasterAccessMode): Promise<MasterToolCont
   return {
     agent,
     runId: "run",
+    messageId: "message",
     threadId: "thread",
     workspacePath,
     dataPath,

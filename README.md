@@ -82,7 +82,8 @@ Optional workspace configuration lives in `nexestra.config.json`. It can tighten
 access mode, add search ignores, choose the hosted web-search backend, add custom tool directories,
 and configure local or remote MCP servers. Wildcards apply to normalized custom and MCP names; an
 MCP tool named `lookup` on server `docs` is exposed as `docs_lookup`. Configuration can make an
-access policy stricter, but cannot silently loosen it.
+access policy stricter, but cannot silently loosen it. Permission rules use OpenCode's ordered
+matching semantics: when multiple patterns match, the last matching rule wins.
 
 ```json
 {
@@ -94,6 +95,7 @@ access policy stricter, but cannot silently loosen it.
   "websearch": { "provider": "exa" },
   "customTools": { "directories": ["tools/nexestra"] },
   "mcp": {
+    "timeout": { "startup": 30000, "catalog": 30000, "execution": 43200000 },
     "servers": {
       "localdocs": {
         "type": "local",
@@ -111,31 +113,36 @@ access policy stricter, but cannot silently loosen it.
 }
 ```
 
-Repository custom tools are discovered in `.opencode/tools/` and `.nexestra/tools/`; user tools are
-also discovered in the OpenCode config directory. A `.js`, `.mjs`, `.cjs`, or Node-compatible `.ts`
-module may export one or more objects with `description`, either a Zod `args` schema or JSON Schema
-`parameters`, and an async `execute(args, context)` function. Default exports use the filename as
-their tool name; named exports use `<filename>_<export>`.
+Repository custom tools are discovered in `.opencode/tool/`, `.opencode/tools/`,
+`.nexestra/tool/`, and `.nexestra/tools/`; user tools are also discovered in the OpenCode config
+directory. A `.js`, `.mjs`, `.cjs`, or Node-compatible `.ts` module may use the official
+`@opencode-ai/plugin` helper or export an equivalent object. Raw Zod `args` shapes and JSON Schema
+`parameters` are accepted. Default exports use the filename as their tool name; named exports use
+`<filename>_<export>`. The execution context includes OpenCode-compatible `sessionID`, `messageID`,
+`agent`, `directory`, `worktree`, `abort`, `metadata`, and `ask` members.
 
 ```js
-// .opencode/tools/greet.mjs
-export default {
+// .opencode/tool/greet.mjs
+import { tool } from "@opencode-ai/plugin";
+
+export default tool({
   description: "Greet a person.",
-  parameters: {
-    type: "object",
-    properties: { name: { type: "string" } },
-    required: ["name"]
+  args: {
+    name: tool.schema.string()
   },
-  execute(args) {
+  async execute(args) {
     return `Hello ${args.name}`;
   }
-};
+});
 ```
 
 `glob`, `grep`, and `list` respect `.gitignore`, `.ignore`, and configured ignore patterns while
 always excluding Nexestra data and credential files. `webfetch` blocks private-network targets,
 validates redirects, and caps responses. `websearch` uses Exa by default or Parallel when selected;
-their optional `EXA_API_KEY` or `PARALLEL_API_KEY` environment variables are supported.
+their optional `EXA_API_KEY` or `PARALLEL_API_KEY` environment variables are supported. The file
+tools accept OpenCode's `filePath`, `oldString`, `newString`, `replaceAll`, and shell `workdir`
+arguments while retaining legacy Nexestra aliases. Oversized tool output is previewed and the full
+redacted result is saved under `.nexestra/runs/tool-output/` for continuation with `read`.
 
 ## Agent lifecycle
 

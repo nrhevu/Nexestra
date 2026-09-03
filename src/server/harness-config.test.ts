@@ -31,6 +31,11 @@ describe("harness configuration", () => {
     expect(mergePermissions("deny", "allow")).toBe("deny");
   });
 
+  it("uses the last matching permission rule like OpenCode", () => {
+    expect(configuredPermission({ read: "allow", "*": "deny" }, "read")).toBe("deny");
+    expect(configuredPermission({ "*": "deny", read: "allow" }, "read")).toBe("allow");
+  });
+
   it("expands only explicit environment references", () => {
     expect(expandEnvironmentValue("Bearer {env:TOKEN}", { TOKEN: "secret" })).toBe("Bearer secret");
     expect(() => expandEnvironmentValue("{env:MISSING}", {})).toThrow(

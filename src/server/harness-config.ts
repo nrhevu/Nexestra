@@ -4,6 +4,19 @@ import { z } from "zod";
 import { type ToolPermission, ToolPermissionSchema } from "../shared/contracts.js";
 
 const EnvironmentSchema = z.record(z.string(), z.string().max(8_000)).default({});
+const McpTimeoutValueSchema = z
+  .number()
+  .int()
+  .min(1_000)
+  .max(12 * 60 * 60_000);
+const McpTimeoutOverrideSchema = z.union([
+  McpTimeoutValueSchema,
+  z.object({
+    startup: McpTimeoutValueSchema.optional(),
+    catalog: McpTimeoutValueSchema.optional(),
+    execution: McpTimeoutValueSchema.optional(),
+  }),
+]);
 
 const LocalMcpServerSchema = z.object({
   type: z.literal("local"),
@@ -11,7 +24,8 @@ const LocalMcpServerSchema = z.object({
   cwd: z.string().max(2_000).optional(),
   environment: EnvironmentSchema,
   disabled: z.boolean().default(false),
-  timeout: z.number().int().min(1_000).max(120_000).default(30_000),
+  codemode: z.boolean().optional(),
+  timeout: McpTimeoutOverrideSchema.optional(),
 });
 
 const RemoteMcpServerSchema = z.object({
@@ -19,7 +33,9 @@ const RemoteMcpServerSchema = z.object({
   url: z.string().url().max(4_000),
   headers: EnvironmentSchema,
   disabled: z.boolean().default(false),
-  timeout: z.number().int().min(1_000).max(120_000).default(30_000),
+  codemode: z.boolean().optional(),
+  oauth: z.union([z.literal(false), z.record(z.string(), z.unknown())]).optional(),
+  timeout: McpTimeoutOverrideSchema.optional(),
 });
 
 export const HarnessConfigSchema = z.object({
@@ -33,6 +49,13 @@ export const HarnessConfigSchema = z.object({
     .default({ provider: "exa" }),
   mcp: z
     .object({
+      timeout: z
+        .object({
+          startup: McpTimeoutValueSchema.default(30_000),
+          catalog: McpTimeoutValueSchema.default(30_000),
+          execution: McpTimeoutValueSchema.default(12 * 60 * 60_000),
+        })
+        .default({ startup: 30_000, catalog: 30_000, execution: 12 * 60 * 60_000 }),
       servers: z
         .record(
           z.string().regex(/^[a-zA-Z0-9_-]{1,50}$/),
@@ -40,7 +63,10 @@ export const HarnessConfigSchema = z.object({
         )
         .default({}),
     })
-    .default({ servers: {} }),
+    .default({
+      timeout: { startup: 30_000, catalog: 30_000, execution: 12 * 60 * 60_000 },
+      servers: {},
+    }),
 });
 
 export type HarnessConfig = z.infer<typeof HarnessConfigSchema>;
@@ -70,10 +96,13 @@ export function configuredPermission(
   rules: Record<string, ToolPermission>,
   toolName: string,
 ): ToolPermission | undefined {
-  if (rules[toolName]) return rules[toolName];
   let result: ToolPermission | undefined;
   for (const [pattern, permission] of Object.entries(rules)) {
-    if (pattern === toolName || !pattern.includes("*")) continue;
+    if (pattern === toolName) {
+      result = permission;
+      continue;
+    }
+    if (!pattern.includes("*")) continue;
     const expression = new RegExp(
       `^${pattern
         .split("*")

@@ -1,6 +1,7 @@
 packages: []
 allowBuilds:
   esbuild: true
+  msgpackr-extract: false
 minimumReleaseAgeExclude:
   - '@testing-library/user-event@14.6.7'
   - '@types/node@26.4.1'

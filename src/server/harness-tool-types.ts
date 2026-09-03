@@ -9,10 +9,11 @@ export interface MasterToolHooks {
 export interface MasterToolContext {
   agent: import("../shared/contracts.js").MasterAgent;
   runId: string;
+  messageId?: string;
   threadId: string;
   workspacePath: string;
   dataPath: string;
-  readableArtifactPaths?: readonly string[];
+  readableArtifactPaths?: string[];
   hooks?: MasterToolHooks;
   env?: NodeJS.ProcessEnv;
   fetch?: typeof globalThis.fetch;

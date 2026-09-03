@@ -1,7 +1,10 @@
 import { lookup } from "node:dns/promises";
+import { createReadStream } from "node:fs";
 import {
   lstat,
   mkdir,
+  open,
+  readdir,
   readFile,
   realpath,
   rename,
@@ -10,7 +13,17 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { isIP } from "node:net";
-import { basename, dirname, isAbsolute, matchesGlob, relative, resolve, sep } from "node:path";
+import {
+  basename,
+  dirname,
+  extname,
+  isAbsolute,
+  matchesGlob,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
+import { createInterface } from "node:readline";
 import { z } from "zod";
 import type {
   HarnessPermissionKey,
@@ -45,8 +58,12 @@ export type {
 
 const MAX_FILE_BYTES = 1024 * 1024;
 const MAX_FETCH_BYTES = 5 * 1024 * 1024;
-const MAX_TOOL_OUTPUT_BYTES = 512 * 1024;
+const MAX_TOOL_OUTPUT_BYTES = 50 * 1024;
+const MAX_PROCESS_OUTPUT_BYTES = 5 * 1024 * 1024;
+const MAX_READ_LINE_LENGTH = 2_000;
+const DEFAULT_READ_LIMIT = 2_000;
 const MAX_ENTRIES = 500;
+const MAX_SEARCH_RESULTS = 100;
 
 export interface MasterToolSession {
   definitions: ProviderToolDefinition[];
@@ -133,17 +150,25 @@ function builtInTools(config: HarnessConfig, skills: HarnessSkill[]): ToolDefini
       "read",
       objectSchema(
         {
-          query: stringProperty("Regular expression, without delimiters."),
+          pattern: stringProperty("The regular expression to search for."),
           path: stringProperty("File or directory relative to the repository root."),
-          pattern: stringProperty("Optional glob limiting files, for example **/*.ts."),
+          include: stringProperty("Optional glob limiting files, for example **/*.ts."),
         },
-        ["query"],
+        ["pattern"],
       ),
-      z.object({
-        query: z.string().min(1).max(500),
-        path: optionalPath,
-        pattern: z.string().trim().min(1).max(500).default("**/*"),
-      }),
+      z
+        .object({
+          query: z.string().min(1).max(500).optional(),
+          include: z.string().trim().min(1).max(500).optional(),
+          pattern: z.string().trim().min(1).max(500).optional(),
+          path: optionalPath,
+        })
+        .refine((input) => Boolean(input.query || input.pattern), "pattern is required")
+        .transform((input) => ({
+          query: input.query ?? input.pattern ?? "",
+          path: input.path,
+          pattern: input.include ?? (input.query ? input.pattern : undefined) ?? "**/*",
+        })),
       (input, context) => grepTool(input, context, config),
     ),
     zodTool(
@@ -152,19 +177,23 @@ function builtInTools(config: HarnessConfig, skills: HarnessSkill[]): ToolDefini
       "read",
       objectSchema(
         {
-          path: stringProperty(
-            "File relative to the repository root, or an attached artifact path supplied in the message.",
+          filePath: stringProperty(
+            "Absolute or repository-relative path, including an attached artifact path supplied in the message.",
           ),
           offset: integerProperty(1, 1_000_000_000),
-          limit: integerProperty(1, 1_000),
+          limit: integerProperty(1, 10_000),
         },
-        ["path"],
+        ["filePath"],
       ),
-      z.object({
-        path: z.string().trim().min(1).max(2_000),
-        offset: z.number().int().min(1).default(1),
-        limit: z.number().int().min(1).max(1_000).default(200),
-      }),
+      z
+        .object({
+          filePath: z.string().trim().min(1).max(2_000).optional(),
+          path: z.string().trim().min(1).max(2_000).optional(),
+          offset: z.number().int().min(1).default(1),
+          limit: z.number().int().min(1).max(10_000).default(DEFAULT_READ_LIMIT),
+        })
+        .refine((input) => Boolean(input.filePath || input.path), "filePath is required")
+        .transform((input) => ({ ...input, path: input.filePath ?? input.path ?? "" })),
       readTool,
     ),
     zodTool(
@@ -173,19 +202,39 @@ function builtInTools(config: HarnessConfig, skills: HarnessSkill[]): ToolDefini
       "edit",
       objectSchema(
         {
-          path: stringProperty("File relative to the repository root."),
-          old_text: stringProperty("Exact text to replace."),
-          new_text: stringProperty("Replacement text."),
-          replace_all: { type: "boolean", description: "Replace every match instead of one." },
+          filePath: stringProperty("Absolute or repository-relative file path."),
+          oldString: stringProperty("Exact text to replace."),
+          newString: stringProperty("Replacement text, which must differ from oldString."),
+          replaceAll: { type: "boolean", description: "Replace every match instead of one." },
         },
-        ["path", "old_text", "new_text"],
+        ["filePath", "oldString", "newString"],
       ),
-      z.object({
-        path: z.string().trim().min(1).max(2_000),
-        old_text: z.string().min(1).max(MAX_FILE_BYTES),
-        new_text: z.string().max(MAX_FILE_BYTES),
-        replace_all: z.boolean().default(false),
-      }),
+      z
+        .object({
+          filePath: z.string().trim().min(1).max(2_000).optional(),
+          path: z.string().trim().min(1).max(2_000).optional(),
+          oldString: z.string().max(MAX_FILE_BYTES).optional(),
+          old_text: z.string().max(MAX_FILE_BYTES).optional(),
+          newString: z.string().max(MAX_FILE_BYTES).optional(),
+          new_text: z.string().max(MAX_FILE_BYTES).optional(),
+          replaceAll: z.boolean().optional(),
+          replace_all: z.boolean().optional(),
+        })
+        .refine((input) => Boolean(input.filePath || input.path), "filePath is required")
+        .refine(
+          (input) => input.oldString !== undefined || input.old_text !== undefined,
+          "oldString is required",
+        )
+        .refine(
+          (input) => input.newString !== undefined || input.new_text !== undefined,
+          "newString is required",
+        )
+        .transform((input) => ({
+          path: input.filePath ?? input.path ?? "",
+          old_text: input.oldString ?? input.old_text ?? "",
+          new_text: input.newString ?? input.new_text ?? "",
+          replace_all: input.replaceAll ?? input.replace_all ?? false,
+        })),
       editTool,
     ),
     zodTool(
@@ -194,15 +243,22 @@ function builtInTools(config: HarnessConfig, skills: HarnessSkill[]): ToolDefini
       "edit",
       objectSchema(
         {
-          path: stringProperty("File relative to the repository root."),
+          filePath: stringProperty("Absolute or repository-relative file path."),
           content: stringProperty("Complete file contents."),
         },
-        ["path", "content"],
+        ["filePath", "content"],
       ),
-      z.object({
-        path: z.string().trim().min(1).max(2_000),
-        content: z.string().max(MAX_FILE_BYTES),
-      }),
+      z
+        .object({
+          filePath: z.string().trim().min(1).max(2_000).optional(),
+          path: z.string().trim().min(1).max(2_000).optional(),
+          content: z.string().max(MAX_FILE_BYTES),
+        })
+        .refine((input) => Boolean(input.filePath || input.path), "filePath is required")
+        .transform((input) => ({
+          path: input.filePath ?? input.path ?? "",
+          content: input.content,
+        })),
       writeTool,
     ),
     zodTool(
@@ -212,14 +268,23 @@ function builtInTools(config: HarnessConfig, skills: HarnessSkill[]): ToolDefini
       objectSchema(
         {
           command: stringProperty("Shell command to run from the repository root."),
-          timeout_ms: integerProperty(1_000, 120_000),
+          timeout: integerProperty(1_000, 600_000),
+          workdir: stringProperty("Repository directory to run the command in."),
         },
         ["command"],
       ),
-      z.object({
-        command: z.string().trim().min(1).max(20_000),
-        timeout_ms: z.number().int().min(1_000).max(120_000).default(30_000),
-      }),
+      z
+        .object({
+          command: z.string().trim().min(1).max(20_000),
+          timeout: z.number().int().min(1_000).max(600_000).optional(),
+          timeout_ms: z.number().int().min(1_000).max(600_000).optional(),
+          workdir: z.string().trim().min(1).max(2_000).default("."),
+        })
+        .transform((input) => ({
+          command: input.command,
+          timeout_ms: input.timeout ?? input.timeout_ms ?? 120_000,
+          workdir: input.workdir,
+        })),
       bashTool,
     ),
     zodTool(
@@ -238,10 +303,10 @@ function builtInTools(config: HarnessConfig, skills: HarnessSkill[]): ToolDefini
       "skill",
       objectSchema({ name: stringProperty("Installed skill name.") }, ["name"]),
       z.object({ name: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/) }),
-      async (input) => {
+      async (input, context) => {
         const skill = skills.find((entry) => entry.name === input.name);
         if (!skill) throw new Error(`Skill ${String(input.name)} was not found.`);
-        return readSkill(skill);
+        return readSkill(skill, context);
       },
     ),
     zodTool(
@@ -471,7 +536,11 @@ async function executeDefinition(
       };
       await context.hooks.update(toolCall);
     }
-    const output = limitOutput(context.redact(await definition.execute(input, context)));
+    const output = await limitOutput(
+      context.redact(await definition.execute(input, context)),
+      context,
+      definition.name === "bash" ? "tail" : "head",
+    );
     toolCall = {
       ...toolCall,
       status: "completed",
@@ -560,9 +629,16 @@ async function globTool(
     input.path as string,
     validateGlob(input.pattern as string),
   );
-  const limited = results.slice(0, MAX_ENTRIES);
-  if (results.length > MAX_ENTRIES) limited.push("… result limit reached");
-  return limited.join("\n") || "No files matched.";
+  const limited = results
+    .slice(0, MAX_SEARCH_RESULTS)
+    .map((file) => resolve(context.workspacePath, file));
+  if (results.length >= MAX_SEARCH_RESULTS) {
+    limited.push(
+      "",
+      `(Results are truncated: showing first ${MAX_SEARCH_RESULTS} results. Consider using a more specific path or pattern.)`,
+    );
+  }
+  return limited.join("\n") || "No files found";
 }
 
 async function repositoryFiles(
@@ -581,7 +657,7 @@ async function repositoryFiles(
   const result = await runCommand(binary, args, {
     cwd: context.workspacePath,
     timeoutMs: 10_000,
-    maxOutputBytes: MAX_TOOL_OUTPUT_BYTES,
+    maxOutputBytes: MAX_PROCESS_OUTPUT_BYTES,
     env: safeProcessEnv(context.env),
   });
   if (result.exitCode !== 0) throw new Error(result.stderr.trim() || "ripgrep failed.");
@@ -607,16 +683,6 @@ async function grepTool(
   const target = await securePath(context, input.path as string, "read");
   const binary = await findExecutable("rg", context.env);
   if (!binary) throw new Error("The grep tool requires ripgrep (rg) in PATH.");
-  const targetInfo = await stat(target);
-  const files = targetInfo.isDirectory()
-    ? await repositoryFiles(
-        context,
-        config,
-        input.path as string,
-        validateGlob(input.pattern as string),
-      )
-    : [relative(context.workspacePath, target)];
-  if (files.length === 0) return "No matches found.";
   const args = [
     "--line-number",
     "--with-filename",
@@ -628,16 +694,46 @@ async function grepTool(
     "--max-filesize",
     "1M",
   ];
-  args.push("--", input.query as string, ...files.slice(0, MAX_ENTRIES));
+  addIgnoreGlobs(args, config.ignore);
+  const include = validateGlob(input.pattern as string);
+  if (include !== "**/*") args.push("--glob", include);
+  args.push("--", input.query as string, relative(context.workspacePath, target) || ".");
   const result = await runCommand(binary, args, {
     cwd: context.workspacePath,
     timeoutMs: 10_000,
-    maxOutputBytes: MAX_TOOL_OUTPUT_BYTES,
+    maxOutputBytes: MAX_PROCESS_OUTPUT_BYTES,
     env: safeProcessEnv(context.env),
   });
-  if (result.exitCode === 1) return "No matches found.";
+  if (result.exitCode === 1) return "No files found";
   if (result.exitCode !== 0) throw new Error(result.stderr.trim() || "ripgrep failed.");
-  return result.stdout.trimEnd();
+  const rows = result.stdout
+    .trimEnd()
+    .split("\n")
+    .flatMap((line) => {
+      const match = /^(.*?):(\d+):(.*)$/.exec(line);
+      if (!match?.[1] || !match[2]) return [];
+      return [
+        { path: resolve(context.workspacePath, match[1]), line: match[2], text: match[3] ?? "" },
+      ];
+    });
+  const selected = rows.slice(0, MAX_SEARCH_RESULTS);
+  if (selected.length === 0) return "No files found";
+  const output = [
+    `Found ${selected.length} matches${rows.length >= MAX_SEARCH_RESULTS ? " (more matches available)" : ""}`,
+  ];
+  let currentPath = "";
+  for (const row of selected) {
+    if (row.path !== currentPath) {
+      if (currentPath) output.push("");
+      currentPath = row.path;
+      output.push(`${row.path}:`);
+    }
+    output.push(`  Line ${row.line}: ${row.text}`);
+  }
+  if (rows.length >= MAX_SEARCH_RESULTS) {
+    output.push("", "(Results truncated. Consider using a more specific path or pattern.)");
+  }
+  return output.join("\n");
 }
 
 function addIgnoreGlobs(args: string[], patterns: string[]): void {
@@ -655,17 +751,134 @@ async function readTool(
   const requestedPath = input.path as string;
   const file = await secureReadPath(context, requestedPath);
   const info = await stat(file);
-  if (!info.isFile()) throw new Error(`${requestedPath} is not a file.`);
-  if (info.size > MAX_FILE_BYTES) throw new Error("File is larger than 1 MiB.");
-  const content = await readFile(file, "utf8");
-  if (content.includes("\0")) throw new Error("Binary files cannot be read.");
   const offset = input.offset as number;
   const limit = input.limit as number;
-  return content
-    .split("\n")
-    .slice(offset - 1, offset - 1 + limit)
-    .map((line, index) => `${String(offset + index).padStart(6)}\t${line}`)
-    .join("\n");
+  if (info.isDirectory()) {
+    const entries = (await readdir(file, { withFileTypes: true }))
+      .map((entry) => `${entry.name}${entry.isDirectory() ? "/" : ""}`)
+      .sort((left, right) => left.localeCompare(right));
+    const selected = entries.slice(offset - 1, offset - 1 + limit);
+    const truncated = offset - 1 + selected.length < entries.length;
+    return [
+      `<path>${file}</path>`,
+      "<type>directory</type>",
+      "<entries>",
+      selected.join("\n"),
+      truncated
+        ? `(Showing ${selected.length} of ${entries.length} entries. Use offset=${offset + selected.length} to continue.)`
+        : `(${entries.length} entries)`,
+      "</entries>",
+    ].join("\n");
+  }
+  if (!info.isFile()) throw new Error(`${requestedPath} is not a file.`);
+  const sample = await readSample(file, Math.min(info.size, 4_096));
+  if (isBinaryFile(file, sample)) throw new Error(`Cannot read binary file: ${requestedPath}`);
+  const slice = await readTextSlice(file, offset, limit);
+  if (slice.totalLines < offset && !(slice.totalLines === 0 && offset === 1)) {
+    throw new Error(`Offset ${offset} is out of range for this file (${slice.totalLines} lines).`);
+  }
+  const last = offset + slice.lines.length - 1;
+  const next = last + 1;
+  const notice = slice.byteLimited
+    ? `(Output capped at 50 KB. Showing lines ${offset}-${last}. Use offset=${next} to continue.)`
+    : slice.hasMore
+      ? `(Showing lines ${offset}-${last} of ${slice.totalLines}. Use offset=${next} to continue.)`
+      : `(End of file - total ${slice.totalLines} lines)`;
+  return [
+    `<path>${file}</path>`,
+    "<type>file</type>",
+    "<content>",
+    ...slice.lines.map((line, index) => `${offset + index}: ${line}`),
+    "",
+    notice,
+    "</content>",
+  ].join("\n");
+}
+
+async function readSample(file: string, size: number): Promise<Buffer> {
+  if (size === 0) return Buffer.alloc(0);
+  const handle = await open(file, "r");
+  try {
+    const buffer = Buffer.alloc(size);
+    const { bytesRead } = await handle.read(buffer, 0, size, 0);
+    return buffer.subarray(0, bytesRead);
+  } finally {
+    await handle.close();
+  }
+}
+
+function isBinaryFile(file: string, sample: Uint8Array): boolean {
+  if (
+    [
+      ".zip",
+      ".tar",
+      ".gz",
+      ".exe",
+      ".dll",
+      ".so",
+      ".class",
+      ".jar",
+      ".war",
+      ".7z",
+      ".doc",
+      ".docx",
+      ".xls",
+      ".xlsx",
+      ".ppt",
+      ".pptx",
+      ".bin",
+      ".wasm",
+    ].includes(extname(file).toLowerCase())
+  ) {
+    return true;
+  }
+  if (sample.length === 0) return false;
+  let nonPrintable = 0;
+  for (const byte of sample) {
+    if (byte === 0) return true;
+    if (byte < 9 || (byte > 13 && byte < 32)) nonPrintable += 1;
+  }
+  return nonPrintable / sample.length > 0.3;
+}
+
+async function readTextSlice(
+  file: string,
+  offset: number,
+  limit: number,
+): Promise<{ lines: string[]; totalLines: number; hasMore: boolean; byteLimited: boolean }> {
+  const input = createReadStream(file);
+  const reader = createInterface({ input, crlfDelay: Number.POSITIVE_INFINITY });
+  const lines: string[] = [];
+  let totalLines = 0;
+  let bytes = 0;
+  let hasMore = false;
+  let byteLimited = false;
+  try {
+    for await (const rawLine of reader) {
+      totalLines += 1;
+      if (totalLines < offset) continue;
+      if (lines.length >= limit) {
+        hasMore = true;
+        continue;
+      }
+      const line =
+        rawLine.length > MAX_READ_LINE_LENGTH
+          ? `${rawLine.slice(0, MAX_READ_LINE_LENGTH)}... (line truncated to ${MAX_READ_LINE_LENGTH} chars)`
+          : rawLine;
+      const size = Buffer.byteLength(line) + (lines.length > 0 ? 1 : 0);
+      if (bytes + size > MAX_TOOL_OUTPUT_BYTES) {
+        byteLimited = true;
+        hasMore = true;
+        break;
+      }
+      lines.push(line);
+      bytes += size;
+    }
+  } finally {
+    reader.close();
+    input.destroy();
+  }
+  return { lines, totalLines, hasMore, byteLimited };
 }
 
 async function secureReadPath(context: MasterToolContext, requestedPath: string): Promise<string> {
@@ -674,18 +887,18 @@ async function secureReadPath(context: MasterToolContext, requestedPath: string)
   const allowed = context.readableArtifactPaths?.some(
     (artifactPath) => isAbsolute(artifactPath) && resolve(artifactPath) === requested,
   );
-  if (!allowed) {
-    throw new Error(
-      "Paths must be relative to the repository root or reference an attached artifact.",
-    );
+  if (allowed) {
+    const directInfo = await lstat(requested);
+    if (!directInfo.isFile()) throw new Error("Attached artifact paths must be regular files.");
+    const resolved = await realpath(requested);
+    if (isCredentialPath(context, resolved)) {
+      throw new Error("Nexestra credentials and auth files are protected.");
+    }
+    return resolved;
   }
-  const directInfo = await lstat(requested);
-  if (!directInfo.isFile()) throw new Error("Attached artifact paths must be regular files.");
-  const resolved = await realpath(requested);
-  if (isSensitivePath(context, resolved)) {
-    throw new Error("Nexestra credentials and auth files are protected.");
-  }
-  return resolved;
+  const workspace = await realpath(context.workspacePath);
+  if (isWithin(workspace, requested)) return securePath(context, requested, "read");
+  throw new Error("Paths must stay inside the repository root or reference an attached artifact.");
 }
 
 async function editTool(
@@ -693,13 +906,33 @@ async function editTool(
   context: MasterToolContext,
 ): Promise<string> {
   const requestedPath = input.path as string;
-  const file = await securePath(context, requestedPath, "write");
+  const oldTextInput = input.old_text as string;
+  const newTextInput = input.new_text as string;
+  if (oldTextInput === newTextInput) {
+    throw new Error("No changes to apply: oldString and newString are identical.");
+  }
+  const file = await securePath(context, requestedPath, "write", oldTextInput === "");
+  if (oldTextInput === "") {
+    if (await pathExists(file)) {
+      throw new Error(
+        "oldString cannot be empty when editing an existing file. Use write for an intentional full-file replacement.",
+      );
+    }
+    if (Buffer.byteLength(newTextInput) > MAX_FILE_BYTES) {
+      throw new Error("Edited file would exceed 1 MiB.");
+    }
+    await mkdir(dirname(file), { recursive: true });
+    await writeAtomic(file, newTextInput);
+    return `Created ${requestedPath}.`;
+  }
   const info = await stat(file);
   if (!info.isFile()) throw new Error(`${requestedPath} is not a file.`);
   if (info.size > MAX_FILE_BYTES) throw new Error("File is larger than 1 MiB.");
   const content = await readFile(file, "utf8");
   if (content.includes("\0")) throw new Error("Binary files cannot be edited.");
-  const oldText = input.old_text as string;
+  const lineEnding = content.includes("\r\n") ? "\r\n" : "\n";
+  const oldText = normalizeLineEndings(oldTextInput).replaceAll("\n", lineEnding);
+  const newText = normalizeLineEndings(newTextInput).replaceAll("\n", lineEnding);
   const occurrences = content.split(oldText).length - 1;
   if (occurrences === 0) throw new Error("old_text was not found.");
   if (!input.replace_all && occurrences !== 1) {
@@ -708,12 +941,16 @@ async function editTool(
     );
   }
   const updated = input.replace_all
-    ? content.replaceAll(oldText, input.new_text as string)
-    : content.replace(oldText, input.new_text as string);
+    ? content.replaceAll(oldText, newText)
+    : content.replace(oldText, newText);
   if (Buffer.byteLength(updated) > MAX_FILE_BYTES)
     throw new Error("Edited file would exceed 1 MiB.");
   await writeAtomic(file, updated, info.mode);
   return `Updated ${requestedPath} (${input.replace_all ? occurrences : 1} replacement${occurrences === 1 ? "" : "s"}).`;
+}
+
+function normalizeLineEndings(value: string): string {
+  return value.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
 }
 
 async function writeTool(
@@ -736,13 +973,15 @@ async function bashTool(
   input: Record<string, unknown>,
   context: MasterToolContext,
 ): Promise<string> {
+  const workdir = await securePath(context, input.workdir as string, "read");
+  if (!(await stat(workdir)).isDirectory()) throw new Error("Shell workdir must be a directory.");
   const env = safeProcessEnv(context.env);
   delete env.CODEX_HOME;
   delete env.OPENCODE_CONFIG;
   const result = await runCommand("/bin/bash", ["-lc", input.command as string], {
-    cwd: context.workspacePath,
+    cwd: workdir,
     timeoutMs: input.timeout_ms as number,
-    maxOutputBytes: MAX_TOOL_OUTPUT_BYTES,
+    maxOutputBytes: MAX_PROCESS_OUTPUT_BYTES,
     env,
   });
   const output = [result.stdout.trimEnd(), result.stderr.trimEnd()].filter(Boolean).join("\n");
@@ -1131,9 +1370,10 @@ async function securePath(
   operation: "read" | "write",
   allowMissing = false,
 ): Promise<string> {
-  if (isAbsolute(requestedPath)) throw new Error("Paths must be relative to the repository root.");
   const workspace = await realpath(context.workspacePath);
-  const target = resolve(workspace, requestedPath);
+  const target = isAbsolute(requestedPath)
+    ? resolve(requestedPath)
+    : resolve(workspace, requestedPath);
   if (!isWithin(workspace, target)) throw new Error("Path escapes the repository root.");
   if (isSensitivePath(context, target))
     throw new Error("Nexestra credentials and auth files are protected.");
@@ -1166,7 +1406,18 @@ async function securePath(
 }
 
 function isSensitivePath(context: MasterToolContext, target: string): boolean {
-  if (target === resolve(context.dataPath, "credentials.json")) return true;
+  const dataRoot = resolve(context.dataPath);
+  const workspace = resolve(context.workspacePath);
+  const resolvedTarget = resolve(target);
+  const nestedDataRoot = dataRoot !== workspace && isWithin(workspace, dataRoot);
+  return (
+    (nestedDataRoot && isWithin(dataRoot, resolvedTarget)) ||
+    isCredentialPath(context, resolvedTarget)
+  );
+}
+
+function isCredentialPath(context: MasterToolContext, target: string): boolean {
+  if (resolve(target) === resolve(context.dataPath, "credentials.json")) return true;
   const name = basename(target).toLowerCase();
   return name === "auth.json" || name === "credentials.json";
 }
@@ -1261,9 +1512,41 @@ function outputSummary(name: string, output: string, permission: HarnessPermissi
   return output.slice(0, 500);
 }
 
-function limitOutput(output: string): string {
-  if (Buffer.byteLength(output) <= MAX_TOOL_OUTPUT_BYTES) return output;
-  return `${Buffer.from(output).subarray(0, MAX_TOOL_OUTPUT_BYTES).toString("utf8")}\n… output truncated`;
+async function limitOutput(
+  output: string,
+  context: MasterToolContext,
+  direction: "head" | "tail",
+): Promise<string> {
+  const lines = output.split("\n");
+  if (lines.length <= DEFAULT_READ_LIMIT && Buffer.byteLength(output) <= MAX_TOOL_OUTPUT_BYTES) {
+    return output;
+  }
+  const directory = resolve(context.dataPath, "runs", "tool-output");
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const file = resolve(directory, crypto.randomUUID());
+  await writeFile(file, output, { mode: 0o600 });
+  context.readableArtifactPaths ??= [];
+  context.readableArtifactPaths.push(file);
+
+  const selected: string[] = [];
+  let bytes = 0;
+  const start = direction === "head" ? 0 : lines.length - 1;
+  const end = direction === "head" ? lines.length : -1;
+  const step = direction === "head" ? 1 : -1;
+  for (let index = start; index !== end; index += step) {
+    if (selected.length >= DEFAULT_READ_LIMIT) break;
+    const line = lines[index] ?? "";
+    const size = Buffer.byteLength(line) + (selected.length > 0 ? 1 : 0);
+    if (bytes + size > MAX_TOOL_OUTPUT_BYTES) break;
+    if (direction === "head") selected.push(line);
+    else selected.unshift(line);
+    bytes += size;
+  }
+  const preview = selected.join("\n");
+  const hint = `The tool call succeeded but the output was truncated. Full output saved to: ${file}\nUse read with offset/limit to view specific sections.`;
+  return direction === "head"
+    ? `${preview}\n\n... output truncated ...\n\n${hint}`
+    : `... output truncated ...\n\n${hint}\n\n${preview}`;
 }
 
 function formatValidationError(error: unknown): string {

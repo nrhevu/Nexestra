@@ -192,6 +192,21 @@ export class AgentDispatcher {
         this.store.transcriptSnapshot(run.threadId),
         this.store.agentArtifacts(run.threadId, trigger.id),
       ]);
+      const pendingInteractions = new Map<string, "waiting_approval" | "waiting_input">();
+      let runStatusQueue: Promise<void> = Promise.resolve();
+      const refreshInteractionStatus = async (): Promise<void> => {
+        const update = runStatusQueue.then(async () => {
+          const status = [...pendingInteractions.values()].at(-1) ?? "running";
+          currentRun = await this.store.updateRun({
+            ...currentRun,
+            status,
+            updatedAt: new Date().toISOString(),
+          });
+          this.liveRuns.set(currentRun.id, currentRun);
+        });
+        runStatusQueue = update.catch(() => undefined);
+        return update;
+      };
       const invocation: AgentInvocation = {
         runId: run.id,
         thread,
@@ -207,21 +222,13 @@ export class AgentDispatcher {
             });
             try {
               await this.store.updateToolCall(toolCall);
-              currentRun = await this.store.updateRun({
-                ...currentRun,
-                status: "waiting_approval",
-                updatedAt: new Date().toISOString(),
-              });
-              this.liveRuns.set(currentRun.id, currentRun);
+              pendingInteractions.set(toolCall.id, "waiting_approval");
+              await refreshInteractionStatus();
               return await decision;
             } finally {
               this.pendingApprovals.delete(toolCall.id);
-              currentRun = await this.store.updateRun({
-                ...currentRun,
-                status: "running",
-                updatedAt: new Date().toISOString(),
-              });
-              this.liveRuns.set(currentRun.id, currentRun);
+              pendingInteractions.delete(toolCall.id);
+              await refreshInteractionStatus();
             }
           },
           requestInput: async (toolCall) => {
@@ -230,21 +237,13 @@ export class AgentDispatcher {
             });
             try {
               await this.store.updateToolCall(toolCall);
-              currentRun = await this.store.updateRun({
-                ...currentRun,
-                status: "waiting_input",
-                updatedAt: new Date().toISOString(),
-              });
-              this.liveRuns.set(currentRun.id, currentRun);
+              pendingInteractions.set(toolCall.id, "waiting_input");
+              await refreshInteractionStatus();
               return await response;
             } finally {
               this.pendingInputs.delete(toolCall.id);
-              currentRun = await this.store.updateRun({
-                ...currentRun,
-                status: "running",
-                updatedAt: new Date().toISOString(),
-              });
-              this.liveRuns.set(currentRun.id, currentRun);
+              pendingInteractions.delete(toolCall.id);
+              await refreshInteractionStatus();
             }
           },
         },

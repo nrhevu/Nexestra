@@ -196,6 +196,7 @@ export class LocalAgentRunner implements AgentRunner {
     const context: MasterToolContext = {
       agent,
       runId: invocation.runId ?? crypto.randomUUID(),
+      messageId: invocation.trigger.id,
       threadId: invocation.thread.id,
       workspacePath: this.options.store.workspacePath,
       dataPath: this.options.store.root,
@@ -249,7 +250,7 @@ export class LocalAgentRunner implements AgentRunner {
       { role: "system", content: system },
       { role: "user", content: await providerChatUserContent(invocation) },
     ];
-    const repeatedCalls = new Map<string, number>();
+    const recentCalls: string[] = [];
     for (let turn = 0; turn <= 12; turn += 1) {
       const toolsEnabled = turn < 12;
       const payload = await this.providerRequest(agent, url, headers, {
@@ -271,7 +272,7 @@ export class LocalAgentRunner implements AgentRunner {
       const calls = parseChatToolCalls(payload);
       if (calls.length === 0) return parseProviderReply(payload);
       if (!toolsEnabled) throw new Error("Provider continued calling tools after the step limit.");
-      guardRepeatedCalls(calls, repeatedCalls);
+      guardRepeatedCalls(calls, recentCalls);
       messages.push({
         role: "assistant",
         content: chatAssistantContent(payload),
@@ -281,11 +282,12 @@ export class LocalAgentRunner implements AgentRunner {
           function: { name: call.name, arguments: call.arguments },
         })),
       });
-      for (const call of calls) {
+      const outputs = await Promise.all(calls.map((call) => tools.execute(call)));
+      for (const [index, call] of calls.entries()) {
         messages.push({
           role: "tool",
           tool_call_id: call.id,
-          content: await tools.execute(call),
+          content: outputs[index] ?? "Tool completed without output.",
         });
       }
     }
@@ -303,7 +305,7 @@ export class LocalAgentRunner implements AgentRunner {
     const input: unknown[] = [
       { role: "user", content: await providerResponsesUserContent(invocation) },
     ];
-    const repeatedCalls = new Map<string, number>();
+    const recentCalls: string[] = [];
     for (let turn = 0; turn <= 12; turn += 1) {
       const toolsEnabled = turn < 12;
       const payload = await this.providerRequest(agent, url, headers, {
@@ -315,13 +317,14 @@ export class LocalAgentRunner implements AgentRunner {
       const calls = parseResponsesToolCalls(payload);
       if (calls.length === 0) return parseProviderReply(payload);
       if (!toolsEnabled) throw new Error("Provider continued calling tools after the step limit.");
-      guardRepeatedCalls(calls, repeatedCalls);
+      guardRepeatedCalls(calls, recentCalls);
       if (isRecord(payload) && Array.isArray(payload.output)) input.push(...payload.output);
-      for (const call of calls) {
+      const outputs = await Promise.all(calls.map((call) => tools.execute(call)));
+      for (const [index, call] of calls.entries()) {
         input.push({
           type: "function_call_output",
           call_id: call.id,
-          output: await tools.execute(call),
+          output: outputs[index] ?? "Tool completed without output.",
         });
       }
     }
@@ -334,25 +337,39 @@ export class LocalAgentRunner implements AgentRunner {
     headers: Record<string, string>,
     body: Record<string, unknown>,
   ): Promise<unknown> {
-    const response = await this.fetchImpl(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(3 * 60_000),
-    });
-    const text = await readBoundedResponse(response, 1024 * 1024);
-    if (!response.ok) {
-      throw new Error(
-        this.options.store.redactSecrets(
-          `Provider ${customProviderName(agent)} returned HTTP ${response.status}: ${text.slice(0, 500)}`,
-        ),
-      );
+    for (let attempt = 0; attempt <= 5; attempt += 1) {
+      let response: Response;
+      try {
+        response = await this.fetchImpl(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(3 * 60_000),
+        });
+      } catch (error) {
+        if (attempt >= 5) throw error;
+        await retryDelay(attempt + 1);
+        continue;
+      }
+      const text = await readBoundedResponse(response, 1024 * 1024);
+      if (!response.ok) {
+        if (attempt < 5 && isRetryableProviderStatus(response.status)) {
+          await retryDelay(attempt + 1, response.headers);
+          continue;
+        }
+        throw new Error(
+          this.options.store.redactSecrets(
+            `Provider ${customProviderName(agent)} returned HTTP ${response.status}: ${text.slice(0, 500)}`,
+          ),
+        );
+      }
+      try {
+        return JSON.parse(text);
+      } catch {
+        throw new Error(`Provider ${customProviderName(agent)} did not return valid JSON.`);
+      }
     }
-    try {
-      return JSON.parse(text);
-    } catch {
-      throw new Error(`Provider ${customProviderName(agent)} did not return valid JSON.`);
-    }
+    throw new Error(`Provider ${customProviderName(agent)} exhausted its retry budget.`);
   }
 
   private async detectBinary(name: "codex" | "opencode") {
@@ -695,13 +712,35 @@ function chatAssistantContent(payload: unknown): string | null {
   return typeof first.message.content === "string" ? first.message.content : null;
 }
 
-function guardRepeatedCalls(calls: HarnessToolRequest[], repeatedCalls: Map<string, number>): void {
+function guardRepeatedCalls(calls: HarnessToolRequest[], recentCalls: string[]): void {
   for (const call of calls) {
     const signature = `${call.name}\n${canonicalArguments(call.arguments)}`;
-    const count = (repeatedCalls.get(signature) ?? 0) + 1;
-    repeatedCalls.set(signature, count);
-    if (count >= 3) throw new Error(`Stopped a repeated ${call.name} tool-call loop.`);
+    recentCalls.push(signature);
+    if (recentCalls.length > 3) recentCalls.shift();
+    if (recentCalls.length === 3 && recentCalls.every((recent) => recent === signature)) {
+      throw new Error(`Stopped a repeated ${call.name} tool-call loop.`);
+    }
   }
+}
+
+function isRetryableProviderStatus(status: number): boolean {
+  return status === 408 || status === 409 || status === 429 || status >= 500;
+}
+
+async function retryDelay(attempt: number, headers?: Headers): Promise<void> {
+  const retryAfterMs = headers?.get("retry-after-ms");
+  const retryAfter = headers?.get("retry-after");
+  let delay = Number.NaN;
+  if (retryAfterMs) delay = Number.parseFloat(retryAfterMs);
+  else if (retryAfter) {
+    const seconds = Number.parseFloat(retryAfter);
+    delay = Number.isNaN(seconds) ? Date.parse(retryAfter) - Date.now() : seconds * 1_000;
+  }
+  if (!Number.isFinite(delay) || delay < 0) {
+    delay = Math.min(2_000 * 2 ** (attempt - 1), 30_000);
+  }
+  if (delay === 0) return;
+  await new Promise((resolvePromise) => setTimeout(resolvePromise, Math.min(delay, 30_000)));
 }
 
 function canonicalArguments(value: string): string {

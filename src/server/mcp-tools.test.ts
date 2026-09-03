@@ -5,17 +5,22 @@ import type { MasterToolContext } from "./harness-tool-types.js";
 
 const sdk = vi.hoisted(() => ({
   connected: [] as unknown[],
+  connectOptions: [] as unknown[],
+  catalogOptions: [] as unknown[],
   called: [] as unknown[],
+  callOptions: [] as unknown[],
   closed: 0,
   transports: [] as { kind: string; input: unknown }[],
 }));
 
 vi.mock("@modelcontextprotocol/client", () => ({
   Client: class {
-    async connect(transport: unknown) {
+    async connect(transport: unknown, options: unknown) {
       sdk.connected.push(transport);
+      sdk.connectOptions.push(options);
     }
-    async listTools() {
+    async listTools(_input: unknown, options: unknown) {
+      sdk.catalogOptions.push(options);
       return {
         tools: [
           {
@@ -30,8 +35,9 @@ vi.mock("@modelcontextprotocol/client", () => ({
         ],
       };
     }
-    async callTool(input: unknown) {
+    async callTool(input: unknown, options: unknown) {
       sdk.called.push(input);
+      sdk.callOptions.push(options);
       return { content: [{ type: "text", text: "MCP result" }] };
     }
     async close() {
@@ -60,6 +66,7 @@ describe("MCP tools", () => {
   it("discovers, prefixes, invokes, and closes local and remote server tools", async () => {
     const config = HarnessConfigSchema.parse({
       mcp: {
+        timeout: { startup: 40_000, catalog: 41_000, execution: 42_000 },
         servers: {
           localdocs: {
             type: "local",
@@ -70,6 +77,7 @@ describe("MCP tools", () => {
             type: "remote",
             url: "https://mcp.example.test/service",
             headers: { authorization: "Bearer $" + "{TEST_MCP_TOKEN}" },
+            timeout: { startup: 45_000, execution: 46_000 },
           },
         },
       },
@@ -87,6 +95,9 @@ describe("MCP tools", () => {
     expect(sdk.called).toContainEqual(
       expect.objectContaining({ name: "lookup", arguments: { value: "guide" } }),
     );
+    expect(sdk.connectOptions).toEqual([{ timeout: 40_000 }, { timeout: 45_000 }]);
+    expect(sdk.catalogOptions).toEqual([{ timeout: 41_000 }, { timeout: 41_000 }]);
+    expect(sdk.callOptions).toContainEqual(expect.objectContaining({ timeout: 42_000 }));
     expect(sdk.transports).toContainEqual(
       expect.objectContaining({
         kind: "local",

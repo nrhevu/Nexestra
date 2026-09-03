@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -354,7 +354,10 @@ describe("parseProviderReply", () => {
                 {
                   id: "call-read",
                   type: "function",
-                  function: { name: "read", arguments: JSON.stringify({ path: artifactPath }) },
+                  function: {
+                    name: "read",
+                    arguments: JSON.stringify({ filePath: artifactPath }),
+                  },
                 },
               ],
             },
@@ -393,6 +396,14 @@ describe("parseProviderReply", () => {
       "websearch",
       "question",
     ]);
+    const readDefinition = firstBody.tools.find(
+      (tool: { function: { name: string } }) => tool.function.name === "read",
+    );
+    expect(readDefinition.function.parameters).toMatchObject({
+      required: ["filePath"],
+      properties: { filePath: { type: "string" }, offset: { type: "integer" } },
+    });
+    expect(readDefinition.function.parameters.properties.path).toBeUndefined();
     expect(secondBody.messages).toContainEqual(
       expect.objectContaining({
         role: "tool",
@@ -469,6 +480,123 @@ describe("parseProviderReply", () => {
       new LocalAgentRunner({ store, fetch: fetchMock as typeof fetch }).invoke(agent, invocation),
     ).rejects.toThrow("Stopped a repeated read tool-call loop");
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("retries transient provider failures using Retry-After", async () => {
+    const { agent, invocation, store } = await customMasterFixture("openai-chat");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("busy", { status: 429, headers: { "retry-after": "0" } }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ choices: [{ message: { content: "Recovered." } }] })),
+      );
+
+    await expect(
+      new LocalAgentRunner({ store, fetch: fetchMock as typeof fetch }).invoke(agent, invocation),
+    ).resolves.toBe("Recovered.");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("only stops consecutive identical calls, not repeated calls separated by other work", async () => {
+    const { agent, invocation, root, store } = await customMasterFixture("openai-chat");
+    await writeFile(join(root, "loop.txt"), "loop\n");
+    const calls = [
+      { name: "read", arguments: '{"filePath":"loop.txt"}' },
+      { name: "glob", arguments: '{"pattern":"**/*"}' },
+      { name: "read", arguments: '{"filePath":"loop.txt"}' },
+      { name: "read", arguments: '{"filePath":"loop.txt"}' },
+    ];
+    let turn = 0;
+    const fetchMock = vi.fn(async () => {
+      const call = calls[turn];
+      turn += 1;
+      return new Response(
+        JSON.stringify(
+          call
+            ? {
+                choices: [
+                  {
+                    message: {
+                      content: null,
+                      tool_calls: [
+                        {
+                          id: `call-${turn}`,
+                          type: "function",
+                          function: call,
+                        },
+                      ],
+                    },
+                  },
+                ],
+              }
+            : { choices: [{ message: { content: "Finished." } }] },
+        ),
+      );
+    });
+
+    await expect(
+      new LocalAgentRunner({ store, fetch: fetchMock as typeof fetch }).invoke(agent, invocation),
+    ).resolves.toBe("Finished.");
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
+
+  it("runs independent tool calls from one provider turn concurrently", async () => {
+    const { agent, invocation, root, store } = await customMasterFixture("openai-chat");
+    const toolDirectory = join(root, ".opencode", "tool");
+    await mkdir(toolDirectory, { recursive: true });
+    await writeFile(
+      join(toolDirectory, "rendezvous.mjs"),
+      [
+        "let waiters = [];",
+        "function meet(value) {",
+        "  return new Promise((resolve) => {",
+        "    waiters.push(() => resolve(value));",
+        "    if (waiters.length === 2) { const ready = waiters; waiters = []; for (const done of ready) done(); }",
+        "  });",
+        "}",
+        "export const first = { description: 'First.', timeoutMs: 1000, execute() { return meet('first'); } };",
+        "export const second = { description: 'Second.', timeoutMs: 1000, execute() { return meet('second'); } };",
+      ].join("\n"),
+    );
+    const responses = [
+      {
+        choices: [
+          {
+            message: {
+              content: null,
+              tool_calls: [
+                {
+                  id: "first",
+                  type: "function",
+                  function: { name: "rendezvous_first", arguments: "{}" },
+                },
+                {
+                  id: "second",
+                  type: "function",
+                  function: { name: "rendezvous_second", arguments: "{}" },
+                },
+              ],
+            },
+          },
+        ],
+      },
+      { choices: [{ message: { content: "Both completed." } }] },
+    ];
+    const requestBodies: Record<string, unknown>[] = [];
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify(responses.shift()));
+    });
+
+    await expect(
+      new LocalAgentRunner({ store, fetch: fetchMock as typeof fetch }).invoke(agent, invocation),
+    ).resolves.toBe("Both completed.");
+    expect(requestBodies[1]?.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: "tool", tool_call_id: "first", content: "first" }),
+        expect.objectContaining({ role: "tool", tool_call_id: "second", content: "second" }),
+      ]),
+    );
   });
 });
 

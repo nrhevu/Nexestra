@@ -2,7 +2,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { Agent, RuntimeStatus } from "../shared/contracts.js";
+import type { Agent, RuntimeStatus, ToolCall } from "../shared/contracts.js";
 import { AgentDispatcher, ChatService } from "./dispatcher.js";
 import type { AgentInvocation, AgentRunner } from "./runtime.js";
 import { FileStore, StoreError } from "./store.js";
@@ -25,6 +25,40 @@ class FakeRunner implements AgentRunner {
   async invoke(agent: Agent, invocation: AgentInvocation) {
     this.invocations.push({ agent, invocation });
     return `reply from @${agent.handle}`;
+  }
+}
+
+class ConcurrentApprovalRunner implements AgentRunner {
+  readonly resolved: string[] = [];
+
+  async runtimeStatus() {
+    return readyRuntime;
+  }
+
+  async invoke(agent: Agent, invocation: AgentInvocation) {
+    if (!invocation.toolHooks) throw new Error("expected tool hooks");
+    const now = new Date().toISOString();
+    const calls = ["first", "second"].map(
+      (id): ToolCall => ({
+        id,
+        runId: invocation.runId ?? "run",
+        threadId: invocation.thread.id,
+        agentId: agent.id,
+        name: "write",
+        permission: "edit",
+        status: "waiting_approval",
+        input: "{}",
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+    await Promise.all(
+      calls.map(async (call) => {
+        await invocation.toolHooks?.requestApproval(call);
+        this.resolved.push(call.id);
+      }),
+    );
+    return "approved";
   }
 }
 
@@ -200,4 +234,46 @@ describe("mention dispatch", () => {
     await expect(dispatcher.retry(failed.id)).rejects.toBeInstanceOf(StoreError);
     expect((await store.threadData(thread.id)).runs).toHaveLength(2);
   });
+
+  it("keeps a run waiting until every concurrent approval is resolved", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-dispatch-approvals-"));
+    const store = await FileStore.open({ root, workspacePath: root });
+    const runner = new ConcurrentApprovalRunner();
+    const dispatcher = new AgentDispatcher(store, runner);
+    const chat = new ChatService(store, dispatcher);
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const agent = await store.createAgent({
+      kind: "worker",
+      name: "Codex",
+      handle: "codex",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+
+    await chat.send(thread.id, { content: `@${agent.handle} approve both` });
+    await waitUntil(
+      async () =>
+        (await store.threadData(thread.id)).toolCalls.length === 2 &&
+        dispatcher.activeRuns()[0]?.status === "waiting_approval",
+    );
+    expect(dispatcher.activeRuns()[0]?.status).toBe("waiting_approval");
+
+    dispatcher.resolveToolApproval("first", true);
+    await waitUntil(() => runner.resolved.length === 1);
+    expect(dispatcher.activeRuns()[0]?.status).toBe("waiting_approval");
+
+    dispatcher.resolveToolApproval("second", true);
+    await dispatcher.waitForIdle();
+    expect((await store.threadData(thread.id)).runs.at(-1)?.status).toBe("completed");
+  });
 });
+
+async function waitUntil(predicate: () => boolean | Promise<boolean>): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error("Timed out waiting for the test condition.");
+}
