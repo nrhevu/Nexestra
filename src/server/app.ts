@@ -289,6 +289,10 @@ export function createApp(options: CreateAppOptions) {
     return context.json(await dispatcher.taskProcess(context.req.param("id")));
   });
 
+  app.post("/api/tasks/:id/stop", async (context) => {
+    return context.json(await dispatcher.stopTask(context.req.param("id")));
+  });
+
   app.patch("/api/tasks/:id", async (context) => {
     return context.json(
       await options.store.updateTask(context.req.param("id"), await context.req.json()),

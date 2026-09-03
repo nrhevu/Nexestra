@@ -94,7 +94,9 @@ Every assignment is also a durable Worker run. Click any Taskboard card to inspe
 repository, isolated branch and worktree, current phase, live reasoning, streamed response, and
 tool calls. Completed cards retain the Worker result and tool history in this process view; a task
 that was never delegated says so explicitly. The same detail view can edit every task field or
-permanently delete the task when no Worker assignment is active.
+permanently delete the task when no Worker assignment is active. While an assignment is queued or
+running, **Stop process** terminates its Codex/OpenCode process group, records the run and unfinished
+tools as interrupted, and returns the task to To do so it can be delegated again.
 
 Custom-provider Master agents have a provider-neutral
 harness with `list`, `glob`, `grep`, `read`, `edit`, `write`, `bash`, `apply_patch`, `skill`,

@@ -679,9 +679,9 @@ describe("Taskboard Worker process", () => {
       createdAt: now,
       updatedAt: now,
     };
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
-      if (path === "/api/bootstrap") {
+      if (path.startsWith("/api/bootstrap")) {
         return jsonResponse({
           ...bootstrapData,
           agents: [workerAgent],
@@ -723,6 +723,22 @@ describe("Taskboard Worker process", () => {
           ],
         });
       }
+      if (path === `/api/tasks/${task.id}/stop` && init?.method === "POST") {
+        return jsonResponse({
+          task: { ...task, status: "todo", assigneeId: null },
+          assignment: {
+            ...assignment,
+            status: "interrupted",
+            error: "Worker process stopped by the user.",
+          },
+          run: {
+            ...run,
+            status: "interrupted",
+            error: "Worker process stopped by the user.",
+          },
+          toolCalls: [],
+        });
+      }
       return jsonResponse({ error: { message: "Not found" } }, 404);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -739,6 +755,14 @@ describe("Taskboard Worker process", () => {
     expect(within(dialog).getByText("Implementing the change…")).toBeVisible();
     await user.click(within(dialog).getByText("Thinking"));
     expect(await within(dialog).findByText("Inspecting")).toBeVisible();
+    await user.click(within(dialog).getByRole("button", { name: "Stop process" }));
+    expect(await within(dialog).findByText("Worker process stopped")).toBeVisible();
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) =>
+          String(input) === `/api/tasks/${task.id}/stop` && init?.method === "POST",
+      ),
+    ).toBe(true);
   });
 
   it("shows task details and supports editing and deletion", async () => {

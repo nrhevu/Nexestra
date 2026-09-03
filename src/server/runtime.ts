@@ -50,6 +50,7 @@ export interface AgentInvocation {
   mode?: "discussion" | "task";
   toolHooks?: MasterToolHooks;
   activityHooks?: AgentActivityHooks;
+  signal?: AbortSignal;
 }
 
 export interface AgentRunner {
@@ -170,9 +171,11 @@ export class LocalAgentRunner implements AgentRunner {
       timeoutMs: 5 * 60_000,
       env: safeProcessEnv(this.env),
       onStdout: consume.push,
+      signal: invocation.signal,
+    }).finally(async () => {
+      consume.end();
+      await toolUpdates.drain();
     });
-    consume.end();
-    await toolUpdates.drain();
     if (result.exitCode !== 0) {
       throw new Error(
         cleanProcessError(result.stderr || result.stdout, "Codex exited with an error."),
@@ -216,9 +219,11 @@ export class LocalAgentRunner implements AgentRunner {
       timeoutMs: 5 * 60_000,
       env: safeProcessEnv(this.env),
       onStdout: consume.push,
+      signal: invocation.signal,
+    }).finally(async () => {
+      consume.end();
+      await toolUpdates.drain();
     });
-    consume.end();
-    await toolUpdates.drain();
     if (result.exitCode !== 0) {
       throw new Error(
         cleanProcessError(result.stderr || result.stdout, "OpenCode exited with an error."),

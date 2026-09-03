@@ -2177,6 +2177,9 @@ kbd {
 .task-process-summary .status-failed {
   color: #e59094;
 }
+.task-process-summary .status-interrupted {
+  color: #d9a86d;
+}
 .task-detail-copy {
   padding: 13px 14px;
   border: 1px solid var(--border-soft);
@@ -2279,10 +2282,39 @@ kbd {
   color: #d4d8d5;
   font-size: 13px;
 }
+.task-process-interrupted {
+  padding: 11px 12px;
+  border: 1px solid rgba(224, 164, 91, 0.25);
+  border-radius: 8px;
+  background: rgba(137, 88, 32, 0.08);
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  color: #d9a86d;
+}
+.task-process-interrupted strong {
+  color: #dfc29f;
+  font-size: 12px;
+}
+.task-process-interrupted p {
+  margin: 3px 0 0;
+  color: #b7a99a;
+  font-size: 11px;
+}
 .task-process .modal-actions button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+.task-process .modal-actions .stop-button {
+  height: 34px;
+  padding: 0 13px;
+  border: 1px solid #b76b70;
+  border-radius: 7px;
+  background: rgba(168, 66, 73, 0.12);
+  color: #efa5aa;
+  font-size: 11px;
+  font-weight: 750;
 }
 .column-empty {
   margin: 40px 0;

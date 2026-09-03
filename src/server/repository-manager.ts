@@ -12,7 +12,11 @@ export interface AssignmentLocation {
 
 export interface AssignmentRepositoryManager {
   assignmentLocation(workspaceId: string, assignmentId: string): AssignmentLocation;
-  prepareAssignment(repository: KnowledgeRepository, location: AssignmentLocation): Promise<void>;
+  prepareAssignment(
+    repository: KnowledgeRepository,
+    location: AssignmentLocation,
+    signal?: AbortSignal,
+  ): Promise<void>;
 }
 
 export class RepositoryManager implements AssignmentRepositoryManager {
@@ -82,6 +86,7 @@ export class RepositoryManager implements AssignmentRepositoryManager {
   async prepareAssignment(
     repository: KnowledgeRepository,
     location: AssignmentLocation,
+    signal?: AbortSignal,
   ): Promise<void> {
     if (repository.status !== "ready") {
       throw new StoreError("conflict", `#${repository.handle} is not ready.`);
@@ -106,6 +111,7 @@ export class RepositoryManager implements AssignmentRepositoryManager {
         timeoutMs: 60_000,
         maxOutputBytes: 1024 * 1024,
         env: safeProcessEnv(this.env),
+        signal,
       },
     );
     if (result.exitCode !== 0) {

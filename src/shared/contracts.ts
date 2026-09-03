@@ -408,7 +408,7 @@ export const WorkAssignmentSchema = z.object({
   masterRunId: z.string(),
   workerAgentId: z.string(),
   repositoryId: z.string(),
-  status: z.enum(["queued", "running", "completed", "failed"]),
+  status: z.enum(["queued", "running", "completed", "failed", "interrupted"]),
   branch: z.string(),
   worktreePath: z.string(),
   result: z.string().max(20_000).optional(),

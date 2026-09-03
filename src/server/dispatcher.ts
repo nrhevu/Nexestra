@@ -6,6 +6,7 @@ import {
   extractMentionHandles,
   type Message,
   type RunActivity,
+  type Task,
   type TaskProcessData,
   type ThreadStreamEvent,
   type ToolCall,
@@ -28,6 +29,8 @@ export class AgentDispatcher {
   private readonly retryingRunIds = new Set<string>();
   private readonly liveRuns = new Map<string, AgentRun>();
   private readonly liveActivities = new Map<string, RunActivity>();
+  private readonly runControllers = new Map<string, AbortController>();
+  private readonly stoppingRunIds = new Set<string>();
   private readonly threadSubscribers = new Map<string, Set<(event: ThreadStreamEvent) => void>>();
   private readonly threadRevisions = new Map<string, number>();
   private readonly pendingApprovals = new Map<
@@ -63,8 +66,7 @@ export class AgentDispatcher {
     if (!task) throw new StoreError("not_found", "Task not found.");
     const assignment = this.store
       .listAssignments(task.workspaceId)
-      .filter((entry) => entry.taskId === task.id)
-      .at(-1);
+      .find((entry) => entry.taskId === task.id);
     if (!assignment) return { task, toolCalls: [] };
     const thread = await this.store.threadData(assignment.threadId);
     const run = thread.runs.find((entry) => entry.id === assignment.id);
@@ -76,6 +78,29 @@ export class AgentDispatcher {
       ...(activity ? { activity: structuredClone(activity) } : {}),
       toolCalls: thread.toolCalls.filter((toolCall) => toolCall.runId === assignment.id),
     };
+  }
+
+  async stopTask(taskId: string): Promise<TaskProcessData> {
+    const task = this.store.getTask(taskId);
+    if (!task) throw new StoreError("not_found", "Task not found.");
+    const assignment = this.store
+      .listAssignments(task.workspaceId)
+      .find((entry) => entry.taskId === task.id);
+    if (!assignment || !["queued", "running"].includes(assignment.status)) {
+      throw new StoreError("conflict", "This task does not have an active Worker process.");
+    }
+    this.stoppingRunIds.add(assignment.id);
+    const controller = this.runControllers.get(assignment.id);
+    const run = this.liveRuns.get(assignment.id);
+    if (run) this.updateActivity(run, "tool", "Stopping Worker");
+    controller?.abort(new Error("Worker process stopped by the user."));
+    try {
+      await this.persistStoppedAssignment(task, assignment);
+      this.notifyThread(assignment.threadId, true);
+      return this.taskProcess(task.id);
+    } finally {
+      if (!controller) this.stoppingRunIds.delete(assignment.id);
+    }
   }
 
   threadStreamSnapshot(threadId: string, refresh = true): ThreadStreamEvent {
@@ -424,7 +449,12 @@ export class AgentDispatcher {
     if (
       this.store
         .listAssignments(thread.workspaceId)
-        .some((assignment) => assignment.taskId === task.id && assignment.status !== "failed")
+        .some(
+          (assignment) =>
+            assignment.taskId === task.id &&
+            assignment.status !== "failed" &&
+            assignment.status !== "interrupted",
+        )
     ) {
       throw new StoreError("conflict", "This planned task already has an assignment.");
     }
@@ -445,6 +475,8 @@ export class AgentDispatcher {
     const release = this.reserveAgent(worker.id);
     if (!release) throw new StoreError("conflict", `@${worker.handle} is being deleted.`);
     const id = crypto.randomUUID();
+    const controller = new AbortController();
+    this.runControllers.set(id, controller);
     const location = this.repositories.assignmentLocation(thread.workspaceId, id);
     const now = new Date().toISOString();
     let workerRun: AgentRun = {
@@ -457,23 +489,26 @@ export class AgentDispatcher {
       createdAt: now,
       updatedAt: now,
     };
+    let assignment: WorkAssignment = {
+      id,
+      workspaceId: thread.workspaceId,
+      taskId: task.id,
+      threadId: thread.id,
+      masterRunId: masterRun.id,
+      workerAgentId: worker.id,
+      repositoryId: knowledge.id,
+      status: "queued",
+      branch: location.branch,
+      worktreePath: location.worktreePath,
+      createdAt: now,
+      updatedAt: now,
+    };
     let workerRunPersisted = false;
     try {
-      let assignment = await this.store.createAssignment({
-        id,
-        workspaceId: thread.workspaceId,
-        taskId: task.id,
-        threadId: thread.id,
-        masterRunId: masterRun.id,
-        workerAgentId: worker.id,
-        repositoryId: knowledge.id,
-        status: "queued",
-        branch: location.branch,
-        worktreePath: location.worktreePath,
-        createdAt: now,
-        updatedAt: now,
-      });
+      assignment = await this.store.createAssignment(assignment);
+      controller.signal.throwIfAborted();
       await this.store.updateTask(task.id, { status: "in_progress", assigneeId: worker.id });
+      controller.signal.throwIfAborted();
       workerRun = await this.store.updateRun(workerRun);
       workerRunPersisted = true;
       this.liveRuns.set(workerRun.id, workerRun);
@@ -491,8 +526,10 @@ export class AgentDispatcher {
       const result = await this.enqueueDelegation(worker.id, async () => {
         this.busy.add(worker.id);
         try {
+          controller.signal.throwIfAborted();
           this.updateActivity(workerRun, "thinking", "Preparing an isolated worktree");
-          await this.repositories.prepareAssignment(knowledge, location);
+          await this.repositories.prepareAssignment(knowledge, location, controller.signal);
+          controller.signal.throwIfAborted();
           assignment = await this.store.updateAssignment(assignment.id, { status: "running" });
           workerRun = await this.store.updateRun({
             ...workerRun,
@@ -530,6 +567,7 @@ export class AgentDispatcher {
               knowledge: [{ item: knowledge, localPath: location.absolutePath }],
               workingDirectory: location.absolutePath,
               mode: "task",
+              signal: controller.signal,
               activityHooks: {
                 status: (stage, detail) => this.updateActivity(workerRun, stage, detail),
                 thinking: (value, mode) => this.updateActivityThinking(workerRun, value, mode),
@@ -547,31 +585,48 @@ export class AgentDispatcher {
               },
             })
           ).trim();
+          controller.signal.throwIfAborted();
           if (!response) throw new Error("The Worker returned an empty response.");
           await this.store.createAgentMessage(thread.id, worker, response, trigger.id);
+          controller.signal.throwIfAborted();
           workerRun = await this.store.updateRun({
             ...workerRun,
             status: "completed",
             updatedAt: new Date().toISOString(),
           });
+          controller.signal.throwIfAborted();
           this.liveRuns.set(workerRun.id, workerRun);
           return response;
         } finally {
           this.busy.delete(worker.id);
         }
       });
+      controller.signal.throwIfAborted();
       assignment = await this.store.updateAssignment(assignment.id, {
         status: "completed",
         result: result.slice(0, 20_000),
       });
+      controller.signal.throwIfAborted();
       await this.store.updateTask(task.id, { status: "done" });
+      controller.signal.throwIfAborted();
       this.notifyThread(thread.id, true);
       return { assignment, result };
     } catch (error) {
+      const stopped = controller.signal.aborted || this.stoppingRunIds.has(id);
       const message = this.store.redactSecrets(
-        error instanceof Error ? error.message : "Worker assignment failed.",
+        stopped
+          ? "Worker process stopped by the user."
+          : error instanceof Error
+            ? error.message
+            : "Worker assignment failed.",
       );
-      if (workerRunPersisted) {
+      if (stopped) {
+        await this.persistStoppedAssignment(task, {
+          ...assignment,
+          id,
+          status: "interrupted",
+        });
+      } else if (workerRunPersisted) {
         workerRun = await this.store
           .updateRun({
             ...workerRun,
@@ -581,20 +636,70 @@ export class AgentDispatcher {
           })
           .catch(() => workerRun);
       }
-      await this.store
-        .updateAssignment(id, { status: "failed", error: message.slice(0, 2_000) })
-        .catch(() => undefined);
-      await this.store
-        .updateTask(task.id, { status: "todo", assigneeId: null })
-        .catch(() => undefined);
+      if (!stopped) {
+        await this.store
+          .updateAssignment(id, { status: "failed", error: message.slice(0, 2_000) })
+          .catch(() => undefined);
+        await this.store
+          .updateTask(task.id, { status: "todo", assigneeId: null })
+          .catch(() => undefined);
+      }
       throw new StoreError("invalid", message);
     } finally {
+      this.runControllers.delete(id);
+      this.stoppingRunIds.delete(id);
       this.liveRuns.delete(id);
       this.liveActivities.delete(id);
       this.busy.delete(worker.id);
       this.notifyThread(thread.id, true);
       release();
     }
+  }
+
+  private async persistStoppedAssignment(task: Task, assignment: WorkAssignment): Promise<void> {
+    const message = "Worker process stopped by the user.";
+    const thread = await this.store.threadData(assignment.threadId);
+    const run = thread.runs.find((entry) => entry.id === assignment.id);
+    if (!run) {
+      const masterRun = thread.runs.find((entry) => entry.id === assignment.masterRunId);
+      if (masterRun) {
+        await this.store.updateRun({
+          id: assignment.id,
+          threadId: assignment.threadId,
+          triggerMessageId: masterRun.triggerMessageId,
+          agentId: assignment.workerAgentId,
+          attempt: 1,
+          status: "interrupted",
+          error: message,
+          createdAt: assignment.createdAt,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+    } else if (run.status !== "completed" && run.status !== "interrupted") {
+      await this.store.updateRun({
+        ...run,
+        status: "interrupted",
+        error: message,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+    for (const toolCall of thread.toolCalls.filter(
+      (entry) =>
+        entry.runId === assignment.id &&
+        ["waiting_approval", "waiting_input", "running"].includes(entry.status),
+    )) {
+      await this.store.updateToolCall({
+        ...toolCall,
+        status: "interrupted",
+        error: message,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+    await this.store.updateAssignment(assignment.id, {
+      status: "interrupted",
+      error: message,
+    });
+    await this.store.updateTask(task.id, { status: "todo", assigneeId: null });
   }
 
   private async enqueueDelegation<T>(agentId: string, work: () => Promise<T>): Promise<T> {

@@ -135,6 +135,13 @@ the shared transcript snapshot, and the selected repository as knowledge. Succes
 assignment and task complete; failure records a redacted error and returns the task to To do.
 Branches and worktrees are retained for inspection. Nexestra never merges or pushes.
 
+Each delegated assignment owns an in-memory abort controller from before it is queued until its
+final cleanup. Stopping a task aborts both Git worktree preparation and the Worker harness process;
+CLI harnesses forward the signal to the detached process group and escalate from TERM to KILL after
+the normal grace period. The assignment, run, and unfinished tool calls become `interrupted`, while
+the task returns to To do and is unassigned. A stop request also repairs stale queued/running state
+left without an in-memory controller after a restart.
+
 The assignment ID is also the delegated Worker's durable run ID in the canonical thread JSONL.
 Native Worker tool events are normalized and persisted against that run, while reasoning and
 partial text remain in the dispatcher's bounded live projection. The Taskboard process endpoint

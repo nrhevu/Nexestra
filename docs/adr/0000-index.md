@@ -16,3 +16,4 @@
 | [0012](0012-collapsible-live-reasoning.md) | Accepted | Show runtime-emitted reasoning only while a run is active |
 | [0013](0013-repository-knowledge-worker-delegation.md) | Accepted | Store shared knowledge and delegate planned tasks through isolated Git worktrees |
 | [0014](0014-task-knowledge-crud-lifecycle.md) | Accepted | Complete Task and Knowledge CRUD while preserving active and historical Worker state |
+| [0015](0015-stoppable-worker-processes.md) | Accepted | Stop queued or running Worker processes while retaining interrupted history |

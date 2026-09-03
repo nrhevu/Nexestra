@@ -123,6 +123,55 @@ class DelegatingMasterRunner implements AgentRunner {
   }
 }
 
+class StoppableDelegatingMasterRunner implements AgentRunner {
+  workerStarted = false;
+
+  async runtimeStatus() {
+    return readyRuntime;
+  }
+
+  async invoke(agent: Agent, invocation: AgentInvocation) {
+    if (agent.kind === "worker") {
+      this.workerStarted = true;
+      await invocation.activityHooks?.tool({
+        id: "worker-write",
+        name: "write",
+        permission: "edit",
+        status: "running",
+        input: '{"filePath":"src/index.ts"}',
+      });
+      return new Promise<string>((_resolve, reject) => {
+        if (invocation.signal?.aborted) {
+          reject(invocation.signal.reason);
+          return;
+        }
+        invocation.signal?.addEventListener(
+          "abort",
+          () => reject(invocation.signal?.reason ?? new Error("Worker stopped.")),
+          { once: true },
+        );
+      });
+    }
+    if (!invocation.toolHooks?.createPlan || !invocation.toolHooks.delegate) {
+      throw new Error("expected planning and delegation hooks");
+    }
+    const [task] = await invocation.toolHooks.createPlan("Implementation plan", [
+      { title: "Implement feature", description: "Make the requested repository change." },
+    ]);
+    if (!task) throw new Error("expected planned task");
+    try {
+      await invocation.toolHooks.delegate({
+        taskId: task.id,
+        workerHandle: "builder",
+        repositoryHandle: "product-repo",
+      });
+    } catch {
+      return "The Worker process was stopped.";
+    }
+    return "The Worker completed unexpectedly.";
+  }
+}
+
 class FakeAssignmentRepositories implements AssignmentRepositoryManager {
   constructor(private readonly root: string) {}
 
@@ -492,6 +541,78 @@ describe("mention dispatch", () => {
       run: { id: assignment.id, status: "completed" },
       toolCalls: [{ runId: assignment.id, name: "read" }],
     });
+  });
+
+  it("stops an active Worker process and preserves interrupted run and tool history", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-dispatch-stop-"));
+    const store = await FileStore.open({ root, workspacePath: root });
+    const runner = new StoppableDelegatingMasterRunner();
+    const dispatcher = new AgentDispatcher(
+      store,
+      runner,
+      new FakeAssignmentRepositories(store.root),
+    );
+    const chat = new ChatService(store, dispatcher);
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    await store.createAgent({
+      kind: "master",
+      name: "Lead",
+      handle: "lead",
+      description: "",
+      instructions: "",
+      accessMode: "full",
+      provider: {
+        type: "custom",
+        name: "Test provider",
+        baseUrl: "https://example.test/v1",
+        model: "test-model",
+        protocol: "openai-chat",
+      },
+    });
+    await store.createAgent({
+      kind: "worker",
+      name: "Builder",
+      handle: "builder",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    const repository = await store.createKnowledgeRepository({
+      name: "Product repository",
+      handle: "product-repo",
+      source: "https://github.com/example/product.git",
+    });
+    await store.updateKnowledgeRepository(repository.id, {
+      status: "ready",
+      defaultBranch: "main",
+    });
+
+    await chat.send(thread.id, { content: "@lead implement the feature in #product-repo" });
+    await waitUntil(() => runner.workerStarted);
+    const [task] = store.listTasks();
+    if (!task) throw new Error("expected planned task");
+
+    await expect(dispatcher.stopTask(task.id)).resolves.toMatchObject({
+      assignment: { status: "interrupted" },
+      run: { status: "interrupted" },
+      toolCalls: [{ status: "interrupted" }],
+    });
+    await dispatcher.waitForIdle();
+
+    expect(store.getTask(task.id)).toMatchObject({ status: "todo", assigneeId: null });
+    expect(store.listAssignments()).toEqual([
+      expect.objectContaining({ status: "interrupted", error: expect.stringContaining("stopped") }),
+    ]);
+    const threadData = await store.threadData(thread.id);
+    expect(threadData.runs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ agentId: expect.any(String), status: "interrupted" }),
+      ]),
+    );
+    expect(threadData.toolCalls).toEqual([
+      expect.objectContaining({ name: "write", status: "interrupted" }),
+    ]);
   });
 });
 

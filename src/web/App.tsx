@@ -24,6 +24,7 @@ import {
   SendHorizontal,
   Settings,
   Sparkles,
+  Square,
   TerminalSquare,
   Trash2,
   Unplug,
@@ -544,6 +545,10 @@ export function App() {
           onDelete={(task) => {
             setTaskToInspect(undefined);
             setTaskToDelete(task);
+          }}
+          onStopped={async () => {
+            await refresh(true);
+            flash("Worker process stopped.");
           }}
         />
       )}
@@ -2516,6 +2521,7 @@ function TaskProcessDialog({
   onThread,
   onEdit,
   onDelete,
+  onStopped,
 }: {
   task: Task;
   data: BootstrapData;
@@ -2523,9 +2529,12 @@ function TaskProcessDialog({
   onThread: (threadId: string) => void;
   onEdit: (task: Task) => void;
   onDelete: (task: Task) => void;
+  onStopped: () => Promise<void>;
 }) {
   const [process, setProcess] = useState<TaskProcessData>();
   const [loadError, setLoadError] = useState<string>();
+  const [stopping, setStopping] = useState(false);
+  const [stopError, setStopError] = useState<string>();
   const loadProcess = useCallback(
     async (quiet = false) => {
       try {
@@ -2620,6 +2629,7 @@ function TaskProcessDialog({
                 {isActive && <LoaderCircle className="spin" size={13} />}
                 {assignment?.status === "completed" && <Check size={13} />}
                 {assignment?.status === "failed" && <CircleAlert size={13} />}
+                {assignment?.status === "interrupted" && <Square size={11} />}
                 {status.replace("_", " ")}
               </strong>
             </div>
@@ -2750,10 +2760,52 @@ function TaskProcessDialog({
                   </div>
                 </div>
               )}
+
+              {assignment.status === "interrupted" && (
+                <div className="task-process-interrupted">
+                  <Square size={13} />
+                  <div>
+                    <strong>Worker process stopped</strong>
+                    <p>{assignment.error ?? "Stopped by the user."}</p>
+                  </div>
+                </div>
+              )}
             </>
           )}
 
+          {stopError && (
+            <p className="form-error">
+              <CircleAlert size={14} />
+              {stopError}
+            </p>
+          )}
           <div className="modal-actions">
+            {isActive && (
+              <button
+                type="button"
+                className="stop-button"
+                disabled={stopping}
+                onClick={async () => {
+                  setStopping(true);
+                  setStopError(undefined);
+                  try {
+                    const next = await api<TaskProcessData>(
+                      `/api/tasks/${encodeURIComponent(process.task.id)}/stop`,
+                      { method: "POST" },
+                    );
+                    setProcess(next);
+                    await onStopped();
+                  } catch (caught) {
+                    setStopError(messageFrom(caught));
+                  } finally {
+                    setStopping(false);
+                  }
+                }}
+              >
+                {stopping ? <LoaderCircle className="spin" size={14} /> : <Square size={12} />}
+                {stopping ? "Stopping…" : "Stop process"}
+              </button>
+            )}
             <button type="button" onClick={() => onEdit(process.task)}>
               <Pencil size={14} />
               Edit

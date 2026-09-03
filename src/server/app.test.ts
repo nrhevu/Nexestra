@@ -452,6 +452,14 @@ describe("HTTP app", () => {
       run: { id: assignmentId, status: "running" },
       toolCalls: [{ runId: assignmentId, name: "read" }],
     });
+
+    const stopped = await app.request(`/api/tasks/${task.id}/stop`, { method: "POST" });
+    expect(stopped.status).toBe(200);
+    await expect(stopped.json()).resolves.toMatchObject({
+      task: { id: task.id, status: "todo", assigneeId: null },
+      assignment: { id: assignmentId, status: "interrupted" },
+      run: { id: assignmentId, status: "interrupted" },
+    });
   });
 
   it("opens a thread event stream with an immediate activity snapshot", async () => {
