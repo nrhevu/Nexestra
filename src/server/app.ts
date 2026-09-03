@@ -123,6 +123,16 @@ export function createApp(options: CreateAppOptions) {
     return context.json(await dispatcher.retry(context.req.param("id")), 201);
   });
 
+  app.post("/api/tool-calls/:id/approve", (context) => {
+    dispatcher.resolveToolApproval(context.req.param("id"), true);
+    return context.body(null, 204);
+  });
+
+  app.post("/api/tool-calls/:id/deny", (context) => {
+    dispatcher.resolveToolApproval(context.req.param("id"), false);
+    return context.body(null, 204);
+  });
+
   app.post("/api/tasks", async (context) => {
     return context.json(await options.store.createTask(await context.req.json()), 201);
   });

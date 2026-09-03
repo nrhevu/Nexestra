@@ -15,6 +15,7 @@ import {
   SendHorizontal,
   Settings,
   Sparkles,
+  TerminalSquare,
   Trash2,
   Unplug,
   UsersRound,
@@ -40,6 +41,7 @@ import type {
   Task,
   Thread,
   ThreadData,
+  ToolCall,
   Workspace,
 } from "../shared/contracts.js";
 import { extractMentionHandles, handleFromName } from "../shared/contracts.js";
@@ -135,7 +137,8 @@ export function App() {
   }, [loadThread, route.threadId, route.view, routeThreadExists]);
 
   const hasActiveThreadRuns = threadData?.runs.some(
-    (run) => run.status === "queued" || run.status === "running",
+    (run) =>
+      run.status === "queued" || run.status === "running" || run.status === "waiting_approval",
   );
   const isPollingActiveThread = Boolean(
     hasActiveThreadRuns &&
@@ -156,7 +159,10 @@ export function App() {
       void loadThread(threadId, true)
         .then((next) => {
           const stillActive = next?.runs.some(
-            (run) => run.status === "queued" || run.status === "running",
+            (run) =>
+              run.status === "queued" ||
+              run.status === "running" ||
+              run.status === "waiting_approval",
           );
           if (next && !stillActive) void refresh(true);
         })
@@ -292,6 +298,13 @@ export function App() {
                 "Reply queued again.",
               )
             }
+            onToolDecision={async (toolCallId, approved) => {
+              await api(`/api/tool-calls/${toolCallId}/${approved ? "approve" : "deny"}`, {
+                method: "POST",
+                body: "{}",
+              });
+              if (route.threadId) await loadThread(route.threadId, true);
+            }}
           />
         ) : route.surface === "agents" ? (
           <AgentsView
@@ -736,6 +749,7 @@ function ThreadView(props: {
   threadData?: ThreadData;
   onSend: (content: string) => Promise<void>;
   onRetry: (runId: string) => Promise<unknown>;
+  onToolDecision: (toolCallId: string, approved: boolean) => Promise<void>;
 }) {
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -865,8 +879,10 @@ function ThreadView(props: {
         thread={thread}
         messages={props.threadData.messages}
         runs={props.threadData.runs}
+        toolCalls={props.threadData.toolCalls ?? []}
         agents={props.data.agents}
         onRetry={props.onRetry}
+        onToolDecision={props.onToolDecision}
       />
       <div className="composer-wrap">
         {mentionMenuOpen && suggestions.length > 0 && (
@@ -968,14 +984,18 @@ const ThreadTranscript = memo(function ThreadTranscript({
   thread,
   messages,
   runs,
+  toolCalls,
   agents,
   onRetry,
+  onToolDecision,
 }: {
   thread: Thread;
   messages: Message[];
   runs: AgentRun[];
+  toolCalls: ToolCall[];
   agents: AgentView[];
   onRetry: (runId: string) => Promise<unknown>;
+  onToolDecision: (toolCallId: string, approved: boolean) => Promise<void>;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const agentsById = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
@@ -989,9 +1009,18 @@ const ThreadTranscript = memo(function ThreadTranscript({
     }
     return grouped;
   }, [runs]);
+  const toolCallsByRun = useMemo(() => {
+    const grouped = new Map<string, ToolCall[]>();
+    for (const toolCall of toolCalls) {
+      const runTools = grouped.get(toolCall.runId) ?? [];
+      runTools.push(toolCall);
+      grouped.set(toolCall.runId, runTools);
+    }
+    return grouped;
+  }, [toolCalls]);
   const transcriptVersion = `${messages.length}:${runs
     .map((run) => `${run.id}-${run.status}`)
-    .join(",")}`;
+    .join(",")}:${toolCalls.map((call) => `${call.id}-${call.status}`).join(",")}`;
   useEffect(() => {
     if (!transcriptVersion) return;
     bottomRef.current?.scrollIntoView?.({ block: "end" });
@@ -1034,6 +1063,8 @@ const ThreadTranscript = memo(function ThreadTranscript({
                 message.mentions.find((mention) => mention.agentId === run.agentId)?.handle
               }
               onRetry={onRetry}
+              toolCalls={toolCallsByRun.get(run.id) ?? []}
+              onToolDecision={onToolDecision}
             />
           ))}
         </div>
@@ -1085,56 +1116,126 @@ function RunRow({
   agent,
   historicalHandle,
   onRetry,
+  toolCalls,
+  onToolDecision,
 }: {
   run: AgentRun;
   agent?: AgentView;
   historicalHandle?: string;
   onRetry: (id: string) => Promise<unknown>;
+  toolCalls: ToolCall[];
+  onToolDecision: (id: string, approved: boolean) => Promise<void>;
 }) {
   const [retrying, setRetrying] = useState(false);
   const handle = agent?.handle ?? historicalHandle;
-  if (run.status === "completed") return null;
-  if (run.status === "queued" || run.status === "running") {
+  const activity = toolCalls.length > 0 && (
+    <div className="tool-activity">
+      {toolCalls.map((toolCall) => (
+        <ToolCallRow key={toolCall.id} toolCall={toolCall} onDecision={onToolDecision} />
+      ))}
+    </div>
+  );
+  if (run.status === "completed") return activity || null;
+  if (run.status === "queued" || run.status === "running" || run.status === "waiting_approval") {
     return (
-      <div className="typing-row">
-        {agent ? <Avatar agent={agent} small /> : <span className="avatar avatar-blue">A</span>}
-        <span>
-          <b>{handle ? `@${handle}` : "Deleted agent"}</b>{" "}
-          {run.status === "queued" ? "is waiting in the queue" : "is reading the transcript"}
-        </span>
-        <span className="typing-dots">
-          <i />
-          <i />
-          <i />
-        </span>
-      </div>
+      <>
+        {activity}
+        <div className="typing-row">
+          {agent ? <Avatar agent={agent} small /> : <span className="avatar avatar-blue">A</span>}
+          <span>
+            <b>{handle ? `@${handle}` : "Deleted agent"}</b>{" "}
+            {run.status === "queued"
+              ? "is waiting in the queue"
+              : run.status === "waiting_approval"
+                ? "is waiting for tool approval"
+                : "is working with the repository"}
+          </span>
+          <span className="typing-dots">
+            <i />
+            <i />
+            <i />
+          </span>
+        </div>
+      </>
     );
   }
   return (
-    <div className="run-error">
-      <CircleAlert size={15} />
-      <div>
-        <strong>{handle ? `@${handle}` : "Deleted agent"} could not reply</strong>
-        <p>{run.error ?? "The run was interrupted."}</p>
+    <>
+      {activity}
+      <div className="run-error">
+        <CircleAlert size={15} />
+        <div>
+          <strong>{handle ? `@${handle}` : "Deleted agent"} could not reply</strong>
+          <p>{run.error ?? "The run was interrupted."}</p>
+        </div>
+        {agent ? (
+          <button
+            type="button"
+            disabled={retrying}
+            onClick={async () => {
+              setRetrying(true);
+              try {
+                await onRetry(run.id);
+              } finally {
+                setRetrying(false);
+              }
+            }}
+          >
+            {retrying ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}
+            {retrying ? "Queueing…" : "Retry"}
+          </button>
+        ) : (
+          <span className="run-unavailable">Agent deleted</span>
+        )}
       </div>
-      {agent ? (
-        <button
-          type="button"
-          disabled={retrying}
-          onClick={async () => {
-            setRetrying(true);
-            try {
-              await onRetry(run.id);
-            } finally {
-              setRetrying(false);
-            }
-          }}
-        >
-          {retrying ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}
-          {retrying ? "Queueing…" : "Retry"}
-        </button>
-      ) : (
-        <span className="run-unavailable">Agent deleted</span>
+    </>
+  );
+}
+
+function ToolCallRow({
+  toolCall,
+  onDecision,
+}: {
+  toolCall: ToolCall;
+  onDecision: (id: string, approved: boolean) => Promise<void>;
+}) {
+  const [deciding, setDeciding] = useState(false);
+  const [decisionError, setDecisionError] = useState<string>();
+  const decide = async (approved: boolean) => {
+    setDeciding(true);
+    setDecisionError(undefined);
+    try {
+      await onDecision(toolCall.id, approved);
+    } catch (caught) {
+      setDecisionError(messageFrom(caught));
+    } finally {
+      setDeciding(false);
+    }
+  };
+  return (
+    <div className={`tool-call tool-call-${toolCall.status}`}>
+      <TerminalSquare size={15} />
+      <div>
+        <strong>{toolCall.name}</strong>
+        <code>{toolCall.input}</code>
+        {(toolCall.summary || toolCall.error) && <p>{toolCall.error ?? toolCall.summary}</p>}
+        {decisionError && <p>{decisionError}</p>}
+      </div>
+      <span>{toolCall.status.replace("_", " ")}</span>
+      {toolCall.status === "waiting_approval" && (
+        <div className="tool-actions">
+          <button type="button" disabled={deciding} onClick={() => void decide(false)}>
+            Deny
+          </button>
+          <button
+            className="tool-approve"
+            type="button"
+            disabled={deciding}
+            onClick={() => void decide(true)}
+          >
+            {deciding ? "Saving…" : "Approve"}
+          </button>
+        </div>
       )}
     </div>
   );
@@ -1256,8 +1357,8 @@ function AgentCard({
           .filter(Boolean)
           .join(" · ")
       : agent.provider.type === "chatgpt"
-        ? `ChatGPT OAuth${agent.provider.model ? ` · ${agent.provider.model}` : ""}`
-        : `${agent.provider.name} · ${agent.provider.model}`;
+        ? `ChatGPT OAuth${agent.provider.model ? ` · ${agent.provider.model}` : ""} · ${masterAccessLabel(agent)}`
+        : `${agent.provider.name} · ${agent.provider.model} · ${masterAccessLabel(agent)}`;
   return (
     <article className={`agent-card${agent.archived ? " agent-card-archived" : ""}`}>
       <div className="agent-card-top">
@@ -1620,6 +1721,16 @@ function AgentDialog({
     };
     const workerModel = String(fields.get("workerModel") ?? "").trim();
     const workerReasoningEffort = String(fields.get("reasoningEffort") ?? "").trim();
+    const permissions =
+      providerMode === "chatgpt"
+        ? fields.get("chatgptAccess") === "workspace-write"
+          ? { read: "allow", edit: "allow", bash: "allow" }
+          : { read: "allow", edit: "deny", bash: "deny" }
+        : {
+            read: String(fields.get("readPermission") ?? "allow"),
+            edit: String(fields.get("editPermission") ?? "ask"),
+            bash: String(fields.get("bashPermission") ?? "ask"),
+          };
     const payload =
       kind === "worker"
         ? {
@@ -1630,6 +1741,7 @@ function AgentDialog({
           }
         : {
             ...common,
+            permissions,
             provider:
               providerMode === "chatgpt"
                 ? { type: "chatgpt", model: String(fields.get("model") ?? "") }
@@ -1872,9 +1984,21 @@ function AgentDialog({
                 <Field label="Model" optional hint="Leave blank to use the Codex default">
                   <input name="model" placeholder="Default" />
                 </Field>
+                <Field
+                  label="Repository access"
+                  hint="Workspace-write uses Codex sandboxing and automatic approval review."
+                >
+                  <select name="chatgptAccess" defaultValue="read-only">
+                    <option value="read-only">Read only</option>
+                    <option value="workspace-write">Build — files and shell</option>
+                  </select>
+                </Field>
               </div>
             ) : (
-              <CustomProviderFields />
+              <>
+                <CustomProviderFields />
+                <MasterPermissionFields />
+              </>
             )}
           </>
         )}
@@ -1933,6 +2057,48 @@ function CustomProviderFields() {
         current OS user.
       </p>
     </div>
+  );
+}
+
+function MasterPermissionFields() {
+  return (
+    <>
+      <Field
+        label="Tool permissions"
+        hint="Ask pauses the run until you approve or deny the tool in its thread."
+      >
+        <div className="form-grid permission-grid">
+          <label>
+            <span>Read files</span>
+            <select name="readPermission" defaultValue="allow">
+              <option value="allow">Allow</option>
+              <option value="ask">Ask</option>
+              <option value="deny">Deny</option>
+            </select>
+          </label>
+          <label>
+            <span>Edit files</span>
+            <select name="editPermission" defaultValue="ask">
+              <option value="ask">Ask</option>
+              <option value="allow">Allow</option>
+              <option value="deny">Deny</option>
+            </select>
+          </label>
+          <label>
+            <span>Run shell</span>
+            <select name="bashPermission" defaultValue="ask">
+              <option value="ask">Ask</option>
+              <option value="allow">Allow</option>
+              <option value="deny">Deny</option>
+            </select>
+          </label>
+        </div>
+      </Field>
+      <p className="security-note">
+        Shell commands run as your local OS user from the repository. Keep shell on Ask unless you
+        fully trust the provider.
+      </p>
+    </>
   );
 }
 
@@ -2275,6 +2441,13 @@ function latestAttempts(runs: AgentRun[]): AgentRun[] {
 
 function canCallAgent(agent: AgentView): boolean {
   return agent.readiness === "ready" || agent.readiness === "busy";
+}
+
+function masterAccessLabel(agent: Extract<AgentView, { kind: "master" }>): string {
+  const enabled = Object.entries(agent.permissions)
+    .filter(([, permission]) => permission !== "deny")
+    .map(([name, permission]) => `${name} ${permission}`);
+  return enabled.length > 0 ? enabled.join(", ") : "tools disabled";
 }
 
 function highlightMentions(content: string, knownHandles: ReadonlySet<string>): ReactNode[] {

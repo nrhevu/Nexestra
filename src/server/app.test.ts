@@ -18,14 +18,49 @@ const runtime: RuntimeStatus = {
 class FakeRunner implements AgentRunner {
   invocations = 0;
   gate?: Promise<void>;
+  requireToolApproval = false;
+  approvalRequested: Promise<void> = Promise.resolve();
+  private markApprovalRequested: () => void = () => undefined;
+
+  prepareToolApproval() {
+    this.requireToolApproval = true;
+    this.approvalRequested = new Promise<void>((resolve) => {
+      this.markApprovalRequested = resolve;
+    });
+  }
 
   async runtimeStatus() {
     return runtime;
   }
 
-  async invoke(agent: Agent, _invocation: AgentInvocation) {
+  async invoke(agent: Agent, invocation: AgentInvocation) {
     this.invocations += 1;
     await this.gate;
+    if (this.requireToolApproval) {
+      if (!invocation.runId || !invocation.toolHooks) throw new Error("missing tool hooks");
+      const now = new Date().toISOString();
+      const toolCall = {
+        id: "tool-approval",
+        runId: invocation.runId,
+        threadId: invocation.thread.id,
+        agentId: agent.id,
+        name: "bash" as const,
+        permission: "bash" as const,
+        status: "waiting_approval" as const,
+        input: '{"command":"pnpm test"}',
+        createdAt: now,
+        updatedAt: now,
+      };
+      const decision = invocation.toolHooks.requestApproval(toolCall);
+      this.markApprovalRequested();
+      const approved = await decision;
+      await invocation.toolHooks.update({
+        ...toolCall,
+        status: approved ? "completed" : "denied",
+        summary: approved ? "Command finished." : "Denied by the user.",
+        updatedAt: new Date().toISOString(),
+      });
+    }
     return `Hello from ${agent.name}`;
   }
 }
@@ -156,6 +191,48 @@ describe("HTTP app", () => {
       body: JSON.stringify({ name: "blocked" }),
     });
     expect(response.status).toBe(403);
+  });
+
+  it("approves a pending Master tool call and resumes the run", async () => {
+    runner.prepareToolApproval();
+    const agent = await store.createAgent({
+      kind: "master",
+      name: "Maya",
+      handle: "maya",
+      description: "",
+      instructions: "",
+      permissions: { read: "allow", edit: "ask", bash: "ask" },
+      provider: {
+        type: "custom",
+        name: "Gateway",
+        baseUrl: "http://127.0.0.1:11434/v1",
+        model: "model-a",
+        protocol: "openai-chat",
+      },
+    });
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    await app.request(`/api/threads/${thread.id}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "@maya run the tests" }),
+    });
+    await runner.approvalRequested;
+
+    const approval = await app.request("/api/tool-calls/tool-approval/approve", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(approval.status).toBe(204);
+    await app.dispatcher.waitForIdle();
+
+    const data = await store.threadData(thread.id);
+    expect(data.runs).toMatchObject([{ status: "completed" }]);
+    expect(data.toolCalls).toMatchObject([
+      { id: "tool-approval", status: "completed", summary: "Command finished." },
+    ]);
+    expect(data.messages.at(-1)?.content).toBe(`Hello from ${agent.name}`);
   });
 
   it("permanently deletes an idle agent and returns not found when repeated", async () => {

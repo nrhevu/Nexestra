@@ -20,7 +20,8 @@ Hono API ── FileStore ── state.json / credentials.json
 ChatService ── AgentDispatcher ── LocalAgentRunner
                                   ├─ codex exec --json (read-only)
                                   ├─ opencode run --format json (plan)
-                                  └─ OpenAI-compatible HTTP
+                                  └─ MasterHarness ── OpenAI-compatible HTTP
+                                                   └─ read/search/edit/write/bash tools
 ```
 
 The shared Zod contracts in `src/shared/contracts.ts` define the boundary between browser and server.
@@ -28,7 +29,7 @@ The shared Zod contracts in `src/shared/contracts.ts` define the boundary betwee
 ## Refresh and rendering model
 
 The SPA performs no periodic requests while the selected workspace is idle. While the visible
-thread has queued or running work, it polls only that thread once per second. If work continues
+thread has queued, running, or approval-waiting work, it polls only that thread once per second. If work continues
 after the user navigates elsewhere, a lightweight activity endpoint is polled instead; the full
 workspace bootstrap is refreshed once when activity finishes. The dispatcher keeps this live-run
 projection in memory, while JSONL run events remain the durable source used for restart recovery.
@@ -44,7 +45,8 @@ transcript refresh does not perform a messages-by-runs nested scan.
 task carries a workspace ID. Handles and thread slugs are unique only within their workspace, and
 task references cannot cross workspace boundaries. Creating a workspace seeds a `general` thread.
 Version 1 state is migrated in place to version 2 by assigning every existing record to a default
-`Nexestra` workspace; record IDs and transcript paths do not change. State writes use a temporary
+`Nexestra` workspace; record IDs and transcript paths do not change. Version 2 state migrates to
+version 3 by adding safe Master tool permissions. State writes use a temporary
 file followed by an atomic rename. The separate `credentials.json` file has mode `0600` and stores
 only custom API keys by agent ID.
 
@@ -53,11 +55,12 @@ assignments, and releases the handle for reuse. Credential removal is persisted 
 so an interrupted multi-file write favors removing the secret. Thread JSONL files are never rewritten
 for agent deletion; historical author and mention snapshots remain part of the canonical transcript.
 
-Each thread has one canonical JSONL file. The `message.created` and `run.updated` events use a
+Each thread has one canonical JSONL file. The `message.created`, `run.updated`, and `tool.updated` events use a
 monotonically increasing sequence. User messages are appended and fsynced before agents are queued.
 Read projections select messages by sequence and the final state of each run. On startup, only an
-incomplete JSONL tail is truncated. After a restart, queued or running runs are completed if their
-replies were fsynced; otherwise, they are marked interrupted and can be retried.
+incomplete JSONL tail is truncated. After a restart, queued, running, or approval-waiting runs are
+completed if their replies were fsynced; otherwise, they and any unfinished tools are marked
+interrupted and can be retried.
 
 ## Mention and dispatch
 
@@ -77,13 +80,21 @@ agent. Historical failed runs for a deleted profile cannot be retried.
 ## Agent runtimes
 
 Worker profiles select either `codex` or `opencode`, with optional model and reasoning-effort
-overrides. Chat turns always require read-only discussion mode. Codex maps the overrides to
+overrides. Worker chat turns always require read-only discussion mode. Codex maps the overrides to
 `--model` and `model_reasoning_effort`; OpenCode maps them to `--model` and its provider-specific
 `--variant`. Missing overrides preserve the harness defaults. Master profiles select one of the
 following:
 
-- ChatGPT: uses the Codex CLI session; device-login output remains in memory, and tokens never enter the app.
-- Custom: uses OpenAI Chat Completions or Responses with an API root, model, and optional API key.
+- ChatGPT: uses the Codex CLI session in read-only or workspace-write mode; device-login output
+  remains in memory, and tokens never enter the app.
+- Custom: uses OpenAI Chat Completions or Responses with an API root, model, optional API key, and
+  the provider-neutral Master tool loop.
+
+The Master tool registry provides repository list, glob, grep, read, exact edit, file write, and
+bounded shell execution. Each profile independently sets read, edit, and shell to `allow`, `ask`,
+or `deny`. An asked tool is written to the thread and pauses its run until the user decides. File
+tools reject absolute paths, traversal, escaping symlinks, credential paths, oversized files, and
+oversized results. Tool loops stop after twelve rounds or three identical calls.
 
 Child processes close stdin, enforce timeouts and output caps, kill the process group, and inherit
 only allowlisted environment variables to reduce the risk of exposing server secrets. A timeout
@@ -97,6 +108,10 @@ tokens. Custom API keys remain plaintext at rest in a `0600` file, which fits th
 threat model but does not replace an OS keychain. Custom base URLs may not contain user info, a
 query, or a fragment; remote endpoints require HTTPS, while HTTP is permitted only on loopback.
 Provider responses have a byte limit enforced before parsing.
+Only tool metadata and short summaries are persisted; full file and shell output is transient and
+known custom-provider credentials are redacted. Custom-provider shell commands still run with the
+current OS user's authority, so shell defaults to per-call approval and should only be allowed for
+trusted providers. ChatGPT build access instead relies on the Codex workspace-write sandbox.
 
 ## Known gaps
 
@@ -107,7 +122,9 @@ Provider responses have a byte limit enforced before parsing.
   and permanent deletion are available.
 - Workspaces cannot yet be renamed, reordered, or deleted.
 - Device OAuth displays raw Codex CLI instructions; it does not yet use `codex app-server` JSON-RPC.
-- Custom providers support only two OpenAI-compatible protocols; Anthropic Messages is not supported.
+- Custom providers support only two OpenAI-compatible protocols; Anthropic Messages and MCP tools
+  are not supported.
+- ChatGPT/Codex native tool calls are not yet mirrored into Nexestra's per-tool activity history.
 - Queues live in process. A restart marks runs interrupted, and the user must click Retry.
 - Agent messages currently render as plain text, without Markdown, code blocks, or link previews.
 - Uploads, nested replies, reactions, and multi-user authentication are not supported.

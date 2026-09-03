@@ -18,6 +18,8 @@ import {
   type Thread,
   type ThreadData,
   ThreadSchema,
+  type ToolCall,
+  ToolCallSchema,
   type UpdateAgentInput,
   UpdateAgentSchema,
   UpdateTaskSchema,
@@ -26,7 +28,7 @@ import {
 } from "../shared/contracts.js";
 
 const StateSchema = z.object({
-  version: z.literal(2),
+  version: z.literal(3),
   workspaces: z.array(WorkspaceSchema).min(1),
   agents: z.array(AgentSchema),
   threads: z.array(ThreadSchema),
@@ -40,6 +42,14 @@ const LegacyStateSchema = z.object({
   tasks: z.array(z.record(z.string(), z.unknown())),
 });
 
+const VersionTwoStateSchema = z.object({
+  version: z.literal(2),
+  workspaces: z.array(WorkspaceSchema).min(1),
+  agents: z.array(z.record(z.string(), z.unknown())),
+  threads: z.array(ThreadSchema),
+  tasks: z.array(TaskSchema),
+});
+
 type PersistedState = z.infer<typeof StateSchema>;
 
 const CredentialSchema = z.object({
@@ -49,7 +59,8 @@ const CredentialSchema = z.object({
 
 type TranscriptEvent =
   | { type: "message.created"; sequence: number; message: Message }
-  | { type: "run.updated"; sequence: number; run: AgentRun };
+  | { type: "run.updated"; sequence: number; run: AgentRun }
+  | { type: "tool.updated"; sequence: number; toolCall: ToolCall };
 
 interface FileStoreOptions {
   root?: string;
@@ -179,6 +190,14 @@ export class FileStore {
     return this.credentials[agentId];
   }
 
+  redactSecrets(value: string): string {
+    let redacted = value;
+    for (const credential of Object.values(this.credentials)) {
+      if (credential) redacted = redacted.replaceAll(credential, "[REDACTED]");
+    }
+    return redacted;
+  }
+
   transcriptPath(threadId: string): string {
     return join(this.threadDirectory, `${threadId}.jsonl`);
   }
@@ -239,6 +258,7 @@ export class FileStore {
         agent = {
           ...base,
           kind: "master",
+          permissions: input.permissions,
           provider: { type: "chatgpt", model: input.provider.model },
         };
       } else {
@@ -246,6 +266,7 @@ export class FileStore {
         agent = {
           ...base,
           kind: "master",
+          permissions: input.permissions,
           provider: {
             type: "custom",
             name: input.provider.name,
@@ -373,19 +394,39 @@ export class FileStore {
     });
   }
 
+  async updateToolCall(toolCall: ToolCall): Promise<ToolCall> {
+    ToolCallSchema.parse(toolCall);
+    return this.withWrite(async () => {
+      this.requireThread(toolCall.threadId);
+      const sequence = await this.nextSequence(toolCall.threadId);
+      await appendSynced(this.transcriptPath(toolCall.threadId), {
+        type: "tool.updated",
+        sequence,
+        toolCall,
+      } satisfies TranscriptEvent);
+      this.sequenceByThread.set(toolCall.threadId, sequence);
+      return structuredClone(toolCall);
+    });
+  }
+
   async threadData(threadId: string): Promise<ThreadData> {
     const thread = this.requireThread(threadId);
     const events = await this.readEvents(threadId);
     const messages: Message[] = [];
     const runs = new Map<string, AgentRun>();
+    const toolCalls = new Map<string, ToolCall>();
     for (const event of events) {
       if (event.type === "message.created") messages.push(event.message);
-      else runs.set(event.run.id, event.run);
+      else if (event.type === "run.updated") runs.set(event.run.id, event.run);
+      else toolCalls.set(event.toolCall.id, event.toolCall);
     }
     return {
       thread: structuredClone(thread),
       messages: messages.sort((left, right) => left.sequence - right.sequence),
       runs: [...runs.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
+      toolCalls: [...toolCalls.values()].sort((left, right) =>
+        left.createdAt.localeCompare(right.createdAt),
+      ),
     };
   }
 
@@ -531,7 +572,13 @@ export class FileStore {
     for (const thread of this.state.threads) {
       const data = await this.threadData(thread.id);
       for (const run of data.runs) {
-        if (run.status !== "queued" && run.status !== "running") continue;
+        if (
+          run.status !== "queued" &&
+          run.status !== "running" &&
+          run.status !== "waiting_approval"
+        ) {
+          continue;
+        }
         const hasReply = data.messages.some(
           (message) =>
             message.author.kind === "agent" &&
@@ -542,6 +589,15 @@ export class FileStore {
           ...run,
           status: hasReply ? "completed" : "interrupted",
           error: hasReply ? undefined : "The server restarted before the agent replied.",
+          updatedAt: new Date().toISOString(),
+        });
+      }
+      for (const toolCall of data.toolCalls) {
+        if (toolCall.status !== "running" && toolCall.status !== "waiting_approval") continue;
+        await this.updateToolCall({
+          ...toolCall,
+          status: "interrupted",
+          error: "The server restarted before this tool call finished.",
           updatedAt: new Date().toISOString(),
         });
       }
@@ -622,7 +678,7 @@ function createInitialState(): PersistedState {
     updatedAt: now,
   });
   return {
-    version: 2,
+    version: 3,
     workspaces: [workspace],
     agents: [],
     threads: [createThreadRecord(workspace.id, "general", now, [])],
@@ -714,6 +770,13 @@ function parseTranscriptEvent(line: string): TranscriptEvent | undefined {
   if (parsed.type === "run.updated") {
     return { type: "run.updated", sequence, run: RunSchema.parse(parsed.run) };
   }
+  if (parsed.type === "tool.updated") {
+    return {
+      type: "tool.updated",
+      sequence,
+      toolCall: ToolCallSchema.parse(parsed.toolCall),
+    };
+  }
   return undefined;
 }
 
@@ -783,7 +846,18 @@ async function readState(file: string): Promise<{ state: PersistedState; needsWr
 
   try {
     const version = z.object({ version: z.number() }).parse(raw).version;
-    if (version === 2) return { state: StateSchema.parse(raw), needsWrite: false };
+    if (version === 3) return { state: StateSchema.parse(raw), needsWrite: false };
+    if (version === 2) {
+      const previous = VersionTwoStateSchema.parse(raw);
+      return {
+        state: StateSchema.parse({
+          ...previous,
+          version: 3,
+          agents: previous.agents.map(addDefaultMasterPermissions),
+        }),
+        needsWrite: true,
+      };
+    }
     const legacy = LegacyStateSchema.parse(raw);
     const now = new Date().toISOString();
     const workspace = WorkspaceSchema.parse({
@@ -795,9 +869,11 @@ async function readState(file: string): Promise<{ state: PersistedState; needsWr
     });
     return {
       state: StateSchema.parse({
-        version: 2,
+        version: 3,
         workspaces: [workspace],
-        agents: legacy.agents.map((agent) => ({ ...agent, workspaceId: workspace.id })),
+        agents: legacy.agents.map((agent) =>
+          addDefaultMasterPermissions({ ...agent, workspaceId: workspace.id }),
+        ),
         threads: legacy.threads.map((thread) => ({ ...thread, workspaceId: workspace.id })),
         tasks: legacy.tasks.map((task) => ({ ...task, workspaceId: workspace.id })),
       }),
@@ -806,6 +882,15 @@ async function readState(file: string): Promise<{ state: PersistedState; needsWr
   } catch (error) {
     throw new Error(`Unable to read ${file}.`, { cause: error });
   }
+}
+
+function addDefaultMasterPermissions(agent: Record<string, unknown>): Record<string, unknown> {
+  return agent.kind === "master" && agent.permissions === undefined
+    ? {
+        ...agent,
+        permissions: { read: "allow", edit: "ask", bash: "ask" },
+      }
+    : agent;
 }
 
 async function exists(path: string): Promise<boolean> {

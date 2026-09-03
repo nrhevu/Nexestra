@@ -265,6 +265,163 @@ describe("Worker creation", () => {
   });
 });
 
+describe("Master harness", () => {
+  it("creates a custom Master with explicit tool permissions", async () => {
+    window.history.replaceState({}, "", "/surfaces/agents");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/bootstrap") return jsonResponse(bootstrapData);
+      if (path === "/api/agents" && init?.method === "POST") return jsonResponse({}, 201);
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Agent management" });
+    await user.click(screen.getByRole("button", { name: "Create agent" }));
+    const dialog = screen.getByRole("dialog", { name: "Create agent" });
+    await user.click(within(dialog).getByRole("button", { name: /Master/ }));
+    await user.click(within(dialog).getByRole("button", { name: "OpenAI-compatible" }));
+    await user.type(within(dialog).getByPlaceholderText("Maya"), "Maya");
+    await user.type(within(dialog).getByPlaceholderText("Local gateway"), "Gateway");
+    await user.type(
+      within(dialog).getByPlaceholderText("https://api.example.com/v1"),
+      "https://gateway.example/v1",
+    );
+    await user.type(within(dialog).getByPlaceholderText("model-name"), "model-a");
+    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Run shell" }), "deny");
+    await user.click(within(dialog).getByRole("button", { name: "Create agent" }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([input, init]) => String(input) === "/api/agents" && init?.method === "POST",
+        ),
+      ).toBe(true);
+    });
+    const request = fetchMock.mock.calls.find(
+      ([input, init]) => String(input) === "/api/agents" && init?.method === "POST",
+    );
+    expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({
+      kind: "master",
+      name: "Maya",
+      handle: "maya",
+      permissions: { read: "allow", edit: "ask", bash: "deny" },
+      provider: {
+        type: "custom",
+        name: "Gateway",
+        baseUrl: "https://gateway.example/v1",
+        model: "model-a",
+        protocol: "openai-chat",
+      },
+    });
+  });
+
+  it("shows pending tool details and sends an approval decision", async () => {
+    const thread = {
+      id: "thread-tools",
+      workspaceId: workspace.id,
+      name: "general",
+      slug: "general",
+      createdAt: now,
+      updatedAt: now,
+      messageCount: 1,
+      lastMessageAt: now,
+    };
+    const masterAgent: AgentView = {
+      id: "agent-master",
+      workspaceId: workspace.id,
+      kind: "master",
+      name: "Maya",
+      handle: "maya",
+      description: "",
+      instructions: "",
+      enabled: true,
+      archived: false,
+      permissions: { read: "allow", edit: "ask", bash: "ask" },
+      provider: {
+        type: "custom",
+        name: "Gateway",
+        baseUrl: "https://gateway.example/v1",
+        model: "model-a",
+        protocol: "openai-chat",
+        hasCredential: false,
+      },
+      createdAt: now,
+      updatedAt: now,
+      readiness: "busy",
+      readinessLabel: "Responding",
+    };
+    const transcript: ThreadData = {
+      thread,
+      messages: [
+        {
+          id: "message-tools",
+          threadId: thread.id,
+          sequence: 1,
+          author: { kind: "user", id: "local-user", name: "You" },
+          content: "@maya run the tests",
+          mentions: [{ agentId: masterAgent.id, handle: masterAgent.handle }],
+          createdAt: now,
+        },
+      ],
+      runs: [
+        {
+          id: "run-tools",
+          threadId: thread.id,
+          triggerMessageId: "message-tools",
+          agentId: masterAgent.id,
+          attempt: 1,
+          status: "waiting_approval",
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+      toolCalls: [
+        {
+          id: "tool-tools",
+          runId: "run-tools",
+          threadId: thread.id,
+          agentId: masterAgent.id,
+          name: "bash",
+          permission: "bash",
+          status: "waiting_approval",
+          input: '{"command":"pnpm test"}',
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/bootstrap") {
+        return jsonResponse({ ...bootstrapData, agents: [masterAgent], threads: [thread] });
+      }
+      if (path === `/api/threads/${thread.id}`) return jsonResponse(transcript);
+      if (path === "/api/tool-calls/tool-tools/approve" && init?.method === "POST") {
+        return new Response(null, { status: 204 });
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    const user = userEvent.setup();
+
+    render(<App />);
+    expect(await screen.findByText('{"command":"pnpm test"}')).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Approve" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/tool-calls/tool-tools/approve", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
+    });
+  });
+});
+
 describe("Agent deletion", () => {
   it("requires confirmation, supports cancellation, and permanently deletes the agent", async () => {
     window.history.replaceState({}, "", "/surfaces/agents");
@@ -430,6 +587,7 @@ describe("Agent deletion", () => {
           updatedAt: now,
         },
       ],
+      toolCalls: [],
     };
     vi.stubGlobal(
       "fetch",
@@ -468,7 +626,7 @@ describe("Agent deletion", () => {
       lastMessageAt: null,
     };
     window.history.replaceState({}, "", `/threads/${thread.id}`);
-    const emptyTranscript: ThreadData = { thread, messages: [], runs: [] };
+    const emptyTranscript: ThreadData = { thread, messages: [], runs: [], toolCalls: [] };
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
       if (path === "/api/bootstrap") {

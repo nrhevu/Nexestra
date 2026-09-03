@@ -15,6 +15,10 @@ export class AgentDispatcher {
   private readonly deletingAgentIds = new Set<string>();
   private readonly retryingRunIds = new Set<string>();
   private readonly liveRuns = new Map<string, AgentRun>();
+  private readonly pendingApprovals = new Map<
+    string,
+    { runId: string; resolve: (approved: boolean) => void }
+  >();
 
   constructor(
     private readonly store: FileStore,
@@ -46,6 +50,13 @@ export class AgentDispatcher {
 
   finishAgentDeletion(agentId: string): void {
     this.deletingAgentIds.delete(agentId);
+  }
+
+  resolveToolApproval(toolCallId: string, approved: boolean): void {
+    const approval = this.pendingApprovals.get(toolCallId);
+    if (!approval) throw new StoreError("not_found", "Pending tool approval not found.");
+    this.pendingApprovals.delete(toolCallId);
+    approval.resolve(approved);
   }
 
   reserveAgent(agentId: string): (() => void) | undefined {
@@ -152,6 +163,7 @@ export class AgentDispatcher {
 
   private async execute(run: AgentRun, agent: Agent, trigger: Message): Promise<void> {
     this.busy.add(agent.id);
+    let currentRun = run;
     try {
       const runtime = await this.runner.runtimeStatus();
       const readiness = agentView(agent, runtime, new Set());
@@ -161,31 +173,66 @@ export class AgentDispatcher {
         status: "running",
         updatedAt: new Date().toISOString(),
       });
+      currentRun = running;
       this.liveRuns.set(running.id, running);
       const thread = this.store.getThread(run.threadId);
       if (!thread) throw new StoreError("not_found", "Thread not found.");
       const invocation: AgentInvocation = {
+        runId: run.id,
         thread,
         trigger,
         transcriptPath: this.store.transcriptPath(run.threadId),
         transcriptSnapshot: await this.store.transcriptSnapshot(run.threadId),
+        toolHooks: {
+          update: (toolCall) => this.store.updateToolCall(toolCall).then(() => undefined),
+          requestApproval: async (toolCall) => {
+            const decision = new Promise<boolean>((resolve) => {
+              this.pendingApprovals.set(toolCall.id, { runId: run.id, resolve });
+            });
+            try {
+              await this.store.updateToolCall(toolCall);
+              currentRun = await this.store.updateRun({
+                ...currentRun,
+                status: "waiting_approval",
+                updatedAt: new Date().toISOString(),
+              });
+              this.liveRuns.set(currentRun.id, currentRun);
+              return await decision;
+            } finally {
+              this.pendingApprovals.delete(toolCall.id);
+              currentRun = await this.store.updateRun({
+                ...currentRun,
+                status: "running",
+                updatedAt: new Date().toISOString(),
+              });
+              this.liveRuns.set(currentRun.id, currentRun);
+            }
+          },
+        },
       };
       const response = (await this.runner.invoke(agent, invocation)).trim();
       if (!response) throw new Error("The agent returned an empty response.");
       await this.store.createAgentMessage(run.threadId, agent, response, trigger.id);
       await this.store.updateRun({
-        ...run,
+        ...currentRun,
         status: "completed",
         updatedAt: new Date().toISOString(),
       });
     } catch (error) {
       await this.store.updateRun({
-        ...run,
+        ...currentRun,
         status: "failed",
-        error: error instanceof Error ? error.message : "The agent encountered an unknown error.",
+        error: this.store.redactSecrets(
+          error instanceof Error ? error.message : "The agent encountered an unknown error.",
+        ),
         updatedAt: new Date().toISOString(),
       });
     } finally {
+      for (const [toolCallId, approval] of this.pendingApprovals) {
+        if (approval.runId !== run.id) continue;
+        this.pendingApprovals.delete(toolCallId);
+        approval.resolve(false);
+      }
       this.liveRuns.delete(run.id);
       this.busy.delete(agent.id);
     }

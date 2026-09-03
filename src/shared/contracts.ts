@@ -35,6 +35,22 @@ const AgentBaseSchema = z.object({
 const WorkerModelSchema = z.string().trim().min(1).max(160);
 const WorkerReasoningEffortSchema = z.string().trim().min(1).max(40);
 
+export const ToolPermissionSchema = z.enum(["allow", "ask", "deny"]);
+export type ToolPermission = z.infer<typeof ToolPermissionSchema>;
+
+export const MasterToolPermissionsSchema = z.object({
+  read: ToolPermissionSchema,
+  edit: ToolPermissionSchema,
+  bash: ToolPermissionSchema,
+});
+export type MasterToolPermissions = z.infer<typeof MasterToolPermissionsSchema>;
+
+export const DEFAULT_MASTER_TOOL_PERMISSIONS: MasterToolPermissions = {
+  read: "allow",
+  edit: "ask",
+  bash: "ask",
+};
+
 export const WorkerAgentSchema = AgentBaseSchema.extend({
   kind: z.literal("worker"),
   harness: z.enum(["codex", "opencode"]),
@@ -44,6 +60,7 @@ export const WorkerAgentSchema = AgentBaseSchema.extend({
 
 export const MasterAgentSchema = AgentBaseSchema.extend({
   kind: z.literal("master"),
+  permissions: MasterToolPermissionsSchema,
   provider: z.discriminatedUnion("type", [
     z.object({
       type: z.literal("chatgpt"),
@@ -82,6 +99,7 @@ export const CreateAgentSchema = z.discriminatedUnion("kind", [
   }),
   AgentInputBaseSchema.extend({
     kind: z.literal("master"),
+    permissions: MasterToolPermissionsSchema.default(DEFAULT_MASTER_TOOL_PERMISSIONS),
     provider: z.discriminatedUnion("type", [
       z.object({
         type: z.literal("chatgpt"),
@@ -166,12 +184,39 @@ export const RunSchema = z.object({
   triggerMessageId: z.string(),
   agentId: z.string(),
   attempt: z.number().int().positive(),
-  status: z.enum(["queued", "running", "completed", "failed", "interrupted"]),
+  status: z.enum(["queued", "running", "waiting_approval", "completed", "failed", "interrupted"]),
   error: z.string().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
 export type AgentRun = z.infer<typeof RunSchema>;
+
+export const HarnessToolNameSchema = z.enum([
+  "list",
+  "glob",
+  "grep",
+  "read",
+  "edit",
+  "write",
+  "bash",
+]);
+export type HarnessToolName = z.infer<typeof HarnessToolNameSchema>;
+
+export const ToolCallSchema = z.object({
+  id: z.string(),
+  runId: z.string(),
+  threadId: z.string(),
+  agentId: z.string(),
+  name: HarnessToolNameSchema,
+  permission: z.enum(["read", "edit", "bash"]),
+  status: z.enum(["waiting_approval", "running", "completed", "denied", "failed", "interrupted"]),
+  input: z.string().max(4_000),
+  summary: z.string().max(500).optional(),
+  error: z.string().max(2_000).optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type ToolCall = z.infer<typeof ToolCallSchema>;
 
 export const TaskSchema = z.object({
   id: z.string(),
@@ -226,6 +271,7 @@ export interface ThreadData {
   thread: Thread;
   messages: Message[];
   runs: AgentRun[];
+  toolCalls: ToolCall[];
 }
 
 export function extractMentionHandles(content: string): string[] {

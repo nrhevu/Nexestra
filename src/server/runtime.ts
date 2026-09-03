@@ -10,14 +10,22 @@ import type {
   Thread,
   WorkerAgent,
 } from "../shared/contracts.js";
+import {
+  executeMasterTool,
+  type HarnessToolRequest,
+  type MasterToolHooks,
+  providerToolDefinitions,
+} from "./master-harness.js";
 import { findExecutable, runCommand, safeProcessEnv } from "./process.js";
 import type { FileStore } from "./store.js";
 
 export interface AgentInvocation {
+  runId?: string;
   thread: Thread;
   trigger: Message;
   transcriptPath: string;
   transcriptSnapshot: string;
+  toolHooks?: MasterToolHooks;
 }
 
 export interface AgentRunner {
@@ -103,18 +111,22 @@ export class LocalAgentRunner implements AgentRunner {
     await mkdir(runDirectory, { recursive: true, mode: 0o700 });
     const lastMessageFile = join(runDirectory, "last-message.txt");
     const prompt = localHarnessPrompt(agent, invocation);
+    const workspaceWrite =
+      agent.kind === "master" &&
+      (agent.permissions.edit === "allow" || agent.permissions.bash === "allow");
     const args = [
       "exec",
       "--json",
       "-C",
       this.options.store.workspacePath,
       "-s",
-      "read-only",
+      workspaceWrite ? "workspace-write" : "read-only",
       "--skip-git-repo-check",
       "--ephemeral",
       "-o",
       lastMessageFile,
     ];
+    if (workspaceWrite) args.push("--approve-for-me");
     if (agent.kind === "worker") {
       if (agent.model) args.push("-m", agent.model);
       if (agent.reasoningEffort) {
@@ -180,28 +192,129 @@ export class LocalAgentRunner implements AgentRunner {
     const system = [
       `You are ${agent.name} (@${agent.handle}), Nexestra's internal Master agent.`,
       "You are responding in a shared thread with the user and other agents.",
-      "Answer the exact message that just @mentioned you. Be concise, propose concrete actions, and use the user's language.",
+      "Answer the exact message that just @mentioned you. Use tools when repository evidence or a code change is needed.",
+      "Keep working through tool results until the request is resolved, then return a concise final answer in the user's language.",
       agent.instructions,
     ]
       .filter(Boolean)
       .join("\n\n");
-    const body =
+    const context = {
+      agent,
+      runId: invocation.runId ?? crypto.randomUUID(),
+      threadId: invocation.thread.id,
+      workspacePath: this.options.store.workspacePath,
+      dataPath: this.options.store.root,
+      hooks: invocation.toolHooks,
+      env: this.env,
+      redact: (value: string) => this.options.store.redactSecrets(value),
+    };
+    const reply =
       agent.provider.protocol === "openai-chat"
-        ? {
-            model: agent.provider.model,
-            messages: [
-              { role: "system", content: system },
-              {
-                role: "user",
-                content: providerUserPrompt(invocation),
-              },
-            ],
-          }
-        : {
-            model: agent.provider.model,
-            instructions: system,
-            input: providerUserPrompt(invocation),
-          };
+        ? await this.runChatToolLoop(agent, url, headers, system, invocation, context)
+        : await this.runResponsesToolLoop(agent, url, headers, system, invocation, context);
+    if (!reply)
+      throw new Error(`Provider ${agent.provider.name} did not include response content.`);
+    if (reply.length > 40_000) {
+      throw new Error(`Provider ${agent.provider.name} returned a response that is too long.`);
+    }
+    return this.options.store.redactSecrets(reply);
+  }
+
+  private async runChatToolLoop(
+    agent: MasterAgent,
+    url: string,
+    headers: Record<string, string>,
+    system: string,
+    invocation: AgentInvocation,
+    context: Parameters<typeof executeMasterTool>[1],
+  ): Promise<string> {
+    const messages: Record<string, unknown>[] = [
+      { role: "system", content: system },
+      { role: "user", content: providerUserPrompt(invocation) },
+    ];
+    const repeatedCalls = new Map<string, number>();
+    for (let turn = 0; turn <= 12; turn += 1) {
+      const toolsEnabled = turn < 12;
+      const payload = await this.providerRequest(agent, url, headers, {
+        model: customProviderModel(agent),
+        messages,
+        ...(toolsEnabled
+          ? {
+              tools: providerToolDefinitions().map((tool) => ({
+                type: "function",
+                function: {
+                  name: tool.name,
+                  description: tool.description,
+                  parameters: tool.parameters,
+                },
+              })),
+            }
+          : { tool_choice: "none" }),
+      });
+      const calls = parseChatToolCalls(payload);
+      if (calls.length === 0) return parseProviderReply(payload);
+      if (!toolsEnabled) throw new Error("Provider continued calling tools after the step limit.");
+      guardRepeatedCalls(calls, repeatedCalls);
+      messages.push({
+        role: "assistant",
+        content: chatAssistantContent(payload),
+        tool_calls: calls.map((call) => ({
+          id: call.id,
+          type: "function",
+          function: { name: call.name, arguments: call.arguments },
+        })),
+      });
+      for (const call of calls) {
+        messages.push({
+          role: "tool",
+          tool_call_id: call.id,
+          content: await executeMasterTool(call, context),
+        });
+      }
+    }
+    throw new Error("Provider exceeded the tool step limit.");
+  }
+
+  private async runResponsesToolLoop(
+    agent: MasterAgent,
+    url: string,
+    headers: Record<string, string>,
+    system: string,
+    invocation: AgentInvocation,
+    context: Parameters<typeof executeMasterTool>[1],
+  ): Promise<string> {
+    const input: unknown[] = [{ role: "user", content: providerUserPrompt(invocation) }];
+    const repeatedCalls = new Map<string, number>();
+    for (let turn = 0; turn <= 12; turn += 1) {
+      const toolsEnabled = turn < 12;
+      const payload = await this.providerRequest(agent, url, headers, {
+        model: customProviderModel(agent),
+        instructions: system,
+        input,
+        ...(toolsEnabled ? { tools: providerToolDefinitions() } : { tool_choice: "none" }),
+      });
+      const calls = parseResponsesToolCalls(payload);
+      if (calls.length === 0) return parseProviderReply(payload);
+      if (!toolsEnabled) throw new Error("Provider continued calling tools after the step limit.");
+      guardRepeatedCalls(calls, repeatedCalls);
+      if (isRecord(payload) && Array.isArray(payload.output)) input.push(...payload.output);
+      for (const call of calls) {
+        input.push({
+          type: "function_call_output",
+          call_id: call.id,
+          output: await executeMasterTool(call, context),
+        });
+      }
+    }
+    throw new Error("Provider exceeded the tool step limit.");
+  }
+
+  private async providerRequest(
+    agent: MasterAgent,
+    url: string,
+    headers: Record<string, string>,
+    body: Record<string, unknown>,
+  ): Promise<unknown> {
     const response = await this.fetchImpl(url, {
       method: "POST",
       headers,
@@ -211,22 +324,16 @@ export class LocalAgentRunner implements AgentRunner {
     const text = await readBoundedResponse(response, 1024 * 1024);
     if (!response.ok) {
       throw new Error(
-        `Provider ${agent.provider.name} returned HTTP ${response.status}: ${text.slice(0, 500)}`,
+        this.options.store.redactSecrets(
+          `Provider ${customProviderName(agent)} returned HTTP ${response.status}: ${text.slice(0, 500)}`,
+        ),
       );
     }
-    let payload: unknown;
     try {
-      payload = JSON.parse(text);
+      return JSON.parse(text);
     } catch {
-      throw new Error(`Provider ${agent.provider.name} did not return valid JSON.`);
+      throw new Error(`Provider ${customProviderName(agent)} did not return valid JSON.`);
     }
-    const reply = parseProviderReply(payload);
-    if (!reply)
-      throw new Error(`Provider ${agent.provider.name} did not include response content.`);
-    if (reply.length > 40_000) {
-      throw new Error(`Provider ${agent.provider.name} returned a response that is too long.`);
-    }
-    return reply;
   }
 
   private async detectBinary(name: "codex" | "opencode") {
@@ -278,12 +385,21 @@ function localHarnessPrompt(agent: Agent, invocation: AgentInvocation): string {
     "Answer the message above even if the transcript contains newer messages.",
     `Shared transcript path: ${invocation.transcriptPath}`,
     "Read the transcript for relevant context.",
-    "This is a discussion turn: do not modify files or run commands that change state.",
+    agent.kind === "worker"
+      ? "This is a discussion turn: do not modify files or run commands that change state."
+      : masterCodexAccessPrompt(agent),
     "Return only the response content so Nexestra can write it to the thread.",
     agent.instructions ? `Agent-specific instructions:\n${agent.instructions}` : "",
   ]
     .filter(Boolean)
     .join("\n\n");
+}
+
+function masterCodexAccessPrompt(agent: MasterAgent): string {
+  const writable = agent.permissions.edit === "allow" || agent.permissions.bash === "allow";
+  return writable
+    ? "You may inspect the repository, edit files, and run commands inside the Codex workspace-write sandbox. Complete the requested work before replying."
+    : "Inspect the repository as needed, but do not modify files or run commands that change state.";
 }
 
 function providerUserPrompt(invocation: AgentInvocation): string {
@@ -390,8 +506,14 @@ export function parseProviderReply(payload: unknown): string {
   const choices = payload.choices;
   if (Array.isArray(choices)) {
     const first = choices[0];
-    if (isRecord(first) && isRecord(first.message) && typeof first.message.content === "string") {
-      return first.message.content.trim();
+    if (isRecord(first) && isRecord(first.message)) {
+      if (typeof first.message.content === "string") return first.message.content.trim();
+      if (Array.isArray(first.message.content)) {
+        return first.message.content
+          .flatMap((part) => (isRecord(part) && typeof part.text === "string" ? [part.text] : []))
+          .join("\n")
+          .trim();
+      }
     }
   }
   if (Array.isArray(payload.output)) {
@@ -405,6 +527,86 @@ export function parseProviderReply(payload: unknown): string {
     return parts.join("\n").trim();
   }
   return "";
+}
+
+function parseChatToolCalls(payload: unknown): HarnessToolRequest[] {
+  if (!isRecord(payload) || !Array.isArray(payload.choices)) return [];
+  const first = payload.choices[0];
+  if (!isRecord(first) || !isRecord(first.message) || !Array.isArray(first.message.tool_calls)) {
+    return [];
+  }
+  return first.message.tool_calls.flatMap((value) => {
+    if (!isRecord(value) || typeof value.id !== "string" || !isRecord(value.function)) return [];
+    if (typeof value.function.name !== "string") return [];
+    return [
+      {
+        id: value.id,
+        name: value.function.name,
+        arguments:
+          typeof value.function.arguments === "string"
+            ? value.function.arguments
+            : JSON.stringify(value.function.arguments ?? {}),
+      },
+    ];
+  });
+}
+
+function parseResponsesToolCalls(payload: unknown): HarnessToolRequest[] {
+  if (!isRecord(payload) || !Array.isArray(payload.output)) return [];
+  return payload.output.flatMap((value) => {
+    if (
+      !isRecord(value) ||
+      value.type !== "function_call" ||
+      typeof value.call_id !== "string" ||
+      typeof value.name !== "string"
+    ) {
+      return [];
+    }
+    return [
+      {
+        id: value.call_id,
+        name: value.name,
+        arguments:
+          typeof value.arguments === "string"
+            ? value.arguments
+            : JSON.stringify(value.arguments ?? {}),
+      },
+    ];
+  });
+}
+
+function chatAssistantContent(payload: unknown): string | null {
+  if (!isRecord(payload) || !Array.isArray(payload.choices)) return null;
+  const first = payload.choices[0];
+  if (!isRecord(first) || !isRecord(first.message)) return null;
+  return typeof first.message.content === "string" ? first.message.content : null;
+}
+
+function guardRepeatedCalls(calls: HarnessToolRequest[], repeatedCalls: Map<string, number>): void {
+  for (const call of calls) {
+    const signature = `${call.name}\n${canonicalArguments(call.arguments)}`;
+    const count = (repeatedCalls.get(signature) ?? 0) + 1;
+    repeatedCalls.set(signature, count);
+    if (count >= 3) throw new Error(`Stopped a repeated ${call.name} tool-call loop.`);
+  }
+}
+
+function canonicalArguments(value: string): string {
+  try {
+    return JSON.stringify(JSON.parse(value));
+  } catch {
+    return value.trim();
+  }
+}
+
+function customProviderModel(agent: MasterAgent): string {
+  if (agent.provider.type !== "custom") throw new Error("Invalid custom provider.");
+  return agent.provider.model;
+}
+
+function customProviderName(agent: MasterAgent): string {
+  if (agent.provider.type !== "custom") throw new Error("Invalid custom provider.");
+  return agent.provider.name;
 }
 
 function cleanProcessError(output: string, fallback: string): string {

@@ -773,6 +773,78 @@ kbd {
   color: #ad8588;
   font-size: 11px;
 }
+.tool-activity {
+  display: grid;
+  gap: 6px;
+  margin: 8px 28px 10px 77px;
+}
+.tool-call {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 9px;
+  padding: 9px 10px;
+  border: 1px solid #383c44;
+  border-radius: 7px;
+  background: #1b1e24;
+  color: #949aa6;
+  font-size: 11px;
+}
+.tool-call-waiting_approval {
+  border-color: rgba(230, 160, 75, 0.35);
+  background: rgba(118, 76, 31, 0.12);
+}
+.tool-call-failed,
+.tool-call-denied,
+.tool-call-interrupted {
+  border-color: rgba(235, 112, 112, 0.22);
+}
+.tool-call > div {
+  min-width: 0;
+}
+.tool-call strong {
+  display: block;
+  margin-bottom: 3px;
+  color: #d6d8dd;
+  font-size: 12px;
+}
+.tool-call code {
+  display: block;
+  max-height: 150px;
+  overflow: auto;
+  color: #adb3bf;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.tool-call p {
+  margin: 4px 0 0;
+  color: var(--quiet);
+}
+.tool-call > span {
+  color: #858b96;
+  text-transform: capitalize;
+}
+.tool-actions {
+  grid-column: 2 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.tool-actions button {
+  min-width: 58px;
+  height: 27px;
+  border: 1px solid #4a4e57;
+  border-radius: 5px;
+  background: #272a31;
+  color: #c7c9cf;
+  font-size: 11px;
+}
+.tool-actions .tool-approve {
+  border-color: #7d518e;
+  background: #6c3f7b;
+  color: #fff;
+}
 .composer-wrap {
   position: relative;
   padding: 0 20px 12px;
@@ -1548,6 +1620,15 @@ kbd {
   color: #b99b76;
   font-size: 11px;
   line-height: 1.5;
+}
+.permission-grid {
+  grid-template-columns: repeat(3, 1fr);
+}
+.permission-grid label {
+  display: grid;
+  gap: 5px;
+  color: var(--quiet);
+  font-size: 11px;
 }
 .form-error {
   display: flex;

@@ -6,3 +6,4 @@
 | [0002](0002-permanent-agent-deletion.md) | Accepted | Permanent agent deletion preserves append-only history |
 | [0003](0003-workspace-scoped-state.md) | Accepted | Workspace-scoped state with an in-place version 1 migration |
 | [0004](0004-activity-aware-refresh.md) | Accepted | Activity-aware refresh without idle polling |
+| [0005](0005-provider-neutral-master-harness.md) | Accepted | Provider-neutral Master tools and explicit permissions |

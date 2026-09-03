@@ -1,7 +1,8 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { MasterToolPermissions } from "../shared/contracts.js";
 import {
   LocalAgentRunner,
   parseCodexReply,
@@ -171,6 +172,50 @@ describe("Worker harness arguments", () => {
   );
 });
 
+describe("ChatGPT Master harness arguments", () => {
+  it("enables the Codex workspace-write sandbox only for explicitly allowed build access", async () => {
+    processMocks.findExecutable.mockReset();
+    processMocks.runCommand.mockReset();
+    const root = await mkdtemp(join(tmpdir(), "nexestra-master-codex-"));
+    const store = await FileStore.open({ root: join(root, ".nexestra"), workspacePath: root });
+    const agent = await store.createAgent({
+      kind: "master",
+      name: "Builder",
+      handle: "builder",
+      description: "",
+      instructions: "",
+      permissions: { read: "allow", edit: "allow", bash: "allow" },
+      provider: { type: "chatgpt", model: "" },
+    });
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const trigger = await store.createUserMessage(thread.id, "@builder update the code", [
+      { agentId: agent.id, handle: agent.handle },
+    ]);
+    processMocks.findExecutable.mockResolvedValue("/fake/codex");
+    processMocks.runCommand.mockResolvedValue({
+      stdout: JSON.stringify({
+        type: "item.completed",
+        item: { type: "agent_message", text: "Done." },
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+
+    await new LocalAgentRunner({ store }).invoke(agent, {
+      thread,
+      trigger,
+      transcriptPath: store.transcriptPath(thread.id),
+      transcriptSnapshot: await store.transcriptSnapshot(thread.id),
+    });
+
+    const args = processMocks.runCommand.mock.calls[0]?.[1] ?? [];
+    expect(args).toContain("workspace-write");
+    expect(args).toContain("--approve-for-me");
+    expect(args.at(-1)).toContain("Complete the requested work before replying");
+  });
+});
+
 describe("parseProviderReply", () => {
   it("supports chat completions and responses payloads", () => {
     expect(parseProviderReply({ choices: [{ message: { content: "hello" } }] })).toBe("hello");
@@ -198,9 +243,10 @@ describe("parseProviderReply", () => {
     if (created.kind !== "master") throw new Error("expected master agent");
     const fetchMock = vi.fn(
       async (_input: RequestInfo | URL, _init?: RequestInit) =>
-        new Response(JSON.stringify({ choices: [{ message: { content: "Understood." } }] }), {
-          status: 200,
-        }),
+        new Response(
+          JSON.stringify({ choices: [{ message: { content: "secret-key must not leak" } }] }),
+          { status: 200 },
+        ),
     );
     const runner = new LocalAgentRunner({ store, fetch: fetchMock as typeof fetch });
     const [thread] = store.listThreads();
@@ -217,7 +263,7 @@ describe("parseProviderReply", () => {
       transcriptSnapshot: await store.transcriptSnapshot(thread.id),
     });
 
-    expect(reply).toBe("Understood.");
+    expect(reply).toBe("[REDACTED] must not leak");
     const [url, init] = fetchMock.mock.calls[0] ?? [];
     if (!init) throw new Error("expected request init");
     expect(url).toBe("https://gateway.example/v1/chat/completions");
@@ -243,7 +289,165 @@ describe("parseProviderReply", () => {
       }),
     ).rejects.toThrow("too much data");
   });
+
+  it("executes Chat Completions tool calls and returns the provider's final answer", async () => {
+    const { agent, invocation, root, store } = await customMasterFixture("openai-chat");
+    await writeFile(join(root, "answer.txt"), "forty two\n");
+    const responses = [
+      {
+        choices: [
+          {
+            message: {
+              content: null,
+              tool_calls: [
+                {
+                  id: "call-read",
+                  type: "function",
+                  function: { name: "read", arguments: '{"path":"answer.txt"}' },
+                },
+              ],
+            },
+          },
+        ],
+      },
+      { choices: [{ message: { content: "The answer is forty two." } }] },
+    ];
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify(responses.shift())),
+    );
+    const reply = await new LocalAgentRunner({
+      store,
+      fetch: fetchMock as typeof fetch,
+    }).invoke(agent, invocation);
+
+    expect(reply).toBe("The answer is forty two.");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const firstBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    const secondBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(
+      firstBody.tools.map((tool: { function: { name: string } }) => tool.function.name),
+    ).toEqual(["list", "glob", "grep", "read", "edit", "write", "bash"]);
+    expect(secondBody.messages).toContainEqual(
+      expect.objectContaining({
+        role: "tool",
+        tool_call_id: "call-read",
+        content: expect.stringContaining("forty two"),
+      }),
+    );
+  });
+
+  it("executes Responses function calls and feeds function_call_output into the next turn", async () => {
+    const { agent, invocation, root, store } = await customMasterFixture("openai-responses", {
+      read: "allow",
+      edit: "allow",
+      bash: "deny",
+    });
+    const responses = [
+      {
+        output: [
+          {
+            type: "function_call",
+            call_id: "call-write",
+            name: "write",
+            arguments: '{"path":"generated.txt","content":"created by harness\\n"}',
+          },
+        ],
+      },
+      { output_text: "Created generated.txt." },
+    ];
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify(responses.shift())),
+    );
+    const reply = await new LocalAgentRunner({
+      store,
+      fetch: fetchMock as typeof fetch,
+    }).invoke(agent, invocation);
+
+    expect(reply).toBe("Created generated.txt.");
+    expect(await readFile(join(root, "generated.txt"), "utf8")).toBe("created by harness\n");
+    const secondBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(secondBody.input).toContainEqual({
+      type: "function_call_output",
+      call_id: "call-write",
+      output: expect.stringContaining("Wrote generated.txt"),
+    });
+  });
+
+  it("stops three identical provider tool calls instead of looping forever", async () => {
+    const { agent, invocation, root, store } = await customMasterFixture("openai-chat");
+    await writeFile(join(root, "loop.txt"), "loop\n");
+    let callNumber = 0;
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: null,
+                  tool_calls: [
+                    {
+                      id: `call-${++callNumber}`,
+                      type: "function",
+                      function: { name: "read", arguments: '{"path":"loop.txt"}' },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+        ),
+    );
+
+    await expect(
+      new LocalAgentRunner({ store, fetch: fetchMock as typeof fetch }).invoke(agent, invocation),
+    ).rejects.toThrow("Stopped a repeated read tool-call loop");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
 });
+
+async function customMasterFixture(
+  protocol: "openai-chat" | "openai-responses",
+  permissions: MasterToolPermissions = { read: "allow", edit: "ask", bash: "ask" },
+) {
+  const root = await mkdtemp(join(tmpdir(), "nexestra-provider-tools-"));
+  const store = await FileStore.open({ root: join(root, ".nexestra"), workspacePath: root });
+  const agent = await store.createAgent({
+    kind: "master",
+    name: "Maya",
+    handle: "maya",
+    description: "",
+    instructions: "",
+    permissions,
+    provider: {
+      type: "custom",
+      name: "Gateway",
+      baseUrl: "https://gateway.example/v1",
+      model: "model-a",
+      protocol,
+    },
+  });
+  if (agent.kind !== "master") throw new Error("expected master agent");
+  const [thread] = store.listThreads();
+  if (!thread) throw new Error("expected seeded thread");
+  const trigger = await store.createUserMessage(thread.id, "@maya do the work", [
+    { agentId: agent.id, handle: agent.handle },
+  ]);
+  return {
+    agent,
+    root,
+    store,
+    invocation: {
+      runId: "run-tools",
+      thread,
+      trigger,
+      transcriptPath: store.transcriptPath(thread.id),
+      transcriptSnapshot: await store.transcriptSnapshot(thread.id),
+    },
+  };
+}
 
 async function workerFixture(
   harness: "codex" | "opencode",

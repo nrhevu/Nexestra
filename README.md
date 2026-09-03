@@ -42,8 +42,10 @@ Messages without a mention are only saved to the transcript. A message containin
 `@codex`, or multiple handles creates one run for each invoked agent. Agent replies are recorded
 in the same transcript file. Agent replies do not trigger other agents, which prevents loops.
 
-Workers run in read-only discussion mode in the MVP. The Taskboard currently organizes work but
-does not dispatch agents automatically.
+Workers run in read-only discussion mode. Master agents can inspect the repository with `list`,
+`glob`, `grep`, and `read`, change it with exact `edit` or `write`, and verify work with bounded
+`bash` commands. Custom Masters default to allowing reads and asking in the thread before every edit
+or shell command. The Taskboard currently organizes work but does not dispatch agents automatically.
 
 ## Agent lifecycle
 
@@ -61,10 +63,13 @@ OpenCode receives `--model` (in `provider/model` form) and the provider-specific
 ## Provider
 
 - **ChatGPT OAuth:** install Codex CLI and run `codex login`, or click Connect in the Master
-  creation form. Codex CLI manages OAuth tokens; Nexestra never reads or stores them.
+  creation form. Choose read-only or build access; build uses Codex's workspace-write sandbox and
+  automatic approval review. Codex CLI manages OAuth tokens; Nexestra never reads or stores them.
 - **Custom:** enter an API root and model, then select OpenAI Chat Completions or OpenAI Responses.
   The API key may be left blank for a local endpoint. Remote endpoints must use HTTPS; HTTP is
-  accepted only on loopback.
+  accepted only on loopback. Read, edit, and shell permissions can each be allowed, approved per
+  call, or denied. Shell commands run as the current local OS user, so keep shell on Ask unless the
+  endpoint is trusted.
 
 ## Verification
 

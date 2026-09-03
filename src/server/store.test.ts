@@ -42,7 +42,7 @@ describe("FileStore", () => {
       workspaceId: workspace?.id,
     });
     const persisted = JSON.parse(await readFile(store.stateFile, "utf8"));
-    expect(persisted).toMatchObject({ version: 2 });
+    expect(persisted).toMatchObject({ version: 3 });
   });
 
   it("creates isolated workspaces with their own general thread and agent handles", async () => {
@@ -151,6 +151,35 @@ describe("FileStore", () => {
     });
     expect(reopened.getAgent(created.id)).not.toHaveProperty("model");
     expect(reopened.getAgent(created.id)).not.toHaveProperty("reasoningEffort");
+  });
+
+  it("migrates version 2 Master agents to safe default tool permissions", async () => {
+    const store = await openStore();
+    const agent = await store.createAgent({
+      kind: "master",
+      name: "Maya",
+      handle: "maya",
+      description: "",
+      instructions: "",
+      provider: {
+        type: "custom",
+        name: "Gateway",
+        baseUrl: "http://127.0.0.1:11434/v1",
+        model: "model-a",
+        protocol: "openai-chat",
+      },
+    });
+    const state = JSON.parse(await readFile(store.stateFile, "utf8"));
+    state.version = 2;
+    delete state.agents[0].permissions;
+    await writeFile(store.stateFile, `${JSON.stringify(state)}\n`);
+
+    const reopened = await FileStore.open({ root: store.root, workspacePath: store.workspacePath });
+
+    expect(reopened.getAgent(agent.id)).toMatchObject({
+      permissions: { read: "allow", edit: "ask", bash: "ask" },
+    });
+    await expect(readFile(store.stateFile, "utf8")).resolves.toContain('"version": 3');
   });
 
   it("never writes a custom provider key to public state or transcripts", async () => {
@@ -367,6 +396,41 @@ describe("FileStore", () => {
     const data = await reopened.threadData(thread.id);
     expect(data.messages.map((message) => message.id)).toEqual([first.id, second.id]);
     expect(data.runs[0]?.status).toBe("interrupted");
+  });
+
+  it("replays tool events and interrupts a pending approval after restart", async () => {
+    const store = await openStore();
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const now = new Date().toISOString();
+    const run = await store.updateRun({
+      id: "run-pending",
+      threadId: thread.id,
+      triggerMessageId: "message",
+      agentId: "agent",
+      attempt: 1,
+      status: "waiting_approval",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await store.updateToolCall({
+      id: "tool-pending",
+      runId: run.id,
+      threadId: thread.id,
+      agentId: run.agentId,
+      name: "bash",
+      permission: "bash",
+      status: "waiting_approval",
+      input: '{"command":"pnpm test"}',
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const reopened = await FileStore.open({ root: store.root, workspacePath: store.workspacePath });
+    const data = await reopened.threadData(thread.id);
+
+    expect(data.runs).toMatchObject([{ id: run.id, status: "interrupted" }]);
+    expect(data.toolCalls).toMatchObject([{ id: "tool-pending", status: "interrupted" }]);
   });
 
   it("repairs a partial JSONL tail before appending another event", async () => {
