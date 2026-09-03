@@ -2,7 +2,10 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { MasterToolPermissions } from "../shared/contracts.js";
+import {
+  DEFAULT_MASTER_TOOL_PERMISSIONS,
+  type MasterToolPermissions,
+} from "../shared/contracts.js";
 import {
   LocalAgentRunner,
   parseCodexReply,
@@ -327,7 +330,21 @@ describe("parseProviderReply", () => {
     const secondBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
     expect(
       firstBody.tools.map((tool: { function: { name: string } }) => tool.function.name),
-    ).toEqual(["list", "glob", "grep", "read", "edit", "write", "bash"]);
+    ).toEqual([
+      "list",
+      "glob",
+      "grep",
+      "read",
+      "edit",
+      "write",
+      "bash",
+      "apply_patch",
+      "skill",
+      "todowrite",
+      "webfetch",
+      "websearch",
+      "question",
+    ]);
     expect(secondBody.messages).toContainEqual(
       expect.objectContaining({
         role: "tool",
@@ -410,7 +427,7 @@ describe("parseProviderReply", () => {
 
 async function customMasterFixture(
   protocol: "openai-chat" | "openai-responses",
-  permissions: MasterToolPermissions = { read: "allow", edit: "ask", bash: "ask" },
+  permissions: Partial<MasterToolPermissions> = DEFAULT_MASTER_TOOL_PERMISSIONS,
 ) {
   const root = await mkdtemp(join(tmpdir(), "nexestra-provider-tools-"));
   const store = await FileStore.open({ root: join(root, ".nexestra"), workspacePath: root });
@@ -420,7 +437,7 @@ async function customMasterFixture(
     handle: "maya",
     description: "",
     instructions: "",
-    permissions,
+    permissions: { ...DEFAULT_MASTER_TOOL_PERMISSIONS, ...permissions },
     provider: {
       type: "custom",
       name: "Gateway",

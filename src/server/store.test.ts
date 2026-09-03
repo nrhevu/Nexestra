@@ -42,7 +42,7 @@ describe("FileStore", () => {
       workspaceId: workspace?.id,
     });
     const persisted = JSON.parse(await readFile(store.stateFile, "utf8"));
-    expect(persisted).toMatchObject({ version: 3 });
+    expect(persisted).toMatchObject({ version: 4 });
   });
 
   it("creates isolated workspaces with their own general thread and agent handles", async () => {
@@ -179,7 +179,45 @@ describe("FileStore", () => {
     expect(reopened.getAgent(agent.id)).toMatchObject({
       permissions: { read: "allow", edit: "ask", bash: "ask" },
     });
-    await expect(readFile(store.stateFile, "utf8")).resolves.toContain('"version": 3');
+    await expect(readFile(store.stateFile, "utf8")).resolves.toContain('"version": 4');
+  });
+
+  it("migrates version 3 Master permissions to the expanded tool policy", async () => {
+    const store = await openStore();
+    const agent = await store.createAgent({
+      kind: "master",
+      name: "Maya",
+      handle: "maya",
+      description: "",
+      instructions: "",
+      provider: {
+        type: "custom",
+        name: "Gateway",
+        baseUrl: "http://127.0.0.1:11434/v1",
+        model: "model-a",
+        protocol: "openai-chat",
+      },
+    });
+    const state = JSON.parse(await readFile(store.stateFile, "utf8"));
+    state.version = 3;
+    state.agents[0].permissions = { read: "allow", edit: "ask", bash: "deny" };
+    await writeFile(store.stateFile, `${JSON.stringify(state)}\n`);
+
+    const reopened = await FileStore.open({ root: store.root, workspacePath: store.workspacePath });
+
+    expect(reopened.getAgent(agent.id)).toMatchObject({
+      permissions: {
+        read: "allow",
+        edit: "ask",
+        bash: "deny",
+        skill: "allow",
+        todowrite: "allow",
+        webfetch: "ask",
+        websearch: "ask",
+        question: "allow",
+        external: "ask",
+      },
+    });
   });
 
   it("never writes a custom provider key to public state or transcripts", async () => {
@@ -398,7 +436,7 @@ describe("FileStore", () => {
     expect(data.runs[0]?.status).toBe("interrupted");
   });
 
-  it("replays tool events and interrupts a pending approval after restart", async () => {
+  it("replays tool events and interrupts pending approval and input after restart", async () => {
     const store = await openStore();
     const [thread] = store.listThreads();
     if (!thread) throw new Error("expected seeded thread");
@@ -425,12 +463,45 @@ describe("FileStore", () => {
       createdAt: now,
       updatedAt: now,
     });
+    const inputRun = await store.updateRun({
+      id: "run-input",
+      threadId: thread.id,
+      triggerMessageId: "message",
+      agentId: "agent",
+      attempt: 1,
+      status: "waiting_input",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await store.updateToolCall({
+      id: "tool-input",
+      runId: inputRun.id,
+      threadId: thread.id,
+      agentId: inputRun.agentId,
+      name: "question",
+      permission: "question",
+      status: "waiting_input",
+      input:
+        '{"questions":[{"question":"Continue?","header":"Confirm","options":[{"label":"Yes","description":"Continue the run."}]}]}',
+      createdAt: now,
+      updatedAt: now,
+    });
 
     const reopened = await FileStore.open({ root: store.root, workspacePath: store.workspacePath });
     const data = await reopened.threadData(thread.id);
 
-    expect(data.runs).toMatchObject([{ id: run.id, status: "interrupted" }]);
-    expect(data.toolCalls).toMatchObject([{ id: "tool-pending", status: "interrupted" }]);
+    expect(data.runs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: run.id, status: "interrupted" }),
+        expect.objectContaining({ id: inputRun.id, status: "interrupted" }),
+      ]),
+    );
+    expect(data.toolCalls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "tool-pending", status: "interrupted" }),
+        expect.objectContaining({ id: "tool-input", status: "interrupted" }),
+      ]),
+    );
   });
 
   it("repairs a partial JSONL tail before appending another event", async () => {

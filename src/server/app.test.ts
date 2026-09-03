@@ -19,13 +19,23 @@ class FakeRunner implements AgentRunner {
   invocations = 0;
   gate?: Promise<void>;
   requireToolApproval = false;
+  requireToolQuestion = false;
   approvalRequested: Promise<void> = Promise.resolve();
+  questionRequested: Promise<void> = Promise.resolve();
   private markApprovalRequested: () => void = () => undefined;
+  private markQuestionRequested: () => void = () => undefined;
 
   prepareToolApproval() {
     this.requireToolApproval = true;
     this.approvalRequested = new Promise<void>((resolve) => {
       this.markApprovalRequested = resolve;
+    });
+  }
+
+  prepareToolQuestion() {
+    this.requireToolQuestion = true;
+    this.questionRequested = new Promise<void>((resolve) => {
+      this.markQuestionRequested = resolve;
     });
   }
 
@@ -58,6 +68,42 @@ class FakeRunner implements AgentRunner {
         ...toolCall,
         status: approved ? "completed" : "denied",
         summary: approved ? "Command finished." : "Denied by the user.",
+        updatedAt: new Date().toISOString(),
+      });
+    }
+    if (this.requireToolQuestion) {
+      if (!invocation.runId || !invocation.toolHooks?.requestInput) {
+        throw new Error("missing question hooks");
+      }
+      const now = new Date().toISOString();
+      const toolCall = {
+        id: "tool-question",
+        runId: invocation.runId,
+        threadId: invocation.thread.id,
+        agentId: agent.id,
+        name: "question" as const,
+        permission: "question" as const,
+        status: "waiting_input" as const,
+        input: '{"questions":[{"question":"Continue?"}]}',
+        questions: [
+          {
+            header: "Decision",
+            question: "Continue?",
+            options: [{ label: "Proceed", description: "Keep going." }],
+            multiple: false,
+          },
+        ],
+        createdAt: now,
+        updatedAt: now,
+      };
+      const answer = invocation.toolHooks.requestInput(toolCall);
+      this.markQuestionRequested();
+      const answers = await answer;
+      await invocation.toolHooks.update({
+        ...toolCall,
+        answers,
+        status: "completed",
+        summary: "User answered.",
         updatedAt: new Date().toISOString(),
       });
     }
@@ -231,6 +277,47 @@ describe("HTTP app", () => {
     expect(data.runs).toMatchObject([{ status: "completed" }]);
     expect(data.toolCalls).toMatchObject([
       { id: "tool-approval", status: "completed", summary: "Command finished." },
+    ]);
+    expect(data.messages.at(-1)?.content).toBe(`Hello from ${agent.name}`);
+  });
+
+  it("accepts an answer for a pending Master question and resumes the run", async () => {
+    runner.prepareToolQuestion();
+    const agent = await store.createAgent({
+      kind: "master",
+      name: "Maya",
+      handle: "maya",
+      description: "",
+      instructions: "",
+      provider: {
+        type: "custom",
+        name: "Gateway",
+        baseUrl: "http://127.0.0.1:11434/v1",
+        model: "model-a",
+        protocol: "openai-chat",
+      },
+    });
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    await app.request(`/api/threads/${thread.id}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "@maya ask me" }),
+    });
+    await runner.questionRequested;
+
+    const response = await app.request("/api/tool-calls/tool-question/respond", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ answers: [["Proceed"]] }),
+    });
+    expect(response.status).toBe(204);
+    await app.dispatcher.waitForIdle();
+
+    const data = await store.threadData(thread.id);
+    expect(data.runs).toMatchObject([{ status: "completed" }]);
+    expect(data.toolCalls).toMatchObject([
+      { id: "tool-question", status: "completed", answers: [["Proceed"]] },
     ]);
     expect(data.messages.at(-1)?.content).toBe(`Hello from ${agent.name}`);
   });

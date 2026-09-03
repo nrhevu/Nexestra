@@ -4,7 +4,12 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgentView, BootstrapData, ThreadData } from "../shared/contracts.js";
+import {
+  type AgentView,
+  type BootstrapData,
+  DEFAULT_MASTER_TOOL_PERMISSIONS,
+  type ThreadData,
+} from "../shared/contracts.js";
 import { App } from "./App.js";
 
 const now = "2026-09-02T12:00:00.000Z";
@@ -318,7 +323,7 @@ describe("Master harness", () => {
     });
   });
 
-  it("shows pending tool details and sends an approval decision", async () => {
+  it("shows pending tool details and sends approval and question responses", async () => {
     const thread = {
       id: "thread-tools",
       workspaceId: workspace.id,
@@ -339,7 +344,7 @@ describe("Master harness", () => {
       instructions: "",
       enabled: true,
       archived: false,
-      permissions: { read: "allow", edit: "ask", bash: "ask" },
+      permissions: DEFAULT_MASTER_TOOL_PERMISSIONS,
       provider: {
         type: "custom",
         name: "Gateway",
@@ -373,7 +378,7 @@ describe("Master harness", () => {
           triggerMessageId: "message-tools",
           agentId: masterAgent.id,
           attempt: 1,
-          status: "waiting_approval",
+          status: "waiting_input",
           createdAt: now,
           updatedAt: now,
         },
@@ -391,6 +396,26 @@ describe("Master harness", () => {
           createdAt: now,
           updatedAt: now,
         },
+        {
+          id: "tool-question",
+          runId: "run-tools",
+          threadId: thread.id,
+          agentId: masterAgent.id,
+          name: "question",
+          permission: "question",
+          status: "waiting_input",
+          input: '{"questions":[{"question":"Continue?"}]}',
+          questions: [
+            {
+              header: "Decision",
+              question: "Continue?",
+              options: [{ label: "Proceed", description: "Keep going." }],
+              multiple: false,
+            },
+          ],
+          createdAt: now,
+          updatedAt: now,
+        },
       ],
     };
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -402,6 +427,9 @@ describe("Master harness", () => {
       if (path === "/api/tool-calls/tool-tools/approve" && init?.method === "POST") {
         return new Response(null, { status: 204 });
       }
+      if (path === "/api/tool-calls/tool-question/respond" && init?.method === "POST") {
+        return new Response(null, { status: 204 });
+      }
       return jsonResponse({ error: { message: "Not found" } }, 404);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -411,12 +439,19 @@ describe("Master harness", () => {
     render(<App />);
     expect(await screen.findByText('{"command":"pnpm test"}')).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Approve" }));
+    await user.click(screen.getByRole("radio", { name: /Proceed/ }));
+    await user.click(screen.getByRole("button", { name: "Send answer" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith("/api/tool-calls/tool-tools/approve", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: "{}",
+      });
+      expect(fetchMock).toHaveBeenCalledWith("/api/tool-calls/tool-question/respond", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ answers: [["Proceed"]] }),
       });
     });
   });

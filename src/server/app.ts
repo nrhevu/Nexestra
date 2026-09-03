@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { ZodError } from "zod";
-import type { BootstrapData } from "../shared/contracts.js";
+import { type BootstrapData, ToolAnswersSchema } from "../shared/contracts.js";
 import { ChatGptAuthManager } from "./auth.js";
 import { AgentDispatcher, ChatService } from "./dispatcher.js";
 import { type AgentRunner, agentView, LocalAgentRunner } from "./runtime.js";
@@ -130,6 +130,12 @@ export function createApp(options: CreateAppOptions) {
 
   app.post("/api/tool-calls/:id/deny", (context) => {
     dispatcher.resolveToolApproval(context.req.param("id"), false);
+    return context.body(null, 204);
+  });
+
+  app.post("/api/tool-calls/:id/respond", async (context) => {
+    const { answers } = ToolAnswersSchema.parse(await context.req.json());
+    dispatcher.resolveToolInput(context.req.param("id"), answers);
     return context.body(null, 204);
   });
 

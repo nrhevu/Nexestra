@@ -138,7 +138,10 @@ export function App() {
 
   const hasActiveThreadRuns = threadData?.runs.some(
     (run) =>
-      run.status === "queued" || run.status === "running" || run.status === "waiting_approval",
+      run.status === "queued" ||
+      run.status === "running" ||
+      run.status === "waiting_approval" ||
+      run.status === "waiting_input",
   );
   const isPollingActiveThread = Boolean(
     hasActiveThreadRuns &&
@@ -162,7 +165,8 @@ export function App() {
             (run) =>
               run.status === "queued" ||
               run.status === "running" ||
-              run.status === "waiting_approval",
+              run.status === "waiting_approval" ||
+              run.status === "waiting_input",
           );
           if (next && !stillActive) void refresh(true);
         })
@@ -302,6 +306,13 @@ export function App() {
               await api(`/api/tool-calls/${toolCallId}/${approved ? "approve" : "deny"}`, {
                 method: "POST",
                 body: "{}",
+              });
+              if (route.threadId) await loadThread(route.threadId, true);
+            }}
+            onToolResponse={async (toolCallId, answers) => {
+              await api(`/api/tool-calls/${toolCallId}/respond`, {
+                method: "POST",
+                body: JSON.stringify({ answers }),
               });
               if (route.threadId) await loadThread(route.threadId, true);
             }}
@@ -750,6 +761,7 @@ function ThreadView(props: {
   onSend: (content: string) => Promise<void>;
   onRetry: (runId: string) => Promise<unknown>;
   onToolDecision: (toolCallId: string, approved: boolean) => Promise<void>;
+  onToolResponse: (toolCallId: string, answers: string[][]) => Promise<void>;
 }) {
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -883,6 +895,7 @@ function ThreadView(props: {
         agents={props.data.agents}
         onRetry={props.onRetry}
         onToolDecision={props.onToolDecision}
+        onToolResponse={props.onToolResponse}
       />
       <div className="composer-wrap">
         {mentionMenuOpen && suggestions.length > 0 && (
@@ -988,6 +1001,7 @@ const ThreadTranscript = memo(function ThreadTranscript({
   agents,
   onRetry,
   onToolDecision,
+  onToolResponse,
 }: {
   thread: Thread;
   messages: Message[];
@@ -996,6 +1010,7 @@ const ThreadTranscript = memo(function ThreadTranscript({
   agents: AgentView[];
   onRetry: (runId: string) => Promise<unknown>;
   onToolDecision: (toolCallId: string, approved: boolean) => Promise<void>;
+  onToolResponse: (toolCallId: string, answers: string[][]) => Promise<void>;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const agentsById = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
@@ -1065,6 +1080,7 @@ const ThreadTranscript = memo(function ThreadTranscript({
               onRetry={onRetry}
               toolCalls={toolCallsByRun.get(run.id) ?? []}
               onToolDecision={onToolDecision}
+              onToolResponse={onToolResponse}
             />
           ))}
         </div>
@@ -1118,6 +1134,7 @@ function RunRow({
   onRetry,
   toolCalls,
   onToolDecision,
+  onToolResponse,
 }: {
   run: AgentRun;
   agent?: AgentView;
@@ -1125,18 +1142,29 @@ function RunRow({
   onRetry: (id: string) => Promise<unknown>;
   toolCalls: ToolCall[];
   onToolDecision: (id: string, approved: boolean) => Promise<void>;
+  onToolResponse: (id: string, answers: string[][]) => Promise<void>;
 }) {
   const [retrying, setRetrying] = useState(false);
   const handle = agent?.handle ?? historicalHandle;
   const activity = toolCalls.length > 0 && (
     <div className="tool-activity">
       {toolCalls.map((toolCall) => (
-        <ToolCallRow key={toolCall.id} toolCall={toolCall} onDecision={onToolDecision} />
+        <ToolCallRow
+          key={toolCall.id}
+          toolCall={toolCall}
+          onDecision={onToolDecision}
+          onResponse={onToolResponse}
+        />
       ))}
     </div>
   );
   if (run.status === "completed") return activity || null;
-  if (run.status === "queued" || run.status === "running" || run.status === "waiting_approval") {
+  if (
+    run.status === "queued" ||
+    run.status === "running" ||
+    run.status === "waiting_approval" ||
+    run.status === "waiting_input"
+  ) {
     return (
       <>
         {activity}
@@ -1148,7 +1176,9 @@ function RunRow({
               ? "is waiting in the queue"
               : run.status === "waiting_approval"
                 ? "is waiting for tool approval"
-                : "is working with the repository"}
+                : run.status === "waiting_input"
+                  ? "is waiting for your answer"
+                  : "is working with the repository"}
           </span>
           <span className="typing-dots">
             <i />
@@ -1195,17 +1225,48 @@ function RunRow({
 function ToolCallRow({
   toolCall,
   onDecision,
+  onResponse,
 }: {
   toolCall: ToolCall;
   onDecision: (id: string, approved: boolean) => Promise<void>;
+  onResponse: (id: string, answers: string[][]) => Promise<void>;
 }) {
   const [deciding, setDeciding] = useState(false);
   const [decisionError, setDecisionError] = useState<string>();
+  const [answers, setAnswers] = useState<string[][]>(() =>
+    (toolCall.questions ?? []).map(() => []),
+  );
+  const [customAnswers, setCustomAnswers] = useState<string[]>(() =>
+    (toolCall.questions ?? []).map(() => ""),
+  );
   const decide = async (approved: boolean) => {
     setDeciding(true);
     setDecisionError(undefined);
     try {
       await onDecision(toolCall.id, approved);
+    } catch (caught) {
+      setDecisionError(messageFrom(caught));
+    } finally {
+      setDeciding(false);
+    }
+  };
+  const respond = async () => {
+    const complete = answers.map((answer, index) => {
+      const custom = customAnswers[index]?.trim();
+      return custom
+        ? toolCall.questions?.[index]?.multiple
+          ? [...answer, custom]
+          : [custom]
+        : answer;
+    });
+    if (complete.some((answer) => answer.length === 0)) {
+      setDecisionError("Answer every question before continuing.");
+      return;
+    }
+    setDeciding(true);
+    setDecisionError(undefined);
+    try {
+      await onResponse(toolCall.id, complete);
     } catch (caught) {
       setDecisionError(messageFrom(caught));
     } finally {
@@ -1234,6 +1295,64 @@ function ToolCallRow({
             onClick={() => void decide(true)}
           >
             {deciding ? "Saving…" : "Approve"}
+          </button>
+        </div>
+      )}
+      {toolCall.status === "waiting_input" && toolCall.questions && (
+        <div className="tool-questions">
+          {toolCall.questions.map((question, questionIndex) => (
+            <fieldset key={`${question.header}-${question.question}`}>
+              <legend>{question.header}</legend>
+              <p>{question.question}</p>
+              {question.options.map((option) => {
+                const selected = answers[questionIndex]?.includes(option.label) ?? false;
+                return (
+                  <label key={option.label}>
+                    <input
+                      type={question.multiple ? "checkbox" : "radio"}
+                      name={`question-${toolCall.id}-${questionIndex}`}
+                      checked={selected}
+                      onChange={() =>
+                        setAnswers((current) =>
+                          current.map((answer, index) => {
+                            if (index !== questionIndex) return answer;
+                            if (!question.multiple) return [option.label];
+                            return selected
+                              ? answer.filter((value) => value !== option.label)
+                              : [...answer, option.label];
+                          }),
+                        )
+                      }
+                    />
+                    <span>
+                      <b>{option.label}</b>
+                      {option.description && <small>{option.description}</small>}
+                    </span>
+                  </label>
+                );
+              })}
+              <input
+                type="text"
+                value={customAnswers[questionIndex] ?? ""}
+                onChange={(event) =>
+                  setCustomAnswers((current) =>
+                    current.map((answer, index) =>
+                      index === questionIndex ? event.target.value : answer,
+                    ),
+                  )
+                }
+                placeholder="Or type a custom answer"
+                maxLength={500}
+              />
+            </fieldset>
+          ))}
+          <button
+            className="tool-approve"
+            type="button"
+            disabled={deciding}
+            onClick={() => void respond()}
+          >
+            {deciding ? "Sending…" : "Send answer"}
           </button>
         </div>
       )}
@@ -1724,12 +1843,38 @@ function AgentDialog({
     const permissions =
       providerMode === "chatgpt"
         ? fields.get("chatgptAccess") === "workspace-write"
-          ? { read: "allow", edit: "allow", bash: "allow" }
-          : { read: "allow", edit: "deny", bash: "deny" }
+          ? {
+              read: "allow",
+              edit: "allow",
+              bash: "allow",
+              skill: "allow",
+              todowrite: "allow",
+              webfetch: "ask",
+              websearch: "ask",
+              question: "allow",
+              external: "ask",
+            }
+          : {
+              read: "allow",
+              edit: "deny",
+              bash: "deny",
+              skill: "allow",
+              todowrite: "allow",
+              webfetch: "ask",
+              websearch: "ask",
+              question: "allow",
+              external: "ask",
+            }
         : {
             read: String(fields.get("readPermission") ?? "allow"),
             edit: String(fields.get("editPermission") ?? "ask"),
             bash: String(fields.get("bashPermission") ?? "ask"),
+            skill: String(fields.get("skillPermission") ?? "allow"),
+            todowrite: String(fields.get("todowritePermission") ?? "allow"),
+            webfetch: String(fields.get("webfetchPermission") ?? "ask"),
+            websearch: String(fields.get("websearchPermission") ?? "ask"),
+            question: String(fields.get("questionPermission") ?? "allow"),
+            external: String(fields.get("externalPermission") ?? "ask"),
           };
     const payload =
       kind === "worker"
@@ -2087,6 +2232,54 @@ function MasterPermissionFields() {
           <label>
             <span>Run shell</span>
             <select name="bashPermission" defaultValue="ask">
+              <option value="ask">Ask</option>
+              <option value="allow">Allow</option>
+              <option value="deny">Deny</option>
+            </select>
+          </label>
+          <label>
+            <span>Load skills</span>
+            <select name="skillPermission" defaultValue="allow">
+              <option value="allow">Allow</option>
+              <option value="ask">Ask</option>
+              <option value="deny">Deny</option>
+            </select>
+          </label>
+          <label>
+            <span>Manage todos</span>
+            <select name="todowritePermission" defaultValue="allow">
+              <option value="allow">Allow</option>
+              <option value="ask">Ask</option>
+              <option value="deny">Deny</option>
+            </select>
+          </label>
+          <label>
+            <span>Fetch URLs</span>
+            <select name="webfetchPermission" defaultValue="ask">
+              <option value="ask">Ask</option>
+              <option value="allow">Allow</option>
+              <option value="deny">Deny</option>
+            </select>
+          </label>
+          <label>
+            <span>Search the web</span>
+            <select name="websearchPermission" defaultValue="ask">
+              <option value="ask">Ask</option>
+              <option value="allow">Allow</option>
+              <option value="deny">Deny</option>
+            </select>
+          </label>
+          <label>
+            <span>Ask questions</span>
+            <select name="questionPermission" defaultValue="allow">
+              <option value="allow">Allow</option>
+              <option value="ask">Ask</option>
+              <option value="deny">Deny</option>
+            </select>
+          </label>
+          <label>
+            <span>Custom &amp; MCP</span>
+            <select name="externalPermission" defaultValue="ask">
               <option value="ask">Ask</option>
               <option value="allow">Allow</option>
               <option value="deny">Deny</option>

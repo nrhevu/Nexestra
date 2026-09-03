@@ -11,10 +11,11 @@ import type {
   WorkerAgent,
 } from "../shared/contracts.js";
 import {
-  executeMasterTool,
+  createMasterToolSession,
   type HarnessToolRequest,
+  type MasterToolContext,
   type MasterToolHooks,
-  providerToolDefinitions,
+  type MasterToolSession,
 } from "./master-harness.js";
 import { findExecutable, runCommand, safeProcessEnv } from "./process.js";
 import type { FileStore } from "./store.js";
@@ -189,16 +190,7 @@ export class LocalAgentRunner implements AgentRunner {
     const headers: Record<string, string> = { "content-type": "application/json" };
     const credential = this.options.store.getCredential(agent.id);
     if (credential) headers.authorization = `Bearer ${credential}`;
-    const system = [
-      `You are ${agent.name} (@${agent.handle}), Nexestra's internal Master agent.`,
-      "You are responding in a shared thread with the user and other agents.",
-      "Answer the exact message that just @mentioned you. Use tools when repository evidence or a code change is needed.",
-      "Keep working through tool results until the request is resolved, then return a concise final answer in the user's language.",
-      agent.instructions,
-    ]
-      .filter(Boolean)
-      .join("\n\n");
-    const context = {
+    const context: MasterToolContext = {
       agent,
       runId: invocation.runId ?? crypto.randomUUID(),
       threadId: invocation.thread.id,
@@ -206,12 +198,31 @@ export class LocalAgentRunner implements AgentRunner {
       dataPath: this.options.store.root,
       hooks: invocation.toolHooks,
       env: this.env,
+      fetch: this.fetchImpl,
       redact: (value: string) => this.options.store.redactSecrets(value),
     };
-    const reply =
-      agent.provider.protocol === "openai-chat"
-        ? await this.runChatToolLoop(agent, url, headers, system, invocation, context)
-        : await this.runResponsesToolLoop(agent, url, headers, system, invocation, context);
+    const tools = await createMasterToolSession(context);
+    const system = [
+      `You are ${agent.name} (@${agent.handle}), Nexestra's internal Master agent.`,
+      "You are responding in a shared thread with the user and other agents.",
+      "Answer the exact message that just @mentioned you. Use tools when repository evidence or a code change is needed.",
+      "Keep working through tool results until the request is resolved, then return a concise final answer in the user's language.",
+      tools.warnings.length > 0
+        ? `Some configured extensions could not start:\n${tools.warnings.map((warning) => `- ${warning}`).join("\n")}`
+        : "",
+      agent.instructions,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+    let reply: string;
+    try {
+      reply =
+        agent.provider.protocol === "openai-chat"
+          ? await this.runChatToolLoop(agent, url, headers, system, invocation, tools)
+          : await this.runResponsesToolLoop(agent, url, headers, system, invocation, tools);
+    } finally {
+      await tools.close();
+    }
     if (!reply)
       throw new Error(`Provider ${agent.provider.name} did not include response content.`);
     if (reply.length > 40_000) {
@@ -226,7 +237,7 @@ export class LocalAgentRunner implements AgentRunner {
     headers: Record<string, string>,
     system: string,
     invocation: AgentInvocation,
-    context: Parameters<typeof executeMasterTool>[1],
+    tools: MasterToolSession,
   ): Promise<string> {
     const messages: Record<string, unknown>[] = [
       { role: "system", content: system },
@@ -240,7 +251,7 @@ export class LocalAgentRunner implements AgentRunner {
         messages,
         ...(toolsEnabled
           ? {
-              tools: providerToolDefinitions().map((tool) => ({
+              tools: tools.definitions.map((tool) => ({
                 type: "function",
                 function: {
                   name: tool.name,
@@ -268,7 +279,7 @@ export class LocalAgentRunner implements AgentRunner {
         messages.push({
           role: "tool",
           tool_call_id: call.id,
-          content: await executeMasterTool(call, context),
+          content: await tools.execute(call),
         });
       }
     }
@@ -281,7 +292,7 @@ export class LocalAgentRunner implements AgentRunner {
     headers: Record<string, string>,
     system: string,
     invocation: AgentInvocation,
-    context: Parameters<typeof executeMasterTool>[1],
+    tools: MasterToolSession,
   ): Promise<string> {
     const input: unknown[] = [{ role: "user", content: providerUserPrompt(invocation) }];
     const repeatedCalls = new Map<string, number>();
@@ -291,7 +302,7 @@ export class LocalAgentRunner implements AgentRunner {
         model: customProviderModel(agent),
         instructions: system,
         input,
-        ...(toolsEnabled ? { tools: providerToolDefinitions() } : { tool_choice: "none" }),
+        ...(toolsEnabled ? { tools: tools.definitions } : { tool_choice: "none" }),
       });
       const calls = parseResponsesToolCalls(payload);
       if (calls.length === 0) return parseProviderReply(payload);
@@ -302,7 +313,7 @@ export class LocalAgentRunner implements AgentRunner {
         input.push({
           type: "function_call_output",
           call_id: call.id,
-          output: await executeMasterTool(call, context),
+          output: await tools.execute(call),
         });
       }
     }

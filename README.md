@@ -42,10 +42,72 @@ Messages without a mention are only saved to the transcript. A message containin
 `@codex`, or multiple handles creates one run for each invoked agent. Agent replies are recorded
 in the same transcript file. Agent replies do not trigger other agents, which prevents loops.
 
-Workers run in read-only discussion mode. Master agents can inspect the repository with `list`,
-`glob`, `grep`, and `read`, change it with exact `edit` or `write`, and verify work with bounded
-`bash` commands. Custom Masters default to allowing reads and asking in the thread before every edit
-or shell command. The Taskboard currently organizes work but does not dispatch agents automatically.
+Workers run in read-only discussion mode. Custom-provider Master agents have a provider-neutral
+harness with `list`, `glob`, `grep`, `read`, `edit`, `write`, `bash`, `apply_patch`, `skill`,
+`todowrite`, `webfetch`, `websearch`, and `question`. LSP is intentionally not included. Questions
+pause in the thread until the user answers; approval-gated tools pause until the user allows or
+denies the call. The Taskboard currently organizes work but does not dispatch agents automatically.
+
+## Master harness configuration
+
+Optional workspace configuration lives in `nexestra.config.json`. It can tighten an agent's saved
+permissions, add search ignores, choose the hosted web-search backend, add custom tool directories,
+and configure local or remote MCP servers. Wildcards apply to normalized custom and MCP names; an
+MCP tool named `lookup` on server `docs` is exposed as `docs_lookup`. Configuration can make a saved
+agent policy stricter, but cannot silently loosen it.
+
+```json
+{
+  "permission": {
+    "deploy_*": "deny",
+    "docs_*": "ask"
+  },
+  "ignore": ["generated/**", "coverage/**"],
+  "websearch": { "provider": "exa" },
+  "customTools": { "directories": ["tools/nexestra"] },
+  "mcp": {
+    "servers": {
+      "localdocs": {
+        "type": "local",
+        "command": ["node", "tools/docs-server.mjs"],
+        "environment": { "DOCS_TOKEN": "{env:DOCS_TOKEN}" },
+        "timeout": 30000
+      },
+      "remote": {
+        "type": "remote",
+        "url": "https://mcp.example.com/service",
+        "headers": { "Authorization": "Bearer {env:MCP_TOKEN}" }
+      }
+    }
+  }
+}
+```
+
+Repository custom tools are discovered in `.opencode/tools/` and `.nexestra/tools/`; user tools are
+also discovered in the OpenCode config directory. A `.js`, `.mjs`, `.cjs`, or Node-compatible `.ts`
+module may export one or more objects with `description`, either a Zod `args` schema or JSON Schema
+`parameters`, and an async `execute(args, context)` function. Default exports use the filename as
+their tool name; named exports use `<filename>_<export>`.
+
+```js
+// .opencode/tools/greet.mjs
+export default {
+  description: "Greet a person.",
+  parameters: {
+    type: "object",
+    properties: { name: { type: "string" } },
+    required: ["name"]
+  },
+  execute(args) {
+    return `Hello ${args.name}`;
+  }
+};
+```
+
+`glob`, `grep`, and `list` respect `.gitignore`, `.ignore`, and configured ignore patterns while
+always excluding Nexestra data and credential files. `webfetch` blocks private-network targets,
+validates redirects, and caps responses. `websearch` uses Exa by default or Parallel when selected;
+their optional `EXA_API_KEY` or `PARALLEL_API_KEY` environment variables are supported.
 
 ## Agent lifecycle
 
@@ -67,9 +129,9 @@ OpenCode receives `--model` (in `provider/model` form) and the provider-specific
   automatic approval review. Codex CLI manages OAuth tokens; Nexestra never reads or stores them.
 - **Custom:** enter an API root and model, then select OpenAI Chat Completions or OpenAI Responses.
   The API key may be left blank for a local endpoint. Remote endpoints must use HTTPS; HTTP is
-  accepted only on loopback. Read, edit, and shell permissions can each be allowed, approved per
-  call, or denied. Shell commands run as the current local OS user, so keep shell on Ask unless the
-  endpoint is trusted.
+  accepted only on loopback. File, shell, skill, todo, web, question, and extension permissions can
+  each be allowed, approved per call, or denied. Shell, custom tools, and local MCP servers run as
+  the current local OS user, so keep them on Ask unless the endpoint and extension code are trusted.
 
 ## Verification
 

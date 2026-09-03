@@ -39,9 +39,15 @@ export const ToolPermissionSchema = z.enum(["allow", "ask", "deny"]);
 export type ToolPermission = z.infer<typeof ToolPermissionSchema>;
 
 export const MasterToolPermissionsSchema = z.object({
-  read: ToolPermissionSchema,
-  edit: ToolPermissionSchema,
-  bash: ToolPermissionSchema,
+  read: ToolPermissionSchema.default("allow"),
+  edit: ToolPermissionSchema.default("ask"),
+  bash: ToolPermissionSchema.default("ask"),
+  skill: ToolPermissionSchema.default("allow"),
+  todowrite: ToolPermissionSchema.default("allow"),
+  webfetch: ToolPermissionSchema.default("ask"),
+  websearch: ToolPermissionSchema.default("ask"),
+  question: ToolPermissionSchema.default("allow"),
+  external: ToolPermissionSchema.default("ask"),
 });
 export type MasterToolPermissions = z.infer<typeof MasterToolPermissionsSchema>;
 
@@ -49,6 +55,12 @@ export const DEFAULT_MASTER_TOOL_PERMISSIONS: MasterToolPermissions = {
   read: "allow",
   edit: "ask",
   bash: "ask",
+  skill: "allow",
+  todowrite: "allow",
+  webfetch: "ask",
+  websearch: "ask",
+  question: "allow",
+  external: "ask",
 };
 
 export const WorkerAgentSchema = AgentBaseSchema.extend({
@@ -184,7 +196,15 @@ export const RunSchema = z.object({
   triggerMessageId: z.string(),
   agentId: z.string(),
   attempt: z.number().int().positive(),
-  status: z.enum(["queued", "running", "waiting_approval", "completed", "failed", "interrupted"]),
+  status: z.enum([
+    "queued",
+    "running",
+    "waiting_approval",
+    "waiting_input",
+    "completed",
+    "failed",
+    "interrupted",
+  ]),
   error: z.string().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -199,18 +219,73 @@ export const HarnessToolNameSchema = z.enum([
   "edit",
   "write",
   "bash",
+  "apply_patch",
+  "skill",
+  "todowrite",
+  "webfetch",
+  "websearch",
+  "question",
 ]);
 export type HarnessToolName = z.infer<typeof HarnessToolNameSchema>;
+
+export const HarnessPermissionKeySchema = z.enum([
+  "read",
+  "edit",
+  "bash",
+  "skill",
+  "todowrite",
+  "webfetch",
+  "websearch",
+  "question",
+  "external",
+]);
+export type HarnessPermissionKey = z.infer<typeof HarnessPermissionKeySchema>;
+
+export const ToolQuestionSchema = z.object({
+  header: z.string().trim().min(1).max(30),
+  question: z.string().trim().min(1).max(500),
+  options: z
+    .array(
+      z.object({
+        label: z.string().trim().min(1).max(100),
+        description: z.string().trim().max(300).default(""),
+      }),
+    )
+    .min(1)
+    .max(12),
+  multiple: z.boolean().default(false),
+});
+export type ToolQuestion = z.infer<typeof ToolQuestionSchema>;
+
+export const ToolAnswersSchema = z.object({
+  answers: z
+    .array(z.array(z.string().trim().min(1).max(500)).min(1).max(12))
+    .min(1)
+    .max(3),
+});
 
 export const ToolCallSchema = z.object({
   id: z.string(),
   runId: z.string(),
   threadId: z.string(),
   agentId: z.string(),
-  name: HarnessToolNameSchema,
-  permission: z.enum(["read", "edit", "bash"]),
-  status: z.enum(["waiting_approval", "running", "completed", "denied", "failed", "interrupted"]),
+  name: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/),
+  permission: HarnessPermissionKeySchema,
+  status: z.enum([
+    "waiting_approval",
+    "waiting_input",
+    "running",
+    "completed",
+    "denied",
+    "failed",
+    "interrupted",
+  ]),
   input: z.string().max(4_000),
+  questions: z.array(ToolQuestionSchema).min(1).max(3).optional(),
+  answers: z
+    .array(z.array(z.string().max(500)).max(12))
+    .max(3)
+    .optional(),
   summary: z.string().max(500).optional(),
   error: z.string().max(2_000).optional(),
   createdAt: z.string(),

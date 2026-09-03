@@ -28,7 +28,7 @@ import {
 } from "../shared/contracts.js";
 
 const StateSchema = z.object({
-  version: z.literal(3),
+  version: z.literal(4),
   workspaces: z.array(WorkspaceSchema).min(1),
   agents: z.array(AgentSchema),
   threads: z.array(ThreadSchema),
@@ -44,6 +44,14 @@ const LegacyStateSchema = z.object({
 
 const VersionTwoStateSchema = z.object({
   version: z.literal(2),
+  workspaces: z.array(WorkspaceSchema).min(1),
+  agents: z.array(z.record(z.string(), z.unknown())),
+  threads: z.array(ThreadSchema),
+  tasks: z.array(TaskSchema),
+});
+
+const VersionThreeStateSchema = z.object({
+  version: z.literal(3),
   workspaces: z.array(WorkspaceSchema).min(1),
   agents: z.array(z.record(z.string(), z.unknown())),
   threads: z.array(ThreadSchema),
@@ -575,7 +583,8 @@ export class FileStore {
         if (
           run.status !== "queued" &&
           run.status !== "running" &&
-          run.status !== "waiting_approval"
+          run.status !== "waiting_approval" &&
+          run.status !== "waiting_input"
         ) {
           continue;
         }
@@ -593,7 +602,13 @@ export class FileStore {
         });
       }
       for (const toolCall of data.toolCalls) {
-        if (toolCall.status !== "running" && toolCall.status !== "waiting_approval") continue;
+        if (
+          toolCall.status !== "running" &&
+          toolCall.status !== "waiting_approval" &&
+          toolCall.status !== "waiting_input"
+        ) {
+          continue;
+        }
         await this.updateToolCall({
           ...toolCall,
           status: "interrupted",
@@ -678,7 +693,7 @@ function createInitialState(): PersistedState {
     updatedAt: now,
   });
   return {
-    version: 3,
+    version: 4,
     workspaces: [workspace],
     agents: [],
     threads: [createThreadRecord(workspace.id, "general", now, [])],
@@ -846,13 +861,24 @@ async function readState(file: string): Promise<{ state: PersistedState; needsWr
 
   try {
     const version = z.object({ version: z.number() }).parse(raw).version;
-    if (version === 3) return { state: StateSchema.parse(raw), needsWrite: false };
+    if (version === 4) return { state: StateSchema.parse(raw), needsWrite: false };
+    if (version === 3) {
+      const previous = VersionThreeStateSchema.parse(raw);
+      return {
+        state: StateSchema.parse({
+          ...previous,
+          version: 4,
+          agents: previous.agents.map(addDefaultMasterPermissions),
+        }),
+        needsWrite: true,
+      };
+    }
     if (version === 2) {
       const previous = VersionTwoStateSchema.parse(raw);
       return {
         state: StateSchema.parse({
           ...previous,
-          version: 3,
+          version: 4,
           agents: previous.agents.map(addDefaultMasterPermissions),
         }),
         needsWrite: true,
@@ -869,7 +895,7 @@ async function readState(file: string): Promise<{ state: PersistedState; needsWr
     });
     return {
       state: StateSchema.parse({
-        version: 3,
+        version: 4,
         workspaces: [workspace],
         agents: legacy.agents.map((agent) =>
           addDefaultMasterPermissions({ ...agent, workspaceId: workspace.id }),
@@ -885,12 +911,24 @@ async function readState(file: string): Promise<{ state: PersistedState; needsWr
 }
 
 function addDefaultMasterPermissions(agent: Record<string, unknown>): Record<string, unknown> {
-  return agent.kind === "master" && agent.permissions === undefined
-    ? {
-        ...agent,
-        permissions: { read: "allow", edit: "ask", bash: "ask" },
-      }
-    : agent;
+  if (agent.kind !== "master") return agent;
+  const permissions =
+    typeof agent.permissions === "object" && agent.permissions !== null ? agent.permissions : {};
+  return {
+    ...agent,
+    permissions: {
+      read: "allow",
+      edit: "ask",
+      bash: "ask",
+      skill: "allow",
+      todowrite: "allow",
+      webfetch: "ask",
+      websearch: "ask",
+      question: "allow",
+      external: "ask",
+      ...permissions,
+    },
+  };
 }
 
 async function exists(path: string): Promise<boolean> {

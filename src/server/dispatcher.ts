@@ -19,6 +19,10 @@ export class AgentDispatcher {
     string,
     { runId: string; resolve: (approved: boolean) => void }
   >();
+  private readonly pendingInputs = new Map<
+    string,
+    { runId: string; resolve: (answers: string[][]) => void }
+  >();
 
   constructor(
     private readonly store: FileStore,
@@ -57,6 +61,13 @@ export class AgentDispatcher {
     if (!approval) throw new StoreError("not_found", "Pending tool approval not found.");
     this.pendingApprovals.delete(toolCallId);
     approval.resolve(approved);
+  }
+
+  resolveToolInput(toolCallId: string, answers: string[][]): void {
+    const input = this.pendingInputs.get(toolCallId);
+    if (!input) throw new StoreError("not_found", "Pending tool question not found.");
+    this.pendingInputs.delete(toolCallId);
+    input.resolve(answers);
   }
 
   reserveAgent(agentId: string): (() => void) | undefined {
@@ -208,6 +219,29 @@ export class AgentDispatcher {
               this.liveRuns.set(currentRun.id, currentRun);
             }
           },
+          requestInput: async (toolCall) => {
+            const response = new Promise<string[][]>((resolve) => {
+              this.pendingInputs.set(toolCall.id, { runId: run.id, resolve });
+            });
+            try {
+              await this.store.updateToolCall(toolCall);
+              currentRun = await this.store.updateRun({
+                ...currentRun,
+                status: "waiting_input",
+                updatedAt: new Date().toISOString(),
+              });
+              this.liveRuns.set(currentRun.id, currentRun);
+              return await response;
+            } finally {
+              this.pendingInputs.delete(toolCall.id);
+              currentRun = await this.store.updateRun({
+                ...currentRun,
+                status: "running",
+                updatedAt: new Date().toISOString(),
+              });
+              this.liveRuns.set(currentRun.id, currentRun);
+            }
+          },
         },
       };
       const response = (await this.runner.invoke(agent, invocation)).trim();
@@ -232,6 +266,11 @@ export class AgentDispatcher {
         if (approval.runId !== run.id) continue;
         this.pendingApprovals.delete(toolCallId);
         approval.resolve(false);
+      }
+      for (const [toolCallId, input] of this.pendingInputs) {
+        if (input.runId !== run.id) continue;
+        this.pendingInputs.delete(toolCallId);
+        input.resolve([]);
       }
       this.liveRuns.delete(run.id);
       this.busy.delete(agent.id);
