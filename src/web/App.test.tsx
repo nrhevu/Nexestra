@@ -398,10 +398,13 @@ describe("Knowledge surface", () => {
     };
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
-      if (path === "/api/bootstrap")
+      if (path.startsWith("/api/bootstrap"))
         return jsonResponse({ ...bootstrapData, knowledge: [knowledge] });
       if (path === "/api/knowledge/documents" && init?.method === "POST") {
         return jsonResponse(knowledge, 201);
+      }
+      if (path === `/api/knowledge/${knowledge.id}` && init?.method === "PATCH") {
+        return jsonResponse({ ...knowledge, name: "System architecture" });
       }
       return jsonResponse({ error: { message: "Not found" } }, 404);
     });
@@ -415,6 +418,27 @@ describe("Knowledge surface", () => {
       "href",
       `/api/knowledge/${knowledge.id}/content`,
     );
+    await user.click(screen.getByRole("button", { name: `View details for ${knowledge.name}` }));
+    const details = screen.getByRole("dialog", { name: knowledge.name });
+    expect(within(details).getByText("#architecture")).toBeVisible();
+    expect(within(details).getByText("Repository conventions")).toBeVisible();
+    await user.click(within(details).getByRole("button", { name: "Edit" }));
+    const editDialog = screen.getByRole("dialog", { name: `Edit ${knowledge.name}` });
+    const nameInput = within(editDialog).getByRole("textbox", { name: "Name" });
+    await user.clear(nameInput);
+    await user.type(nameInput, "System architecture");
+    await user.click(within(editDialog).getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => {
+      const request = fetchMock.mock.calls.find(
+        ([input, init]) =>
+          String(input) === `/api/knowledge/${knowledge.id}` && init?.method === "PATCH",
+      );
+      expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({
+        name: "System architecture",
+        handle: "architecture",
+      });
+    });
     await user.click(screen.getByRole("button", { name: "Add knowledge" }));
     const dialog = screen.getByRole("dialog", { name: "Add knowledge" });
     await user.type(within(dialog).getByPlaceholderText("Architecture guide"), "Product notes");
@@ -436,6 +460,53 @@ describe("Knowledge surface", () => {
       expect(body.get("workspaceId")).toBe(workspace.id);
       expect(body.get("handle")).toBe("product-notes");
       expect((body.get("file") as File).name).toBe("notes.md");
+    });
+  });
+
+  it("deletes knowledge from its detail view", async () => {
+    window.history.replaceState({}, "", "/surfaces/knowledge");
+    const knowledge = {
+      id: "knowledge-notes",
+      workspaceId: workspace.id,
+      kind: "document" as const,
+      name: "Product notes",
+      handle: "product-notes",
+      description: "",
+      fileName: "notes.md",
+      mediaType: "text/markdown",
+      size: 32,
+      storagePath: "workspaces/workspace-nexestra/knowledge/knowledge-notes/document",
+      createdAt: now,
+      updatedAt: now,
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        return jsonResponse({ ...bootstrapData, knowledge: [knowledge] });
+      }
+      if (path === `/api/knowledge/${knowledge.id}` && init?.method === "DELETE") {
+        return new Response(null, { status: 204 });
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(
+      await screen.findByRole("button", { name: `View details for ${knowledge.name}` }),
+    );
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    const confirmation = screen.getByRole("dialog", { name: `Delete ${knowledge.name}?` });
+    await user.click(within(confirmation).getByRole("button", { name: "Delete knowledge" }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([input, init]) =>
+            String(input) === `/api/knowledge/${knowledge.id}` && init?.method === "DELETE",
+        ),
+      ).toBe(true);
     });
   });
 
@@ -668,6 +739,74 @@ describe("Taskboard Worker process", () => {
     expect(within(dialog).getByText("Implementing the change…")).toBeVisible();
     await user.click(within(dialog).getByText("Thinking"));
     expect(await within(dialog).findByText("Inspecting")).toBeVisible();
+  });
+
+  it("shows task details and supports editing and deletion", async () => {
+    window.history.replaceState({}, "", "/surfaces/taskboard");
+    const task = {
+      id: "task-documentation",
+      workspaceId: workspace.id,
+      title: "Draft documentation",
+      description: "Write the first draft.",
+      status: "todo" as const,
+      assigneeId: null,
+      threadId: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        return jsonResponse({ ...bootstrapData, tasks: [task] });
+      }
+      if (path === `/api/tasks/${task.id}/process`) {
+        return jsonResponse({ task, toolCalls: [] });
+      }
+      if (path === `/api/tasks/${task.id}` && init?.method === "PATCH") {
+        return jsonResponse({ ...task, title: "Publish documentation" });
+      }
+      if (path === `/api/tasks/${task.id}` && init?.method === "DELETE") {
+        return new Response(null, { status: 204 });
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: `Open process for ${task.title}` }));
+    let details = await screen.findByRole("dialog", { name: task.title });
+    expect(within(details).getByText("Write the first draft.")).toBeVisible();
+    await user.click(within(details).getByRole("button", { name: "Edit" }));
+    const editDialog = screen.getByRole("dialog", { name: `Edit ${task.title}` });
+    const titleInput = within(editDialog).getByRole("textbox", { name: "Title" });
+    await user.clear(titleInput);
+    await user.type(titleInput, "Publish documentation");
+    await user.click(within(editDialog).getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => {
+      const request = fetchMock.mock.calls.find(
+        ([input, init]) => String(input) === `/api/tasks/${task.id}` && init?.method === "PATCH",
+      );
+      expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({
+        title: "Publish documentation",
+        description: "Write the first draft.",
+      });
+    });
+
+    await user.click(screen.getByRole("button", { name: `Open process for ${task.title}` }));
+    details = await screen.findByRole("dialog", { name: task.title });
+    await user.click(within(details).getByRole("button", { name: "Delete" }));
+    const confirmation = screen.getByRole("dialog", { name: `Delete ${task.title}?` });
+    await user.click(within(confirmation).getByRole("button", { name: "Delete task" }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([input, init]) => String(input) === `/api/tasks/${task.id}` && init?.method === "DELETE",
+        ),
+      ).toBe(true);
+    });
   });
 });
 

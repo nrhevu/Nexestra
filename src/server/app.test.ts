@@ -239,7 +239,7 @@ describe("HTTP app", () => {
     expect([...new Uint8Array(await response.arrayBuffer())]).toEqual([0x89, 0x50, 0x4e, 0x47]);
   });
 
-  it("uploads a shared knowledge document and serves it from the knowledge endpoint", async () => {
+  it("creates, reads, updates, and deletes shared knowledge", async () => {
     const form = new FormData();
     form.append("name", "Architecture guide");
     form.append("handle", "architecture");
@@ -260,11 +260,74 @@ describe("HTTP app", () => {
     expect(content.status).toBe(200);
     expect(content.headers.get("content-disposition")).toContain("architecture.md");
     await expect(content.text()).resolves.toBe("# Architecture\n");
+    const details = await app.request(`/api/knowledge/${item.id}`);
+    expect(details.status).toBe(200);
+    await expect(details.json()).resolves.toMatchObject({ id: item.id, handle: "architecture" });
+    const updated = await app.request(`/api/knowledge/${item.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "System architecture",
+        handle: "system-architecture",
+        description: "Current system boundaries",
+      }),
+    });
+    expect(updated.status).toBe(200);
+    await expect(updated.json()).resolves.toMatchObject({
+      name: "System architecture",
+      handle: "system-architecture",
+      description: "Current system boundaries",
+    });
     const bootstrap = await app.request("/api/bootstrap");
     await expect(bootstrap.json()).resolves.toMatchObject({
-      knowledge: [expect.objectContaining({ id: item.id, handle: "architecture" })],
+      knowledge: [expect.objectContaining({ id: item.id, handle: "system-architecture" })],
       assignments: [],
     });
+    const deleted = await app.request(`/api/knowledge/${item.id}`, { method: "DELETE" });
+    expect(deleted.status).toBe(204);
+    expect((await app.request(`/api/knowledge/${item.id}`)).status).toBe(404);
+  });
+
+  it("creates, reads, updates, and deletes a Taskboard task", async () => {
+    const created = await app.request("/api/tasks", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        title: "Draft documentation",
+        description: "Write the first draft.",
+        status: "todo",
+        assigneeId: null,
+        threadId: null,
+      }),
+    });
+    expect(created.status).toBe(201);
+    const task = (await created.json()) as { id: string };
+
+    const details = await app.request(`/api/tasks/${task.id}`);
+    expect(details.status).toBe(200);
+    await expect(details.json()).resolves.toMatchObject({
+      id: task.id,
+      title: "Draft documentation",
+    });
+    const updated = await app.request(`/api/tasks/${task.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        title: "Publish documentation",
+        description: "Review and publish the draft.",
+        status: "in_progress",
+      }),
+    });
+    expect(updated.status).toBe(200);
+    await expect(updated.json()).resolves.toMatchObject({
+      title: "Publish documentation",
+      description: "Review and publish the draft.",
+      status: "in_progress",
+    });
+
+    const deleted = await app.request(`/api/tasks/${task.id}`, { method: "DELETE" });
+    expect(deleted.status).toBe(204);
+    expect((await app.request(`/api/tasks/${task.id}`)).status).toBe(404);
   });
 
   it("reports live activity without scanning persisted thread history", async () => {

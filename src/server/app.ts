@@ -125,6 +125,23 @@ export function createApp(options: CreateAppOptions) {
     return context.json(await repositories.addRepository(await context.req.json()), 201);
   });
 
+  app.get("/api/knowledge/:id", (context) => {
+    const item = options.store.getKnowledge(context.req.param("id"));
+    if (!item) throw new StoreError("not_found", "Knowledge item not found.");
+    return context.json(item);
+  });
+
+  app.patch("/api/knowledge/:id", async (context) => {
+    return context.json(
+      await options.store.updateKnowledge(context.req.param("id"), await context.req.json()),
+    );
+  });
+
+  app.delete("/api/knowledge/:id", async (context) => {
+    await options.store.deleteKnowledge(context.req.param("id"));
+    return context.body(null, 204);
+  });
+
   app.get("/api/knowledge/:id/content", async (context) => {
     const item = options.store.getKnowledge(context.req.param("id"));
     if (item?.kind !== "document") {
@@ -262,6 +279,12 @@ export function createApp(options: CreateAppOptions) {
     return context.json(await options.store.createTask(await context.req.json()), 201);
   });
 
+  app.get("/api/tasks/:id", (context) => {
+    const task = options.store.getTask(context.req.param("id"));
+    if (!task) throw new StoreError("not_found", "Task not found.");
+    return context.json(task);
+  });
+
   app.get("/api/tasks/:id/process", async (context) => {
     return context.json(await dispatcher.taskProcess(context.req.param("id")));
   });
@@ -270,6 +293,11 @@ export function createApp(options: CreateAppOptions) {
     return context.json(
       await options.store.updateTask(context.req.param("id"), await context.req.json()),
     );
+  });
+
+  app.delete("/api/tasks/:id", async (context) => {
+    await options.store.deleteTask(context.req.param("id"));
+    return context.body(null, 204);
   });
 
   app.post("/api/auth/chatgpt/start", async (context) => {

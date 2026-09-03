@@ -30,7 +30,7 @@ By default, data is stored in `.nexestra/` in the running repository:
 
 ```text
 .nexestra/
-├── state.json          # workspace, agent, thread, and task metadata
+├── state.json          # workspace, agent, thread, task, knowledge, and assignment metadata
 ├── credentials.json    # custom API keys, mode 0600
 ├── artifacts/
 │   └── <thread-id>/<artifact-id> # uploaded bytes, mode 0600
@@ -78,7 +78,9 @@ content and safe raster images in their native multimodal request shape.
 The **Knowledge** surface stores workspace-scoped documents and Git repositories. Typing `#` in
 the composer opens the knowledge picker. Text documents are included as bounded context; binary
 documents are exposed by their managed local path. Repository URLs may use HTTPS or SSH, and local
-Git paths are also accepted. URLs containing embedded credentials are rejected.
+Git paths are also accepted. URLs containing embedded credentials are rejected. Click a Knowledge
+card to inspect its details, edit its name, `#handle`, and description, download a stored document,
+or permanently delete it. Replacing document bytes or a repository source uses delete-and-create.
 
 Workers run in read-only discussion mode. For an implementation request, a custom-provider Master
 must call `plan` to create durable Taskboard tasks and then call `delegate` for each task it assigns.
@@ -91,7 +93,8 @@ commits on that branch. Nexestra does not merge or push the branch automatically
 Every assignment is also a durable Worker run. Click any Taskboard card to inspect its assignee,
 repository, isolated branch and worktree, current phase, live reasoning, streamed response, and
 tool calls. Completed cards retain the Worker result and tool history in this process view; a task
-that was never delegated says so explicitly.
+that was never delegated says so explicitly. The same detail view can edit every task field or
+permanently delete the task when no Worker assignment is active.
 
 Custom-provider Master agents have a provider-neutral
 harness with `list`, `glob`, `grep`, `read`, `edit`, `write`, `bash`, `apply_patch`, `skill`,

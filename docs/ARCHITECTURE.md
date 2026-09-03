@@ -75,6 +75,13 @@ assignments, and releases the handle for reuse. Credential removal is persisted 
 so an interrupted multi-file write favors removing the secret. Thread JSONL files are never rewritten
 for agent deletion; historical author and mention snapshots remain part of the canonical transcript.
 
+Task and Knowledge metadata support create, detail, update, and permanent-delete operations.
+Deleting a task is rejected while one of its Worker assignments is queued or running. Historical
+assignment and transcript events are retained after task deletion. Deleting repository knowledge is
+also rejected while cloning or while a related assignment is active. Unused Knowledge storage is
+removed; repository storage with assignment history is retained so its worktrees remain inspectable.
+Existing message text and stable historical references are never rewritten.
+
 Each thread has one canonical JSONL file. The `message.created`, `artifact.created`, `run.updated`,
 and `tool.updated` events use a monotonically increasing sequence. Artifact metadata and message
 IDs are committed in the same append; uploaded bytes live under a thread-scoped private directory.
@@ -227,6 +234,8 @@ OS user's existing SSH and Git configuration; Nexestra does not store Git creden
   ChatGPT OAuth Masters run through Codex CLI and do not yet receive this bridge.
 - Assignment worktrees and branches are retained and cannot yet be cleaned up, merged, or pushed
   from the UI. Repository fetch/pull and retry are not yet exposed.
+- Knowledge metadata can be edited, but replacing stored document bytes or a repository source
+  requires deleting and creating the item again.
 - Tasks created before the delegation-completion guard may remain unassigned; their process dialog
   reports that state, but does not retroactively start a Worker.
 - OpenCode `plan` is an application policy, not an independent OS or container sandbox.

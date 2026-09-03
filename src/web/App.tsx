@@ -17,6 +17,7 @@ import {
   LoaderCircle,
   MessageSquareMore,
   Paperclip,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
@@ -91,6 +92,11 @@ export function App() {
   const [error, setError] = useState<string>();
   const [taskStatus, setTaskStatus] = useState<Task["status"]>("todo");
   const [taskToInspect, setTaskToInspect] = useState<Task>();
+  const [taskToEdit, setTaskToEdit] = useState<Task>();
+  const [taskToDelete, setTaskToDelete] = useState<Task>();
+  const [knowledgeToInspect, setKnowledgeToInspect] = useState<KnowledgeItem>();
+  const [knowledgeToEdit, setKnowledgeToEdit] = useState<KnowledgeItem>();
+  const [knowledgeToDelete, setKnowledgeToDelete] = useState<KnowledgeItem>();
   const [agentToDelete, setAgentToDelete] = useState<AgentView>();
   const deferredRunActivities = useDeferredValue(runActivities);
   const workspaceIdRef = useRef<string | undefined>(
@@ -421,7 +427,11 @@ export function App() {
             onDelete={setAgentToDelete}
           />
         ) : route.surface === "knowledge" ? (
-          <KnowledgeView data={data} onCreate={() => setModal("knowledge")} />
+          <KnowledgeView
+            data={data}
+            onCreate={() => setModal("knowledge")}
+            onInspect={setKnowledgeToInspect}
+          />
         ) : (
           <Taskboard
             data={data}
@@ -527,6 +537,38 @@ export function App() {
             setTaskToInspect(undefined);
             openThread(threadId);
           }}
+          onEdit={(task) => {
+            setTaskToInspect(undefined);
+            setTaskToEdit(task);
+          }}
+          onDelete={(task) => {
+            setTaskToInspect(undefined);
+            setTaskToDelete(task);
+          }}
+        />
+      )}
+      {taskToEdit && (
+        <TaskDialog
+          data={data}
+          task={taskToEdit}
+          initialStatus={taskToEdit.status}
+          onClose={() => setTaskToEdit(undefined)}
+          onCreated={async () => {
+            await refresh();
+            setTaskToEdit(undefined);
+            flash("Task updated.");
+          }}
+        />
+      )}
+      {taskToDelete && (
+        <DeleteTaskDialog
+          task={taskToDelete}
+          onClose={() => setTaskToDelete(undefined)}
+          onDeleted={async () => {
+            await refresh();
+            setTaskToDelete(undefined);
+            flash("Task deleted.");
+          }}
         />
       )}
       {modal === "knowledge" && (
@@ -537,6 +579,45 @@ export function App() {
             await refresh();
             setModal(null);
             flash("Knowledge added to the workspace.");
+          }}
+        />
+      )}
+      {knowledgeToInspect && (
+        <KnowledgeDetailDialog
+          item={knowledgeToInspect}
+          onClose={() => setKnowledgeToInspect(undefined)}
+          onEdit={(item) => {
+            setKnowledgeToInspect(undefined);
+            setKnowledgeToEdit(item);
+          }}
+          onDelete={(item) => {
+            setKnowledgeToInspect(undefined);
+            setKnowledgeToDelete(item);
+          }}
+        />
+      )}
+      {knowledgeToEdit && (
+        <EditKnowledgeDialog
+          item={knowledgeToEdit}
+          onClose={() => setKnowledgeToEdit(undefined)}
+          onSaved={async () => {
+            await refresh();
+            setKnowledgeToEdit(undefined);
+            flash("Knowledge updated.");
+          }}
+        />
+      )}
+      {knowledgeToDelete && (
+        <DeleteKnowledgeDialog
+          item={knowledgeToDelete}
+          hasAssignmentHistory={data.assignments.some(
+            (assignment) => assignment.repositoryId === knowledgeToDelete.id,
+          )}
+          onClose={() => setKnowledgeToDelete(undefined)}
+          onDeleted={async () => {
+            await refresh();
+            setKnowledgeToDelete(undefined);
+            flash("Knowledge deleted.");
           }}
         />
       )}
@@ -1983,7 +2064,15 @@ function ToolCallRow({
   );
 }
 
-function KnowledgeView({ data, onCreate }: { data: BootstrapData; onCreate: () => void }) {
+function KnowledgeView({
+  data,
+  onCreate,
+  onInspect,
+}: {
+  data: BootstrapData;
+  onCreate: () => void;
+  onInspect: (item: KnowledgeItem) => void;
+}) {
   const documents = data.knowledge.filter((item) => item.kind === "document");
   const repositories = data.knowledge.filter((item) => item.kind === "repository");
   return (
@@ -2030,39 +2119,55 @@ function KnowledgeView({ data, onCreate }: { data: BootstrapData; onCreate: () =
       ) : (
         <div className="knowledge-grid">
           {data.knowledge.map((item) => (
-            <article className="knowledge-card" key={item.id}>
-              <div className="knowledge-icon">
-                {item.kind === "document" ? <FileText size={20} /> : <GitBranch size={20} />}
-              </div>
-              <div className="knowledge-card-body">
-                <header>
-                  <div>
-                    <h2>{item.name}</h2>
-                    <mark>#{item.handle}</mark>
-                  </div>
-                  <span
-                    className={`knowledge-status${item.kind === "repository" ? ` ${item.status}` : ""}`}
-                  >
-                    {item.kind === "document" ? "Document" : item.status}
+            <article
+              className={`knowledge-card${item.kind === "document" ? " has-download" : ""}`}
+              key={item.id}
+            >
+              <button
+                className="knowledge-card-open"
+                type="button"
+                aria-label={`View details for ${item.name}`}
+                onClick={() => onInspect(item)}
+              >
+                <span className="knowledge-icon">
+                  {item.kind === "document" ? <FileText size={20} /> : <GitBranch size={20} />}
+                </span>
+                <span className="knowledge-card-body">
+                  <span className="knowledge-card-header">
+                    <span>
+                      <strong className="knowledge-card-title">{item.name}</strong>
+                      <mark>#{item.handle}</mark>
+                    </span>
+                    <span
+                      className={`knowledge-status${item.kind === "repository" ? ` ${item.status}` : ""}`}
+                    >
+                      {item.kind === "document" ? "Document" : item.status}
+                    </span>
                   </span>
-                </header>
-                {item.description && <p>{item.description}</p>}
-                {item.kind === "document" ? (
-                  <div className="knowledge-meta">
-                    <span>{item.fileName}</span>
-                    <span>{formatBytes(item.size)}</span>
-                    <a href={`/api/knowledge/${encodeURIComponent(item.id)}/content`} download>
-                      <Download size={13} /> Download
-                    </a>
-                  </div>
-                ) : (
-                  <div className="knowledge-meta repository-meta">
-                    <code>{item.source}</code>
-                    {item.defaultBranch && <span>Default branch: {item.defaultBranch}</span>}
-                    {item.error && <span className="knowledge-error">{item.error}</span>}
-                  </div>
-                )}
-              </div>
+                  {item.description && <p>{item.description}</p>}
+                  {item.kind === "document" ? (
+                    <span className="knowledge-meta">
+                      <span>{item.fileName}</span>
+                      <span>{formatBytes(item.size)}</span>
+                    </span>
+                  ) : (
+                    <span className="knowledge-meta repository-meta">
+                      <code>{item.source}</code>
+                      {item.defaultBranch && <span>Default branch: {item.defaultBranch}</span>}
+                      {item.error && <span className="knowledge-error">{item.error}</span>}
+                    </span>
+                  )}
+                </span>
+              </button>
+              {item.kind === "document" && (
+                <a
+                  className="knowledge-card-download"
+                  href={`/api/knowledge/${encodeURIComponent(item.id)}/content`}
+                  download
+                >
+                  <Download size={13} /> Download
+                </a>
+              )}
             </article>
           ))}
         </div>
@@ -2265,7 +2370,7 @@ function Taskboard(props: {
   const agents = new Map(props.data.agents.map((agent) => [agent.id, agent]));
   const assignments = new Map<string, BootstrapData["assignments"][number]>();
   for (const assignment of props.data.assignments) {
-    assignments.set(assignment.taskId, assignment);
+    if (!assignments.has(assignment.taskId)) assignments.set(assignment.taskId, assignment);
   }
   return (
     <div className="surface-view">
@@ -2409,11 +2514,15 @@ function TaskProcessDialog({
   data,
   onClose,
   onThread,
+  onEdit,
+  onDelete,
 }: {
   task: Task;
   data: BootstrapData;
   onClose: () => void;
   onThread: (threadId: string) => void;
+  onEdit: (task: Task) => void;
+  onDelete: (task: Task) => void;
 }) {
   const [process, setProcess] = useState<TaskProcessData>();
   const [loadError, setLoadError] = useState<string>();
@@ -2524,6 +2633,19 @@ function TaskProcessDialog({
             </div>
           </div>
 
+          <div className="task-detail-copy">
+            {process.task.description ? (
+              <Suspense
+                fallback={<p className="message-markdown-fallback">{process.task.description}</p>}
+              >
+                <RichMessage content={process.task.description} knownHandles={knownHandles} />
+              </Suspense>
+            ) : (
+              <p>No description.</p>
+            )}
+            <small>Updated {formatDateTime(process.task.updatedAt)}</small>
+          </div>
+
           {!assignment ? (
             <div className="task-process-empty">
               <Bot size={22} />
@@ -2632,6 +2754,14 @@ function TaskProcessDialog({
           )}
 
           <div className="modal-actions">
+            <button type="button" onClick={() => onEdit(process.task)}>
+              <Pencil size={14} />
+              Edit
+            </button>
+            <button type="button" className="danger-button" onClick={() => onDelete(process.task)}>
+              <Trash2 size={14} />
+              Delete
+            </button>
             {process.task.threadId && (
               <button type="button" onClick={() => onThread(process.task.threadId ?? "")}>
                 <MessageSquareMore size={14} />
@@ -3172,6 +3302,245 @@ function MasterAccessModeField() {
   );
 }
 
+function KnowledgeDetailDialog({
+  item,
+  onClose,
+  onEdit,
+  onDelete,
+}: {
+  item: KnowledgeItem;
+  onClose: () => void;
+  onEdit: (item: KnowledgeItem) => void;
+  onDelete: (item: KnowledgeItem) => void;
+}) {
+  return (
+    <Modal title={item.name} eyebrow="KNOWLEDGE DETAILS" onClose={onClose}>
+      <div className="resource-details">
+        <div>
+          <span>Reference</span>
+          <strong>#{item.handle}</strong>
+        </div>
+        <div>
+          <span>Type</span>
+          <strong>{item.kind === "document" ? "Document" : "Git repository"}</strong>
+        </div>
+        <div className="resource-details-wide">
+          <span>Description</span>
+          <p>{item.description || "No description."}</p>
+        </div>
+        {item.kind === "document" ? (
+          <>
+            <div>
+              <span>File</span>
+              <strong>{item.fileName}</strong>
+            </div>
+            <div>
+              <span>Size</span>
+              <strong>{formatBytes(item.size)}</strong>
+            </div>
+            <div>
+              <span>Media type</span>
+              <strong>{item.mediaType}</strong>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="resource-details-wide">
+              <span>Source</span>
+              <code>{item.source}</code>
+            </div>
+            <div>
+              <span>Status</span>
+              <strong>{item.status}</strong>
+            </div>
+            <div>
+              <span>Default branch</span>
+              <strong>{item.defaultBranch ?? "Unknown"}</strong>
+            </div>
+            {item.error && (
+              <div className="resource-details-wide resource-details-error">
+                <span>Error</span>
+                <p>{item.error}</p>
+              </div>
+            )}
+          </>
+        )}
+        <div>
+          <span>Created</span>
+          <strong>{formatDateTime(item.createdAt)}</strong>
+        </div>
+        <div>
+          <span>Updated</span>
+          <strong>{formatDateTime(item.updatedAt)}</strong>
+        </div>
+      </div>
+      <div className="modal-actions resource-actions">
+        {item.kind === "document" && (
+          <a href={`/api/knowledge/${encodeURIComponent(item.id)}/content`} download>
+            <Download size={14} />
+            Download
+          </a>
+        )}
+        <button type="button" onClick={() => onEdit(item)}>
+          <Pencil size={14} />
+          Edit
+        </button>
+        <button type="button" className="danger-button" onClick={() => onDelete(item)}>
+          <Trash2 size={14} />
+          Delete
+        </button>
+        <button type="button" className="primary-button" onClick={onClose}>
+          Done
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+function EditKnowledgeDialog({
+  item,
+  onClose,
+  onSaved,
+}: {
+  item: KnowledgeItem;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string>();
+  return (
+    <Modal title={`Edit ${item.name}`} eyebrow="KNOWLEDGE" onClose={onClose}>
+      <form
+        onSubmit={async (event) => {
+          event.preventDefault();
+          const fields = new FormData(event.currentTarget);
+          setSaving(true);
+          setFormError(undefined);
+          try {
+            await api(`/api/knowledge/${encodeURIComponent(item.id)}`, {
+              method: "PATCH",
+              body: JSON.stringify({
+                name: String(fields.get("name") ?? ""),
+                handle: String(fields.get("handle") ?? ""),
+                description: String(fields.get("description") ?? ""),
+              }),
+            });
+            await onSaved();
+          } catch (caught) {
+            setFormError(messageFrom(caught));
+          } finally {
+            setSaving(false);
+          }
+        }}
+      >
+        <Field label="Name">
+          <input name="name" aria-label="Name" defaultValue={item.name} required maxLength={120} />
+        </Field>
+        <Field label="Reference handle" hint="Existing thread messages keep their original text.">
+          <div className="handle-input">
+            <span>#</span>
+            <input
+              name="handle"
+              aria-label="Reference handle"
+              defaultValue={item.handle}
+              pattern="[a-z0-9][a-z0-9_-]{1,47}"
+              required
+              maxLength={48}
+            />
+          </div>
+        </Field>
+        <Field label="Description" optional>
+          <textarea
+            name="description"
+            aria-label="Description"
+            rows={4}
+            defaultValue={item.description}
+            maxLength={1000}
+          />
+        </Field>
+        <div className="immutable-resource">
+          <span>{item.kind === "document" ? "Stored file" : "Repository source"}</span>
+          <code>{item.kind === "document" ? item.fileName : item.source}</code>
+          <small>
+            {item.kind === "document"
+              ? "Delete and upload a new item to replace the file contents."
+              : "Delete and clone a new item to change the repository source."}
+          </small>
+        </div>
+        {formError && (
+          <p className="form-error">
+            <CircleAlert size={14} />
+            {formError}
+          </p>
+        )}
+        <ModalActions onClose={onClose} saving={saving} submitLabel="Save changes" />
+      </form>
+    </Modal>
+  );
+}
+
+function DeleteKnowledgeDialog({
+  item,
+  hasAssignmentHistory,
+  onClose,
+  onDeleted,
+}: {
+  item: KnowledgeItem;
+  hasAssignmentHistory: boolean;
+  onClose: () => void;
+  onDeleted: () => Promise<void>;
+}) {
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string>();
+  return (
+    <Modal title={`Delete ${item.name}?`} eyebrow="PERMANENT DELETE" onClose={onClose}>
+      <div className="delete-confirmation">
+        <span>
+          <Trash2 size={22} />
+        </span>
+        <div>
+          <strong>Remove #{item.handle} from Knowledge?</strong>
+          <p>
+            It will disappear from the Knowledge surface and future #reference suggestions. Existing
+            thread text remains unchanged.
+          </p>
+          {hasAssignmentHistory && item.kind === "repository" && (
+            <p>
+              The managed clone and historical worktrees will be retained so completed Worker runs
+              remain inspectable.
+            </p>
+          )}
+        </div>
+      </div>
+      {deleteError && <p className="form-error">{deleteError}</p>}
+      <div className="modal-actions">
+        <button type="button" disabled={deleting} onClick={onClose}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="danger-button"
+          disabled={deleting}
+          onClick={async () => {
+            setDeleting(true);
+            setDeleteError(undefined);
+            try {
+              await api(`/api/knowledge/${encodeURIComponent(item.id)}`, { method: "DELETE" });
+              await onDeleted();
+            } catch (caught) {
+              setDeleteError(messageFrom(caught));
+              setDeleting(false);
+            }
+          }}
+        >
+          {deleting ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />}
+          {deleting ? "Deleting…" : "Delete knowledge"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 function KnowledgeDialog({
   data,
   onClose,
@@ -3312,11 +3681,13 @@ function KnowledgeDialog({
 
 function TaskDialog({
   data,
+  task,
   initialStatus,
   onClose,
   onCreated,
 }: {
   data: BootstrapData;
+  task?: Task;
   initialStatus: Task["status"];
   onClose: () => void;
   onCreated: () => Promise<void>;
@@ -3324,7 +3695,11 @@ function TaskDialog({
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string>();
   return (
-    <Modal title="Create task" eyebrow="TASKBOARD" onClose={onClose}>
+    <Modal
+      title={task ? `Edit ${task.title}` : "Create task"}
+      eyebrow="TASKBOARD"
+      onClose={onClose}
+    >
       <form
         onSubmit={async (event) => {
           event.preventDefault();
@@ -3332,10 +3707,10 @@ function TaskDialog({
           setFormError(undefined);
           const fields = new FormData(event.currentTarget);
           try {
-            await api("/api/tasks", {
-              method: "POST",
+            await api(task ? `/api/tasks/${encodeURIComponent(task.id)}` : "/api/tasks", {
+              method: task ? "PATCH" : "POST",
               body: JSON.stringify({
-                workspaceId: data.workspace.id,
+                ...(task ? {} : { workspaceId: data.workspace.id }),
                 title: String(fields.get("title") ?? ""),
                 description: String(fields.get("description") ?? ""),
                 status: String(fields.get("status") ?? initialStatus),
@@ -3352,21 +3727,35 @@ function TaskDialog({
         }}
       >
         <Field label="Title">
-          <input name="title" placeholder="Work item to complete" required maxLength={160} />
+          <input
+            name="title"
+            aria-label="Title"
+            defaultValue={task?.title}
+            placeholder="Work item to complete"
+            required
+            maxLength={160}
+          />
         </Field>
         <Field label="Description" optional>
-          <textarea name="description" rows={3} placeholder="Desired outcome…" />
+          <textarea
+            name="description"
+            aria-label="Description"
+            rows={3}
+            defaultValue={task?.description}
+            placeholder="Desired outcome…"
+            maxLength={2000}
+          />
         </Field>
         <div className="form-grid">
           <Field label="Column">
-            <select name="status" defaultValue={initialStatus}>
+            <select name="status" aria-label="Column" defaultValue={task?.status ?? initialStatus}>
               <option value="todo">To do</option>
               <option value="in_progress">In progress</option>
               <option value="done">Done</option>
             </select>
           </Field>
           <Field label="Assignee" optional>
-            <select name="assigneeId" defaultValue="">
+            <select name="assigneeId" aria-label="Assignee" defaultValue={task?.assigneeId ?? ""}>
               <option value="">Unassigned</option>
               {data.agents
                 .filter((agent) => !agent.archived)
@@ -3379,7 +3768,7 @@ function TaskDialog({
           </Field>
         </div>
         <Field label="Linked thread" optional>
-          <select name="threadId" defaultValue="">
+          <select name="threadId" aria-label="Linked thread" defaultValue={task?.threadId ?? ""}>
             <option value="">No linked thread</option>
             {data.threads.map((thread) => (
               <option key={thread.id} value={thread.id}>
@@ -3394,8 +3783,66 @@ function TaskDialog({
             {formError}
           </p>
         )}
-        <ModalActions onClose={onClose} saving={saving} submitLabel="Create task" />
+        <ModalActions
+          onClose={onClose}
+          saving={saving}
+          submitLabel={task ? "Save changes" : "Create task"}
+        />
       </form>
+    </Modal>
+  );
+}
+
+function DeleteTaskDialog({
+  task,
+  onClose,
+  onDeleted,
+}: {
+  task: Task;
+  onClose: () => void;
+  onDeleted: () => Promise<void>;
+}) {
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string>();
+  return (
+    <Modal title={`Delete ${task.title}?`} eyebrow="PERMANENT DELETE" onClose={onClose}>
+      <div className="delete-confirmation">
+        <span>
+          <Trash2 size={22} />
+        </span>
+        <div>
+          <strong>Remove this task from the Taskboard?</strong>
+          <p>
+            This cannot be undone. Completed Worker run history remains in its linked thread, and
+            retained worktrees are not deleted automatically.
+          </p>
+        </div>
+      </div>
+      {deleteError && <p className="form-error">{deleteError}</p>}
+      <div className="modal-actions">
+        <button type="button" disabled={deleting} onClick={onClose}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="danger-button"
+          disabled={deleting}
+          onClick={async () => {
+            setDeleting(true);
+            setDeleteError(undefined);
+            try {
+              await api(`/api/tasks/${encodeURIComponent(task.id)}`, { method: "DELETE" });
+              await onDeleted();
+            } catch (caught) {
+              setDeleteError(messageFrom(caught));
+              setDeleting(false);
+            }
+          }}
+        >
+          {deleting ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />}
+          {deleting ? "Deleting…" : "Delete task"}
+        </button>
+      </div>
     </Modal>
   );
 }
@@ -3674,6 +4121,13 @@ function formatTime(value: string): string {
   return new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(
     new Date(value),
   );
+}
+
+function formatDateTime(value: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
 }
 
 function messageFrom(error: unknown): string {

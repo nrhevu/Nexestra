@@ -7,6 +7,7 @@ import {
   readFile,
   realpath,
   rename,
+  rm,
   stat,
   unlink,
   writeFile,
@@ -41,6 +42,7 @@ import {
   ToolCallSchema,
   type UpdateAgentInput,
   UpdateAgentSchema,
+  UpdateKnowledgeSchema,
   UpdateTaskSchema,
   type WorkAssignment,
   WorkAssignmentSchema,
@@ -456,6 +458,84 @@ export class FileStore {
     });
   }
 
+  async updateKnowledge(id: string, rawInput: unknown): Promise<KnowledgeItem> {
+    const input = UpdateKnowledgeSchema.parse(rawInput);
+    return this.withWrite(async () => {
+      const nextState = structuredClone(this.state);
+      const index = nextState.knowledge.findIndex((item) => item.id === id);
+      const current = nextState.knowledge[index];
+      if (!current) throw new StoreError("not_found", "Knowledge item not found.");
+      if (
+        input.handle &&
+        input.handle !== current.handle &&
+        nextState.knowledge.some(
+          (item) => item.workspaceId === current.workspaceId && item.handle === input.handle,
+        )
+      ) {
+        throw new StoreError("conflict", `#${input.handle} is already used in this workspace.`);
+      }
+      const updated = KnowledgeItemSchema.parse({
+        ...current,
+        ...input,
+        updatedAt: new Date().toISOString(),
+      });
+      nextState.knowledge[index] = updated;
+      await this.writeState(nextState);
+      this.state = nextState;
+      return structuredClone(updated);
+    });
+  }
+
+  async deleteKnowledge(id: string): Promise<void> {
+    return this.withWrite(async () => {
+      const nextState = structuredClone(this.state);
+      const index = nextState.knowledge.findIndex((item) => item.id === id);
+      const item = nextState.knowledge[index];
+      if (!item) throw new StoreError("not_found", "Knowledge item not found.");
+      if (item.kind === "repository" && item.status === "cloning") {
+        throw new StoreError(
+          "conflict",
+          "Wait for the repository clone to finish before deleting it.",
+        );
+      }
+      const assignments = nextState.assignments.filter(
+        (assignment) => assignment.repositoryId === item.id,
+      );
+      if (
+        assignments.some(
+          (assignment) => assignment.status === "queued" || assignment.status === "running",
+        )
+      ) {
+        throw new StoreError(
+          "conflict",
+          "Wait for active Worker assignments to finish before deleting this repository.",
+        );
+      }
+      const itemRoot = dirname(this.knowledgePath(item));
+      const tombstone = `${itemRoot}.deleting-${crypto.randomUUID()}`;
+      let storageDetached = false;
+      if (assignments.length === 0) {
+        try {
+          await rename(itemRoot, tombstone);
+          storageDetached = true;
+        } catch (error) {
+          if (!isNodeError(error, "ENOENT")) throw error;
+        }
+      }
+      nextState.knowledge.splice(index, 1);
+      try {
+        await this.writeState(nextState);
+      } catch (error) {
+        if (storageDetached) await rename(tombstone, itemRoot).catch(() => undefined);
+        throw error;
+      }
+      this.state = nextState;
+      if (storageDetached) {
+        await rm(tombstone, { recursive: true, force: true }).catch(() => undefined);
+      }
+    });
+  }
+
   knowledgePath(item: KnowledgeItem): string {
     return this.managedPath(item.storagePath);
   }
@@ -761,6 +841,29 @@ export class FileStore {
       this.state.tasks[index] = updated;
       await this.writeState();
       return structuredClone(updated);
+    });
+  }
+
+  async deleteTask(id: string): Promise<void> {
+    return this.withWrite(async () => {
+      const nextState = structuredClone(this.state);
+      const index = nextState.tasks.findIndex((task) => task.id === id);
+      if (index === -1) throw new StoreError("not_found", "Task not found.");
+      if (
+        nextState.assignments.some(
+          (assignment) =>
+            assignment.taskId === id &&
+            (assignment.status === "queued" || assignment.status === "running"),
+        )
+      ) {
+        throw new StoreError(
+          "conflict",
+          "Wait for the active Worker assignment to finish before deleting this task.",
+        );
+      }
+      nextState.tasks.splice(index, 1);
+      await this.writeState(nextState);
+      this.state = nextState;
     });
   }
 

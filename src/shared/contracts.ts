@@ -75,6 +75,12 @@ export const CreateKnowledgeRepositorySchema = z.object({
   source: z.string().trim().min(1).max(2_048),
 });
 
+export const UpdateKnowledgeSchema = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
+  handle: KnowledgeHandleSchema.optional(),
+  description: z.string().trim().max(1_000).optional(),
+});
+
 const AgentBaseSchema = z.object({
   id: z.string(),
   workspaceId: z.string(),
@@ -422,6 +428,8 @@ export const CreateTaskSchema = z.object({
 });
 
 export const UpdateTaskSchema = z.object({
+  title: z.string().trim().min(1).max(160).optional(),
+  description: z.string().trim().max(2_000).optional(),
   status: z.enum(["todo", "in_progress", "done"]).optional(),
   assigneeId: z.string().nullable().optional(),
   threadId: z.string().nullable().optional(),

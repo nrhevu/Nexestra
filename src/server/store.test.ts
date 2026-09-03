@@ -147,6 +147,44 @@ describe("FileStore", () => {
     expect(await readFile(store.knowledgePath(item), "utf8")).toContain("Architecture");
   });
 
+  it("updates knowledge metadata and permanently removes an unused document", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected seeded workspace");
+    const item = await store.createKnowledgeDocument(
+      {
+        name: "Architecture guide",
+        handle: "architecture",
+        description: "Repository conventions",
+      },
+      {
+        name: "architecture.md",
+        mediaType: "text/markdown",
+        bytes: new TextEncoder().encode("# Architecture\n"),
+      },
+    );
+    const file = store.knowledgePath(item);
+
+    await expect(
+      store.updateKnowledge(item.id, {
+        name: "System architecture",
+        handle: "system-architecture",
+        description: "Current system boundaries",
+      }),
+    ).resolves.toMatchObject({
+      name: "System architecture",
+      handle: "system-architecture",
+      description: "Current system boundaries",
+    });
+    expect(store.findKnowledgeByHandle("architecture", workspace.id)).toBeUndefined();
+    expect(store.findKnowledgeByHandle("system-architecture", workspace.id)?.id).toBe(item.id);
+
+    await store.deleteKnowledge(item.id);
+
+    expect(store.getKnowledge(item.id)).toBeUndefined();
+    await expect(readFile(file)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("stores uploads and indexes web and workspace-file references in the thread transcript", async () => {
     const store = await openStore();
     const [thread] = store.listThreads();
@@ -558,6 +596,72 @@ describe("FileStore", () => {
       threadId: null,
     });
     expect(task.status).toBe("in_progress");
+  });
+
+  it("updates and deletes a task while protecting active Worker assignments", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    const [thread] = store.listThreads();
+    if (!workspace || !thread) throw new Error("expected seeded workspace");
+    const worker = await store.createAgent({
+      kind: "worker",
+      name: "Builder",
+      handle: "builder",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    const repository = await store.createKnowledgeRepository({
+      name: "Product repository",
+      handle: "product-repo",
+      source: "https://github.com/example/product.git",
+    });
+    await store.updateKnowledgeRepository(repository.id, {
+      status: "ready",
+      defaultBranch: "main",
+    });
+    const task = await store.createTask({
+      title: "Initial task",
+      description: "Initial description",
+      assigneeId: worker.id,
+      threadId: thread.id,
+    });
+    const now = new Date().toISOString();
+    const assignment = await store.createAssignment({
+      id: "assignment-active",
+      workspaceId: workspace.id,
+      taskId: task.id,
+      threadId: thread.id,
+      masterRunId: "master-run",
+      workerAgentId: worker.id,
+      repositoryId: repository.id,
+      status: "running",
+      branch: "nexestra/assignment-active",
+      worktreePath: "workspaces/workspace/worktrees/assignment-active",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await expect(
+      store.updateTask(task.id, {
+        title: "Updated task",
+        description: "Updated description",
+        status: "in_progress",
+      }),
+    ).resolves.toMatchObject({
+      title: "Updated task",
+      description: "Updated description",
+      status: "in_progress",
+    });
+    await expect(store.deleteTask(task.id)).rejects.toMatchObject({ code: "conflict" });
+    await expect(store.deleteKnowledge(repository.id)).rejects.toMatchObject({ code: "conflict" });
+
+    await store.updateAssignment(assignment.id, { status: "completed" });
+    await store.deleteTask(task.id);
+    await store.deleteKnowledge(repository.id);
+
+    expect(store.getTask(task.id)).toBeUndefined();
+    expect(store.getKnowledge(repository.id)).toBeUndefined();
   });
 
   it("replays message order after restart and marks an unfinished run interrupted", async () => {
