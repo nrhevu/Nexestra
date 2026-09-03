@@ -42,7 +42,7 @@ describe("FileStore", () => {
       workspaceId: workspace?.id,
     });
     const persisted = JSON.parse(await readFile(store.stateFile, "utf8"));
-    expect(persisted).toMatchObject({ version: 4 });
+    expect(persisted).toMatchObject({ version: 5 });
   });
 
   it("creates isolated workspaces with their own general thread and agent handles", async () => {
@@ -153,7 +153,7 @@ describe("FileStore", () => {
     expect(reopened.getAgent(created.id)).not.toHaveProperty("reasoningEffort");
   });
 
-  it("migrates version 2 Master agents to safe default tool permissions", async () => {
+  it("migrates version 2 Master agents to ask mode", async () => {
     const store = await openStore();
     const agent = await store.createAgent({
       kind: "master",
@@ -171,18 +171,16 @@ describe("FileStore", () => {
     });
     const state = JSON.parse(await readFile(store.stateFile, "utf8"));
     state.version = 2;
-    delete state.agents[0].permissions;
+    delete state.agents[0].accessMode;
     await writeFile(store.stateFile, `${JSON.stringify(state)}\n`);
 
     const reopened = await FileStore.open({ root: store.root, workspacePath: store.workspacePath });
 
-    expect(reopened.getAgent(agent.id)).toMatchObject({
-      permissions: { read: "allow", edit: "ask", bash: "ask" },
-    });
-    await expect(readFile(store.stateFile, "utf8")).resolves.toContain('"version": 4');
+    expect(reopened.getAgent(agent.id)).toMatchObject({ accessMode: "ask" });
+    await expect(readFile(store.stateFile, "utf8")).resolves.toContain('"version": 5');
   });
 
-  it("migrates version 3 Master permissions to the expanded tool policy", async () => {
+  it("migrates version 3 Master permissions to ask mode", async () => {
     const store = await openStore();
     const agent = await store.createAgent({
       kind: "master",
@@ -200,24 +198,61 @@ describe("FileStore", () => {
     });
     const state = JSON.parse(await readFile(store.stateFile, "utf8"));
     state.version = 3;
+    delete state.agents[0].accessMode;
     state.agents[0].permissions = { read: "allow", edit: "ask", bash: "deny" };
     await writeFile(store.stateFile, `${JSON.stringify(state)}\n`);
 
     const reopened = await FileStore.open({ root: store.root, workspacePath: store.workspacePath });
 
-    expect(reopened.getAgent(agent.id)).toMatchObject({
-      permissions: {
-        read: "allow",
-        edit: "ask",
-        bash: "deny",
-        skill: "allow",
-        todowrite: "allow",
-        webfetch: "ask",
-        websearch: "ask",
-        question: "allow",
-        external: "ask",
-      },
+    expect(reopened.getAgent(agent.id)).toMatchObject({ accessMode: "ask" });
+  });
+
+  it("migrates version 4 permission profiles to auto or full and removes the old matrix", async () => {
+    const store = await openStore();
+    const autoAgent = await store.createAgent({
+      kind: "master",
+      name: "Builder",
+      handle: "builder",
+      description: "",
+      instructions: "",
+      provider: { type: "chatgpt", model: "" },
     });
+    const fullAgent = await store.createAgent({
+      kind: "master",
+      name: "Trusted",
+      handle: "trusted",
+      description: "",
+      instructions: "",
+      provider: { type: "chatgpt", model: "" },
+    });
+    const state = JSON.parse(await readFile(store.stateFile, "utf8"));
+    state.version = 4;
+    delete state.agents[0].accessMode;
+    state.agents[0].permissions = {
+      read: "allow",
+      edit: "allow",
+      bash: "allow",
+      skill: "allow",
+      todowrite: "allow",
+      webfetch: "ask",
+      websearch: "ask",
+      question: "allow",
+      external: "ask",
+    };
+    delete state.agents[1].accessMode;
+    state.agents[1].permissions = Object.fromEntries(
+      Object.keys(state.agents[0].permissions).map((key) => [key, "allow"]),
+    );
+    await writeFile(store.stateFile, `${JSON.stringify(state)}\n`);
+
+    const reopened = await FileStore.open({ root: store.root, workspacePath: store.workspacePath });
+    const migratedAuto = reopened.getAgent(autoAgent.id);
+    const migratedFull = reopened.getAgent(fullAgent.id);
+
+    expect(migratedAuto).toMatchObject({ accessMode: "auto" });
+    expect(migratedFull).toMatchObject({ accessMode: "full" });
+    expect(migratedAuto).not.toHaveProperty("permissions");
+    expect(migratedFull).not.toHaveProperty("permissions");
   });
 
   it("never writes a custom provider key to public state or transcripts", async () => {

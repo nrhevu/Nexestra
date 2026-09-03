@@ -2,10 +2,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  DEFAULT_MASTER_TOOL_PERMISSIONS,
-  type MasterToolPermissions,
-} from "../shared/contracts.js";
+import type { MasterAccessMode } from "../shared/contracts.js";
 import {
   LocalAgentRunner,
   parseCodexReply,
@@ -176,47 +173,55 @@ describe("Worker harness arguments", () => {
 });
 
 describe("ChatGPT Master harness arguments", () => {
-  it("enables the Codex workspace-write sandbox only for explicitly allowed build access", async () => {
-    processMocks.findExecutable.mockReset();
-    processMocks.runCommand.mockReset();
-    const root = await mkdtemp(join(tmpdir(), "nexestra-master-codex-"));
-    const store = await FileStore.open({ root: join(root, ".nexestra"), workspacePath: root });
-    const agent = await store.createAgent({
-      kind: "master",
-      name: "Builder",
-      handle: "builder",
-      description: "",
-      instructions: "",
-      permissions: { read: "allow", edit: "allow", bash: "allow" },
-      provider: { type: "chatgpt", model: "" },
-    });
-    const [thread] = store.listThreads();
-    if (!thread) throw new Error("expected seeded thread");
-    const trigger = await store.createUserMessage(thread.id, "@builder update the code", [
-      { agentId: agent.id, handle: agent.handle },
-    ]);
-    processMocks.findExecutable.mockResolvedValue("/fake/codex");
-    processMocks.runCommand.mockResolvedValue({
-      stdout: JSON.stringify({
-        type: "item.completed",
-        item: { type: "agent_message", text: "Done." },
-      }),
-      stderr: "",
-      exitCode: 0,
-    });
+  it.each([
+    ["ask", "read-only", false, false],
+    ["auto", "workspace-write", true, false],
+    ["full", undefined, false, true],
+  ] as const)(
+    "maps %s access to the expected Codex sandbox and approval flags",
+    async (accessMode, sandbox, autoApprove, bypass) => {
+      processMocks.findExecutable.mockReset();
+      processMocks.runCommand.mockReset();
+      const root = await mkdtemp(join(tmpdir(), "nexestra-master-codex-"));
+      const store = await FileStore.open({ root: join(root, ".nexestra"), workspacePath: root });
+      const agent = await store.createAgent({
+        kind: "master",
+        name: "Builder",
+        handle: "builder",
+        description: "",
+        instructions: "",
+        accessMode,
+        provider: { type: "chatgpt", model: "" },
+      });
+      const [thread] = store.listThreads();
+      if (!thread) throw new Error("expected seeded thread");
+      const trigger = await store.createUserMessage(thread.id, "@builder update the code", [
+        { agentId: agent.id, handle: agent.handle },
+      ]);
+      processMocks.findExecutable.mockResolvedValue("/fake/codex");
+      processMocks.runCommand.mockResolvedValue({
+        stdout: JSON.stringify({
+          type: "item.completed",
+          item: { type: "agent_message", text: "Done." },
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
 
-    await new LocalAgentRunner({ store }).invoke(agent, {
-      thread,
-      trigger,
-      transcriptPath: store.transcriptPath(thread.id),
-      transcriptSnapshot: await store.transcriptSnapshot(thread.id),
-    });
+      await new LocalAgentRunner({ store }).invoke(agent, {
+        thread,
+        trigger,
+        transcriptPath: store.transcriptPath(thread.id),
+        transcriptSnapshot: await store.transcriptSnapshot(thread.id),
+      });
 
-    const args = processMocks.runCommand.mock.calls[0]?.[1] ?? [];
-    expect(args).toContain("workspace-write");
-    expect(args).toContain("--approve-for-me");
-    expect(args.at(-1)).toContain("Complete the requested work before replying");
-  });
+      const args = processMocks.runCommand.mock.calls[0]?.[1] ?? [];
+      if (sandbox) expect(args).toContain(sandbox);
+      else expect(args).not.toContain("-s");
+      expect(args.includes("--approve-for-me")).toBe(autoApprove);
+      expect(args.includes("--dangerously-bypass-approvals-and-sandbox")).toBe(bypass);
+    },
+  );
 });
 
 describe("parseProviderReply", () => {
@@ -355,11 +360,10 @@ describe("parseProviderReply", () => {
   });
 
   it("executes Responses function calls and feeds function_call_output into the next turn", async () => {
-    const { agent, invocation, root, store } = await customMasterFixture("openai-responses", {
-      read: "allow",
-      edit: "allow",
-      bash: "deny",
-    });
+    const { agent, invocation, root, store } = await customMasterFixture(
+      "openai-responses",
+      "full",
+    );
     const responses = [
       {
         output: [
@@ -427,7 +431,7 @@ describe("parseProviderReply", () => {
 
 async function customMasterFixture(
   protocol: "openai-chat" | "openai-responses",
-  permissions: Partial<MasterToolPermissions> = DEFAULT_MASTER_TOOL_PERMISSIONS,
+  accessMode: MasterAccessMode = "full",
 ) {
   const root = await mkdtemp(join(tmpdir(), "nexestra-provider-tools-"));
   const store = await FileStore.open({ root: join(root, ".nexestra"), workspacePath: root });
@@ -437,7 +441,7 @@ async function customMasterFixture(
     handle: "maya",
     description: "",
     instructions: "",
-    permissions: { ...DEFAULT_MASTER_TOOL_PERMISSIONS, ...permissions },
+    accessMode,
     provider: {
       type: "custom",
       name: "Gateway",

@@ -112,22 +112,15 @@ export class LocalAgentRunner implements AgentRunner {
     await mkdir(runDirectory, { recursive: true, mode: 0o700 });
     const lastMessageFile = join(runDirectory, "last-message.txt");
     const prompt = localHarnessPrompt(agent, invocation);
-    const workspaceWrite =
-      agent.kind === "master" &&
-      (agent.permissions.edit === "allow" || agent.permissions.bash === "allow");
-    const args = [
-      "exec",
-      "--json",
-      "-C",
-      this.options.store.workspacePath,
-      "-s",
-      workspaceWrite ? "workspace-write" : "read-only",
-      "--skip-git-repo-check",
-      "--ephemeral",
-      "-o",
-      lastMessageFile,
-    ];
-    if (workspaceWrite) args.push("--approve-for-me");
+    const masterAccessMode = agent.kind === "master" ? agent.accessMode : undefined;
+    const args = ["exec", "--json", "-C", this.options.store.workspacePath];
+    if (masterAccessMode === "full") {
+      args.push("--dangerously-bypass-approvals-and-sandbox");
+    } else {
+      args.push("-s", masterAccessMode === "auto" ? "workspace-write" : "read-only");
+    }
+    args.push("--skip-git-repo-check", "--ephemeral", "-o", lastMessageFile);
+    if (masterAccessMode === "auto") args.push("--approve-for-me");
     if (agent.kind === "worker") {
       if (agent.model) args.push("-m", agent.model);
       if (agent.reasoningEffort) {
@@ -407,10 +400,13 @@ function localHarnessPrompt(agent: Agent, invocation: AgentInvocation): string {
 }
 
 function masterCodexAccessPrompt(agent: MasterAgent): string {
-  const writable = agent.permissions.edit === "allow" || agent.permissions.bash === "allow";
-  return writable
-    ? "You may inspect the repository, edit files, and run commands inside the Codex workspace-write sandbox. Complete the requested work before replying."
-    : "Inspect the repository as needed, but do not modify files or run commands that change state.";
+  if (agent.accessMode === "full") {
+    return "Full access is enabled. Complete the requested work directly, while protecting credentials and avoiding unrelated or destructive changes.";
+  }
+  if (agent.accessMode === "auto") {
+    return "You may inspect the repository, edit files, and run commands inside the Codex workspace-write sandbox. Complete the requested work before replying.";
+  }
+  return "Inspect the repository as needed, but do not modify files or run commands that change state.";
 }
 
 function providerUserPrompt(invocation: AgentInvocation): string {

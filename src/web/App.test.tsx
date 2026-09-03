@@ -4,12 +4,7 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  type AgentView,
-  type BootstrapData,
-  DEFAULT_MASTER_TOOL_PERMISSIONS,
-  type ThreadData,
-} from "../shared/contracts.js";
+import type { AgentView, BootstrapData, ThreadData } from "../shared/contracts.js";
 import { App } from "./App.js";
 
 const now = "2026-09-02T12:00:00.000Z";
@@ -271,7 +266,7 @@ describe("Worker creation", () => {
 });
 
 describe("Master harness", () => {
-  it("creates a custom Master with explicit tool permissions", async () => {
+  it("creates a custom Master with one access mode", async () => {
     window.history.replaceState({}, "", "/surfaces/agents");
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
@@ -295,7 +290,7 @@ describe("Master harness", () => {
       "https://gateway.example/v1",
     );
     await user.type(within(dialog).getByPlaceholderText("model-name"), "model-a");
-    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Run shell" }), "deny");
+    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Access mode" }), "auto");
     await user.click(within(dialog).getByRole("button", { name: "Create agent" }));
 
     await waitFor(() => {
@@ -312,7 +307,7 @@ describe("Master harness", () => {
       kind: "master",
       name: "Maya",
       handle: "maya",
-      permissions: { read: "allow", edit: "ask", bash: "deny" },
+      accessMode: "auto",
       provider: {
         type: "custom",
         name: "Gateway",
@@ -344,7 +339,7 @@ describe("Master harness", () => {
       instructions: "",
       enabled: true,
       archived: false,
-      permissions: DEFAULT_MASTER_TOOL_PERMISSIONS,
+      accessMode: "ask",
       provider: {
         type: "custom",
         name: "Gateway",

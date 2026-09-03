@@ -38,30 +38,8 @@ const WorkerReasoningEffortSchema = z.string().trim().min(1).max(40);
 export const ToolPermissionSchema = z.enum(["allow", "ask", "deny"]);
 export type ToolPermission = z.infer<typeof ToolPermissionSchema>;
 
-export const MasterToolPermissionsSchema = z.object({
-  read: ToolPermissionSchema.default("allow"),
-  edit: ToolPermissionSchema.default("ask"),
-  bash: ToolPermissionSchema.default("ask"),
-  skill: ToolPermissionSchema.default("allow"),
-  todowrite: ToolPermissionSchema.default("allow"),
-  webfetch: ToolPermissionSchema.default("ask"),
-  websearch: ToolPermissionSchema.default("ask"),
-  question: ToolPermissionSchema.default("allow"),
-  external: ToolPermissionSchema.default("ask"),
-});
-export type MasterToolPermissions = z.infer<typeof MasterToolPermissionsSchema>;
-
-export const DEFAULT_MASTER_TOOL_PERMISSIONS: MasterToolPermissions = {
-  read: "allow",
-  edit: "ask",
-  bash: "ask",
-  skill: "allow",
-  todowrite: "allow",
-  webfetch: "ask",
-  websearch: "ask",
-  question: "allow",
-  external: "ask",
-};
+export const MasterAccessModeSchema = z.enum(["ask", "auto", "full"]);
+export type MasterAccessMode = z.infer<typeof MasterAccessModeSchema>;
 
 export const WorkerAgentSchema = AgentBaseSchema.extend({
   kind: z.literal("worker"),
@@ -72,7 +50,7 @@ export const WorkerAgentSchema = AgentBaseSchema.extend({
 
 export const MasterAgentSchema = AgentBaseSchema.extend({
   kind: z.literal("master"),
-  permissions: MasterToolPermissionsSchema,
+  accessMode: MasterAccessModeSchema,
   provider: z.discriminatedUnion("type", [
     z.object({
       type: z.literal("chatgpt"),
@@ -111,7 +89,7 @@ export const CreateAgentSchema = z.discriminatedUnion("kind", [
   }),
   AgentInputBaseSchema.extend({
     kind: z.literal("master"),
-    permissions: MasterToolPermissionsSchema.default(DEFAULT_MASTER_TOOL_PERMISSIONS),
+    accessMode: MasterAccessModeSchema.default("ask"),
     provider: z.discriminatedUnion("type", [
       z.object({
         type: z.literal("chatgpt"),

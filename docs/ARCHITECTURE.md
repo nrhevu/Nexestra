@@ -18,7 +18,7 @@ Hono API ── FileStore ── state.json / credentials.json
    │                    └─ threads/<id>.jsonl
    ▼
 ChatService ── AgentDispatcher ── LocalAgentRunner
-                                  ├─ codex exec --json (read-only)
+                                  ├─ codex exec --json (read-only / workspace-write / full)
                                   ├─ opencode run --format json (plan)
                                   └─ MasterHarness ── OpenAI-compatible HTTP
                                                    ├─ built-in tools + user questions
@@ -48,10 +48,10 @@ task carries a workspace ID. Handles and thread slugs are unique only within the
 task references cannot cross workspace boundaries. Creating a workspace seeds a `general` thread.
 Version 1 state is migrated in place to version 2 by assigning every existing record to a default
 `Nexestra` workspace; record IDs and transcript paths do not change. Version 2 state migrates to
-version 3 by adding the first Master tool permissions; version 3 migrates to version 4 by adding
-skill, todo, web, question, and extension permissions. State writes use a temporary
-file followed by an atomic rename. The separate `credentials.json` file has mode `0600` and stores
-only custom API keys by agent ID.
+version 3 by adding the first Master tool permissions; version 3 migrates to version 4 by adding the
+complete tool matrix. Version 4 migrates to version 5 by replacing that matrix with one `ask`,
+`auto`, or `full` access mode. State writes use a temporary file followed by an atomic rename. The
+separate `credentials.json` file has mode `0600` and stores only custom API keys by agent ID.
 
 Permanent agent deletion removes the profile and its custom credential, clears matching task
 assignments, and releases the handle for reuse. Credential removal is persisted before public state
@@ -88,16 +88,18 @@ overrides. Worker chat turns always require read-only discussion mode. Codex map
 `--variant`. Missing overrides preserve the harness defaults. Master profiles select one of the
 following:
 
-- ChatGPT: uses the Codex CLI session in read-only or workspace-write mode; device-login output
-  remains in memory, and tokens never enter the app.
+- ChatGPT: maps Ask to Codex read-only, Auto to workspace-write with automatic approval review,
+  and Full access to Codex's explicit sandbox-and-approval bypass; device-login output remains in
+  memory, and tokens never enter the app.
 - Custom: uses OpenAI Chat Completions or Responses with an API root, model, optional API key, and
   the provider-neutral Master tool loop.
 
 The Master tool registry provides repository list, glob, grep, read, exact edit, file write,
 multi-file patch, bounded shell, skill loading, per-run todos, bounded public web fetch/search, and
-interactive questions. LSP is deliberately excluded. Each profile independently sets file, shell,
-skill, todo, web, question, and extension access to `allow`, `ask`, or `deny`. An asked tool is
-written to the thread and pauses its run until the user decides; a question pauses in a distinct
+interactive questions. LSP is deliberately excluded. Each profile selects one access mode. Ask
+allows contextual tools directly and pauses edits, shell, web, and extensions. Auto allows all
+built-ins and pauses custom or MCP tools. Full access removes tool approval prompts. An asked tool
+is written to the thread and pauses its run until the user decides; a question pauses in a distinct
 input state until the local user responds. File tools reject absolute paths, traversal, escaping
 symlinks, credential paths, oversized files, and oversized results. Tool loops stop after twelve
 rounds or three identical calls.
@@ -106,7 +108,7 @@ One tool session is created per custom-provider invocation. It reads optional
 `nexestra.config.json`, discovers skills and OpenCode-style custom modules, connects configured MCP
 servers, and closes all MCP clients after the provider finishes. Local MCP uses stdio; remote MCP
 uses Streamable HTTP. Custom and MCP tools receive normalized names and share the `external`
-permission boundary. Workspace permission patterns may narrow, but never widen, the profile policy.
+permission boundary. Workspace permission patterns may narrow, but never widen, the access mode.
 Search/list tools use ripgrep's `.gitignore` and `.ignore` behavior plus configured patterns, with
 hard exclusions for app data and credentials. Web fetch validates DNS and every redirect against
 private address ranges before reading a capped textual response.
@@ -127,8 +129,9 @@ query, or a fragment; remote endpoints require HTTPS, while HTTP is permitted on
 Provider responses have a byte limit enforced before parsing.
 Only redacted tool metadata and non-content summaries are persisted; full file and shell output is transient and
 known custom-provider credentials are redacted. Custom-provider shell commands still run with the
-current OS user's authority, so shell defaults to per-call approval and should only be allowed for
-trusted providers. ChatGPT build access instead relies on the Codex workspace-write sandbox.
+current OS user's authority, so Ask is the default and broader modes should only be selected for
+trusted providers. ChatGPT Auto access instead relies on the Codex workspace-write sandbox; its
+Full access mode is deliberately explicit because it bypasses that sandbox.
 
 ## Known gaps
 

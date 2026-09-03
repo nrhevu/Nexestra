@@ -28,7 +28,7 @@ import {
 } from "../shared/contracts.js";
 
 const StateSchema = z.object({
-  version: z.literal(4),
+  version: z.literal(5),
   workspaces: z.array(WorkspaceSchema).min(1),
   agents: z.array(AgentSchema),
   threads: z.array(ThreadSchema),
@@ -52,6 +52,14 @@ const VersionTwoStateSchema = z.object({
 
 const VersionThreeStateSchema = z.object({
   version: z.literal(3),
+  workspaces: z.array(WorkspaceSchema).min(1),
+  agents: z.array(z.record(z.string(), z.unknown())),
+  threads: z.array(ThreadSchema),
+  tasks: z.array(TaskSchema),
+});
+
+const VersionFourStateSchema = z.object({
+  version: z.literal(4),
   workspaces: z.array(WorkspaceSchema).min(1),
   agents: z.array(z.record(z.string(), z.unknown())),
   threads: z.array(ThreadSchema),
@@ -266,7 +274,7 @@ export class FileStore {
         agent = {
           ...base,
           kind: "master",
-          permissions: input.permissions,
+          accessMode: input.accessMode,
           provider: { type: "chatgpt", model: input.provider.model },
         };
       } else {
@@ -274,7 +282,7 @@ export class FileStore {
         agent = {
           ...base,
           kind: "master",
-          permissions: input.permissions,
+          accessMode: input.accessMode,
           provider: {
             type: "custom",
             name: input.provider.name,
@@ -693,7 +701,7 @@ function createInitialState(): PersistedState {
     updatedAt: now,
   });
   return {
-    version: 4,
+    version: 5,
     workspaces: [workspace],
     agents: [],
     threads: [createThreadRecord(workspace.id, "general", now, [])],
@@ -861,14 +869,25 @@ async function readState(file: string): Promise<{ state: PersistedState; needsWr
 
   try {
     const version = z.object({ version: z.number() }).parse(raw).version;
-    if (version === 4) return { state: StateSchema.parse(raw), needsWrite: false };
+    if (version === 5) return { state: StateSchema.parse(raw), needsWrite: false };
+    if (version === 4) {
+      const previous = VersionFourStateSchema.parse(raw);
+      return {
+        state: StateSchema.parse({
+          ...previous,
+          version: 5,
+          agents: previous.agents.map(migrateMasterAccessMode),
+        }),
+        needsWrite: true,
+      };
+    }
     if (version === 3) {
       const previous = VersionThreeStateSchema.parse(raw);
       return {
         state: StateSchema.parse({
           ...previous,
-          version: 4,
-          agents: previous.agents.map(addDefaultMasterPermissions),
+          version: 5,
+          agents: previous.agents.map(migrateMasterAccessMode),
         }),
         needsWrite: true,
       };
@@ -878,8 +897,8 @@ async function readState(file: string): Promise<{ state: PersistedState; needsWr
       return {
         state: StateSchema.parse({
           ...previous,
-          version: 4,
-          agents: previous.agents.map(addDefaultMasterPermissions),
+          version: 5,
+          agents: previous.agents.map(migrateMasterAccessMode),
         }),
         needsWrite: true,
       };
@@ -895,10 +914,10 @@ async function readState(file: string): Promise<{ state: PersistedState; needsWr
     });
     return {
       state: StateSchema.parse({
-        version: 4,
+        version: 5,
         workspaces: [workspace],
         agents: legacy.agents.map((agent) =>
-          addDefaultMasterPermissions({ ...agent, workspaceId: workspace.id }),
+          migrateMasterAccessMode({ ...agent, workspaceId: workspace.id }),
         ),
         threads: legacy.threads.map((thread) => ({ ...thread, workspaceId: workspace.id })),
         tasks: legacy.tasks.map((task) => ({ ...task, workspaceId: workspace.id })),
@@ -910,25 +929,31 @@ async function readState(file: string): Promise<{ state: PersistedState; needsWr
   }
 }
 
-function addDefaultMasterPermissions(agent: Record<string, unknown>): Record<string, unknown> {
+function migrateMasterAccessMode(agent: Record<string, unknown>): Record<string, unknown> {
   if (agent.kind !== "master") return agent;
-  const permissions =
-    typeof agent.permissions === "object" && agent.permissions !== null ? agent.permissions : {};
+  const { permissions: rawPermissions, ...rest } = agent;
+  const permissions = isRecord(rawPermissions) ? rawPermissions : {};
+  const currentKeys = [
+    "read",
+    "edit",
+    "bash",
+    "skill",
+    "todowrite",
+    "webfetch",
+    "websearch",
+    "question",
+    "external",
+  ];
+  const allCurrentToolsAllowed = currentKeys.every((key) => permissions[key] === "allow");
+  const codingToolsAllowed = permissions.edit === "allow" && permissions.bash === "allow";
   return {
-    ...agent,
-    permissions: {
-      read: "allow",
-      edit: "ask",
-      bash: "ask",
-      skill: "allow",
-      todowrite: "allow",
-      webfetch: "ask",
-      websearch: "ask",
-      question: "allow",
-      external: "ask",
-      ...permissions,
-    },
+    ...rest,
+    accessMode: allCurrentToolsAllowed ? "full" : codingToolsAllowed ? "auto" : "ask",
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 async function exists(path: string): Promise<boolean> {

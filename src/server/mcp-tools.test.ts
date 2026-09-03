@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { DEFAULT_MASTER_TOOL_PERMISSIONS, type MasterAgent } from "../shared/contracts.js";
+import type { MasterAgent } from "../shared/contracts.js";
 import { HarnessConfigSchema } from "./harness-config.js";
 import type { MasterToolContext } from "./harness-tool-types.js";
 
@@ -110,7 +110,7 @@ function toolContext(): MasterToolContext {
     instructions: "",
     enabled: true,
     archived: false,
-    permissions: DEFAULT_MASTER_TOOL_PERMISSIONS,
+    accessMode: "full",
     provider: {
       type: "custom",
       name: "Test",

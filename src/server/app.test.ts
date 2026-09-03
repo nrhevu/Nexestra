@@ -247,7 +247,7 @@ describe("HTTP app", () => {
       handle: "maya",
       description: "",
       instructions: "",
-      permissions: { read: "allow", edit: "ask", bash: "ask" },
+      accessMode: "ask",
       provider: {
         type: "custom",
         name: "Gateway",

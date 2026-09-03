@@ -2,11 +2,7 @@ import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-  DEFAULT_MASTER_TOOL_PERMISSIONS,
-  type MasterAgent,
-  type ToolCall,
-} from "../shared/contracts.js";
+import type { MasterAccessMode, MasterAgent, ToolCall } from "../shared/contracts.js";
 import {
   createMasterToolSession,
   executeMasterTool,
@@ -15,7 +11,7 @@ import {
 
 describe("Master harness tools", () => {
   it("lists, searches, reads, edits, writes, and runs bounded shell commands", async () => {
-    const context = await toolContext({ read: "allow", edit: "allow", bash: "allow" });
+    const context = await toolContext("full");
     await mkdir(join(context.workspacePath, "src"));
     await writeFile(join(context.workspacePath, "src", "alpha.ts"), "export const alpha = 1;\n");
 
@@ -52,12 +48,16 @@ describe("Master harness tools", () => {
   });
 
   it("confines file tools to the repository and protects credentials through symlinks", async () => {
-    const context = await toolContext({ read: "allow", edit: "allow", bash: "deny" });
+    const context = await toolContext("full");
     const outside = await mkdtemp(join(tmpdir(), "nexestra-outside-"));
     await writeFile(join(outside, "secret.txt"), "secret");
     await symlink(join(outside, "secret.txt"), join(context.workspacePath, "escape.txt"));
     await mkdir(context.dataPath, { recursive: true });
     await writeFile(join(context.dataPath, "credentials.json"), "secret-key");
+    await writeFile(
+      join(context.workspacePath, "nexestra.config.json"),
+      JSON.stringify({ permission: { bash: "deny" } }),
+    );
 
     await expect(call(context, "read", { path: "../secret.txt" })).resolves.toContain(
       "Path escapes",
@@ -84,7 +84,7 @@ describe("Master harness tools", () => {
   });
 
   it("pauses ask permissions and records only redacted tool metadata", async () => {
-    const context = await toolContext({ read: "allow", edit: "ask", bash: "deny" });
+    const context = await toolContext("ask");
     const updates: ToolCall[] = [];
     context.hooks = {
       update: async (toolCall) => {
@@ -106,8 +106,37 @@ describe("Master harness tools", () => {
     expect(updates.map((update) => update.input).join(" ")).not.toContain("secret-key");
   });
 
+  it("runs built-in tools automatically in auto mode but asks before custom tools", async () => {
+    const context = await toolContext("auto");
+    const directory = join(context.workspacePath, ".opencode", "tools");
+    await mkdir(directory, { recursive: true });
+    await writeFile(
+      join(directory, "greet.mjs"),
+      "export default { description: 'Greet.', execute() { return 'hello'; } };",
+    );
+    const statuses: ToolCall["status"][] = [];
+    context.hooks = {
+      update: async (toolCall) => {
+        statuses.push(toolCall.status);
+      },
+      requestApproval: async (toolCall) => {
+        statuses.push(toolCall.status);
+        return true;
+      },
+    };
+    const session = await createMasterToolSession(context);
+    try {
+      await callSession(session, "write", { path: "automatic.txt", content: "done\n" });
+      await callSession(session, "greet", {});
+    } finally {
+      await session.close();
+    }
+
+    expect(statuses).toEqual(["running", "completed", "waiting_approval", "running", "completed"]);
+  });
+
   it("applies add, update, move, and delete patch operations", async () => {
-    const context = await toolContext({ edit: "allow" });
+    const context = await toolContext("full");
     await writeFile(join(context.workspacePath, "move-me.txt"), "alpha\n");
     await writeFile(join(context.workspacePath, "remove-me.txt"), "obsolete\n");
 
@@ -134,7 +163,7 @@ describe("Master harness tools", () => {
   });
 
   it("loads skills and keeps a todo list inside one tool session", async () => {
-    const context = await toolContext({ skill: "allow", todowrite: "allow" });
+    const context = await toolContext("full");
     const skillDirectory = join(context.workspacePath, ".opencode", "skills", "review-code");
     await mkdir(skillDirectory, { recursive: true });
     await writeFile(
@@ -160,7 +189,7 @@ describe("Master harness tools", () => {
   });
 
   it("respects repository and Nexestra ignore patterns in discovery tools", async () => {
-    const context = await toolContext({ read: "allow" });
+    const context = await toolContext("full");
     await writeFile(join(context.workspacePath, ".gitignore"), "ignored.log\n");
     await writeFile(join(context.workspacePath, "ignored.log"), "hidden\n");
     await writeFile(join(context.workspacePath, "visible.ts"), "visible\n");
@@ -176,7 +205,7 @@ describe("Master harness tools", () => {
   });
 
   it("loads OpenCode-style custom tool modules with external permission", async () => {
-    const context = await toolContext({ external: "allow" });
+    const context = await toolContext("full");
     const directory = join(context.workspacePath, ".opencode", "tools");
     await mkdir(directory, { recursive: true });
     await writeFile(
@@ -201,7 +230,7 @@ describe("Master harness tools", () => {
   });
 
   it("does not follow custom-tool or skill roots outside the allowed directories", async () => {
-    const context = await toolContext({ external: "allow", skill: "allow" });
+    const context = await toolContext("full");
     const outside = await mkdtemp(join(tmpdir(), "nexestra-outside-"));
     const outsideTools = join(outside, "tools");
     const outsideSkills = join(outside, "skills");
@@ -233,7 +262,7 @@ describe("Master harness tools", () => {
 
   it("fetches and searches the web through bounded, permissioned tools", async () => {
     const requests: { url: string; init?: RequestInit }[] = [];
-    const context = await toolContext({ webfetch: "allow", websearch: "allow" });
+    const context = await toolContext("full");
     context.resolveHost = async () => ["93.184.216.34"];
     context.fetch = (async (input, init) => {
       const url = String(input);
@@ -285,7 +314,7 @@ describe("Master harness tools", () => {
   });
 
   it("pauses question tools until the user supplies an answer", async () => {
-    const context = await toolContext({ question: "allow" });
+    const context = await toolContext("ask");
     const statuses: ToolCall["status"][] = [];
     context.hooks = {
       update: async (toolCall) => {
@@ -313,9 +342,7 @@ describe("Master harness tools", () => {
   });
 });
 
-async function toolContext(
-  permissions: Partial<MasterAgent["permissions"]>,
-): Promise<MasterToolContext> {
+async function toolContext(accessMode: MasterAccessMode): Promise<MasterToolContext> {
   const workspacePath = await mkdtemp(join(tmpdir(), "nexestra-tools-"));
   const dataPath = join(workspacePath, ".nexestra");
   const now = new Date().toISOString();
@@ -329,7 +356,7 @@ async function toolContext(
     instructions: "",
     enabled: true,
     archived: false,
-    permissions: { ...DEFAULT_MASTER_TOOL_PERMISSIONS, ...permissions },
+    accessMode,
     provider: {
       type: "custom",
       name: "Test",

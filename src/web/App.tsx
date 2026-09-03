@@ -1840,42 +1840,6 @@ function AgentDialog({
     };
     const workerModel = String(fields.get("workerModel") ?? "").trim();
     const workerReasoningEffort = String(fields.get("reasoningEffort") ?? "").trim();
-    const permissions =
-      providerMode === "chatgpt"
-        ? fields.get("chatgptAccess") === "workspace-write"
-          ? {
-              read: "allow",
-              edit: "allow",
-              bash: "allow",
-              skill: "allow",
-              todowrite: "allow",
-              webfetch: "ask",
-              websearch: "ask",
-              question: "allow",
-              external: "ask",
-            }
-          : {
-              read: "allow",
-              edit: "deny",
-              bash: "deny",
-              skill: "allow",
-              todowrite: "allow",
-              webfetch: "ask",
-              websearch: "ask",
-              question: "allow",
-              external: "ask",
-            }
-        : {
-            read: String(fields.get("readPermission") ?? "allow"),
-            edit: String(fields.get("editPermission") ?? "ask"),
-            bash: String(fields.get("bashPermission") ?? "ask"),
-            skill: String(fields.get("skillPermission") ?? "allow"),
-            todowrite: String(fields.get("todowritePermission") ?? "allow"),
-            webfetch: String(fields.get("webfetchPermission") ?? "ask"),
-            websearch: String(fields.get("websearchPermission") ?? "ask"),
-            question: String(fields.get("questionPermission") ?? "allow"),
-            external: String(fields.get("externalPermission") ?? "ask"),
-          };
     const payload =
       kind === "worker"
         ? {
@@ -1886,7 +1850,7 @@ function AgentDialog({
           }
         : {
             ...common,
-            permissions,
+            accessMode: String(fields.get("accessMode") ?? "ask"),
             provider:
               providerMode === "chatgpt"
                 ? { type: "chatgpt", model: String(fields.get("model") ?? "") }
@@ -2129,22 +2093,11 @@ function AgentDialog({
                 <Field label="Model" optional hint="Leave blank to use the Codex default">
                   <input name="model" placeholder="Default" />
                 </Field>
-                <Field
-                  label="Repository access"
-                  hint="Workspace-write uses Codex sandboxing and automatic approval review."
-                >
-                  <select name="chatgptAccess" defaultValue="read-only">
-                    <option value="read-only">Read only</option>
-                    <option value="workspace-write">Build — files and shell</option>
-                  </select>
-                </Field>
               </div>
             ) : (
-              <>
-                <CustomProviderFields />
-                <MasterPermissionFields />
-              </>
+              <CustomProviderFields />
             )}
+            <MasterAccessModeField />
           </>
         )}
         <Field label="Custom instructions" optional>
@@ -2205,91 +2158,23 @@ function CustomProviderFields() {
   );
 }
 
-function MasterPermissionFields() {
+function MasterAccessModeField() {
   return (
     <>
       <Field
-        label="Tool permissions"
-        hint="Ask pauses the run until you approve or deny the tool in its thread."
+        label="Access mode"
+        hint="Choose one policy for the whole agent instead of configuring individual tools."
       >
-        <div className="form-grid permission-grid">
-          <label>
-            <span>Read files</span>
-            <select name="readPermission" defaultValue="allow">
-              <option value="allow">Allow</option>
-              <option value="ask">Ask</option>
-              <option value="deny">Deny</option>
-            </select>
-          </label>
-          <label>
-            <span>Edit files</span>
-            <select name="editPermission" defaultValue="ask">
-              <option value="ask">Ask</option>
-              <option value="allow">Allow</option>
-              <option value="deny">Deny</option>
-            </select>
-          </label>
-          <label>
-            <span>Run shell</span>
-            <select name="bashPermission" defaultValue="ask">
-              <option value="ask">Ask</option>
-              <option value="allow">Allow</option>
-              <option value="deny">Deny</option>
-            </select>
-          </label>
-          <label>
-            <span>Load skills</span>
-            <select name="skillPermission" defaultValue="allow">
-              <option value="allow">Allow</option>
-              <option value="ask">Ask</option>
-              <option value="deny">Deny</option>
-            </select>
-          </label>
-          <label>
-            <span>Manage todos</span>
-            <select name="todowritePermission" defaultValue="allow">
-              <option value="allow">Allow</option>
-              <option value="ask">Ask</option>
-              <option value="deny">Deny</option>
-            </select>
-          </label>
-          <label>
-            <span>Fetch URLs</span>
-            <select name="webfetchPermission" defaultValue="ask">
-              <option value="ask">Ask</option>
-              <option value="allow">Allow</option>
-              <option value="deny">Deny</option>
-            </select>
-          </label>
-          <label>
-            <span>Search the web</span>
-            <select name="websearchPermission" defaultValue="ask">
-              <option value="ask">Ask</option>
-              <option value="allow">Allow</option>
-              <option value="deny">Deny</option>
-            </select>
-          </label>
-          <label>
-            <span>Ask questions</span>
-            <select name="questionPermission" defaultValue="allow">
-              <option value="allow">Allow</option>
-              <option value="ask">Ask</option>
-              <option value="deny">Deny</option>
-            </select>
-          </label>
-          <label>
-            <span>Custom &amp; MCP</span>
-            <select name="externalPermission" defaultValue="ask">
-              <option value="ask">Ask</option>
-              <option value="allow">Allow</option>
-              <option value="deny">Deny</option>
-            </select>
-          </label>
-        </div>
+        <select name="accessMode" aria-label="Access mode" defaultValue="ask">
+          <option value="ask">Ask for permission</option>
+          <option value="auto">Auto</option>
+          <option value="full">Full access</option>
+        </select>
       </Field>
       <p className="security-note">
-        Shell commands run as your local OS user from the repository. Keep shell on Ask unless you
-        fully trust the provider.
+        Ask reviews impactful tools for custom providers and keeps ChatGPT read-only. Auto runs
+        built-in tools but asks before custom or MCP tools. Full access runs every tool without
+        approval and removes the Codex sandbox.
       </p>
     </>
   );
@@ -2637,10 +2522,9 @@ function canCallAgent(agent: AgentView): boolean {
 }
 
 function masterAccessLabel(agent: Extract<AgentView, { kind: "master" }>): string {
-  const enabled = Object.entries(agent.permissions)
-    .filter(([, permission]) => permission !== "deny")
-    .map(([name, permission]) => `${name} ${permission}`);
-  return enabled.length > 0 ? enabled.join(", ") : "tools disabled";
+  if (agent.accessMode === "full") return "Full access";
+  if (agent.accessMode === "auto") return "Auto";
+  return "Ask for permission";
 }
 
 function highlightMentions(content: string, knownHandles: ReadonlySet<string>): ReactNode[] {

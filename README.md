@@ -48,13 +48,22 @@ harness with `list`, `glob`, `grep`, `read`, `edit`, `write`, `bash`, `apply_pat
 pause in the thread until the user answers; approval-gated tools pause until the user allows or
 denies the call. The Taskboard currently organizes work but does not dispatch agents automatically.
 
+Each Master has one access mode instead of separate settings for every tool:
+
+- **Ask for permission:** reads, skills, todos, and questions run directly; edits, shell commands,
+  web access, and extensions pause for approval.
+- **Auto:** built-in tools run automatically inside the normal harness boundaries; custom and MCP
+  tools still pause for approval.
+- **Full access:** every tool runs without approval. Fixed credential, path, network, timeout, and
+  output protections still apply to the provider-neutral harness.
+
 ## Master harness configuration
 
-Optional workspace configuration lives in `nexestra.config.json`. It can tighten an agent's saved
-permissions, add search ignores, choose the hosted web-search backend, add custom tool directories,
+Optional workspace configuration lives in `nexestra.config.json`. It can tighten the selected
+access mode, add search ignores, choose the hosted web-search backend, add custom tool directories,
 and configure local or remote MCP servers. Wildcards apply to normalized custom and MCP names; an
-MCP tool named `lookup` on server `docs` is exposed as `docs_lookup`. Configuration can make a saved
-agent policy stricter, but cannot silently loosen it.
+MCP tool named `lookup` on server `docs` is exposed as `docs_lookup`. Configuration can make an
+access policy stricter, but cannot silently loosen it.
 
 ```json
 {
@@ -125,13 +134,14 @@ OpenCode receives `--model` (in `provider/model` form) and the provider-specific
 ## Provider
 
 - **ChatGPT OAuth:** install Codex CLI and run `codex login`, or click Connect in the Master
-  creation form. Choose read-only or build access; build uses Codex's workspace-write sandbox and
-  automatic approval review. Codex CLI manages OAuth tokens; Nexestra never reads or stores them.
+  creation form. Ask mode is read-only, Auto uses Codex's workspace-write sandbox and automatic
+  approval review, and Full access bypasses the Codex sandbox and approvals. Codex CLI manages
+  OAuth tokens; Nexestra never reads or stores them.
 - **Custom:** enter an API root and model, then select OpenAI Chat Completions or OpenAI Responses.
   The API key may be left blank for a local endpoint. Remote endpoints must use HTTPS; HTTP is
-  accepted only on loopback. File, shell, skill, todo, web, question, and extension permissions can
-  each be allowed, approved per call, or denied. Shell, custom tools, and local MCP servers run as
-  the current local OS user, so keep them on Ask unless the endpoint and extension code are trusted.
+  accepted only on loopback. Select one access mode for the entire agent. Shell, custom tools, and
+  local MCP servers run as the current local OS user, so use Full access only when the provider and
+  extension code are trusted.
 
 ## Verification
 

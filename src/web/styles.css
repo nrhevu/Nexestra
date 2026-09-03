@@ -1681,15 +1681,6 @@ kbd {
   font-size: 11px;
   line-height: 1.5;
 }
-.permission-grid {
-  grid-template-columns: repeat(3, 1fr);
-}
-.permission-grid label {
-  display: grid;
-  gap: 5px;
-  color: var(--quiet);
-  font-size: 11px;
-}
 .form-error {
   display: flex;
   align-items: flex-start;

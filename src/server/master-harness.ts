@@ -12,7 +12,13 @@ import {
 import { isIP } from "node:net";
 import { basename, dirname, isAbsolute, matchesGlob, relative, resolve, sep } from "node:path";
 import { z } from "zod";
-import type { HarnessPermissionKey, ToolCall, ToolQuestion } from "../shared/contracts.js";
+import type {
+  HarnessPermissionKey,
+  MasterAccessMode,
+  ToolCall,
+  ToolPermission,
+  ToolQuestion,
+} from "../shared/contracts.js";
 import { loadCustomTools } from "./custom-tools.js";
 import {
   configuredPermission,
@@ -54,9 +60,7 @@ export async function createMasterToolSession(
 ): Promise<MasterToolSession> {
   const config = await loadHarnessConfig(context.workspacePath);
   const skills = await discoverSkills(context);
-  const extensionsEnabled =
-    context.agent.permissions.external !== "deny" &&
-    configuredPermission(config.permission, "__extension__") !== "deny";
+  const extensionsEnabled = configuredPermission(config.permission, "__extension__") !== "deny";
   const custom = extensionsEnabled
     ? await loadCustomTools(config, context)
     : { tools: [], warnings: [] };
@@ -408,7 +412,7 @@ async function executeDefinition(
 
   const now = new Date().toISOString();
   const policy = mergePermissions(
-    context.agent.permissions[definition.permission],
+    accessModePermission(context.agent.accessMode, definition.permission),
     configuredPermission(config.permission, definition.name),
   );
   let toolCall: ToolCall = {
@@ -485,6 +489,15 @@ async function executeDefinition(
     await context.hooks?.update(toolCall);
     return `Tool error: ${message}`;
   }
+}
+
+function accessModePermission(
+  mode: MasterAccessMode,
+  permission: HarnessPermissionKey,
+): ToolPermission {
+  if (mode === "full") return "allow";
+  if (mode === "auto") return permission === "external" ? "ask" : "allow";
+  return ["read", "skill", "todowrite", "question"].includes(permission) ? "allow" : "ask";
 }
 
 const optionalPath = z.string().trim().min(1).max(2_000).default(".");
