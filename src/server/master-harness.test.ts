@@ -83,6 +83,27 @@ describe("Master harness tools", () => {
     expect(updates).toMatchObject([{ name: "bash", status: "denied" }]);
   });
 
+  it("reads only absolute artifact paths attached to the current invocation", async () => {
+    const context = await toolContext("full");
+    const artifactDirectory = join(context.dataPath, "artifacts", context.threadId);
+    await mkdir(artifactDirectory, { recursive: true });
+    const attached = join(artifactDirectory, "attached");
+    const unlisted = join(artifactDirectory, "unlisted");
+    const repositoryFile = join(context.workspacePath, "repository.txt");
+    await writeFile(attached, "attached context\n");
+    await writeFile(unlisted, "other thread context\n");
+    await writeFile(repositoryFile, "repository context\n");
+    context.readableArtifactPaths = [attached];
+
+    await expect(call(context, "read", { path: attached })).resolves.toContain("attached context");
+    await expect(call(context, "read", { path: unlisted })).resolves.toContain(
+      "reference an attached artifact",
+    );
+    await expect(call(context, "read", { path: repositoryFile })).resolves.toContain(
+      "reference an attached artifact",
+    );
+  });
+
   it("pauses ask permissions and records only redacted tool metadata", async () => {
     const context = await toolContext("ask");
     const updates: ToolCall[] = [];

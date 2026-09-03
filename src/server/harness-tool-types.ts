@@ -12,6 +12,7 @@ export interface MasterToolContext {
   threadId: string;
   workspacePath: string;
   dataPath: string;
+  readableArtifactPaths?: readonly string[];
   hooks?: MasterToolHooks;
   env?: NodeJS.ProcessEnv;
   fetch?: typeof globalThis.fetch;

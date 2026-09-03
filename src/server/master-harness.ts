@@ -148,11 +148,13 @@ function builtInTools(config: HarnessConfig, skills: HarnessSkill[]): ToolDefini
     ),
     zodTool(
       "read",
-      "Read a UTF-8 text file with line numbers.",
+      "Read a UTF-8 repository file or an attached artifact with line numbers.",
       "read",
       objectSchema(
         {
-          path: stringProperty("File relative to the repository root."),
+          path: stringProperty(
+            "File relative to the repository root, or an attached artifact path supplied in the message.",
+          ),
           offset: integerProperty(1, 1_000_000_000),
           limit: integerProperty(1, 1_000),
         },
@@ -651,7 +653,7 @@ async function readTool(
   context: MasterToolContext,
 ): Promise<string> {
   const requestedPath = input.path as string;
-  const file = await securePath(context, requestedPath, "read");
+  const file = await secureReadPath(context, requestedPath);
   const info = await stat(file);
   if (!info.isFile()) throw new Error(`${requestedPath} is not a file.`);
   if (info.size > MAX_FILE_BYTES) throw new Error("File is larger than 1 MiB.");
@@ -664,6 +666,26 @@ async function readTool(
     .slice(offset - 1, offset - 1 + limit)
     .map((line, index) => `${String(offset + index).padStart(6)}\t${line}`)
     .join("\n");
+}
+
+async function secureReadPath(context: MasterToolContext, requestedPath: string): Promise<string> {
+  if (!isAbsolute(requestedPath)) return securePath(context, requestedPath, "read");
+  const requested = resolve(requestedPath);
+  const allowed = context.readableArtifactPaths?.some(
+    (artifactPath) => isAbsolute(artifactPath) && resolve(artifactPath) === requested,
+  );
+  if (!allowed) {
+    throw new Error(
+      "Paths must be relative to the repository root or reference an attached artifact.",
+    );
+  }
+  const directInfo = await lstat(requested);
+  if (!directInfo.isFile()) throw new Error("Attached artifact paths must be regular files.");
+  const resolved = await realpath(requested);
+  if (isSensitivePath(context, resolved)) {
+    throw new Error("Nexestra credentials and auth files are protected.");
+  }
+  return resolved;
 }
 
 async function editTool(

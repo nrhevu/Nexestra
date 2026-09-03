@@ -199,6 +199,9 @@ export class LocalAgentRunner implements AgentRunner {
       threadId: invocation.thread.id,
       workspacePath: this.options.store.workspacePath,
       dataPath: this.options.store.root,
+      readableArtifactPaths: (invocation.artifacts ?? []).flatMap((entry) =>
+        entry.localPath ? [entry.localPath] : [],
+      ),
       hooks: invocation.toolHooks,
       env: this.env,
       fetch: this.fetchImpl,

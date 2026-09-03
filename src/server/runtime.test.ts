@@ -340,9 +340,10 @@ describe("parseProviderReply", () => {
     ).rejects.toThrow("too much data");
   });
 
-  it("executes Chat Completions tool calls and returns the provider's final answer", async () => {
-    const { agent, invocation, root, store } = await customMasterFixture("openai-chat");
-    await writeFile(join(root, "answer.txt"), "forty two\n");
+  it("lets Chat Completions read an artifact attached to the triggering message", async () => {
+    const { agent, invocation, store } = await customMasterFixture("openai-chat", "full", true);
+    const artifactPath = invocation.artifacts[0]?.localPath;
+    if (!artifactPath) throw new Error("expected attached artifact path");
     const responses = [
       {
         choices: [
@@ -353,7 +354,7 @@ describe("parseProviderReply", () => {
                 {
                   id: "call-read",
                   type: "function",
-                  function: { name: "read", arguments: '{"path":"answer.txt"}' },
+                  function: { name: "read", arguments: JSON.stringify({ path: artifactPath }) },
                 },
               ],
             },
@@ -474,6 +475,7 @@ describe("parseProviderReply", () => {
 async function customMasterFixture(
   protocol: "openai-chat" | "openai-responses",
   accessMode: MasterAccessMode = "full",
+  attachText = false,
 ) {
   const root = await mkdtemp(join(tmpdir(), "nexestra-provider-tools-"));
   const store = await FileStore.open({ root: join(root, ".nexestra"), workspacePath: root });
@@ -495,9 +497,20 @@ async function customMasterFixture(
   if (agent.kind !== "master") throw new Error("expected master agent");
   const [thread] = store.listThreads();
   if (!thread) throw new Error("expected seeded thread");
-  const trigger = await store.createUserMessage(thread.id, "@maya do the work", [
-    { agentId: agent.id, handle: agent.handle },
-  ]);
+  const trigger = await store.createUserMessage(
+    thread.id,
+    "@maya do the work",
+    [{ agentId: agent.id, handle: agent.handle }],
+    attachText
+      ? [
+          {
+            name: "answer.txt",
+            mediaType: "text/plain",
+            bytes: new TextEncoder().encode("forty two\n"),
+          },
+        ]
+      : [],
+  );
   return {
     agent,
     root,
@@ -508,6 +521,7 @@ async function customMasterFixture(
       trigger,
       transcriptPath: store.transcriptPath(thread.id),
       transcriptSnapshot: await store.transcriptSnapshot(thread.id),
+      artifacts: await store.agentArtifacts(thread.id, trigger.id),
     },
   };
 }

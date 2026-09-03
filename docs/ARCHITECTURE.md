@@ -121,7 +121,9 @@ allows contextual tools directly and pauses edits, shell, web, and extensions. A
 built-ins and pauses custom or MCP tools. Full access removes tool approval prompts. An asked tool
 is written to the thread and pauses its run until the user decides; a question pauses in a distinct
 input state until the local user responds. File tools reject absolute paths, traversal, escaping
-symlinks, credential paths, oversized files, and oversized results. Tool loops stop after twelve
+symlinks, credential paths, oversized files, and oversized results. The one exception is `read`,
+which accepts the exact absolute paths of artifacts from the message that triggered the current
+invocation; that allowlist does not extend to search or mutation tools. Tool loops stop after twelve
 rounds or three identical calls.
 
 One tool session is created per custom-provider invocation. It reads optional

@@ -22,7 +22,9 @@ inline-code file paths when their resolved real path is a regular workspace file
 The dispatcher supplies artifacts from the exact triggering message to its agent invocation. Codex
 uses image arguments, OpenCode uses file arguments, and custom OpenAI-compatible providers receive
 bounded text and image content in their protocol-native multimodal shape. Artifact metadata remains
-in the shared transcript snapshot for every participant.
+in the shared transcript snapshot for every participant. A custom-provider Master's `read` tool may
+also open the exact local paths allowlisted by that invocation, while other absolute paths and every
+artifact search or mutation remain blocked.
 
 The web application renders attachments with their message and adds a searchable, filterable
 **Files & links** tab per thread. The tab can preview safe images and open or download artifacts.
