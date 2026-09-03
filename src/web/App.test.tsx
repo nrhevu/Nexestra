@@ -39,6 +39,8 @@ const bootstrapData: BootstrapData = {
   agents: [],
   threads: [],
   tasks: [],
+  knowledge: [],
+  assignments: [],
   activeRuns: [],
   runtime: {
     chatgpt: { installed: true, connected: true, message: "Connected." },
@@ -185,6 +187,7 @@ describe("Activity-aware refresh", () => {
           author: { kind: "user", id: "local-user", name: "You" },
           content: "@planner stream",
           mentions: [{ agentId: workerAgent.id, handle: workerAgent.handle }],
+          knowledgeReferences: [],
           artifactIds: [],
           createdAt: now,
         },
@@ -301,6 +304,7 @@ describe("Activity-aware refresh", () => {
           },
           content: "Final response",
           mentions: [],
+          knowledgeReferences: [],
           artifactIds: [],
           triggerMessageId: "message-stream",
           createdAt: now,
@@ -372,6 +376,116 @@ describe("Workspace navigation", () => {
       ([input, init]) => String(input) === "/api/workspaces" && init?.method === "POST",
     );
     expect(JSON.parse(String(request?.[1]?.body))).toEqual({ name: "Product Team" });
+  });
+});
+
+describe("Knowledge surface", () => {
+  it("lists #references and uploads a document into the active workspace", async () => {
+    window.history.replaceState({}, "", "/surfaces/knowledge");
+    const knowledge = {
+      id: "knowledge-architecture",
+      workspaceId: workspace.id,
+      kind: "document" as const,
+      name: "Architecture guide",
+      handle: "architecture",
+      description: "Repository conventions",
+      fileName: "architecture.md",
+      mediaType: "text/markdown",
+      size: 128,
+      storagePath: "workspaces/workspace-nexestra/knowledge/knowledge-architecture/document",
+      createdAt: now,
+      updatedAt: now,
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/bootstrap")
+        return jsonResponse({ ...bootstrapData, knowledge: [knowledge] });
+      if (path === "/api/knowledge/documents" && init?.method === "POST") {
+        return jsonResponse(knowledge, 201);
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Knowledge" });
+    expect(screen.getByText("#architecture")).toBeVisible();
+    expect(screen.getByRole("link", { name: /Download/ })).toHaveAttribute(
+      "href",
+      `/api/knowledge/${knowledge.id}/content`,
+    );
+    await user.click(screen.getByRole("button", { name: "Add knowledge" }));
+    const dialog = screen.getByRole("dialog", { name: "Add knowledge" });
+    await user.type(within(dialog).getByPlaceholderText("Architecture guide"), "Product notes");
+    const fileInput = dialog.querySelector<HTMLInputElement>('input[name="file"]');
+    if (!fileInput) throw new Error("expected knowledge file input");
+    await user.upload(fileInput, new File(["# Notes"], "notes.md", { type: "text/markdown" }));
+    expect(fileInput.files).toHaveLength(1);
+    expect([...dialog.querySelectorAll(":invalid")].map((element) => element.outerHTML)).toEqual(
+      [],
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Upload document" }));
+
+    await waitFor(() => {
+      const request = fetchMock.mock.calls.find(
+        ([input, init]) => String(input) === "/api/knowledge/documents" && init?.method === "POST",
+      );
+      expect(request?.[1]?.body).toBeInstanceOf(FormData);
+      const body = request?.[1]?.body as FormData;
+      expect(body.get("workspaceId")).toBe(workspace.id);
+      expect(body.get("handle")).toBe("product-notes");
+      expect((body.get("file") as File).name).toBe("notes.md");
+    });
+  });
+
+  it("offers workspace knowledge when the composer receives a #reference", async () => {
+    const thread = {
+      id: "thread-knowledge",
+      workspaceId: workspace.id,
+      name: "general",
+      slug: "general",
+      createdAt: now,
+      updatedAt: now,
+      messageCount: 0,
+      lastMessageAt: null,
+    };
+    const repository = {
+      id: "knowledge-product",
+      workspaceId: workspace.id,
+      kind: "repository" as const,
+      name: "Product repository",
+      handle: "product-repo",
+      description: "",
+      source: "https://github.com/example/product.git",
+      storagePath: "workspaces/workspace-nexestra/repositories/knowledge-product/source",
+      status: "ready" as const,
+      defaultBranch: "main",
+      createdAt: now,
+      updatedAt: now,
+    };
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/bootstrap") {
+          return jsonResponse({ ...bootstrapData, threads: [thread], knowledge: [repository] });
+        }
+        if (path === `/api/threads/${thread.id}`) {
+          return jsonResponse({ thread, messages: [], artifacts: [], runs: [], toolCalls: [] });
+        }
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+
+    const composer = await screen.findByRole("combobox", { name: "Message" });
+    await user.type(composer, "Review #prod");
+    expect(screen.getByRole("listbox", { name: "Choose knowledge" })).toBeVisible();
+    await user.keyboard("{Enter}");
+    expect(composer).toHaveValue("Review #product-repo ");
   });
 });
 
@@ -527,6 +641,7 @@ describe("Master harness", () => {
           author: { kind: "user", id: "local-user", name: "You" },
           content: "@maya run the tests",
           mentions: [{ agentId: masterAgent.id, handle: masterAgent.handle }],
+          knowledgeReferences: [],
           artifactIds: [],
           createdAt: now,
         },
@@ -752,6 +867,7 @@ describe("Agent deletion", () => {
           author: { kind: "user", id: "local-user", name: "You" },
           content: "Please retry @former-planner",
           mentions: [{ agentId: "deleted-agent", handle: "former-planner" }],
+          knowledgeReferences: [],
           artifactIds: [],
           createdAt: now,
         },
@@ -767,6 +883,7 @@ describe("Agent deletion", () => {
           },
           content: "A reply worth keeping.",
           mentions: [],
+          knowledgeReferences: [],
           artifactIds: [],
           triggerMessageId: "message-trigger",
           createdAt: now,
@@ -939,6 +1056,7 @@ describe("Thread artifacts", () => {
       author: { kind: "user" as const, id: "local-user" as const, name: "You" },
       content: "Artifacts",
       mentions: [],
+      knowledgeReferences: [],
       artifactIds: ["image", "file", "link"],
       createdAt: now,
     };

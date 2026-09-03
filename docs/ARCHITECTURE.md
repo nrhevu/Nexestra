@@ -4,7 +4,8 @@
 
 M9 is a single-user, local-first control center. The server binds to `127.0.0.1`, the SPA
 communicates over HTTP, and the server invokes configured coding harnesses or providers. The two
-primary navigation areas are Threads and Surfaces; the first two surfaces are Taskboard and Agents.
+primary navigation areas are Threads and Surfaces; the initial surfaces are Taskboard, Knowledge,
+and Agents.
 The far-left rail switches between workspaces, while the adjacent panel owns the Threads, Surfaces,
 and Settings navigation.
 
@@ -16,13 +17,15 @@ React SPA
    ▼
 Hono API ── FileStore ── state.json / credentials.json
    │                    ├─ threads/<id>.jsonl
-   │                    └─ artifacts/<thread-id>/<artifact-id>
+   │                    ├─ artifacts/<thread-id>/<artifact-id>
+   │                    └─ workspaces/<id>/{knowledge,repositories,worktrees}
    ▼
 ChatService ── AgentDispatcher ── LocalAgentRunner
-                                  ├─ codex exec --json (read-only / workspace-write / full)
-                                  ├─ opencode run --format json (plan)
+                                  ├─ codex exec --json (discussion / delegated task / full)
+                                  ├─ opencode run --format json (plan / build)
                                   └─ MasterHarness ── OpenAI-compatible HTTP
                                                    ├─ built-in tools + user questions
+                                                   ├─ durable plan + Worker delegation
                                                    ├─ workspace/user custom tools
                                                    └─ local/remote MCP servers
 ```
@@ -50,18 +53,21 @@ transcript refresh does not perform a messages-by-runs nested scan.
 Message content is stored and transported as unchanged Markdown. The browser renders it with
 GitHub Flavored Markdown and KaTeX inside the memoized transcript boundary. Raw HTML parsing is not
 enabled, the Markdown renderer removes unsafe URL schemes, and HTTP(S) links use isolated tabs.
-Mention highlighting is applied to rendered text nodes while links and code remain untouched.
+Agent and knowledge-reference highlighting is applied to rendered text nodes while links and code
+remain untouched.
 
 ## Persistence
 
-`state.json` stores workspaces, agent profiles, thread metadata, and tasks. Every agent, thread, and
-task carries a workspace ID. Handles and thread slugs are unique only within their workspace, and
-task references cannot cross workspace boundaries. Creating a workspace seeds a `general` thread.
+`state.json` stores workspaces, agent profiles, thread metadata, tasks, knowledge metadata, and
+Worker assignments. Every record carries a workspace ID. Handles and thread slugs are unique only
+within their workspace, and task references cannot cross workspace boundaries. Creating a
+workspace seeds a `general` thread.
 Version 1 state is migrated in place to version 2 by assigning every existing record to a default
 `Nexestra` workspace; record IDs and transcript paths do not change. Version 2 state migrates to
 version 3 by adding the first Master tool permissions; version 3 migrates to version 4 by adding the
 complete tool matrix. Version 4 migrates to version 5 by replacing that matrix with one `ask`,
-`auto`, or `full` access mode. State writes use a temporary file followed by an atomic rename. The
+`auto`, or `full` access mode. Version 5 migrates to version 6 by adding empty knowledge and
+assignment collections. State writes use a temporary file followed by an atomic rename. The
 separate `credentials.json` file has mode `0600` and stores only custom API keys by agent ID.
 
 Permanent agent deletion removes the profile and its custom credential, clears matching task
@@ -94,16 +100,36 @@ agent, so each agent replies serially while different agents can run in parallel
 is tied to the exact triggering message ID, content, and artifacts; stale or duplicate retries are
 rejected. Agent output goes directly to the transcript without passing through the mention parser.
 
+`ChatService` also resolves `#handles` inside the thread workspace and stores stable knowledge IDs
+on the message. Code spans and fenced code blocks are excluded from reference parsing. An
+invocation receives only the knowledge explicitly referenced by its trigger: text documents carry
+bounded content, while binary documents and repositories carry managed local paths.
+
 Chat reserves each resolved agent before persisting the user's message, without starting dispatch.
 Deletion is rejected while a reservation or per-agent queue is pending or running, and a deletion
 tombstone prevents new reservations until the profile update finishes. After an agent is deleted, a
 newly typed reference to its old handle is plain text unless that handle has been reused by another
 agent. Historical failed runs for a deleted profile cannot be retried.
 
+## Planning and Worker delegation
+
+The provider-neutral Master tool session owns a per-run set of planned task IDs. `plan` creates
+durable Taskboard tasks linked to the triggering thread. `delegate` accepts only a task returned by
+that same session, an enabled Worker, and a ready repository referenced by the triggering message.
+
+Each repository is cloned once under the owning workspace. Every assignment creates a unique
+`nexestra/<assignment-id>` branch and a Git worktree under the same managed workspace tree. The
+dispatcher reuses the normal per-agent queue, so one Worker remains serial while different Workers
+can execute concurrently. A delegated Worker receives task mode, the worktree as its process cwd,
+the shared transcript snapshot, and the selected repository as knowledge. Success marks the
+assignment and task complete; failure records a redacted error and returns the task to To do.
+Branches and worktrees are retained for inspection. Nexestra never merges or pushes.
+
 ## Agent runtimes
 
 Worker profiles select either `codex` or `opencode`, with optional model and reasoning-effort
-overrides. Worker chat turns always require read-only discussion mode. Codex maps the overrides to
+overrides. Worker chat turns require read-only discussion mode. Delegated task turns use
+workspace-write for Codex and OpenCode's build agent, scoped to the assignment worktree. Codex maps the overrides to
 `--model` and `model_reasoning_effort`; OpenCode maps them to `--model` and its provider-specific
 `--variant`. Missing overrides preserve the harness defaults. Master profiles select one of the
 following:
@@ -120,8 +146,8 @@ shape and up to 512 KB of attached text context. Image provider payloads are cap
 artifacts remain indexed but are represented only by metadata.
 
 The Master tool registry provides repository list, glob, grep, read, exact edit, file write,
-multi-file patch, bounded shell, skill loading, per-run todos, bounded public web fetch/search, and
-interactive questions. LSP is deliberately excluded. Each profile selects one access mode. Ask
+multi-file patch, bounded shell, skill loading, per-run todos, bounded public web fetch/search,
+interactive questions, durable planning, and Worker delegation. LSP is deliberately excluded. Each profile selects one access mode. Ask
 allows contextual tools directly and pauses edits, shell, web, and extensions. Auto allows all
 built-ins and pauses custom or MCP tools. Full access removes tool approval prompts. An asked tool
 is written to the thread and pauses its run until the user decides; a question pauses in a distinct
@@ -182,9 +208,16 @@ current OS user's authority, so Ask is the default and broader modes should only
 trusted providers. ChatGPT Auto access instead relies on the Codex workspace-write sandbox; its
 Full access mode is deliberately explicit because it bypasses that sandbox.
 
+Git repository URLs with embedded usernames or passwords are rejected before metadata is written,
+so tokens cannot enter `state.json` or clone errors. Private repository access may use the current
+OS user's existing SSH and Git configuration; Nexestra does not store Git credentials.
+
 ## Known gaps
 
-- Worker chat runs in read-only discussion mode; Taskboard does not yet dispatch coding jobs or manage worktrees.
+- App-native `plan` and `delegate` are currently available to custom OpenAI-compatible Masters.
+  ChatGPT OAuth Masters run through Codex CLI and do not yet receive this bridge.
+- Assignment worktrees and branches are retained and cannot yet be cleaned up, merged, or pushed
+  from the UI. Repository fetch/pull and retry are not yet exposed.
 - OpenCode `plan` is an application policy, not an independent OS or container sandbox.
 - Agent profiles cannot yet edit their full configuration after creation; enable, disable, archive,
   and permanent deletion are available.

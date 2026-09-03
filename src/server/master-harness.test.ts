@@ -222,6 +222,88 @@ describe("Master harness tools", () => {
     expect(statuses).toEqual(["running", "completed", "waiting_approval", "running", "completed"]);
   });
 
+  it("requires a durable plan before delegating its tasks to Workers", async () => {
+    const context = await toolContext("full");
+    const taskId = "f5a80f87-456d-4c35-9081-356cbe665510";
+    const delegated: { workerHandle: string; repositoryHandle: string }[] = [];
+    context.hooks = {
+      update: async () => undefined,
+      requestApproval: async () => true,
+      createPlan: async (_title, steps) =>
+        steps.map((step) => ({
+          id: taskId,
+          workspaceId: "workspace",
+          title: step.title,
+          description: step.description,
+          status: "todo" as const,
+          assigneeId: null,
+          threadId: "thread",
+          createdAt: "2026-09-03T00:00:00.000Z",
+          updatedAt: "2026-09-03T00:00:00.000Z",
+        })),
+      delegate: async (input) => {
+        delegated.push(input);
+        return {
+          assignment: {
+            id: "assignment",
+            workspaceId: "workspace",
+            taskId: input.taskId,
+            threadId: "thread",
+            masterRunId: "run",
+            workerAgentId: "worker",
+            repositoryId: "repository",
+            status: "completed",
+            branch: "nexestra/assignment",
+            worktreePath: "workspaces/workspace/worktrees/assignment",
+            result: "done",
+            createdAt: "2026-09-03T00:00:00.000Z",
+            updatedAt: "2026-09-03T00:00:00.000Z",
+          },
+          result: "done",
+        };
+      },
+    };
+    const session = await createMasterToolSession(context);
+    try {
+      expect(session.definitions.map((tool) => tool.name)).toEqual(
+        expect.arrayContaining(["plan", "delegate"]),
+      );
+      await expect(
+        callSession(session, "delegate", {
+          taskId,
+          worker: "builder",
+          repository: "product-repo",
+        }),
+      ).resolves.toContain("Call plan first");
+      await expect(
+        callSession(session, "plan", {
+          title: "Implementation plan",
+          steps: [{ title: "Build feature", description: "Meet the acceptance criteria." }],
+        }),
+      ).resolves.toContain(taskId);
+      await expect(
+        callSession(session, "delegate", {
+          taskId,
+          worker: "builder",
+          repository: "product-repo",
+        }),
+      ).resolves.toContain("nexestra/assignment");
+      await expect(
+        callSession(session, "delegate", {
+          taskId,
+          worker: "builder",
+          repository: "product-repo",
+        }),
+      ).resolves.toContain("Call plan first");
+    } finally {
+      await session.close();
+    }
+
+    expect(delegated).toEqual([
+      expect.objectContaining({ workerHandle: "builder", repositoryHandle: "product-repo" }),
+    ]);
+  });
+
   it("applies add, update, move, and delete patch operations", async () => {
     const context = await toolContext("full");
     await writeFile(join(context.workspacePath, "move-me.txt"), "alpha\n");

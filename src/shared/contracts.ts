@@ -19,6 +19,62 @@ export const CreateWorkspaceSchema = z.object({
   name: z.string().trim().min(1).max(60),
 });
 
+export const KnowledgeHandleSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .regex(/^[a-z0-9][a-z0-9_-]{1,47}$/, "Use 2–48 characters: a-z, 0-9, _ or -.");
+
+const KnowledgeBaseSchema = z.object({
+  id: z.string(),
+  workspaceId: z.string(),
+  name: z.string(),
+  handle: KnowledgeHandleSchema,
+  description: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const KnowledgeDocumentSchema = KnowledgeBaseSchema.extend({
+  kind: z.literal("document"),
+  fileName: z.string(),
+  mediaType: z.string(),
+  size: z.number().int().nonnegative(),
+  storagePath: z.string(),
+});
+
+export const KnowledgeRepositorySchema = KnowledgeBaseSchema.extend({
+  kind: z.literal("repository"),
+  source: z.string(),
+  storagePath: z.string(),
+  defaultBranch: z.string().optional(),
+  status: z.enum(["cloning", "ready", "failed"]),
+  error: z.string().optional(),
+});
+
+export const KnowledgeItemSchema = z.discriminatedUnion("kind", [
+  KnowledgeDocumentSchema,
+  KnowledgeRepositorySchema,
+]);
+export type KnowledgeItem = z.infer<typeof KnowledgeItemSchema>;
+export type KnowledgeDocument = z.infer<typeof KnowledgeDocumentSchema>;
+export type KnowledgeRepository = z.infer<typeof KnowledgeRepositorySchema>;
+
+export const CreateKnowledgeDocumentSchema = z.object({
+  workspaceId: z.string().optional(),
+  name: z.string().trim().min(1).max(120),
+  handle: KnowledgeHandleSchema,
+  description: z.string().trim().max(1_000).default(""),
+});
+
+export const CreateKnowledgeRepositorySchema = z.object({
+  workspaceId: z.string().optional(),
+  name: z.string().trim().min(1).max(120),
+  handle: KnowledgeHandleSchema,
+  description: z.string().trim().max(1_000).default(""),
+  source: z.string().trim().min(1).max(2_048),
+});
+
 const AgentBaseSchema = z.object({
   id: z.string(),
   workspaceId: z.string(),
@@ -143,6 +199,12 @@ export const MentionSchema = z.object({
   handle: HandleSchema,
 });
 
+export const KnowledgeReferenceSchema = z.object({
+  knowledgeId: z.string(),
+  handle: KnowledgeHandleSchema,
+});
+export type KnowledgeReference = z.infer<typeof KnowledgeReferenceSchema>;
+
 export const MessageAuthorSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("user"), id: z.literal("local-user"), name: z.string() }),
   z.object({
@@ -161,6 +223,7 @@ export const MessageSchema = z.object({
   author: MessageAuthorSchema,
   content: z.string(),
   mentions: z.array(MentionSchema),
+  knowledgeReferences: z.array(KnowledgeReferenceSchema).max(40).default([]),
   artifactIds: z.array(z.string()).max(40).default([]),
   triggerMessageId: z.string().optional(),
   createdAt: z.string(),
@@ -243,6 +306,8 @@ export const HarnessToolNameSchema = z.enum([
   "write",
   "bash",
   "apply_patch",
+  "plan",
+  "delegate",
   "skill",
   "todowrite",
   "webfetch",
@@ -329,6 +394,24 @@ export const TaskSchema = z.object({
 });
 export type Task = z.infer<typeof TaskSchema>;
 
+export const WorkAssignmentSchema = z.object({
+  id: z.string(),
+  workspaceId: z.string(),
+  taskId: z.string(),
+  threadId: z.string(),
+  masterRunId: z.string(),
+  workerAgentId: z.string(),
+  repositoryId: z.string(),
+  status: z.enum(["queued", "running", "completed", "failed"]),
+  branch: z.string(),
+  worktreePath: z.string(),
+  result: z.string().max(20_000).optional(),
+  error: z.string().max(2_000).optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type WorkAssignment = z.infer<typeof WorkAssignmentSchema>;
+
 export const CreateTaskSchema = z.object({
   workspaceId: z.string().optional(),
   title: z.string().trim().min(1).max(160),
@@ -359,6 +442,8 @@ export interface BootstrapData {
   agents: AgentView[];
   threads: Thread[];
   tasks: Task[];
+  knowledge: KnowledgeItem[];
+  assignments: WorkAssignment[];
   activeRuns: AgentRun[];
   runtime: RuntimeStatus;
   workspacePath: string;
@@ -378,6 +463,23 @@ export function extractMentionHandles(content: string): string[] {
   const seen = new Set<string>();
   const pattern = /(^|[^a-zA-Z0-9_-])@([a-zA-Z0-9][a-zA-Z0-9_-]{1,30})/g;
   for (const match of content.matchAll(pattern)) {
+    const handle = match[2]?.toLowerCase();
+    if (!handle || seen.has(handle)) continue;
+    seen.add(handle);
+    handles.push(handle);
+  }
+  return handles;
+}
+
+export function extractKnowledgeHandles(content: string): string[] {
+  const handles: string[] = [];
+  const seen = new Set<string>();
+  const withoutCode = content
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/~~~[\s\S]*?~~~/g, "")
+    .replace(/`[^`\n]*`/g, "");
+  const pattern = /(^|[^a-zA-Z0-9_-])#([a-zA-Z0-9][a-zA-Z0-9_-]{1,47})/g;
+  for (const match of withoutCode.matchAll(pattern)) {
     const handle = match[2]?.toLowerCase();
     if (!handle || seen.has(handle)) continue;
     seen.add(handle);

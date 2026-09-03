@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MasterAccessMode } from "../shared/contracts.js";
-import type { RuntimeToolUpdate } from "./runtime.js";
+import type { AgentInvocation, RuntimeToolUpdate } from "./runtime.js";
 import {
   LocalAgentRunner,
   parseCodexReply,
@@ -147,6 +147,40 @@ describe("Worker harness arguments", () => {
       expect.stringContaining("@opencode"),
     ]);
   });
+
+  it.each(["codex", "opencode"] as const)(
+    "runs a delegated %s Worker with write access inside its assignment worktree",
+    async (harness) => {
+      const { agent, invocation, root, runner } = await workerFixture(harness);
+      const worktree = join(root, "managed-worktree");
+      invocation.mode = "task";
+      invocation.workingDirectory = worktree;
+      processMocks.findExecutable.mockResolvedValue(`/fake/${harness}`);
+      processMocks.runCommand.mockResolvedValue({
+        stdout:
+          harness === "codex"
+            ? JSON.stringify({
+                type: "item.completed",
+                item: { type: "agent_message", text: "Done." },
+              })
+            : JSON.stringify({ type: "text", part: { type: "text", text: "Done." } }),
+        stderr: "",
+        exitCode: 0,
+      });
+
+      await runner.invoke(agent, invocation);
+
+      const [, args, options] = processMocks.runCommand.mock.calls[0] ?? [];
+      expect(options).toMatchObject({ cwd: worktree });
+      if (harness === "codex") {
+        expect(args).toEqual(
+          expect.arrayContaining(["-C", worktree, "-s", "workspace-write", "--approve-for-me"]),
+        );
+      } else {
+        expect(args).toEqual(expect.arrayContaining(["--agent", "build", "--dir", worktree]));
+      }
+    },
+  );
 
   it.each(["codex", "opencode"] as const)(
     "keeps the %s defaults when no overrides are configured",
@@ -638,11 +672,14 @@ describe("parseProviderReply", () => {
       "bash",
       "apply_patch",
       "skill",
+      "plan",
+      "delegate",
       "todowrite",
       "webfetch",
       "websearch",
       "question",
     ]);
+    expect(firstBody.messages[0]?.content).toContain("@builder: codex");
     const readDefinition = firstBody.tools.find(
       (tool: { function: { name: string } }) => tool.function.name === "read",
     );
@@ -870,6 +907,14 @@ async function customMasterFixture(
     },
   });
   if (agent.kind !== "master") throw new Error("expected master agent");
+  await store.createAgent({
+    kind: "worker",
+    name: "Builder",
+    handle: "builder",
+    description: "",
+    instructions: "",
+    harness: "codex",
+  });
   const [thread] = store.listThreads();
   if (!thread) throw new Error("expected seeded thread");
   const trigger = await store.createUserMessage(
@@ -953,16 +998,17 @@ async function workerFixture(
         ]
       : [],
   );
+  const invocation: AgentInvocation = {
+    thread,
+    trigger,
+    transcriptPath: store.transcriptPath(thread.id),
+    transcriptSnapshot: await store.transcriptSnapshot(thread.id),
+    artifacts: await store.agentArtifacts(thread.id, trigger.id),
+  };
   return {
     agent,
     root,
     runner: new LocalAgentRunner({ store }),
-    invocation: {
-      thread,
-      trigger,
-      transcriptPath: store.transcriptPath(thread.id),
-      transcriptSnapshot: await store.transcriptSnapshot(thread.id),
-      artifacts: await store.agentArtifacts(thread.id, trigger.id),
-    },
+    invocation,
   };
 }

@@ -239,6 +239,34 @@ describe("HTTP app", () => {
     expect([...new Uint8Array(await response.arrayBuffer())]).toEqual([0x89, 0x50, 0x4e, 0x47]);
   });
 
+  it("uploads a shared knowledge document and serves it from the knowledge endpoint", async () => {
+    const form = new FormData();
+    form.append("name", "Architecture guide");
+    form.append("handle", "architecture");
+    form.append("description", "Repository conventions");
+    form.append(
+      "file",
+      new File(["# Architecture\n"], "architecture.md", { type: "text/markdown" }),
+    );
+    const created = await app.request("/api/knowledge/documents", {
+      method: "POST",
+      body: form,
+    });
+
+    expect(created.status).toBe(201);
+    const item = (await created.json()) as { id: string; handle: string; mediaType: string };
+    expect(item).toMatchObject({ handle: "architecture", mediaType: "text/markdown" });
+    const content = await app.request(`/api/knowledge/${item.id}/content`);
+    expect(content.status).toBe(200);
+    expect(content.headers.get("content-disposition")).toContain("architecture.md");
+    await expect(content.text()).resolves.toBe("# Architecture\n");
+    const bootstrap = await app.request("/api/bootstrap");
+    await expect(bootstrap.json()).resolves.toMatchObject({
+      knowledge: [expect.objectContaining({ id: item.id, handle: "architecture" })],
+      assignments: [],
+    });
+  });
+
   it("reports live activity without scanning persisted thread history", async () => {
     let releaseRunner: () => void = () => undefined;
     runner.gate = new Promise<void>((resolve) => {

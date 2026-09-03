@@ -1,9 +1,10 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { Agent, RuntimeStatus, ThreadStreamEvent, ToolCall } from "../shared/contracts.js";
 import { AgentDispatcher, ChatService } from "./dispatcher.js";
+import type { AssignmentLocation, AssignmentRepositoryManager } from "./repository-manager.js";
 import type { AgentInvocation, AgentRunner } from "./runtime.js";
 import { FileStore, StoreError } from "./store.js";
 
@@ -80,6 +81,51 @@ class StreamingRunner implements AgentRunner {
       summary: "Read README.md",
     });
     return "Live answer";
+  }
+}
+
+class DelegatingMasterRunner implements AgentRunner {
+  readonly invocations: { agent: Agent; invocation: AgentInvocation }[] = [];
+
+  async runtimeStatus() {
+    return readyRuntime;
+  }
+
+  async invoke(agent: Agent, invocation: AgentInvocation) {
+    this.invocations.push({ agent, invocation });
+    if (agent.kind === "worker") return "Implemented and committed the assigned change.";
+    if (!invocation.toolHooks?.createPlan || !invocation.toolHooks.delegate) {
+      throw new Error("expected planning and delegation hooks");
+    }
+    const [task] = await invocation.toolHooks.createPlan("Implementation plan", [
+      { title: "Implement feature", description: "Make the requested repository change." },
+    ]);
+    if (!task) throw new Error("expected planned task");
+    const delegated = await invocation.toolHooks.delegate({
+      taskId: task.id,
+      workerHandle: "builder",
+      repositoryHandle: "product-repo",
+    });
+    return `Worker completed ${delegated.assignment.branch}: ${delegated.result}`;
+  }
+}
+
+class FakeAssignmentRepositories implements AssignmentRepositoryManager {
+  constructor(private readonly root: string) {}
+
+  assignmentLocation(workspaceId: string, assignmentId: string): AssignmentLocation {
+    return {
+      branch: `nexestra/${assignmentId}`,
+      worktreePath: `workspaces/${workspaceId}/worktrees/${assignmentId}`,
+      absolutePath: join(this.root, "workspaces", workspaceId, "worktrees", assignmentId),
+    };
+  }
+
+  async prepareAssignment(
+    _repository: Parameters<AssignmentRepositoryManager["prepareAssignment"]>[0],
+    location: AssignmentLocation,
+  ) {
+    await mkdir(location.absolutePath, { recursive: true });
   }
 }
 
@@ -331,6 +377,81 @@ describe("mention dispatch", () => {
     dispatcher.resolveToolApproval("second", true);
     await dispatcher.waitForIdle();
     expect((await store.threadData(thread.id)).runs.at(-1)?.status).toBe("completed");
+  });
+
+  it("lets a Master plan work and delegate it to a Worker in an isolated worktree", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-dispatch-delegation-"));
+    const store = await FileStore.open({ root, workspacePath: root });
+    const runner = new DelegatingMasterRunner();
+    const dispatcher = new AgentDispatcher(
+      store,
+      runner,
+      new FakeAssignmentRepositories(store.root),
+    );
+    const chat = new ChatService(store, dispatcher);
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const master = await store.createAgent({
+      kind: "master",
+      name: "Lead",
+      handle: "lead",
+      description: "",
+      instructions: "",
+      accessMode: "full",
+      provider: {
+        type: "custom",
+        name: "Test provider",
+        baseUrl: "https://example.test/v1",
+        model: "test-model",
+        protocol: "openai-chat",
+      },
+    });
+    const worker = await store.createAgent({
+      kind: "worker",
+      name: "Builder",
+      handle: "builder",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    const repository = await store.createKnowledgeRepository({
+      name: "Product repository",
+      handle: "product-repo",
+      source: "https://github.com/example/product.git",
+    });
+    await store.updateKnowledgeRepository(repository.id, {
+      status: "ready",
+      defaultBranch: "main",
+    });
+
+    const sent = await chat.send(thread.id, {
+      content: "@lead implement the feature in #product-repo",
+    });
+    await dispatcher.waitForIdle();
+
+    expect(sent.message.knowledgeReferences).toEqual([
+      { knowledgeId: repository.id, handle: repository.handle },
+    ]);
+    expect(runner.invocations.map(({ agent }) => agent.id)).toEqual([master.id, worker.id]);
+    const workerInvocation = runner.invocations[1]?.invocation;
+    expect(workerInvocation).toMatchObject({ mode: "task" });
+    expect(workerInvocation?.workingDirectory).toContain("/worktrees/");
+    expect(workerInvocation?.knowledge).toEqual([
+      expect.objectContaining({
+        item: expect.objectContaining({ id: repository.id }),
+        localPath: workerInvocation?.workingDirectory,
+      }),
+    ]);
+    expect(store.listAssignments()).toEqual([
+      expect.objectContaining({
+        status: "completed",
+        workerAgentId: worker.id,
+        repositoryId: repository.id,
+      }),
+    ]);
+    expect(store.listTasks()).toEqual([
+      expect.objectContaining({ status: "done", assigneeId: worker.id, threadId: thread.id }),
+    ]);
   });
 });
 

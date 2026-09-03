@@ -20,9 +20,15 @@ import {
   type Artifact,
   ArtifactSchema,
   CreateAgentSchema,
+  CreateKnowledgeDocumentSchema,
+  CreateKnowledgeRepositorySchema,
   CreateTaskSchema,
   CreateThreadSchema,
   CreateWorkspaceSchema,
+  type KnowledgeItem,
+  KnowledgeItemSchema,
+  type KnowledgeReference,
+  type KnowledgeRepository,
   type Message,
   MessageSchema,
   RunSchema,
@@ -36,11 +42,23 @@ import {
   type UpdateAgentInput,
   UpdateAgentSchema,
   UpdateTaskSchema,
+  type WorkAssignment,
+  WorkAssignmentSchema,
   type Workspace,
   WorkspaceSchema,
 } from "../shared/contracts.js";
 
 const StateSchema = z.object({
+  version: z.literal(6),
+  workspaces: z.array(WorkspaceSchema).min(1),
+  agents: z.array(AgentSchema),
+  threads: z.array(ThreadSchema),
+  tasks: z.array(TaskSchema),
+  knowledge: z.array(KnowledgeItemSchema),
+  assignments: z.array(WorkAssignmentSchema),
+});
+
+const VersionFiveStateSchema = z.object({
   version: z.literal(5),
   workspaces: z.array(WorkspaceSchema).min(1),
   agents: z.array(AgentSchema),
@@ -107,6 +125,12 @@ export interface AgentArtifact {
   localPath?: string;
 }
 
+export interface AgentKnowledgeItem {
+  item: KnowledgeItem;
+  localPath: string;
+  content?: string;
+}
+
 interface ArtifactDraft extends Omit<Artifact, "sequence"> {
   bytes?: Uint8Array;
 }
@@ -132,6 +156,7 @@ export class FileStore {
   readonly credentialFile: string;
   readonly threadDirectory: string;
   readonly artifactDirectory: string;
+  readonly managedWorkspaceDirectory: string;
 
   private state: PersistedState;
   private credentials: Record<string, string>;
@@ -146,6 +171,7 @@ export class FileStore {
       credentialFile: string;
       threadDirectory: string;
       artifactDirectory: string;
+      managedWorkspaceDirectory: string;
     },
     state: PersistedState,
     credentials: Record<string, string>,
@@ -156,6 +182,7 @@ export class FileStore {
     this.credentialFile = paths.credentialFile;
     this.threadDirectory = paths.threadDirectory;
     this.artifactDirectory = paths.artifactDirectory;
+    this.managedWorkspaceDirectory = paths.managedWorkspaceDirectory;
     this.state = state;
     this.credentials = credentials;
   }
@@ -172,10 +199,12 @@ export class FileStore {
       credentialFile: join(root, "credentials.json"),
       threadDirectory: join(root, "threads"),
       artifactDirectory: join(root, "artifacts"),
+      managedWorkspaceDirectory: join(root, "workspaces"),
     };
     await Promise.all([
       mkdir(paths.threadDirectory, { recursive: true, mode: 0o700 }),
       mkdir(paths.artifactDirectory, { recursive: true, mode: 0o700 }),
+      mkdir(paths.managedWorkspaceDirectory, { recursive: true, mode: 0o700 }),
     ]);
     const { state, needsWrite } = await readState(paths.stateFile);
     if (needsWrite) await writeJsonAtomic(paths.stateFile, state, 0o600);
@@ -242,6 +271,39 @@ export class FileStore {
     );
   }
 
+  getTask(id: string): Task | undefined {
+    const task = this.state.tasks.find((entry) => entry.id === id);
+    return task ? structuredClone(task) : undefined;
+  }
+
+  listKnowledge(workspaceId?: string): KnowledgeItem[] {
+    return structuredClone(
+      this.state.knowledge
+        .filter((item) => workspaceId === undefined || item.workspaceId === workspaceId)
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    );
+  }
+
+  getKnowledge(id: string): KnowledgeItem | undefined {
+    const item = this.state.knowledge.find((entry) => entry.id === id);
+    return item ? structuredClone(item) : undefined;
+  }
+
+  findKnowledgeByHandle(handle: string, workspaceId: string): KnowledgeItem | undefined {
+    const item = this.state.knowledge.find(
+      (entry) => entry.workspaceId === workspaceId && entry.handle === handle.toLowerCase(),
+    );
+    return item ? structuredClone(item) : undefined;
+  }
+
+  listAssignments(workspaceId?: string): WorkAssignment[] {
+    return structuredClone(
+      this.state.assignments
+        .filter((assignment) => workspaceId === undefined || assignment.workspaceId === workspaceId)
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    );
+  }
+
   getCredential(agentId: string): string | undefined {
     return this.credentials[agentId];
   }
@@ -302,6 +364,116 @@ export class FileStore {
       await this.writeState();
       return structuredClone(workspace);
     });
+  }
+
+  async createKnowledgeDocument(
+    rawInput: unknown,
+    upload: UploadArtifactInput,
+  ): Promise<KnowledgeItem> {
+    const input = CreateKnowledgeDocumentSchema.parse(rawInput);
+    validateUploads([upload]);
+    return this.withWrite(async () => {
+      const workspaceId = this.requireWorkspace(input.workspaceId).id;
+      this.requireAvailableKnowledgeHandle(workspaceId, input.handle);
+      const id = crypto.randomUUID();
+      const now = new Date().toISOString();
+      const storagePath = join("workspaces", workspaceId, "knowledge", id, "document");
+      const item = KnowledgeItemSchema.parse({
+        id,
+        workspaceId,
+        kind: "document",
+        name: input.name,
+        handle: input.handle,
+        description: input.description,
+        fileName: normaliseArtifactName(upload.name),
+        mediaType: normaliseMediaType(upload.mediaType) || inferMediaType(upload.name),
+        size: upload.bytes.byteLength,
+        storagePath,
+        createdAt: now,
+        updatedAt: now,
+      });
+      const file = this.managedPath(storagePath);
+      await writePrivateFile(file, upload.bytes);
+      try {
+        this.state.knowledge.push(item);
+        await this.writeState();
+      } catch (error) {
+        this.state.knowledge.pop();
+        await unlink(file).catch(() => undefined);
+        throw error;
+      }
+      return structuredClone(item);
+    });
+  }
+
+  async createKnowledgeRepository(rawInput: unknown): Promise<KnowledgeRepository> {
+    const input = CreateKnowledgeRepositorySchema.parse(rawInput);
+    return this.withWrite(async () => {
+      const workspaceId = this.requireWorkspace(input.workspaceId).id;
+      this.requireAvailableKnowledgeHandle(workspaceId, input.handle);
+      const id = crypto.randomUUID();
+      const now = new Date().toISOString();
+      const item = KnowledgeItemSchema.parse({
+        id,
+        workspaceId,
+        kind: "repository",
+        name: input.name,
+        handle: input.handle,
+        description: input.description,
+        source: input.source,
+        storagePath: join("workspaces", workspaceId, "repositories", id, "source"),
+        status: "cloning",
+        createdAt: now,
+        updatedAt: now,
+      });
+      if (item.kind !== "repository") throw new Error("Expected repository knowledge.");
+      this.state.knowledge.push(item);
+      await this.writeState();
+      return structuredClone(item);
+    });
+  }
+
+  async updateKnowledgeRepository(
+    id: string,
+    update: Pick<KnowledgeRepository, "status"> &
+      Partial<Pick<KnowledgeRepository, "defaultBranch" | "error">>,
+  ): Promise<KnowledgeRepository> {
+    return this.withWrite(async () => {
+      const index = this.state.knowledge.findIndex((item) => item.id === id);
+      const current = this.state.knowledge[index];
+      if (current?.kind !== "repository") {
+        throw new StoreError("not_found", "Repository knowledge not found.");
+      }
+      const next = KnowledgeItemSchema.parse({
+        ...current,
+        ...update,
+        updatedAt: new Date().toISOString(),
+      });
+      if (next.kind !== "repository") throw new Error("Expected repository knowledge.");
+      this.state.knowledge[index] = next;
+      await this.writeState();
+      return structuredClone(next);
+    });
+  }
+
+  knowledgePath(item: KnowledgeItem): string {
+    return this.managedPath(item.storagePath);
+  }
+
+  async agentKnowledge(message: Message): Promise<AgentKnowledgeItem[]> {
+    const result: AgentKnowledgeItem[] = [];
+    for (const reference of message.knowledgeReferences) {
+      const item = this.getKnowledge(reference.knowledgeId);
+      if (!item) continue;
+      const localPath = this.knowledgePath(item);
+      if (item.kind === "document" && isTextMediaType(item.mediaType)) {
+        const content = (await readFile(localPath, "utf8")).slice(0, 512 * 1024);
+        result.push({ item, localPath, content });
+      } else {
+        result.push({ item, localPath });
+      }
+    }
+    return result;
   }
 
   async createAgent(rawInput: unknown): Promise<Agent> {
@@ -430,6 +602,7 @@ export class FileStore {
     content: string,
     mentions: Message["mentions"],
     uploads: UploadArtifactInput[] = [],
+    knowledgeReferences: KnowledgeReference[] = [],
   ): Promise<Message> {
     return this.appendMessage(
       threadId,
@@ -439,6 +612,7 @@ export class FileStore {
         author: { kind: "user", id: "local-user", name: "You" },
         content,
         mentions,
+        knowledgeReferences,
         artifactIds: [],
         createdAt: new Date().toISOString(),
       },
@@ -463,6 +637,7 @@ export class FileStore {
       },
       content,
       mentions: [],
+      knowledgeReferences: [],
       artifactIds: [],
       triggerMessageId,
       createdAt: new Date().toISOString(),
@@ -538,7 +713,10 @@ export class FileStore {
         const artifactText = artifacts.length
           ? `\nArtifacts:\n${artifacts.map(formatArtifactForTranscript).join("\n")}`
           : "";
-        return `[${message.createdAt}] ${message.author.name}${handle}:\n${message.content}${artifactText}`;
+        const knowledgeText = message.knowledgeReferences.length
+          ? `\nKnowledge: ${message.knowledgeReferences.map((reference) => `#${reference.handle}`).join(", ")}`
+          : "";
+        return `[${message.createdAt}] ${message.author.name}${handle}:\n${message.content}${artifactText}${knowledgeText}`;
       })
       .join("\n\n");
   }
@@ -583,6 +761,37 @@ export class FileStore {
       this.state.tasks[index] = updated;
       await this.writeState();
       return structuredClone(updated);
+    });
+  }
+
+  async createAssignment(input: WorkAssignment): Promise<WorkAssignment> {
+    const assignment = WorkAssignmentSchema.parse(input);
+    return this.withWrite(async () => {
+      if (this.state.assignments.some((entry) => entry.id === assignment.id)) {
+        throw new StoreError("conflict", "Assignment already exists.");
+      }
+      this.state.assignments.push(assignment);
+      await this.writeState();
+      return structuredClone(assignment);
+    });
+  }
+
+  async updateAssignment(
+    id: string,
+    update: Partial<Pick<WorkAssignment, "status" | "result" | "error">>,
+  ): Promise<WorkAssignment> {
+    return this.withWrite(async () => {
+      const index = this.state.assignments.findIndex((assignment) => assignment.id === id);
+      const current = this.state.assignments[index];
+      if (!current) throw new StoreError("not_found", "Assignment not found.");
+      const next = WorkAssignmentSchema.parse({
+        ...current,
+        ...update,
+        updatedAt: new Date().toISOString(),
+      });
+      this.state.assignments[index] = next;
+      await this.writeState();
+      return structuredClone(next);
     });
   }
 
@@ -892,6 +1101,25 @@ export class FileStore {
     return workspace;
   }
 
+  private requireAvailableKnowledgeHandle(workspaceId: string, handle: string): void {
+    if (
+      this.state.knowledge.some(
+        (item) => item.workspaceId === workspaceId && item.handle === handle,
+      )
+    ) {
+      throw new StoreError("conflict", `#${handle} is already used in this workspace.`);
+    }
+  }
+
+  private managedPath(storagePath: string): string {
+    const target = resolve(this.root, storagePath);
+    const offset = relative(this.root, target);
+    if (!offset || offset.startsWith("..") || isAbsolute(offset)) {
+      throw new StoreError("invalid", "Managed path must stay inside the Nexestra data root.");
+    }
+    return target;
+  }
+
   private requireThread(id: string): Thread {
     const thread = this.state.threads.find((entry) => entry.id === id);
     if (!thread) throw new StoreError("not_found", "Thread not found.");
@@ -935,11 +1163,13 @@ function createInitialState(): PersistedState {
     updatedAt: now,
   });
   return {
-    version: 5,
+    version: 6,
     workspaces: [workspace],
     agents: [],
     threads: [createThreadRecord(workspace.id, "general", now, [])],
     tasks: [],
+    knowledge: [],
+    assignments: [],
   };
 }
 
@@ -1082,6 +1312,13 @@ function inferMediaType(name: string): string {
 
 function isSafeImageType(mediaType: string): boolean {
   return SAFE_IMAGE_TYPES.has(mediaType);
+}
+
+function isTextMediaType(mediaType: string): boolean {
+  return (
+    mediaType.startsWith("text/") ||
+    ["application/json", "application/yaml", "application/xml"].includes(mediaType)
+  );
 }
 
 function extractWebUrls(content: string): string[] {
@@ -1250,14 +1487,28 @@ async function readState(file: string): Promise<{ state: PersistedState; needsWr
 
   try {
     const version = z.object({ version: z.number() }).parse(raw).version;
-    if (version === 5) return { state: StateSchema.parse(raw), needsWrite: false };
+    if (version === 6) return { state: StateSchema.parse(raw), needsWrite: false };
+    if (version === 5) {
+      const previous = VersionFiveStateSchema.parse(raw);
+      return {
+        state: StateSchema.parse({
+          ...previous,
+          version: 6,
+          knowledge: [],
+          assignments: [],
+        }),
+        needsWrite: true,
+      };
+    }
     if (version === 4) {
       const previous = VersionFourStateSchema.parse(raw);
       return {
         state: StateSchema.parse({
           ...previous,
-          version: 5,
+          version: 6,
           agents: previous.agents.map(migrateMasterAccessMode),
+          knowledge: [],
+          assignments: [],
         }),
         needsWrite: true,
       };
@@ -1267,8 +1518,10 @@ async function readState(file: string): Promise<{ state: PersistedState; needsWr
       return {
         state: StateSchema.parse({
           ...previous,
-          version: 5,
+          version: 6,
           agents: previous.agents.map(migrateMasterAccessMode),
+          knowledge: [],
+          assignments: [],
         }),
         needsWrite: true,
       };
@@ -1278,8 +1531,10 @@ async function readState(file: string): Promise<{ state: PersistedState; needsWr
       return {
         state: StateSchema.parse({
           ...previous,
-          version: 5,
+          version: 6,
           agents: previous.agents.map(migrateMasterAccessMode),
+          knowledge: [],
+          assignments: [],
         }),
         needsWrite: true,
       };
@@ -1295,13 +1550,15 @@ async function readState(file: string): Promise<{ state: PersistedState; needsWr
     });
     return {
       state: StateSchema.parse({
-        version: 5,
+        version: 6,
         workspaces: [workspace],
         agents: legacy.agents.map((agent) =>
           migrateMasterAccessMode({ ...agent, workspaceId: workspace.id }),
         ),
         threads: legacy.threads.map((thread) => ({ ...thread, workspaceId: workspace.id })),
         tasks: legacy.tasks.map((task) => ({ ...task, workspaceId: workspace.id })),
+        knowledge: [],
+        assignments: [],
       }),
       needsWrite: true,
     };

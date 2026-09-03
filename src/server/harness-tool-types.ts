@@ -1,9 +1,15 @@
-import type { HarnessPermissionKey, ToolCall } from "../shared/contracts.js";
+import type { HarnessPermissionKey, Task, ToolCall, WorkAssignment } from "../shared/contracts.js";
 
 export interface MasterToolHooks {
   update(toolCall: ToolCall): Promise<void>;
   requestApproval(toolCall: ToolCall): Promise<boolean>;
   requestInput?(toolCall: ToolCall): Promise<string[][]>;
+  createPlan?(title: string, steps: { title: string; description: string }[]): Promise<Task[]>;
+  delegate?(input: {
+    taskId: string;
+    workerHandle: string;
+    repositoryHandle: string;
+  }): Promise<{ assignment: WorkAssignment; result: string }>;
 }
 
 export interface MasterToolContext {

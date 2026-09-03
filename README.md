@@ -6,8 +6,9 @@ Milestone M9 is a fresh rebuild focused on two primary workflows:
 - create **Worker agents** powered by Codex or OpenCode;
 - create **Master agents** using ChatGPT OAuth through Codex CLI or an OpenAI-compatible endpoint;
 - chat in shared threads and invoke agents only with an `@handle`;
+- save shared documents and Git repositories, then reference them with a `#handle`;
 - attach files and images, and browse each thread's indexed files and links;
-- manage tasks and agents in the first two surfaces: Taskboard and Agents.
+- manage planned work, repository knowledge, and agents in Taskboard, Knowledge, and Agents.
 
 Workspaces are selected from the far-left rail. Each workspace has its own threads, agents, and
 tasks; Threads, Surfaces, and Settings live in the navigation panel beside that rail. Creating a
@@ -33,6 +34,11 @@ By default, data is stored in `.nexestra/` in the running repository:
 ├── credentials.json    # custom API keys, mode 0600
 ├── artifacts/
 │   └── <thread-id>/<artifact-id> # uploaded bytes, mode 0600
+├── workspaces/
+│   └── <workspace-id>/
+│       ├── knowledge/<knowledge-id>/document
+│       ├── repositories/<knowledge-id>/source
+│       └── worktrees/<assignment-id>
 └── threads/
     └── <thread-id>.jsonl  # the thread's shared append-only transcript
 ```
@@ -69,11 +75,23 @@ Artifacts on the triggering message are passed to the invoked agent. Codex recei
 OpenCode receives file inputs, and custom OpenAI-compatible providers receive bounded text-file
 content and safe raster images in their native multimodal request shape.
 
-Workers run in read-only discussion mode. Custom-provider Master agents have a provider-neutral
+The **Knowledge** surface stores workspace-scoped documents and Git repositories. Typing `#` in
+the composer opens the knowledge picker. Text documents are included as bounded context; binary
+documents are exposed by their managed local path. Repository URLs may use HTTPS or SSH, and local
+Git paths are also accepted. URLs containing embedded credentials are rejected.
+
+Workers run in read-only discussion mode. For an implementation request, a custom-provider Master
+must call `plan` to create durable Taskboard tasks and then call `delegate` for each task it assigns.
+Delegation creates `nexestra/<assignment-id>` from the selected `#repository` and checks it out into
+an isolated managed worktree. The Worker runs there with write access, verifies its work, and
+commits on that branch. Nexestra does not merge or push the branch automatically.
+
+Custom-provider Master agents have a provider-neutral
 harness with `list`, `glob`, `grep`, `read`, `edit`, `write`, `bash`, `apply_patch`, `skill`,
-`todowrite`, `webfetch`, `websearch`, and `question`. LSP is intentionally not included. Questions
+`plan`, `delegate`, `todowrite`, `webfetch`, `websearch`, and `question`. LSP is intentionally not
+included. Questions
 pause in the thread until the user answers; approval-gated tools pause until the user allows or
-denies the call. The Taskboard currently organizes work but does not dispatch agents automatically.
+denies the call.
 
 Each Master has one access mode instead of separate settings for every tool:
 

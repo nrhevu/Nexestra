@@ -2,6 +2,7 @@ import {
   Archive,
   ArrowLeft,
   ArrowRight,
+  BookOpen,
   Bot,
   Check,
   CircleAlert,
@@ -10,6 +11,7 @@ import {
   Download,
   ExternalLink,
   FileText,
+  GitBranch,
   Image as ImageIcon,
   Link as LinkIcon,
   LoaderCircle,
@@ -46,6 +48,7 @@ import type {
   AgentView,
   Artifact,
   BootstrapData,
+  KnowledgeItem,
   Message,
   RunActivity,
   Task,
@@ -61,8 +64,8 @@ import { api } from "./api.js";
 const RichMessage = lazy(() => import("./RichMessage.js"));
 
 type PrimaryView = "threads" | "surfaces";
-type Surface = "taskboard" | "agents";
-type ModalName = "workspace" | "thread" | "agent" | "task" | "settings" | null;
+type Surface = "taskboard" | "agents" | "knowledge";
+type ModalName = "workspace" | "thread" | "agent" | "task" | "knowledge" | "settings" | null;
 
 interface RouteState {
   view: PrimaryView;
@@ -342,10 +345,10 @@ export function App() {
         onCreate={() => {
           if (route.view === "threads") setModal("thread");
           else if (route.surface === "agents") setModal("agent");
-          else {
+          else if (route.surface === "taskboard") {
             setTaskStatus("todo");
             setModal("task");
-          }
+          } else setModal("knowledge");
         }}
       />
       <section className="workspace">
@@ -415,6 +418,8 @@ export function App() {
             }
             onDelete={setAgentToDelete}
           />
+        ) : route.surface === "knowledge" ? (
+          <KnowledgeView data={data} onCreate={() => setModal("knowledge")} />
         ) : (
           <Taskboard
             data={data}
@@ -504,6 +509,17 @@ export function App() {
             await refresh();
             setModal(null);
             flash("Task added to the board.");
+          }}
+        />
+      )}
+      {modal === "knowledge" && (
+        <KnowledgeDialog
+          data={data}
+          onClose={() => setModal(null)}
+          onCreated={async () => {
+            await refresh();
+            setModal(null);
+            flash("Knowledge added to the workspace.");
           }}
         />
       )}
@@ -599,6 +615,14 @@ function TopBar(props: {
             type: "Task",
             action: () => props.onSurface("taskboard" as const),
           })),
+        ...props.data.knowledge
+          .filter((item) => `${item.name} ${item.handle}`.toLowerCase().includes(query))
+          .map((item) => ({
+            id: item.id,
+            label: `#${item.handle}`,
+            type: item.kind === "document" ? "Document" : "Repository",
+            action: () => props.onSurface("knowledge" as const),
+          })),
       ].slice(0, 8)
     : [];
   return (
@@ -607,10 +631,10 @@ function TopBar(props: {
         <Search size={16} />
         <input
           ref={searchRef}
-          aria-label="Search threads, tasks, or agents"
+          aria-label="Search threads, tasks, agents, or knowledge"
           value={queryText}
           onChange={(event) => setQueryText(event.target.value)}
-          placeholder="Search threads, tasks, or agents"
+          placeholder="Search threads, tasks, agents, or knowledge"
         />
         <kbd>⌘/Ctrl K</kbd>
         {query && (
@@ -806,6 +830,17 @@ function Sidebar(props: {
               </button>
               <button
                 className={
+                  props.route.surface === "knowledge" ? "sidebar-row selected" : "sidebar-row"
+                }
+                type="button"
+                onClick={() => props.onSurface("knowledge")}
+              >
+                <BookOpen size={17} />
+                <span className="row-label">Knowledge</span>
+                <span className="count">{props.data.knowledge.length}</span>
+              </button>
+              <button
+                className={
                   props.route.surface === "agents" ? "sidebar-row selected" : "sidebar-row"
                 }
                 type="button"
@@ -859,11 +894,21 @@ function ThreadView(props: {
         .filter((agent) => !mentionQuery || agent.handle.includes(mentionQuery))
         .slice(0, 6)
     : [];
+  const knowledgeMatch = mentionMatch ? null : draft.match(/(^|\s)#([a-zA-Z0-9_-]*)$/);
+  const knowledgeQuery = knowledgeMatch?.[2]?.toLowerCase();
+  const knowledgeSuggestions = knowledgeMatch
+    ? props.data.knowledge
+        .filter((item) => !knowledgeQuery || item.handle.includes(knowledgeQuery))
+        .slice(0, 6)
+    : [];
+  const suggestionMode = knowledgeMatch ? "knowledge" : mentionMatch ? "agent" : null;
   const activeAgent = suggestions[activeSuggestion];
   const selectedSuggestionIndex =
-    activeAgent && canCallAgent(activeAgent)
-      ? activeSuggestion
-      : suggestions.findIndex(canCallAgent);
+    suggestionMode === "knowledge"
+      ? Math.min(activeSuggestion, Math.max(knowledgeSuggestions.length - 1, 0))
+      : activeAgent && canCallAgent(activeAgent)
+        ? activeSuggestion
+        : suggestions.findIndex(canCallAgent);
 
   const send = async () => {
     const content = draft.trim();
@@ -917,7 +962,23 @@ function ThreadView(props: {
     setMentionMenuOpen(false);
   };
 
+  const pickKnowledge = (item: KnowledgeItem) => {
+    if (!knowledgeMatch || knowledgeMatch.index === undefined) return;
+    const prefixLength = knowledgeMatch[1]?.length ?? 0;
+    const start = knowledgeMatch.index + prefixLength;
+    setDraft(`${draft.slice(0, start)}#${item.handle} `);
+    setMentionMenuOpen(false);
+  };
+
   const moveSuggestion = (direction: 1 | -1) => {
+    if (suggestionMode === "knowledge") {
+      if (knowledgeSuggestions.length === 0) return;
+      setActiveSuggestion(
+        (selectedSuggestionIndex + direction + knowledgeSuggestions.length) %
+          knowledgeSuggestions.length,
+      );
+      return;
+    }
     const callable = suggestions
       .map((agent, index) => ({ agent, index }))
       .filter(({ agent }) => canCallAgent(agent));
@@ -929,7 +990,9 @@ function ThreadView(props: {
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.nativeEvent.isComposing) return;
-    const menuVisible = mentionMenuOpen && suggestions.length > 0;
+    const menuVisible =
+      mentionMenuOpen &&
+      (suggestionMode === "knowledge" ? knowledgeSuggestions.length > 0 : suggestions.length > 0);
     if (menuVisible && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
       event.preventDefault();
       moveSuggestion(event.key === "ArrowDown" ? 1 : -1);
@@ -938,6 +1001,17 @@ function ThreadView(props: {
     if (menuVisible && event.key === "Escape") {
       event.preventDefault();
       setMentionMenuOpen(false);
+      return;
+    }
+    const selectedKnowledge = knowledgeSuggestions[selectedSuggestionIndex];
+    if (
+      menuVisible &&
+      suggestionMode === "knowledge" &&
+      selectedKnowledge &&
+      (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey))
+    ) {
+      event.preventDefault();
+      pickKnowledge(selectedKnowledge);
       return;
     }
     const selected = suggestions[selectedSuggestionIndex];
@@ -1007,6 +1081,7 @@ function ThreadView(props: {
           toolCalls={props.threadData.toolCalls ?? []}
           runActivities={props.runActivities}
           agents={props.data.agents}
+          knowledge={props.data.knowledge}
           onRetry={props.onRetry}
           onToolDecision={props.onToolDecision}
           onToolResponse={props.onToolResponse}
@@ -1020,37 +1095,68 @@ function ThreadView(props: {
       )}
       {activeTab === "messages" && (
         <div className="composer-wrap">
-          {mentionMenuOpen && suggestions.length > 0 && (
-            <div
-              className="mention-menu"
-              id="mention-suggestions"
-              role="listbox"
-              aria-label="Choose an agent"
-            >
-              <p>Mention an agent</p>
-              {suggestions.map((agent, index) => (
-                <button
-                  type="button"
-                  role="option"
-                  id={`mention-option-${agent.id}`}
-                  aria-selected={index === selectedSuggestionIndex}
-                  aria-disabled={!canCallAgent(agent)}
-                  disabled={!canCallAgent(agent)}
-                  className={index === selectedSuggestionIndex ? "active" : ""}
-                  key={agent.id}
-                  onClick={() => pickMention(agent)}
-                  onMouseEnter={() => setActiveSuggestion(index)}
-                >
-                  <Avatar agent={agent} small />
-                  <span>
-                    <strong>@{agent.handle}</strong>
-                    <small>{agent.kind === "master" ? "Master" : `${agent.harness} worker`}</small>
-                  </span>
-                  <em>{agent.readinessLabel}</em>
-                </button>
-              ))}
-            </div>
-          )}
+          {mentionMenuOpen &&
+            (suggestionMode === "knowledge"
+              ? knowledgeSuggestions.length > 0
+              : suggestions.length > 0) && (
+              <div
+                className="mention-menu"
+                id="mention-suggestions"
+                role="listbox"
+                aria-label={suggestionMode === "knowledge" ? "Choose knowledge" : "Choose an agent"}
+              >
+                <p>{suggestionMode === "knowledge" ? "Reference knowledge" : "Mention an agent"}</p>
+                {suggestionMode === "knowledge"
+                  ? knowledgeSuggestions.map((item, index) => (
+                      <button
+                        type="button"
+                        role="option"
+                        id={`mention-option-${item.id}`}
+                        aria-selected={index === selectedSuggestionIndex}
+                        className={index === selectedSuggestionIndex ? "active" : ""}
+                        key={item.id}
+                        onClick={() => pickKnowledge(item)}
+                        onMouseEnter={() => setActiveSuggestion(index)}
+                      >
+                        <span className="reference-suggestion-icon">
+                          {item.kind === "document" ? (
+                            <FileText size={15} />
+                          ) : (
+                            <GitBranch size={15} />
+                          )}
+                        </span>
+                        <span>
+                          <strong>#{item.handle}</strong>
+                          <small>{item.name}</small>
+                        </span>
+                        <em>{item.kind === "document" ? "Document" : item.status}</em>
+                      </button>
+                    ))
+                  : suggestions.map((agent, index) => (
+                      <button
+                        type="button"
+                        role="option"
+                        id={`mention-option-${agent.id}`}
+                        aria-selected={index === selectedSuggestionIndex}
+                        aria-disabled={!canCallAgent(agent)}
+                        disabled={!canCallAgent(agent)}
+                        className={index === selectedSuggestionIndex ? "active" : ""}
+                        key={agent.id}
+                        onClick={() => pickMention(agent)}
+                        onMouseEnter={() => setActiveSuggestion(index)}
+                      >
+                        <Avatar agent={agent} small />
+                        <span>
+                          <strong>@{agent.handle}</strong>
+                          <small>
+                            {agent.kind === "master" ? "Master" : `${agent.harness} worker`}
+                          </small>
+                        </span>
+                        <em>{agent.readinessLabel}</em>
+                      </button>
+                    ))}
+              </div>
+            )}
           <fieldset
             className={`composer${draggingFiles ? " dragging" : ""}`}
             aria-label="Message composer"
@@ -1109,11 +1215,23 @@ function ThreadView(props: {
               aria-label="Message"
               role="combobox"
               aria-autocomplete="list"
-              aria-expanded={mentionMenuOpen && suggestions.length > 0}
+              aria-expanded={
+                mentionMenuOpen &&
+                (suggestionMode === "knowledge"
+                  ? knowledgeSuggestions.length > 0
+                  : suggestions.length > 0)
+              }
               aria-controls="mention-suggestions"
               aria-activedescendant={
-                mentionMenuOpen && suggestions[selectedSuggestionIndex]
-                  ? `mention-option-${suggestions[selectedSuggestionIndex].id}`
+                mentionMenuOpen &&
+                (suggestionMode === "knowledge"
+                  ? knowledgeSuggestions[selectedSuggestionIndex]
+                  : suggestions[selectedSuggestionIndex])
+                  ? `mention-option-${
+                      suggestionMode === "knowledge"
+                        ? knowledgeSuggestions[selectedSuggestionIndex]?.id
+                        : suggestions[selectedSuggestionIndex]?.id
+                    }`
                   : undefined
               }
               value={draft}
@@ -1124,7 +1242,7 @@ function ThreadView(props: {
                 setLocalError(undefined);
               }}
               onKeyDown={onKeyDown}
-              placeholder={`Message #${thread.slug} — type @ to mention an agent`}
+              placeholder={`Message #${thread.slug} — use @ for agents or # for knowledge`}
               rows={2}
             />
             <div className="composer-toolbar">
@@ -1149,7 +1267,19 @@ function ThreadView(props: {
                 >
                   @
                 </button>
-                <span>Agents reply only when explicitly @mentioned</span>
+                <button
+                  className="mention-button"
+                  type="button"
+                  onClick={() => {
+                    setMentionMenuOpen(true);
+                    setActiveSuggestion(0);
+                    setDraft((value) => `${value}${value && !value.endsWith(" ") ? " " : ""}#`);
+                  }}
+                  aria-label="Reference knowledge"
+                >
+                  #
+                </button>
+                <span>@ invokes an agent · # shares workspace knowledge</span>
               </div>
               <button
                 className="send-button"
@@ -1189,6 +1319,7 @@ const ThreadTranscript = memo(function ThreadTranscript({
   toolCalls,
   runActivities,
   agents,
+  knowledge,
   onRetry,
   onToolDecision,
   onToolResponse,
@@ -1200,6 +1331,7 @@ const ThreadTranscript = memo(function ThreadTranscript({
   toolCalls: ToolCall[];
   runActivities: RunActivity[];
   agents: AgentView[];
+  knowledge: KnowledgeItem[];
   onRetry: (runId: string) => Promise<unknown>;
   onToolDecision: (toolCallId: string, approved: boolean) => Promise<void>;
   onToolResponse: (toolCallId: string, answers: string[][]) => Promise<void>;
@@ -1208,6 +1340,10 @@ const ThreadTranscript = memo(function ThreadTranscript({
   const agentsById = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
   const currentAgentHandles = useMemo(() => agents.map((agent) => agent.handle), [agents]);
   const knownAgentHandles = useMemo(() => new Set(currentAgentHandles), [currentAgentHandles]);
+  const knownKnowledgeHandles = useMemo(
+    () => new Set(knowledge.map((item) => item.handle)),
+    [knowledge],
+  );
   const artifactsByMessage = useMemo(() => {
     const grouped = new Map<string, Artifact[]>();
     for (const artifact of artifacts) {
@@ -1279,6 +1415,7 @@ const ThreadTranscript = memo(function ThreadTranscript({
                 ...(message.author.kind === "agent" ? [message.author.handle] : []),
               ])
             }
+            knownKnowledgeHandles={knownKnowledgeHandles}
             agent={message.author.kind === "agent" ? agentsById.get(message.author.id) : undefined}
           />
           {(runsByTrigger.get(message.id) ?? []).map((run) => (
@@ -1309,11 +1446,13 @@ function MessageRow({
   artifacts,
   agent,
   knownHandles,
+  knownKnowledgeHandles,
 }: {
   message: Message;
   artifacts: Artifact[];
   agent?: AgentView;
   knownHandles: ReadonlySet<string>;
+  knownKnowledgeHandles: ReadonlySet<string>;
 }) {
   const agentAuthor = message.author.kind === "agent" ? message.author : undefined;
   return (
@@ -1339,7 +1478,11 @@ function MessageRow({
         </div>
         {message.content && (
           <Suspense fallback={<p className="message-markdown-fallback">{message.content}</p>}>
-            <RichMessage content={message.content} knownHandles={knownHandles} />
+            <RichMessage
+              content={message.content}
+              knownHandles={knownHandles}
+              knownKnowledgeHandles={knownKnowledgeHandles}
+            />
           </Suspense>
         )}
         {artifacts.length > 0 && <MessageArtifacts artifacts={artifacts} />}
@@ -1823,6 +1966,94 @@ function ToolCallRow({
   );
 }
 
+function KnowledgeView({ data, onCreate }: { data: BootstrapData; onCreate: () => void }) {
+  const documents = data.knowledge.filter((item) => item.kind === "document");
+  const repositories = data.knowledge.filter((item) => item.kind === "repository");
+  return (
+    <div className="surface-view">
+      <header className="workspace-header">
+        <div>
+          <p className="eyebrow">SURFACE</p>
+          <h1>Knowledge</h1>
+          <p className="subtitle">
+            Share documents and repositories with people and agents through a #reference.
+          </p>
+        </div>
+        <button className="primary-button" type="button" onClick={onCreate}>
+          <Plus size={17} />
+          Add knowledge
+        </button>
+      </header>
+      <div className="stat-strip">
+        <div>
+          <span>Knowledge items</span>
+          <strong>{data.knowledge.length}</strong>
+        </div>
+        <div>
+          <span>Documents</span>
+          <strong>{documents.length}</strong>
+        </div>
+        <div>
+          <span>Repositories</span>
+          <strong>{repositories.length}</strong>
+        </div>
+        <div>
+          <span>Worker assignments</span>
+          <strong className="accent-number">{data.assignments.length}</strong>
+        </div>
+      </div>
+      {data.knowledge.length === 0 ? (
+        <EmptyState
+          icon={<BookOpen size={25} />}
+          title="No shared knowledge yet"
+          body="Upload a document or add a Git repository, then reference it in chat with #handle."
+          action="Add your first item"
+          onAction={onCreate}
+        />
+      ) : (
+        <div className="knowledge-grid">
+          {data.knowledge.map((item) => (
+            <article className="knowledge-card" key={item.id}>
+              <div className="knowledge-icon">
+                {item.kind === "document" ? <FileText size={20} /> : <GitBranch size={20} />}
+              </div>
+              <div className="knowledge-card-body">
+                <header>
+                  <div>
+                    <h2>{item.name}</h2>
+                    <mark>#{item.handle}</mark>
+                  </div>
+                  <span
+                    className={`knowledge-status${item.kind === "repository" ? ` ${item.status}` : ""}`}
+                  >
+                    {item.kind === "document" ? "Document" : item.status}
+                  </span>
+                </header>
+                {item.description && <p>{item.description}</p>}
+                {item.kind === "document" ? (
+                  <div className="knowledge-meta">
+                    <span>{item.fileName}</span>
+                    <span>{formatBytes(item.size)}</span>
+                    <a href={`/api/knowledge/${encodeURIComponent(item.id)}/content`} download>
+                      <Download size={13} /> Download
+                    </a>
+                  </div>
+                ) : (
+                  <div className="knowledge-meta repository-meta">
+                    <code>{item.source}</code>
+                    {item.defaultBranch && <span>Default branch: {item.defaultBranch}</span>}
+                    {item.error && <span className="knowledge-error">{item.error}</span>}
+                  </div>
+                )}
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AgentsView(props: {
   data: BootstrapData;
   onCreate: () => void;
@@ -2014,6 +2245,10 @@ function Taskboard(props: {
     { status: "done", title: "Done" },
   ];
   const agents = new Map(props.data.agents.map((agent) => [agent.id, agent]));
+  const assignments = new Map<string, BootstrapData["assignments"][number]>();
+  for (const assignment of props.data.assignments) {
+    if (!assignments.has(assignment.taskId)) assignments.set(assignment.taskId, assignment);
+  }
   return (
     <div className="surface-view">
       <header className="workspace-header">
@@ -2050,6 +2285,7 @@ function Taskboard(props: {
                   key={task.id}
                   task={task}
                   agent={task.assigneeId ? agents.get(task.assigneeId) : undefined}
+                  assignment={assignments.get(task.id)}
                   onMove={props.onMove}
                   onThread={props.onThread}
                 />
@@ -2065,11 +2301,13 @@ function Taskboard(props: {
 function TaskCard({
   task,
   agent,
+  assignment,
   onMove,
   onThread,
 }: {
   task: Task;
   agent?: AgentView;
+  assignment?: BootstrapData["assignments"][number];
   onMove: (task: Task, status: Task["status"]) => Promise<unknown>;
   onThread: (id: string) => void;
 }) {
@@ -2080,6 +2318,13 @@ function TaskCard({
       <span className="task-id">NX-{task.id.slice(0, 4).toUpperCase()}</span>
       <h3>{task.title}</h3>
       {task.description && <p>{task.description}</p>}
+      {assignment && (
+        <div className="task-assignment">
+          <GitBranch size={12} />
+          <code>{assignment.branch}</code>
+          <span>{assignment.status}</span>
+        </div>
+      )}
       <footer>
         <div>
           {agent ? (
@@ -2643,6 +2888,144 @@ function MasterAccessModeField() {
   );
 }
 
+function KnowledgeDialog({
+  data,
+  onClose,
+  onCreated,
+}: {
+  data: BootstrapData;
+  onClose: () => void;
+  onCreated: () => Promise<void>;
+}) {
+  const [kind, setKind] = useState<KnowledgeItem["kind"]>("document");
+  const [name, setName] = useState("");
+  const [handle, setHandle] = useState("");
+  const [handleEdited, setHandleEdited] = useState(false);
+  const [documentFile, setDocumentFile] = useState<File>();
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string>();
+  return (
+    <Modal title="Add knowledge" eyebrow="KNOWLEDGE" onClose={onClose}>
+      <form
+        onSubmit={async (event) => {
+          event.preventDefault();
+          const fields = new FormData(event.currentTarget);
+          setSaving(true);
+          setFormError(undefined);
+          try {
+            const common = {
+              workspaceId: data.workspace.id,
+              name,
+              handle,
+              description: String(fields.get("description") ?? ""),
+            };
+            if (kind === "document") {
+              if (!documentFile || documentFile.size === 0) {
+                throw new Error("Choose a document to upload.");
+              }
+              const body = new FormData();
+              for (const [key, value] of Object.entries(common)) body.append(key, value);
+              body.append("file", documentFile);
+              await api("/api/knowledge/documents", { method: "POST", body });
+            } else {
+              await api("/api/knowledge/repositories", {
+                method: "POST",
+                body: JSON.stringify({ ...common, source: String(fields.get("source") ?? "") }),
+              });
+            }
+            await onCreated();
+          } catch (caught) {
+            setFormError(messageFrom(caught));
+          } finally {
+            setSaving(false);
+          }
+        }}
+      >
+        <fieldset className="segmented" aria-label="Knowledge type">
+          <button
+            type="button"
+            className={kind === "document" ? "active" : ""}
+            onClick={() => setKind("document")}
+          >
+            <FileText size={15} /> Document
+          </button>
+          <button
+            type="button"
+            className={kind === "repository" ? "active" : ""}
+            onClick={() => setKind("repository")}
+          >
+            <GitBranch size={15} /> Git repository
+          </button>
+        </fieldset>
+        <Field label="Name">
+          <input
+            value={name}
+            onChange={(event) => {
+              const value = event.target.value;
+              setName(value);
+              if (!handleEdited) setHandle(handleFromName(value));
+            }}
+            placeholder={kind === "document" ? "Architecture guide" : "Product repository"}
+            required
+            maxLength={120}
+          />
+        </Field>
+        <Field label="Reference handle" hint="Use this in chat, for example #product-repo">
+          <div className="handle-input">
+            <span>#</span>
+            <input
+              value={handle}
+              onChange={(event) => {
+                setHandleEdited(true);
+                setHandle(event.target.value.toLowerCase());
+              }}
+              placeholder="product-repo"
+              pattern="[a-z0-9][a-z0-9_-]{1,47}"
+              required
+              maxLength={48}
+            />
+          </div>
+        </Field>
+        <Field label="Description" optional>
+          <textarea name="description" rows={3} placeholder="What this knowledge contains…" />
+        </Field>
+        {kind === "document" ? (
+          <Field label="Document" hint="The file is copied into the managed workspace.">
+            <input
+              name="file"
+              type="file"
+              onChange={(event) => setDocumentFile(event.target.files?.[0])}
+            />
+          </Field>
+        ) : (
+          <Field
+            label="Repository source"
+            hint="HTTPS, SSH, or an existing local Git repository path."
+          >
+            <input
+              name="source"
+              placeholder="https://github.com/owner/repository.git"
+              required
+              maxLength={2048}
+            />
+          </Field>
+        )}
+        {formError && (
+          <p className="form-error">
+            <CircleAlert size={14} />
+            {formError}
+          </p>
+        )}
+        <ModalActions
+          onClose={onClose}
+          saving={saving}
+          submitLabel={kind === "document" ? "Upload document" : "Clone repository"}
+        />
+      </form>
+    </Modal>
+  );
+}
+
 function TaskDialog({
   data,
   initialStatus,
@@ -3016,7 +3399,8 @@ function messageFrom(error: unknown): string {
 function routeFromLocation(): RouteState {
   const parts = window.location.pathname.split("/").filter(Boolean);
   if (parts[0] === "surfaces") {
-    return { view: "surfaces", surface: parts[1] === "taskboard" ? "taskboard" : "agents" };
+    const surface = parts[1] === "taskboard" || parts[1] === "knowledge" ? parts[1] : "agents";
+    return { view: "surfaces", surface };
   }
   return { view: "threads", surface: "agents", ...(parts[1] ? { threadId: parts[1] } : {}) };
 }

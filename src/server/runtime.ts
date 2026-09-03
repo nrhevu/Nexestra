@@ -19,7 +19,7 @@ import {
   type MasterToolSession,
 } from "./master-harness.js";
 import { findExecutable, runCommand, safeProcessEnv } from "./process.js";
-import type { AgentArtifact, FileStore } from "./store.js";
+import type { AgentArtifact, AgentKnowledgeItem, FileStore } from "./store.js";
 
 export interface RuntimeToolUpdate {
   id: string;
@@ -45,6 +45,9 @@ export interface AgentInvocation {
   transcriptPath: string;
   transcriptSnapshot: string;
   artifacts?: AgentArtifact[];
+  knowledge?: AgentKnowledgeItem[];
+  workingDirectory?: string;
+  mode?: "discussion" | "task";
   toolHooks?: MasterToolHooks;
   activityHooks?: AgentActivityHooks;
 }
@@ -133,14 +136,16 @@ export class LocalAgentRunner implements AgentRunner {
     const lastMessageFile = join(runDirectory, "last-message.txt");
     const prompt = localHarnessPrompt(agent, invocation);
     const masterAccessMode = agent.kind === "master" ? agent.accessMode : undefined;
-    const args = ["exec", "--json", "-C", this.options.store.workspacePath];
+    const workingDirectory = invocation.workingDirectory ?? this.options.store.workspacePath;
+    const taskWorker = agent.kind === "worker" && invocation.mode === "task";
+    const args = ["exec", "--json", "-C", workingDirectory];
     if (masterAccessMode === "full") {
       args.push("--dangerously-bypass-approvals-and-sandbox");
     } else {
-      args.push("-s", masterAccessMode === "auto" ? "workspace-write" : "read-only");
+      args.push("-s", masterAccessMode === "auto" || taskWorker ? "workspace-write" : "read-only");
     }
     args.push("--skip-git-repo-check", "--ephemeral", "-o", lastMessageFile);
-    if (masterAccessMode === "auto") args.push("--approve-for-me");
+    if (masterAccessMode === "auto" || taskWorker) args.push("--approve-for-me");
     if (agent.kind === "worker") {
       if (agent.model) args.push("-m", agent.model);
       if (agent.reasoningEffort) {
@@ -161,7 +166,7 @@ export class LocalAgentRunner implements AgentRunner {
       handleCodexActivity(event, invocation.activityHooks, toolUpdates.emit);
     });
     const result = await runCommand(binary, args, {
-      cwd: this.options.store.workspacePath,
+      cwd: workingDirectory,
       timeoutMs: 5 * 60_000,
       env: safeProcessEnv(this.env),
       onStdout: consume.push,
@@ -182,15 +187,16 @@ export class LocalAgentRunner implements AgentRunner {
   private async invokeOpenCode(agent: WorkerAgent, invocation: AgentInvocation): Promise<string> {
     const binary = await findExecutable("opencode", this.env);
     if (!binary) throw new Error("OpenCode was not found in PATH.");
+    const workingDirectory = invocation.workingDirectory ?? this.options.store.workspacePath;
     const args = [
       "run",
       "--format",
       "json",
       "--pure",
       "--agent",
-      "plan",
+      invocation.mode === "task" ? "build" : "plan",
       "--dir",
-      this.options.store.workspacePath,
+      workingDirectory,
     ];
     if (agent.model) args.push("-m", agent.model);
     if (agent.reasoningEffort) args.push("--variant", agent.reasoningEffort);
@@ -206,7 +212,7 @@ export class LocalAgentRunner implements AgentRunner {
       handleOpenCodeActivity(event, invocation.activityHooks, toolUpdates.emit);
     });
     const result = await runCommand(binary, args, {
-      cwd: this.options.store.workspacePath,
+      cwd: workingDirectory,
       timeoutMs: 5 * 60_000,
       env: safeProcessEnv(this.env),
       onStdout: consume.push,
@@ -245,10 +251,24 @@ export class LocalAgentRunner implements AgentRunner {
       redact: (value: string) => this.options.store.redactSecrets(value),
     };
     const tools = await createMasterToolSession(context);
+    const workers = this.options.store
+      .listAgents(invocation.thread.workspaceId)
+      .filter(
+        (candidate): candidate is WorkerAgent =>
+          candidate.kind === "worker" && candidate.enabled && !candidate.archived,
+      )
+      .map(
+        (candidate) =>
+          `- @${candidate.handle}: ${candidate.harness}${candidate.model ? `, model ${candidate.model}` : ""}`,
+      );
     const system = [
       `You are ${agent.name} (@${agent.handle}), Nexestra's internal Master agent.`,
       "You are responding in a shared thread with the user and other agents.",
       "Answer the exact message that just @mentioned you. Use tools when repository evidence or a code change is needed.",
+      "For repository implementation requests, call plan first, delegate each independent planned task to an available Worker and a referenced #repository, then synthesize the Worker results. Never invent task IDs, Worker handles, or repository handles.",
+      workers.length > 0
+        ? `Workers available for delegation:\n${workers.join("\n")}`
+        : "No Workers are currently available for delegation. Explain this blocker instead of inventing a handle.",
       "Keep working through tool results until the request is resolved, then return a concise final answer in the user's language.",
       tools.warnings.length > 0
         ? `Some configured extensions could not start:\n${tools.warnings.map((warning) => `- ${warning}`).join("\n")}`
@@ -486,22 +506,44 @@ export function agentView(
 function localHarnessPrompt(agent: Agent, invocation: AgentInvocation): string {
   const role = agent.kind === "master" ? "Master agent" : `${agent.harness} worker`;
   const artifactContext = formatInvocationArtifacts(invocation);
+  const knowledgeContext = formatInvocationKnowledge(invocation);
+  const taskWorker = agent.kind === "worker" && invocation.mode === "task";
   return [
     `You are ${agent.name} (@${agent.handle}), a ${role} in Nexestra.`,
     `The user just mentioned you in thread #${invocation.thread.slug}.`,
     `Required message to answer (id: ${invocation.trigger.id}):\n${invocation.trigger.content}`,
     "Answer the message above even if the transcript contains newer messages.",
-    `Shared transcript path: ${invocation.transcriptPath}`,
-    "Read the transcript for relevant context.",
+    taskWorker
+      ? `Shared transcript snapshot:\n${invocation.transcriptSnapshot}`
+      : `Shared transcript path: ${invocation.transcriptPath}`,
+    taskWorker
+      ? "Use the supplied snapshot for conversation context."
+      : "Read the transcript for relevant context.",
     artifactContext,
+    knowledgeContext,
     agent.kind === "worker"
-      ? "This is a discussion turn: do not modify files or run commands that change state."
+      ? taskWorker
+        ? "This is an implementation assignment. Work only in the assigned worktree, verify the result, and commit the completed change on the current branch. Do not merge or push."
+        : "This is a discussion turn: do not modify files or run commands that change state."
       : masterCodexAccessPrompt(agent),
     "Return only the response content so Nexestra can write it to the thread.",
     agent.instructions ? `Agent-specific instructions:\n${agent.instructions}` : "",
   ]
     .filter(Boolean)
     .join("\n\n");
+}
+
+function formatInvocationKnowledge(invocation: AgentInvocation): string {
+  if (!invocation.knowledge?.length) return "";
+  return [
+    "Knowledge referenced by the required message:",
+    ...invocation.knowledge.map(({ item, localPath, content }) =>
+      [
+        `- #${item.handle} [${item.kind}] ${item.name}: ${localPath}`,
+        content ? `\n${content}` : "",
+      ].join(""),
+    ),
+  ].join("\n");
 }
 
 function formatInvocationArtifacts(invocation: AgentInvocation): string {
@@ -531,6 +573,7 @@ function providerUserPrompt(invocation: AgentInvocation): string {
     invocation.trigger.content,
     "Answer the message above even if the transcript contains newer messages.",
     formatInvocationArtifacts(invocation),
+    formatInvocationKnowledge(invocation),
     `Shared transcript for #${invocation.thread.slug}:`,
     invocation.transcriptSnapshot,
   ].join("\n\n");

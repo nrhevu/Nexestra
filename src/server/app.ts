@@ -7,6 +7,7 @@ import { ZodError } from "zod";
 import { type BootstrapData, ToolAnswersSchema } from "../shared/contracts.js";
 import { ChatGptAuthManager } from "./auth.js";
 import { AgentDispatcher, ChatService } from "./dispatcher.js";
+import { RepositoryManager } from "./repository-manager.js";
 import { type AgentRunner, agentView, LocalAgentRunner } from "./runtime.js";
 import {
   type FileStore,
@@ -26,7 +27,8 @@ interface CreateAppOptions {
 
 export function createApp(options: CreateAppOptions) {
   const runner = options.runner ?? new LocalAgentRunner({ store: options.store });
-  const dispatcher = new AgentDispatcher(options.store, runner);
+  const repositories = new RepositoryManager(options.store);
+  const dispatcher = new AgentDispatcher(options.store, runner, repositories);
   const chat = new ChatService(options.store, dispatcher);
   const localRunner = runner instanceof LocalAgentRunner ? runner : undefined;
   const auth =
@@ -63,6 +65,8 @@ export function createApp(options: CreateAppOptions) {
         .map((agent) => agentView(agent, runtime, dispatcher.busyAgentIds())),
       threads: options.store.listThreads(workspace.id),
       tasks: options.store.listTasks(workspace.id),
+      knowledge: options.store.listKnowledge(workspace.id),
+      assignments: options.store.listAssignments(workspace.id),
       activeRuns: dispatcher.activeRuns(workspace.id),
       runtime,
       workspacePath: options.store.workspacePath,
@@ -88,6 +92,53 @@ export function createApp(options: CreateAppOptions) {
     const agent = await options.store.createAgent(await context.req.json());
     const runtime = await runner.runtimeStatus();
     return context.json(agentView(agent, runtime, dispatcher.busyAgentIds()), 201);
+  });
+
+  app.post("/api/knowledge/documents", async (context) => {
+    const body = await context.req.parseBody({ all: true });
+    const files = toFiles(body.file);
+    if (files.length !== 1) {
+      throw new StoreError("invalid", "Choose exactly one knowledge document.");
+    }
+    validateFileHeaders(files);
+    const file = files[0];
+    if (!file) throw new StoreError("invalid", "Knowledge document is missing.");
+    return context.json(
+      await options.store.createKnowledgeDocument(
+        {
+          workspaceId: stringField(body.workspaceId),
+          name: stringField(body.name),
+          handle: stringField(body.handle),
+          description: stringField(body.description),
+        },
+        {
+          name: file.name,
+          mediaType: file.type,
+          bytes: new Uint8Array(await file.arrayBuffer()),
+        },
+      ),
+      201,
+    );
+  });
+
+  app.post("/api/knowledge/repositories", async (context) => {
+    return context.json(await repositories.addRepository(await context.req.json()), 201);
+  });
+
+  app.get("/api/knowledge/:id/content", async (context) => {
+    const item = options.store.getKnowledge(context.req.param("id"));
+    if (item?.kind !== "document") {
+      throw new StoreError("not_found", "Knowledge document not found.");
+    }
+    const bytes = await readFile(options.store.knowledgePath(item));
+    return new Response(new Uint8Array(bytes), {
+      headers: {
+        "cache-control": "private, no-store",
+        "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(item.fileName)}`,
+        "content-type": "application/octet-stream",
+        "x-content-type-options": "nosniff",
+      },
+    });
   });
 
   app.patch("/api/agents/:id", async (context) => {
@@ -299,6 +350,10 @@ function toFiles(value: string | File | (string | File)[] | undefined): File[] {
     throw new StoreError("invalid", "Attachments must be uploaded as files.");
   }
   return values as File[];
+}
+
+function stringField(value: string | File | (string | File)[] | undefined): string {
+  return typeof value === "string" ? value : "";
 }
 
 function validateFileHeaders(files: File[]): void {

@@ -14,3 +14,4 @@
 | [0010](0010-opencode-compatible-master-semantics.md) | Accepted | Align provider-neutral Master behavior with OpenCode tool semantics |
 | [0011](0011-live-agent-activity-streams.md) | Accepted | Stream run phases, tool activity, and response text into the active thread |
 | [0012](0012-collapsible-live-reasoning.md) | Accepted | Show runtime-emitted reasoning only while a run is active |
+| [0013](0013-repository-knowledge-worker-delegation.md) | Accepted | Store shared knowledge and delegate planned tasks through isolated Git worktrees |

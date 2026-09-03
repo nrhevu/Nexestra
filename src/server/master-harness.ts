@@ -115,6 +115,8 @@ export async function executeMasterTool(
 
 function builtInTools(config: HarnessConfig, skills: HarnessSkill[]): ToolDefinition[] {
   let todos: Record<string, unknown>[] = [];
+  const plannedTaskIds = new Set<string>();
+  const delegatingTaskIds = new Set<string>();
   return [
     zodTool(
       "list",
@@ -307,6 +309,109 @@ function builtInTools(config: HarnessConfig, skills: HarnessSkill[]): ToolDefini
         const skill = skills.find((entry) => entry.name === input.name);
         if (!skill) throw new Error(`Skill ${String(input.name)} was not found.`);
         return readSkill(skill, context);
+      },
+    ),
+    zodTool(
+      "plan",
+      "Create the required execution plan as durable Taskboard tasks before delegating work.",
+      "todowrite",
+      objectSchema(
+        {
+          title: stringProperty("Short name for the overall plan."),
+          steps: {
+            type: "array",
+            minItems: 1,
+            maxItems: 20,
+            items: {
+              type: "object",
+              properties: {
+                title: stringProperty("Concrete task title."),
+                description: stringProperty("Acceptance criteria and implementation scope."),
+              },
+              required: ["title", "description"],
+              additionalProperties: false,
+            },
+          },
+        },
+        ["title", "steps"],
+      ),
+      z.object({
+        title: z.string().trim().min(1).max(160),
+        steps: z
+          .array(
+            z.object({
+              title: z.string().trim().min(1).max(160),
+              description: z.string().trim().min(1).max(1_800),
+            }),
+          )
+          .min(1)
+          .max(20),
+      }),
+      async (input, context) => {
+        if (!context.hooks?.createPlan) {
+          throw new Error("Planning is unavailable in this runtime.");
+        }
+        const tasks = await context.hooks.createPlan(input.title, input.steps);
+        for (const task of tasks) plannedTaskIds.add(task.id);
+        return JSON.stringify(
+          {
+            title: input.title,
+            tasks: tasks.map((task) => ({ id: task.id, title: task.title, status: task.status })),
+          },
+          null,
+          2,
+        );
+      },
+    ),
+    zodTool(
+      "delegate",
+      "Assign one planned task to a Worker in an isolated worktree of a #repository.",
+      "edit",
+      objectSchema(
+        {
+          taskId: stringProperty("Task ID returned by the plan tool."),
+          worker: stringProperty("Worker handle without @."),
+          repository: stringProperty("Knowledge repository handle without #."),
+        },
+        ["taskId", "worker", "repository"],
+      ),
+      z.object({
+        taskId: z.string().uuid(),
+        worker: z.string().trim().min(2).max(31),
+        repository: z.string().trim().min(2).max(48),
+      }),
+      async (input, context) => {
+        if (!plannedTaskIds.has(input.taskId)) {
+          throw new Error("Call plan first, then delegate only task IDs returned by that plan.");
+        }
+        if (delegatingTaskIds.has(input.taskId)) {
+          throw new Error("This planned task is already being delegated.");
+        }
+        if (!context.hooks?.delegate) {
+          throw new Error("Worker delegation is unavailable in this runtime.");
+        }
+        delegatingTaskIds.add(input.taskId);
+        try {
+          const { assignment, result } = await context.hooks.delegate({
+            taskId: input.taskId,
+            workerHandle: input.worker.toLowerCase(),
+            repositoryHandle: input.repository.toLowerCase(),
+          });
+          plannedTaskIds.delete(input.taskId);
+          return JSON.stringify(
+            {
+              assignmentId: assignment.id,
+              status: assignment.status,
+              branch: assignment.branch,
+              worktreePath: assignment.worktreePath,
+              workerResult: result,
+            },
+            null,
+            2,
+          );
+        } finally {
+          delegatingTaskIds.delete(input.taskId);
+        }
       },
     ),
     zodTool(

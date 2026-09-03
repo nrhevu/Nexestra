@@ -42,7 +42,7 @@ describe("FileStore", () => {
       workspaceId: workspace?.id,
     });
     const persisted = JSON.parse(await readFile(store.stateFile, "utf8"));
-    expect(persisted).toMatchObject({ version: 5 });
+    expect(persisted).toMatchObject({ version: 6, knowledge: [], assignments: [] });
   });
 
   it("creates isolated workspaces with their own general thread and agent handles", async () => {
@@ -105,6 +105,46 @@ describe("FileStore", () => {
     const transcript = await readFile(store.transcriptPath(thread.id), "utf8");
     expect(transcript).toContain("@codex hello");
     expect(transcript).toContain("Hello.");
+  });
+
+  it("stores shared documents and resolves their #references for agents", async () => {
+    const store = await openStore();
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const item = await store.createKnowledgeDocument(
+      {
+        name: "Architecture guide",
+        handle: "architecture",
+        description: "Repository conventions",
+      },
+      {
+        name: "architecture.md",
+        mediaType: "text/markdown",
+        bytes: new TextEncoder().encode("# Architecture\n\nUse one canonical transcript."),
+      },
+    );
+    const message = await store.createUserMessage(
+      thread.id,
+      "Use #architecture for this change.",
+      [],
+      [],
+      [{ knowledgeId: item.id, handle: item.handle }],
+    );
+
+    expect(store.listKnowledge()).toEqual([expect.objectContaining({ id: item.id })]);
+    await expect(store.agentKnowledge(message)).resolves.toEqual([
+      expect.objectContaining({
+        item: expect.objectContaining({ handle: "architecture" }),
+        content: expect.stringContaining("canonical transcript"),
+      }),
+    ]);
+    await expect(
+      store.createKnowledgeDocument(
+        { name: "Duplicate", handle: "architecture" },
+        { name: "duplicate.txt", mediaType: "text/plain", bytes: new Uint8Array([1]) },
+      ),
+    ).rejects.toMatchObject({ code: "conflict" });
+    expect(await readFile(store.knowledgePath(item), "utf8")).toContain("Architecture");
   });
 
   it("stores uploads and indexes web and workspace-file references in the thread transcript", async () => {
@@ -250,7 +290,7 @@ describe("FileStore", () => {
     const reopened = await FileStore.open({ root: store.root, workspacePath: store.workspacePath });
 
     expect(reopened.getAgent(agent.id)).toMatchObject({ accessMode: "ask" });
-    await expect(readFile(store.stateFile, "utf8")).resolves.toContain('"version": 5');
+    await expect(readFile(store.stateFile, "utf8")).resolves.toContain('"version": 6');
   });
 
   it("migrates version 3 Master permissions to ask mode", async () => {

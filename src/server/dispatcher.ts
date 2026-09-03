@@ -2,12 +2,15 @@ import {
   type Agent,
   type AgentRun,
   CreateMessageSchema,
+  extractKnowledgeHandles,
   extractMentionHandles,
   type Message,
   type RunActivity,
   type ThreadStreamEvent,
   type ToolCall,
+  type WorkAssignment,
 } from "../shared/contracts.js";
+import { type AssignmentRepositoryManager, RepositoryManager } from "./repository-manager.js";
 import {
   type AgentInvocation,
   type AgentRunner,
@@ -38,6 +41,7 @@ export class AgentDispatcher {
   constructor(
     private readonly store: FileStore,
     private readonly runner: AgentRunner,
+    private readonly repositories: AssignmentRepositoryManager = new RepositoryManager(store),
   ) {}
 
   busyAgentIds(): ReadonlySet<string> {
@@ -232,9 +236,10 @@ export class AgentDispatcher {
       this.notifyThread(running.threadId, true);
       const thread = this.store.getThread(run.threadId);
       if (!thread) throw new StoreError("not_found", "Thread not found.");
-      const [transcriptSnapshot, artifacts] = await Promise.all([
+      const [transcriptSnapshot, artifacts, knowledge] = await Promise.all([
         this.store.transcriptSnapshot(run.threadId),
         this.store.agentArtifacts(run.threadId, trigger.id),
+        this.store.agentKnowledge(trigger),
       ]);
       const pendingInteractions = new Map<string, "waiting_approval" | "waiting_input">();
       let runStatusQueue: Promise<void> = Promise.resolve();
@@ -267,6 +272,7 @@ export class AgentDispatcher {
         transcriptPath: this.store.transcriptPath(run.threadId),
         transcriptSnapshot,
         artifacts,
+        knowledge,
         toolHooks: {
           update: async (toolCall) => {
             await this.store.updateToolCall(toolCall);
@@ -309,6 +315,25 @@ export class AgentDispatcher {
               await refreshInteractionStatus();
             }
           },
+          createPlan: async (title, steps) => {
+            const tasks = [];
+            for (const step of steps) {
+              tasks.push(
+                await this.store.createTask({
+                  workspaceId: thread.workspaceId,
+                  title: step.title,
+                  description: [title, step.description].filter(Boolean).join("\n\n"),
+                  status: "todo",
+                  assigneeId: null,
+                  threadId: thread.id,
+                }),
+              );
+            }
+            this.notifyThread(run.threadId, true);
+            return tasks;
+          },
+          delegate: (input) =>
+            this.delegateWork(currentRun, agent, trigger, transcriptSnapshot, input),
         },
         activityHooks: {
           status: (stage, detail) => this.updateActivity(currentRun, stage, detail),
@@ -358,6 +383,135 @@ export class AgentDispatcher {
       this.liveActivities.delete(run.id);
       this.busy.delete(agent.id);
       this.notifyThread(run.threadId, true);
+    }
+  }
+
+  private async delegateWork(
+    masterRun: AgentRun,
+    master: Agent,
+    trigger: Message,
+    transcriptSnapshot: string,
+    input: { taskId: string; workerHandle: string; repositoryHandle: string },
+  ): Promise<{ assignment: WorkAssignment; result: string }> {
+    if (master.kind !== "master") throw new StoreError("invalid", "Only Masters can delegate.");
+    const thread = this.store.getThread(masterRun.threadId);
+    if (!thread) throw new StoreError("not_found", "Thread not found.");
+    const task = this.store.getTask(input.taskId);
+    if (!task || task.workspaceId !== thread.workspaceId || task.threadId !== thread.id) {
+      throw new StoreError("invalid", "Delegation must use a task from this run's plan.");
+    }
+    if (
+      this.store
+        .listAssignments(thread.workspaceId)
+        .some((assignment) => assignment.taskId === task.id && assignment.status !== "failed")
+    ) {
+      throw new StoreError("conflict", "This planned task already has an assignment.");
+    }
+    const worker = this.store.findAgentByHandle(input.workerHandle, thread.workspaceId);
+    if (worker?.kind !== "worker" || !worker.enabled || worker.archived) {
+      throw new StoreError("invalid", `@${input.workerHandle} is not an available Worker.`);
+    }
+    const knowledge = this.store.findKnowledgeByHandle(input.repositoryHandle, thread.workspaceId);
+    if (knowledge?.kind !== "repository") {
+      throw new StoreError("invalid", `#${input.repositoryHandle} is not a repository.`);
+    }
+    if (!trigger.knowledgeReferences.some((reference) => reference.knowledgeId === knowledge.id)) {
+      throw new StoreError(
+        "invalid",
+        `The triggering message must reference #${knowledge.handle} before delegation.`,
+      );
+    }
+    const release = this.reserveAgent(worker.id);
+    if (!release) throw new StoreError("conflict", `@${worker.handle} is being deleted.`);
+    const id = crypto.randomUUID();
+    const location = this.repositories.assignmentLocation(thread.workspaceId, id);
+    const now = new Date().toISOString();
+    try {
+      let assignment = await this.store.createAssignment({
+        id,
+        workspaceId: thread.workspaceId,
+        taskId: task.id,
+        threadId: thread.id,
+        masterRunId: masterRun.id,
+        workerAgentId: worker.id,
+        repositoryId: knowledge.id,
+        status: "queued",
+        branch: location.branch,
+        worktreePath: location.worktreePath,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await this.store.updateTask(task.id, { status: "in_progress", assigneeId: worker.id });
+      const result = await this.enqueueDelegation(worker.id, async () => {
+        this.busy.add(worker.id);
+        try {
+          await this.repositories.prepareAssignment(knowledge, location);
+          assignment = await this.store.updateAssignment(assignment.id, { status: "running" });
+          const delegatedTrigger: Message = {
+            ...trigger,
+            id: assignment.id,
+            content: [
+              `Assigned by @${master.handle}.`,
+              `Task: ${task.title}`,
+              task.description,
+              `Repository: #${knowledge.handle}`,
+              `Worktree: ${location.absolutePath}`,
+              "Implement the task, verify the result, and commit your changes on the assigned branch. Do not merge or push.",
+            ]
+              .filter(Boolean)
+              .join("\n\n"),
+            mentions: [{ agentId: worker.id, handle: worker.handle }],
+            knowledgeReferences: [{ knowledgeId: knowledge.id, handle: knowledge.handle }],
+            artifactIds: [],
+          };
+          return this.runner.invoke(worker, {
+            runId: assignment.id,
+            thread,
+            trigger: delegatedTrigger,
+            transcriptPath: this.store.transcriptPath(thread.id),
+            transcriptSnapshot,
+            knowledge: [{ item: knowledge, localPath: location.absolutePath }],
+            workingDirectory: location.absolutePath,
+            mode: "task",
+          });
+        } finally {
+          this.busy.delete(worker.id);
+        }
+      });
+      assignment = await this.store.updateAssignment(assignment.id, {
+        status: "completed",
+        result: result.slice(0, 20_000),
+      });
+      await this.store.updateTask(task.id, { status: "done" });
+      return { assignment, result };
+    } catch (error) {
+      const message = this.store.redactSecrets(
+        error instanceof Error ? error.message : "Worker assignment failed.",
+      );
+      await this.store
+        .updateAssignment(id, { status: "failed", error: message.slice(0, 2_000) })
+        .catch(() => undefined);
+      await this.store
+        .updateTask(task.id, { status: "todo", assigneeId: null })
+        .catch(() => undefined);
+      throw new StoreError("invalid", message);
+    } finally {
+      release();
+    }
+  }
+
+  private async enqueueDelegation<T>(agentId: string, work: () => Promise<T>): Promise<T> {
+    const previous = this.queues.get(agentId) ?? Promise.resolve();
+    const result = previous.catch(() => undefined).then(work);
+    const queued = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.queues.set(agentId, queued);
+    try {
+      return await result;
+    } finally {
+      if (this.queues.get(agentId) === queued) this.queues.delete(agentId);
     }
   }
 
@@ -458,6 +612,10 @@ export class ChatService {
     const thread = this.store.getThread(threadId);
     if (!thread) throw new StoreError("not_found", "Thread not found.");
     const agents: Agent[] = [];
+    const knowledgeReferences = extractKnowledgeHandles(content).flatMap((handle) => {
+      const item = this.store.findKnowledgeByHandle(handle, thread.workspaceId);
+      return item ? [{ knowledgeId: item.id, handle: item.handle }] : [];
+    });
     const releases: (() => void)[] = [];
     for (const handle of extractMentionHandles(content)) {
       const agent = this.store.findAgentByHandle(handle, thread.workspaceId);
@@ -469,7 +627,13 @@ export class ChatService {
     }
     try {
       const mentions = agents.map((agent) => ({ agentId: agent.id, handle: agent.handle }));
-      const message = await this.store.createUserMessage(threadId, content, mentions, uploads);
+      const message = await this.store.createUserMessage(
+        threadId,
+        content,
+        mentions,
+        uploads,
+        knowledgeReferences,
+      );
       const runs = await this.dispatcher.enqueue(message, agents);
       return { message, runs };
     } finally {

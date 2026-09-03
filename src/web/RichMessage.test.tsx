@@ -12,7 +12,7 @@ describe("RichMessage", () => {
     const content = [
       "## Proposal",
       "",
-      "**Hello @planner** and `@inside-code` with $\\gamma$.",
+      "**Hello @planner** using #architecture and `@inside-code #inside-code` with $\\gamma$.",
       "",
       "1. First item",
       "2. Second item",
@@ -26,14 +26,19 @@ describe("RichMessage", () => {
       "<script>window.__unsafe = true</script>",
     ].join("\n");
     const { container } = render(
-      <RichMessage content={content} knownHandles={new Set(["planner"])} />,
+      <RichMessage
+        content={content}
+        knownHandles={new Set(["planner"])}
+        knownKnowledgeHandles={new Set(["architecture"])}
+      />,
     );
 
     expect(screen.getByRole("heading", { name: "Proposal", level: 2 })).toBeInTheDocument();
     const greeting = screen.getByText(/Hello/).closest("strong");
     expect(greeting).not.toBeNull();
     expect(within(greeting as HTMLElement).getByText("@planner").tagName).toBe("MARK");
-    expect(screen.getByText("@inside-code").tagName).toBe("CODE");
+    expect(screen.getByText("#architecture")).toHaveClass("knowledge-reference");
+    expect(screen.getByText(/@inside-code/).tagName).toBe("CODE");
     expect(screen.getByRole("list")).toBeInTheDocument();
     expect(screen.getByRole("table")).toBeInTheDocument();
     expect(container.querySelector(".katex")).toBeInTheDocument();
