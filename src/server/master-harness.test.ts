@@ -281,6 +281,7 @@ describe("Master harness tools", () => {
           steps: [{ title: "Build feature", description: "Meet the acceptance criteria." }],
         }),
       ).resolves.toContain(taskId);
+      expect(session.pendingTaskIds()).toEqual([taskId]);
       await expect(
         callSession(session, "delegate", {
           taskId,
@@ -288,6 +289,7 @@ describe("Master harness tools", () => {
           repository: "product-repo",
         }),
       ).resolves.toContain("nexestra/assignment");
+      expect(session.pendingTaskIds()).toEqual([]);
       await expect(
         callSession(session, "delegate", {
           taskId,

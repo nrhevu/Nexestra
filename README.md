@@ -82,9 +82,16 @@ Git paths are also accepted. URLs containing embedded credentials are rejected.
 
 Workers run in read-only discussion mode. For an implementation request, a custom-provider Master
 must call `plan` to create durable Taskboard tasks and then call `delegate` for each task it assigns.
+If the provider tries to return a final answer while planned tasks are still undelegated, the
+harness sends it back to the tool loop instead of leaving silent, unassigned work on the board.
 Delegation creates `nexestra/<assignment-id>` from the selected `#repository` and checks it out into
 an isolated managed worktree. The Worker runs there with write access, verifies its work, and
 commits on that branch. Nexestra does not merge or push the branch automatically.
+
+Every assignment is also a durable Worker run. Click any Taskboard card to inspect its assignee,
+repository, isolated branch and worktree, current phase, live reasoning, streamed response, and
+tool calls. Completed cards retain the Worker result and tool history in this process view; a task
+that was never delegated says so explicitly.
 
 Custom-provider Master agents have a provider-neutral
 harness with `list`, `glob`, `grep`, `read`, `edit`, `write`, `bash`, `apply_patch`, `skill`,

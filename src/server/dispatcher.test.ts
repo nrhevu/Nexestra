@@ -93,7 +93,20 @@ class DelegatingMasterRunner implements AgentRunner {
 
   async invoke(agent: Agent, invocation: AgentInvocation) {
     this.invocations.push({ agent, invocation });
-    if (agent.kind === "worker") return "Implemented and committed the assigned change.";
+    if (agent.kind === "worker") {
+      invocation.activityHooks?.status("thinking", "Inspecting the assigned worktree");
+      invocation.activityHooks?.thinking("Reviewing the task.", "append");
+      await invocation.activityHooks?.tool({
+        id: "worker-read",
+        name: "read",
+        permission: "read",
+        status: "completed",
+        input: '{"filePath":"README.md"}',
+        summary: "Read README.md",
+      });
+      invocation.activityHooks?.text("Implemented and committed", "append");
+      return "Implemented and committed the assigned change.";
+    }
     if (!invocation.toolHooks?.createPlan || !invocation.toolHooks.delegate) {
       throw new Error("expected planning and delegation hooks");
     }
@@ -442,16 +455,43 @@ describe("mention dispatch", () => {
         localPath: workerInvocation?.workingDirectory,
       }),
     ]);
-    expect(store.listAssignments()).toEqual([
+    const [assignment] = store.listAssignments();
+    expect(assignment).toEqual(
       expect.objectContaining({
         status: "completed",
         workerAgentId: worker.id,
         repositoryId: repository.id,
       }),
-    ]);
-    expect(store.listTasks()).toEqual([
+    );
+    if (!assignment) throw new Error("expected Worker assignment");
+    const [plannedTask] = store.listTasks();
+    expect(plannedTask).toEqual(
       expect.objectContaining({ status: "done", assigneeId: worker.id, threadId: thread.id }),
+    );
+    if (!plannedTask) throw new Error("expected planned task");
+    const threadData = await store.threadData(thread.id);
+    expect(threadData.runs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: assignment.id, agentId: worker.id, status: "completed" }),
+      ]),
+    );
+    expect(threadData.toolCalls).toEqual([
+      expect.objectContaining({ runId: assignment.id, name: "read", status: "completed" }),
     ]);
+    expect(threadData.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          author: expect.objectContaining({ kind: "agent", id: worker.id }),
+          content: "Implemented and committed the assigned change.",
+          triggerMessageId: sent.message.id,
+        }),
+      ]),
+    );
+    await expect(dispatcher.taskProcess(plannedTask.id)).resolves.toMatchObject({
+      assignment: { id: assignment.id, status: "completed" },
+      run: { id: assignment.id, status: "completed" },
+      toolCalls: [{ runId: assignment.id, name: "read" }],
+    });
   });
 });
 

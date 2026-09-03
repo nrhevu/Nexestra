@@ -302,6 +302,95 @@ describe("HTTP app", () => {
     await expect(idle.json()).resolves.toEqual({ activeRuns: [] });
   });
 
+  it("returns the persisted Worker process for a Taskboard task", async () => {
+    const [workspace] = store.listWorkspaces();
+    const [thread] = store.listThreads();
+    if (!workspace || !thread) throw new Error("expected seeded workspace");
+    const master = await store.createAgent({
+      kind: "master",
+      name: "Lead",
+      handle: "lead",
+      description: "",
+      instructions: "",
+      accessMode: "full",
+      provider: {
+        type: "custom",
+        name: "Gateway",
+        baseUrl: "https://example.test/v1",
+        model: "model-a",
+        protocol: "openai-chat",
+      },
+    });
+    const worker = await store.createAgent({
+      kind: "worker",
+      name: "Builder",
+      handle: "builder",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    const repository = await store.createKnowledgeRepository({
+      name: "Product repository",
+      handle: "product-repo",
+      source: "https://github.com/example/product.git",
+    });
+    const task = await store.createTask({
+      title: "Implement feature",
+      description: "Build and test it.",
+      status: "in_progress",
+      assigneeId: worker.id,
+      threadId: thread.id,
+    });
+    const now = new Date().toISOString();
+    const assignmentId = crypto.randomUUID();
+    await store.createAssignment({
+      id: assignmentId,
+      workspaceId: workspace.id,
+      taskId: task.id,
+      threadId: thread.id,
+      masterRunId: master.id,
+      workerAgentId: worker.id,
+      repositoryId: repository.id,
+      status: "running",
+      branch: `nexestra/${assignmentId}`,
+      worktreePath: `workspaces/${workspace.id}/worktrees/${assignmentId}`,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await store.updateRun({
+      id: assignmentId,
+      threadId: thread.id,
+      triggerMessageId: "message-1",
+      agentId: worker.id,
+      attempt: 1,
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await store.updateToolCall({
+      id: `${assignmentId}:read`,
+      runId: assignmentId,
+      threadId: thread.id,
+      agentId: worker.id,
+      name: "read",
+      permission: "read",
+      status: "completed",
+      input: '{"filePath":"README.md"}',
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const response = await app.request(`/api/tasks/${task.id}/process`);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      task: { id: task.id },
+      assignment: { id: assignmentId, workerAgentId: worker.id },
+      run: { id: assignmentId, status: "running" },
+      toolCalls: [{ runId: assignmentId, name: "read" }],
+    });
+  });
+
   it("opens a thread event stream with an immediate activity snapshot", async () => {
     const [thread] = store.listThreads();
     if (!thread) throw new Error("expected seeded thread");

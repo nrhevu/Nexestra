@@ -116,6 +116,9 @@ agent. Historical failed runs for a deleted profile cannot be retried.
 The provider-neutral Master tool session owns a per-run set of planned task IDs. `plan` creates
 durable Taskboard tasks linked to the triggering thread. `delegate` accepts only a task returned by
 that same session, an enabled Worker, and a ready repository referenced by the triggering message.
+When both a Worker and referenced repository are available, a custom-provider Master cannot return
+its final answer while that set still contains undelegated tasks; the runtime adds a corrective turn
+and keeps the tool loop active.
 
 Each repository is cloned once under the owning workspace. Every assignment creates a unique
 `nexestra/<assignment-id>` branch and a Git worktree under the same managed workspace tree. The
@@ -124,6 +127,12 @@ can execute concurrently. A delegated Worker receives task mode, the worktree as
 the shared transcript snapshot, and the selected repository as knowledge. Success marks the
 assignment and task complete; failure records a redacted error and returns the task to To do.
 Branches and worktrees are retained for inspection. Nexestra never merges or pushes.
+
+The assignment ID is also the delegated Worker's durable run ID in the canonical thread JSONL.
+Native Worker tool events are normalized and persisted against that run, while reasoning and
+partial text remain in the dispatcher's bounded live projection. The Taskboard process endpoint
+joins task, assignment, run, tool history, and current live activity. Its dialog subscribes to the
+same thread SSE stream as chat, with an active-only polling fallback when EventSource is unavailable.
 
 ## Agent runtimes
 
@@ -218,6 +227,8 @@ OS user's existing SSH and Git configuration; Nexestra does not store Git creden
   ChatGPT OAuth Masters run through Codex CLI and do not yet receive this bridge.
 - Assignment worktrees and branches are retained and cannot yet be cleaned up, merged, or pushed
   from the UI. Repository fetch/pull and retry are not yet exposed.
+- Tasks created before the delegation-completion guard may remain unassigned; their process dialog
+  reports that state, but does not retroactively start a Worker.
 - OpenCode `plan` is an application policy, not an independent OS or container sandbox.
 - Agent profiles cannot yet edit their full configuration after creation; enable, disable, archive,
   and permanent deletion are available.

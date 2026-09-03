@@ -261,6 +261,11 @@ export class LocalAgentRunner implements AgentRunner {
         (candidate) =>
           `- @${candidate.handle}: ${candidate.harness}${candidate.model ? `, model ${candidate.model}` : ""}`,
       );
+    const delegationAvailable =
+      workers.length > 0 &&
+      (invocation.knowledge ?? []).some(
+        ({ item }) => item.kind === "repository" && item.status === "ready",
+      );
     const system = [
       `You are ${agent.name} (@${agent.handle}), Nexestra's internal Master agent.`,
       "You are responding in a shared thread with the user and other agents.",
@@ -281,8 +286,24 @@ export class LocalAgentRunner implements AgentRunner {
     try {
       reply =
         agent.provider.protocol === "openai-chat"
-          ? await this.runChatToolLoop(agent, url, headers, system, invocation, tools)
-          : await this.runResponsesToolLoop(agent, url, headers, system, invocation, tools);
+          ? await this.runChatToolLoop(
+              agent,
+              url,
+              headers,
+              system,
+              invocation,
+              tools,
+              delegationAvailable,
+            )
+          : await this.runResponsesToolLoop(
+              agent,
+              url,
+              headers,
+              system,
+              invocation,
+              tools,
+              delegationAvailable,
+            );
     } finally {
       await tools.close();
     }
@@ -301,6 +322,7 @@ export class LocalAgentRunner implements AgentRunner {
     system: string,
     invocation: AgentInvocation,
     tools: MasterToolSession,
+    requireDelegation = true,
   ): Promise<string> {
     const messages: Record<string, unknown>[] = [
       { role: "system", content: system },
@@ -337,7 +359,14 @@ export class LocalAgentRunner implements AgentRunner {
         invocation.activityHooks,
       );
       const calls = parseChatToolCalls(payload);
-      if (calls.length === 0) return parseProviderReply(payload);
+      if (calls.length === 0) {
+        const pendingTaskIds = requireDelegation ? tools.pendingTaskIds() : [];
+        if (pendingTaskIds.length === 0) return parseProviderReply(payload);
+        if (!toolsEnabled) throw incompleteDelegationError(pendingTaskIds);
+        messages.push({ role: "assistant", content: chatAssistantContent(payload) });
+        messages.push({ role: "user", content: incompleteDelegationPrompt(pendingTaskIds) });
+        continue;
+      }
       if (!toolsEnabled) throw new Error("Provider continued calling tools after the step limit.");
       guardRepeatedCalls(calls, recentCalls);
       messages.push({
@@ -368,6 +397,7 @@ export class LocalAgentRunner implements AgentRunner {
     system: string,
     invocation: AgentInvocation,
     tools: MasterToolSession,
+    requireDelegation = true,
   ): Promise<string> {
     const input: unknown[] = [
       { role: "user", content: await providerResponsesUserContent(invocation) },
@@ -394,7 +424,17 @@ export class LocalAgentRunner implements AgentRunner {
         invocation.activityHooks,
       );
       const calls = parseResponsesToolCalls(payload);
-      if (calls.length === 0) return parseProviderReply(payload);
+      if (calls.length === 0) {
+        const pendingTaskIds = requireDelegation ? tools.pendingTaskIds() : [];
+        if (pendingTaskIds.length === 0) return parseProviderReply(payload);
+        if (!toolsEnabled) throw incompleteDelegationError(pendingTaskIds);
+        if (isRecord(payload) && Array.isArray(payload.output)) input.push(...payload.output);
+        input.push({
+          role: "user",
+          content: [{ type: "input_text", text: incompleteDelegationPrompt(pendingTaskIds) }],
+        });
+        continue;
+      }
       if (!toolsEnabled) throw new Error("Provider continued calling tools after the step limit.");
       guardRepeatedCalls(calls, recentCalls);
       if (isRecord(payload) && Array.isArray(payload.output)) input.push(...payload.output);
@@ -1267,6 +1307,20 @@ function guardRepeatedCalls(calls: HarnessToolRequest[], recentCalls: string[]):
       throw new Error(`Stopped a repeated ${call.name} tool-call loop.`);
     }
   }
+}
+
+function incompleteDelegationPrompt(taskIds: string[]): string {
+  return [
+    "You created Taskboard tasks that are still unassigned.",
+    `Call delegate for every remaining task before returning a final answer: ${taskIds.join(", ")}.`,
+    "Use only Worker and #repository handles supplied in the conversation. Do not merely describe the delegation.",
+  ].join(" ");
+}
+
+function incompleteDelegationError(taskIds: string[]): Error {
+  return new Error(
+    `Master reached the tool step limit with undelegated Taskboard tasks: ${taskIds.join(", ")}.`,
+  );
 }
 
 function isRetryableProviderStatus(status: number): boolean {

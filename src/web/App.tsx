@@ -52,6 +52,7 @@ import type {
   Message,
   RunActivity,
   Task,
+  TaskProcessData,
   Thread,
   ThreadData,
   ThreadStreamEvent,
@@ -89,6 +90,7 @@ export function App() {
   const [notice, setNotice] = useState<string>();
   const [error, setError] = useState<string>();
   const [taskStatus, setTaskStatus] = useState<Task["status"]>("todo");
+  const [taskToInspect, setTaskToInspect] = useState<Task>();
   const [agentToDelete, setAgentToDelete] = useState<AgentView>();
   const deferredRunActivities = useDeferredValue(runActivities);
   const workspaceIdRef = useRef<string | undefined>(
@@ -438,6 +440,7 @@ export function App() {
               )
             }
             onThread={openThread}
+            onInspect={setTaskToInspect}
           />
         )}
       </section>
@@ -509,6 +512,20 @@ export function App() {
             await refresh();
             setModal(null);
             flash("Task added to the board.");
+          }}
+        />
+      )}
+      {taskToInspect && (
+        <TaskProcessDialog
+          task={taskToInspect}
+          data={data}
+          onClose={() => {
+            setTaskToInspect(undefined);
+            void refresh(true);
+          }}
+          onThread={(threadId) => {
+            setTaskToInspect(undefined);
+            openThread(threadId);
           }}
         />
       )}
@@ -2238,6 +2255,7 @@ function Taskboard(props: {
   onCreate: (status?: Task["status"]) => void;
   onMove: (task: Task, status: Task["status"]) => Promise<unknown>;
   onThread: (id: string) => void;
+  onInspect: (task: Task) => void;
 }) {
   const columns: { status: Task["status"]; title: string }[] = [
     { status: "todo", title: "To do" },
@@ -2247,7 +2265,7 @@ function Taskboard(props: {
   const agents = new Map(props.data.agents.map((agent) => [agent.id, agent]));
   const assignments = new Map<string, BootstrapData["assignments"][number]>();
   for (const assignment of props.data.assignments) {
-    if (!assignments.has(assignment.taskId)) assignments.set(assignment.taskId, assignment);
+    assignments.set(assignment.taskId, assignment);
   }
   return (
     <div className="surface-view">
@@ -2288,6 +2306,7 @@ function Taskboard(props: {
                   assignment={assignments.get(task.id)}
                   onMove={props.onMove}
                   onThread={props.onThread}
+                  onInspect={props.onInspect}
                 />
               ))}
             </section>
@@ -2304,27 +2323,40 @@ function TaskCard({
   assignment,
   onMove,
   onThread,
+  onInspect,
 }: {
   task: Task;
   agent?: AgentView;
   assignment?: BootstrapData["assignments"][number];
   onMove: (task: Task, status: Task["status"]) => Promise<unknown>;
   onThread: (id: string) => void;
+  onInspect: (task: Task) => void;
 }) {
   const statuses: Task["status"][] = ["todo", "in_progress", "done"];
   const position = statuses.indexOf(task.status);
+  const assignmentActive = assignment?.status === "queued" || assignment?.status === "running";
   return (
-    <article className="task-card">
-      <span className="task-id">NX-{task.id.slice(0, 4).toUpperCase()}</span>
-      <h3>{task.title}</h3>
-      {task.description && <p>{task.description}</p>}
-      {assignment && (
-        <div className="task-assignment">
-          <GitBranch size={12} />
-          <code>{assignment.branch}</code>
-          <span>{assignment.status}</span>
-        </div>
-      )}
+    <article className={assignmentActive ? "task-card task-card-active" : "task-card"}>
+      <button
+        className="task-card-open"
+        type="button"
+        aria-label={`Open process for ${task.title}`}
+        onClick={() => onInspect(task)}
+      >
+        <span className="task-id">NX-{task.id.slice(0, 4).toUpperCase()}</span>
+        <h3>{task.title}</h3>
+        {task.description && <p>{task.description}</p>}
+        {assignment && (
+          <span className="task-assignment">
+            <GitBranch size={12} />
+            <code>{assignment.branch}</code>
+            <span role={assignmentActive ? "status" : undefined}>
+              {assignmentActive && <LoaderCircle className="spin" size={11} />}
+              {assignment.status}
+            </span>
+          </span>
+        )}
+      </button>
       <footer>
         <div>
           {agent ? (
@@ -2338,14 +2370,20 @@ function TaskCard({
         </div>
         <div className="task-actions">
           {task.threadId && (
-            <button type="button" onClick={() => onThread(task.threadId ?? "")}>
+            <button
+              type="button"
+              aria-label="Open source thread"
+              onClick={() => onThread(task.threadId ?? "")}
+            >
               <MessageSquareMore size={13} />
             </button>
           )}
           <button
             type="button"
             disabled={position === 0}
-            onClick={() => void onMove(task, statuses[position - 1] ?? task.status)}
+            onClick={() => {
+              void onMove(task, statuses[position - 1] ?? task.status);
+            }}
             aria-label="Move left"
           >
             <ArrowLeft size={13} />
@@ -2353,7 +2391,9 @@ function TaskCard({
           <button
             type="button"
             disabled={position === statuses.length - 1}
-            onClick={() => void onMove(task, statuses[position + 1] ?? task.status)}
+            onClick={() => {
+              void onMove(task, statuses[position + 1] ?? task.status);
+            }}
             aria-label="Move right"
           >
             <ArrowRight size={13} />
@@ -2361,6 +2401,250 @@ function TaskCard({
         </div>
       </footer>
     </article>
+  );
+}
+
+function TaskProcessDialog({
+  task,
+  data,
+  onClose,
+  onThread,
+}: {
+  task: Task;
+  data: BootstrapData;
+  onClose: () => void;
+  onThread: (threadId: string) => void;
+}) {
+  const [process, setProcess] = useState<TaskProcessData>();
+  const [loadError, setLoadError] = useState<string>();
+  const loadProcess = useCallback(
+    async (quiet = false) => {
+      try {
+        const next = await api<TaskProcessData>(
+          `/api/tasks/${encodeURIComponent(task.id)}/process`,
+        );
+        setProcess(next);
+        if (!quiet) setLoadError(undefined);
+        return next;
+      } catch (caught) {
+        if (!quiet) setLoadError(messageFrom(caught));
+        return undefined;
+      }
+    },
+    [task.id],
+  );
+
+  useEffect(() => {
+    setProcess(undefined);
+    setLoadError(undefined);
+    void loadProcess();
+  }, [loadProcess]);
+
+  const assignment = process?.assignment;
+  const assignmentId = assignment?.id;
+  const assignmentThreadId = assignment?.threadId;
+  const isActive = assignment?.status === "queued" || assignment?.status === "running";
+  useEffect(() => {
+    if (!isActive || !assignmentId || !assignmentThreadId) return;
+    const refreshProcess = () => void loadProcess(true);
+    if (typeof window.EventSource !== "function") {
+      const timer = window.setInterval(refreshProcess, 1_000);
+      return () => window.clearInterval(timer);
+    }
+    const source = new window.EventSource(
+      `/api/threads/${encodeURIComponent(assignmentThreadId)}/events`,
+    );
+    const onThreadEvent = (raw: Event) => {
+      try {
+        const event = JSON.parse((raw as MessageEvent<string>).data) as ThreadStreamEvent;
+        const activity = event.activities.find((entry) => entry.runId === assignmentId);
+        setProcess((current) => (current ? { ...current, activity } : current));
+        if (event.refresh) refreshProcess();
+      } catch {
+        // EventSource reconnects automatically; the next valid event refreshes the process.
+      }
+    };
+    source.addEventListener("thread", onThreadEvent);
+    return () => {
+      source.removeEventListener("thread", onThreadEvent);
+      source.close();
+    };
+  }, [assignmentId, assignmentThreadId, isActive, loadProcess]);
+
+  const worker = assignment
+    ? data.agents.find((agent) => agent.id === assignment.workerAgentId)
+    : undefined;
+  const repository = assignment
+    ? data.knowledge.find((item) => item.id === assignment.repositoryId)
+    : undefined;
+  const knownHandles = new Set(data.agents.map((agent) => agent.handle));
+  const status = assignment?.status ?? "not delegated";
+
+  return (
+    <Modal
+      title={process?.task.title ?? task.title}
+      eyebrow="WORKER PROCESS"
+      onClose={onClose}
+      wide
+    >
+      {!process && !loadError && (
+        <div className="task-process-loading">
+          <LoaderCircle className="spin" size={18} />
+          Loading task process…
+        </div>
+      )}
+      {loadError && (
+        <div className="run-error task-process-error">
+          <CircleAlert size={15} />
+          <div>
+            <strong>Could not load this task</strong>
+            <p>{loadError}</p>
+          </div>
+        </div>
+      )}
+      {process && (
+        <div className="task-process">
+          <div className="task-process-summary">
+            <div>
+              <span>Status</span>
+              <strong className={`task-process-status status-${assignment?.status ?? "idle"}`}>
+                {isActive && <LoaderCircle className="spin" size={13} />}
+                {assignment?.status === "completed" && <Check size={13} />}
+                {assignment?.status === "failed" && <CircleAlert size={13} />}
+                {status.replace("_", " ")}
+              </strong>
+            </div>
+            <div>
+              <span>Worker</span>
+              <strong>{worker ? `@${worker.handle}` : "Unassigned"}</strong>
+            </div>
+            <div>
+              <span>Repository</span>
+              <strong>{repository ? `#${repository.handle}` : "—"}</strong>
+            </div>
+          </div>
+
+          {!assignment ? (
+            <div className="task-process-empty">
+              <Bot size={22} />
+              <div>
+                <strong>This task has not been delegated</strong>
+                <p>
+                  A Master created the task but did not start a Worker assignment. Mention the
+                  Master again with an available Worker and a #repository reference.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="task-process-location">
+                <GitBranch size={14} />
+                <div>
+                  <span>Isolated branch</span>
+                  <code>{assignment.branch}</code>
+                </div>
+                <div>
+                  <span>Worktree</span>
+                  <code>{assignment.worktreePath}</code>
+                </div>
+              </div>
+
+              {process.activity?.thinking && (
+                <details className="thinking-activity task-process-thinking">
+                  <summary>
+                    <Sparkles size={14} />
+                    <span>Thinking</span>
+                    <small>Click to view</small>
+                  </summary>
+                  <div className="thinking-content">
+                    <Suspense
+                      fallback={
+                        <p className="message-markdown-fallback">{process.activity.thinking}</p>
+                      }
+                    >
+                      <RichMessage
+                        content={process.activity.thinking}
+                        knownHandles={knownHandles}
+                      />
+                    </Suspense>
+                  </div>
+                </details>
+              )}
+
+              {process.toolCalls.length > 0 && (
+                <section className="task-process-tools" aria-label="Worker tool calls">
+                  <h3>Tool calls</h3>
+                  {process.toolCalls.map((toolCall) => (
+                    <div className={`tool-call tool-call-${toolCall.status}`} key={toolCall.id}>
+                      <TerminalSquare size={15} />
+                      <div>
+                        <strong>{toolCall.name}</strong>
+                        <code>{toolCall.input}</code>
+                        {(toolCall.summary || toolCall.error) && (
+                          <p>{toolCall.error ?? toolCall.summary}</p>
+                        )}
+                      </div>
+                      <span>{toolCall.status.replace("_", " ")}</span>
+                    </div>
+                  ))}
+                </section>
+              )}
+
+              {isActive && (
+                <div className="task-process-live" aria-live="polite">
+                  <div>
+                    <LoaderCircle className="spin" size={14} />
+                    <strong>{process.activity?.detail ?? "Worker is running"}</strong>
+                  </div>
+                  {process.activity?.text && (
+                    <Suspense
+                      fallback={
+                        <p className="message-markdown-fallback">{process.activity.text}</p>
+                      }
+                    >
+                      <RichMessage content={process.activity.text} knownHandles={knownHandles} />
+                    </Suspense>
+                  )}
+                </div>
+              )}
+
+              {assignment.status === "completed" && assignment.result && (
+                <section className="task-process-result">
+                  <h3>Worker result</h3>
+                  <Suspense
+                    fallback={<p className="message-markdown-fallback">{assignment.result}</p>}
+                  >
+                    <RichMessage content={assignment.result} knownHandles={knownHandles} />
+                  </Suspense>
+                </section>
+              )}
+
+              {assignment.status === "failed" && (
+                <div className="run-error task-process-error">
+                  <CircleAlert size={15} />
+                  <div>
+                    <strong>Worker assignment failed</strong>
+                    <p>{assignment.error ?? process.run?.error ?? "The Worker did not finish."}</p>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          <div className="modal-actions">
+            {process.task.threadId && (
+              <button type="button" onClick={() => onThread(process.task.threadId ?? "")}>
+                <MessageSquareMore size={14} />
+                Open thread
+              </button>
+            )}
+            <button type="button" className="primary-button" onClick={onClose}>
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+    </Modal>
   );
 }
 

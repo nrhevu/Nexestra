@@ -458,6 +458,14 @@ export interface ThreadData {
   toolCalls: ToolCall[];
 }
 
+export interface TaskProcessData {
+  task: Task;
+  assignment?: WorkAssignment;
+  run?: AgentRun;
+  activity?: RunActivity;
+  toolCalls: ToolCall[];
+}
+
 export function extractMentionHandles(content: string): string[] {
   const handles: string[] = [];
   const seen = new Set<string>();

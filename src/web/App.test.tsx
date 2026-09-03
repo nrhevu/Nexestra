@@ -543,6 +543,134 @@ describe("Worker creation", () => {
   });
 });
 
+describe("Taskboard Worker process", () => {
+  it("opens a task card and shows its live Worker activity and tool calls", async () => {
+    window.history.replaceState({}, "", "/surfaces/taskboard");
+    vi.spyOn(window, "setInterval").mockImplementation(
+      () => 1 as unknown as ReturnType<typeof window.setInterval>,
+    );
+    const thread = {
+      id: "thread-task",
+      workspaceId: workspace.id,
+      name: "general",
+      slug: "general",
+      createdAt: now,
+      updatedAt: now,
+      messageCount: 1,
+      lastMessageAt: now,
+    };
+    const task = {
+      id: "task-build",
+      workspaceId: workspace.id,
+      title: "Build the repository feature",
+      description: "Implement and test the requested change.",
+      status: "in_progress" as const,
+      assigneeId: workerAgent.id,
+      threadId: thread.id,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const repository = {
+      id: "repository-product",
+      workspaceId: workspace.id,
+      kind: "repository" as const,
+      name: "Product repository",
+      handle: "product-repo",
+      description: "",
+      source: "https://github.com/example/product.git",
+      storagePath: "workspaces/workspace-nexestra/repositories/product/source",
+      status: "ready" as const,
+      defaultBranch: "main",
+      createdAt: now,
+      updatedAt: now,
+    };
+    const assignment = {
+      id: "assignment-task",
+      workspaceId: workspace.id,
+      taskId: task.id,
+      threadId: thread.id,
+      masterRunId: "run-master",
+      workerAgentId: workerAgent.id,
+      repositoryId: repository.id,
+      status: "running" as const,
+      branch: "nexestra/assignment-task",
+      worktreePath: "workspaces/workspace-nexestra/worktrees/assignment-task",
+      createdAt: now,
+      updatedAt: now,
+    };
+    const run = {
+      id: assignment.id,
+      threadId: thread.id,
+      triggerMessageId: "message-task",
+      agentId: workerAgent.id,
+      attempt: 1,
+      status: "running" as const,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/bootstrap") {
+        return jsonResponse({
+          ...bootstrapData,
+          agents: [workerAgent],
+          threads: [thread],
+          tasks: [task],
+          knowledge: [repository],
+          assignments: [assignment],
+        });
+      }
+      if (path === `/api/tasks/${task.id}/process`) {
+        return jsonResponse({
+          task,
+          assignment,
+          run,
+          activity: {
+            runId: run.id,
+            threadId: thread.id,
+            agentId: workerAgent.id,
+            stage: "tool",
+            thinking: "**Inspecting** the repository.",
+            text: "Implementing the change…",
+            detail: "Using read",
+            updatedAt: now,
+          },
+          toolCalls: [
+            {
+              id: "tool-read",
+              runId: run.id,
+              threadId: thread.id,
+              agentId: workerAgent.id,
+              name: "read",
+              permission: "read",
+              status: "completed",
+              input: '{"filePath":"README.md"}',
+              summary: "Read README.md",
+              createdAt: now,
+              updatedAt: now,
+            },
+          ],
+        });
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: `Open process for ${task.title}` }));
+
+    const dialog = await screen.findByRole("dialog", { name: task.title });
+    expect(within(dialog).getByText("@planner")).toBeVisible();
+    expect(within(dialog).getByText("#product-repo")).toBeVisible();
+    expect(within(dialog).getByText("Using read")).toBeVisible();
+    expect(within(dialog).getByText("read")).toBeVisible();
+    expect(within(dialog).getByText("Implementing the change…")).toBeVisible();
+    await user.click(within(dialog).getByText("Thinking"));
+    expect(await within(dialog).findByText("Inspecting")).toBeVisible();
+  });
+});
+
 describe("Master harness", () => {
   it("creates a custom Master with one access mode", async () => {
     window.history.replaceState({}, "", "/surfaces/agents");

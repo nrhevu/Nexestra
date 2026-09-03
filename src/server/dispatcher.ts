@@ -6,6 +6,7 @@ import {
   extractMentionHandles,
   type Message,
   type RunActivity,
+  type TaskProcessData,
   type ThreadStreamEvent,
   type ToolCall,
   type WorkAssignment,
@@ -55,6 +56,26 @@ export class AgentDispatcher {
         return this.store.getThread(run.threadId)?.workspaceId === workspaceId;
       })
       .map((run) => structuredClone(run));
+  }
+
+  async taskProcess(taskId: string): Promise<TaskProcessData> {
+    const task = this.store.getTask(taskId);
+    if (!task) throw new StoreError("not_found", "Task not found.");
+    const assignment = this.store
+      .listAssignments(task.workspaceId)
+      .filter((entry) => entry.taskId === task.id)
+      .at(-1);
+    if (!assignment) return { task, toolCalls: [] };
+    const thread = await this.store.threadData(assignment.threadId);
+    const run = thread.runs.find((entry) => entry.id === assignment.id);
+    const activity = this.liveActivities.get(assignment.id);
+    return {
+      task,
+      assignment,
+      ...(run ? { run } : {}),
+      ...(activity ? { activity: structuredClone(activity) } : {}),
+      toolCalls: thread.toolCalls.filter((toolCall) => toolCall.runId === assignment.id),
+    };
   }
 
   threadStreamSnapshot(threadId: string, refresh = true): ThreadStreamEvent {
@@ -426,6 +447,17 @@ export class AgentDispatcher {
     const id = crypto.randomUUID();
     const location = this.repositories.assignmentLocation(thread.workspaceId, id);
     const now = new Date().toISOString();
+    let workerRun: AgentRun = {
+      id,
+      threadId: thread.id,
+      triggerMessageId: trigger.id,
+      agentId: worker.id,
+      attempt: 1,
+      status: "queued",
+      createdAt: now,
+      updatedAt: now,
+    };
+    let workerRunPersisted = false;
     try {
       let assignment = await this.store.createAssignment({
         id,
@@ -442,11 +474,34 @@ export class AgentDispatcher {
         updatedAt: now,
       });
       await this.store.updateTask(task.id, { status: "in_progress", assigneeId: worker.id });
+      workerRun = await this.store.updateRun(workerRun);
+      workerRunPersisted = true;
+      this.liveRuns.set(workerRun.id, workerRun);
+      this.liveActivities.set(workerRun.id, {
+        runId: workerRun.id,
+        threadId: workerRun.threadId,
+        agentId: workerRun.agentId,
+        stage: "queued",
+        thinking: "",
+        text: "",
+        detail: "Waiting for the Worker",
+        updatedAt: now,
+      });
+      this.notifyThread(thread.id, true);
       const result = await this.enqueueDelegation(worker.id, async () => {
         this.busy.add(worker.id);
         try {
+          this.updateActivity(workerRun, "thinking", "Preparing an isolated worktree");
           await this.repositories.prepareAssignment(knowledge, location);
           assignment = await this.store.updateAssignment(assignment.id, { status: "running" });
+          workerRun = await this.store.updateRun({
+            ...workerRun,
+            status: "running",
+            updatedAt: new Date().toISOString(),
+          });
+          this.liveRuns.set(workerRun.id, workerRun);
+          this.updateActivity(workerRun, "thinking", "Starting Worker");
+          this.notifyThread(thread.id, true);
           const delegatedTrigger: Message = {
             ...trigger,
             id: assignment.id,
@@ -464,16 +519,43 @@ export class AgentDispatcher {
             knowledgeReferences: [{ knowledgeId: knowledge.id, handle: knowledge.handle }],
             artifactIds: [],
           };
-          return this.runner.invoke(worker, {
-            runId: assignment.id,
-            thread,
-            trigger: delegatedTrigger,
-            transcriptPath: this.store.transcriptPath(thread.id),
-            transcriptSnapshot,
-            knowledge: [{ item: knowledge, localPath: location.absolutePath }],
-            workingDirectory: location.absolutePath,
-            mode: "task",
+          const runtimeToolCalls = new Map<string, ToolCall>();
+          const response = (
+            await this.runner.invoke(worker, {
+              runId: assignment.id,
+              thread,
+              trigger: delegatedTrigger,
+              transcriptPath: this.store.transcriptPath(thread.id),
+              transcriptSnapshot,
+              knowledge: [{ item: knowledge, localPath: location.absolutePath }],
+              workingDirectory: location.absolutePath,
+              mode: "task",
+              activityHooks: {
+                status: (stage, detail) => this.updateActivity(workerRun, stage, detail),
+                thinking: (value, mode) => this.updateActivityThinking(workerRun, value, mode),
+                text: (value, mode) => this.updateActivityText(workerRun, value, mode),
+                tool: async (update) => {
+                  const toolCall = this.runtimeToolCall(
+                    workerRun,
+                    update,
+                    runtimeToolCalls.get(update.id),
+                  );
+                  runtimeToolCalls.set(update.id, toolCall);
+                  await this.store.updateToolCall(toolCall);
+                  this.notifyThread(thread.id, true);
+                },
+              },
+            })
+          ).trim();
+          if (!response) throw new Error("The Worker returned an empty response.");
+          await this.store.createAgentMessage(thread.id, worker, response, trigger.id);
+          workerRun = await this.store.updateRun({
+            ...workerRun,
+            status: "completed",
+            updatedAt: new Date().toISOString(),
           });
+          this.liveRuns.set(workerRun.id, workerRun);
+          return response;
         } finally {
           this.busy.delete(worker.id);
         }
@@ -483,11 +565,22 @@ export class AgentDispatcher {
         result: result.slice(0, 20_000),
       });
       await this.store.updateTask(task.id, { status: "done" });
+      this.notifyThread(thread.id, true);
       return { assignment, result };
     } catch (error) {
       const message = this.store.redactSecrets(
         error instanceof Error ? error.message : "Worker assignment failed.",
       );
+      if (workerRunPersisted) {
+        workerRun = await this.store
+          .updateRun({
+            ...workerRun,
+            status: "failed",
+            error: message.slice(0, 2_000),
+            updatedAt: new Date().toISOString(),
+          })
+          .catch(() => workerRun);
+      }
       await this.store
         .updateAssignment(id, { status: "failed", error: message.slice(0, 2_000) })
         .catch(() => undefined);
@@ -496,6 +589,10 @@ export class AgentDispatcher {
         .catch(() => undefined);
       throw new StoreError("invalid", message);
     } finally {
+      this.liveRuns.delete(id);
+      this.liveActivities.delete(id);
+      this.busy.delete(worker.id);
+      this.notifyThread(thread.id, true);
       release();
     }
   }

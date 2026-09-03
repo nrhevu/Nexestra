@@ -734,6 +734,141 @@ describe("parseProviderReply", () => {
     });
   });
 
+  it.each(["openai-chat", "openai-responses"] as const)(
+    "requires %s Masters to delegate every planned task before finalizing",
+    async (protocol) => {
+      const { agent, invocation, root, store } = await customMasterFixture(protocol, "full");
+      const taskId = "f5a80f87-456d-4c35-9081-356cbe665510";
+      const createdAt = "2026-09-03T00:00:00.000Z";
+      const planArguments = JSON.stringify({
+        title: "Implementation plan",
+        steps: [{ title: "Build feature", description: "Implement and verify it." }],
+      });
+      const delegateArguments = JSON.stringify({
+        taskId,
+        worker: "builder",
+        repository: "product-repo",
+      });
+      const chatResponse = (content: string | null, call?: Record<string, unknown>) => ({
+        choices: [
+          {
+            message: {
+              content,
+              ...(call
+                ? { tool_calls: [{ id: String(call.id), type: "function", function: call }] }
+                : {}),
+            },
+          },
+        ],
+      });
+      const responsesResponse = (text: string | null, call?: Record<string, unknown>) => ({
+        ...(text ? { output_text: text } : {}),
+        output: call
+          ? [
+              {
+                type: "function_call",
+                call_id: String(call.id),
+                name: call.name,
+                arguments: call.arguments,
+              },
+            ]
+          : [{ type: "message", role: "assistant", content: [{ type: "output_text", text }] }],
+      });
+      const responses =
+        protocol === "openai-chat"
+          ? [
+              chatResponse(null, { id: "call-plan", name: "plan", arguments: planArguments }),
+              chatResponse("I created the task."),
+              chatResponse(null, {
+                id: "call-delegate",
+                name: "delegate",
+                arguments: delegateArguments,
+              }),
+              chatResponse("The Worker completed the task."),
+            ]
+          : [
+              responsesResponse(null, {
+                id: "call-plan",
+                name: "plan",
+                arguments: planArguments,
+              }),
+              responsesResponse("I created the task."),
+              responsesResponse(null, {
+                id: "call-delegate",
+                name: "delegate",
+                arguments: delegateArguments,
+              }),
+              responsesResponse("The Worker completed the task."),
+            ];
+      const delegate = vi.fn(async () => ({
+        assignment: {
+          id: "assignment-1",
+          workspaceId: invocation.thread.workspaceId,
+          taskId,
+          threadId: invocation.thread.id,
+          masterRunId: invocation.runId ?? "run-tools",
+          workerAgentId: "worker-1",
+          repositoryId: "repository-1",
+          status: "completed" as const,
+          branch: "nexestra/assignment-1",
+          worktreePath: "workspaces/worktree-1",
+          result: "done",
+          createdAt,
+          updatedAt: createdAt,
+        },
+        result: "done",
+      }));
+      const repository = await store.createKnowledgeRepository({
+        name: "Product repository",
+        handle: "product-repo",
+        source: "https://github.com/example/product.git",
+      });
+      const readyRepository = await store.updateKnowledgeRepository(repository.id, {
+        status: "ready",
+        defaultBranch: "main",
+      });
+      const fetchMock = vi.fn(
+        async (_input: RequestInfo | URL, _init?: RequestInit) =>
+          new Response(JSON.stringify(responses.shift())),
+      );
+
+      await expect(
+        new LocalAgentRunner({ store, fetch: fetchMock as typeof fetch }).invoke(agent, {
+          ...invocation,
+          knowledge: [{ item: readyRepository, localPath: root }],
+          toolHooks: {
+            update: async () => undefined,
+            requestApproval: async () => true,
+            createPlan: async (_title, steps) =>
+              steps.map((step) => ({
+                id: taskId,
+                workspaceId: invocation.thread.workspaceId,
+                title: step.title,
+                description: step.description,
+                status: "todo" as const,
+                assigneeId: null,
+                threadId: invocation.thread.id,
+                createdAt,
+                updatedAt: createdAt,
+              })),
+            delegate,
+          },
+        }),
+      ).resolves.toBe("The Worker completed the task.");
+
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+      expect(delegate).toHaveBeenCalledWith({
+        taskId,
+        workerHandle: "builder",
+        repositoryHandle: "product-repo",
+      });
+      const correctiveRequest = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body));
+      expect(JSON.stringify(correctiveRequest)).toContain(
+        "Call delegate for every remaining task before returning a final answer",
+      );
+    },
+  );
+
   it("stops three identical provider tool calls instead of looping forever", async () => {
     const { agent, invocation, root, store } = await customMasterFixture("openai-chat");
     await writeFile(join(root, "loop.txt"), "loop\n");

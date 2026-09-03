@@ -68,8 +68,14 @@ const MAX_SEARCH_RESULTS = 100;
 export interface MasterToolSession {
   definitions: ProviderToolDefinition[];
   warnings: string[];
+  pendingTaskIds(): string[];
   execute(request: HarnessToolRequest): Promise<string>;
   close(): Promise<void>;
+}
+
+interface PlanState {
+  plannedTaskIds: Set<string>;
+  delegatingTaskIds: Set<string>;
 }
 
 export async function createMasterToolSession(
@@ -84,8 +90,12 @@ export async function createMasterToolSession(
   const mcp = extensionsEnabled
     ? await loadMcpTools(config, context)
     : { tools: [], warnings: [], close: async () => undefined };
+  const planState: PlanState = {
+    plannedTaskIds: new Set(),
+    delegatingTaskIds: new Set(),
+  };
   const definitions = new Map<string, ToolDefinition>();
-  for (const tool of builtInTools(config, skills)) definitions.set(tool.name, tool);
+  for (const tool of builtInTools(config, skills, planState)) definitions.set(tool.name, tool);
   for (const tool of custom.tools) definitions.set(tool.name, tool);
   for (const tool of mcp.tools) definitions.set(tool.name, tool);
   return {
@@ -96,6 +106,7 @@ export async function createMasterToolSession(
       parameters,
     })),
     warnings: [...custom.warnings, ...mcp.warnings],
+    pendingTaskIds: () => [...planState.plannedTaskIds],
     execute: (request) => executeDefinition(request, context, config, definitions),
     close: mcp.close,
   };
@@ -113,10 +124,13 @@ export async function executeMasterTool(
   }
 }
 
-function builtInTools(config: HarnessConfig, skills: HarnessSkill[]): ToolDefinition[] {
+function builtInTools(
+  config: HarnessConfig,
+  skills: HarnessSkill[],
+  planState: PlanState,
+): ToolDefinition[] {
   let todos: Record<string, unknown>[] = [];
-  const plannedTaskIds = new Set<string>();
-  const delegatingTaskIds = new Set<string>();
+  const { plannedTaskIds, delegatingTaskIds } = planState;
   return [
     zodTool(
       "list",

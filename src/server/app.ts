@@ -262,6 +262,10 @@ export function createApp(options: CreateAppOptions) {
     return context.json(await options.store.createTask(await context.req.json()), 201);
   });
 
+  app.get("/api/tasks/:id/process", async (context) => {
+    return context.json(await dispatcher.taskProcess(context.req.param("id")));
+  });
+
   app.patch("/api/tasks/:id", async (context) => {
     return context.json(
       await options.store.updateTask(context.req.param("id"), await context.req.json()),
