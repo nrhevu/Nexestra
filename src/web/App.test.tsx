@@ -191,8 +191,23 @@ describe("Activity-aware refresh", () => {
       ],
       artifacts: [],
       runs: [run],
-      toolCalls: [],
+      toolCalls: [
+        {
+          id: "tool-stream",
+          runId: run.id,
+          threadId: thread.id,
+          agentId: workerAgent.id,
+          name: "read",
+          permission: "read",
+          status: "completed",
+          input: '{"filePath":"README.md"}',
+          summary: "Read README.md",
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
     };
+    let currentTranscript = transcript;
     const sources: MockEventSource[] = [];
     class MockEventSource {
       private readonly listeners = new Map<string, Set<EventListener>>();
@@ -231,7 +246,7 @@ describe("Activity-aware refresh", () => {
             activeRuns: [run],
           });
         }
-        if (String(input) === `/api/threads/${thread.id}`) return jsonResponse(transcript);
+        if (String(input) === `/api/threads/${thread.id}`) return jsonResponse(currentTranscript);
         return jsonResponse({ error: { message: "Not found" } }, 404);
       }),
     );
@@ -249,6 +264,7 @@ describe("Activity-aware refresh", () => {
             threadId: thread.id,
             agentId: workerAgent.id,
             stage: "responding",
+            thinking: "**Inspecting** the relevant files.",
             text: "**Live** response",
             detail: "Writing a response",
             updatedAt: now,
@@ -260,8 +276,44 @@ describe("Activity-aware refresh", () => {
     await waitFor(() => {
       expect(screen.getByLabelText("Streaming response")).toHaveTextContent("Live response");
     });
+    const thinking = screen.getByText("Thinking").closest("details");
+    expect(thinking).not.toHaveAttribute("open");
+    await userEvent.click(screen.getByText("Thinking"));
+    expect(thinking).toHaveAttribute("open");
+    expect(await screen.findByText("Inspecting")).toBeInTheDocument();
+    expect(screen.getByText("read")).toBeInTheDocument();
     expect(screen.getByText("Writing a response")).toBeInTheDocument();
     expect(intervalSpy.mock.calls.filter(([, delay]) => delay === 1_000)).toHaveLength(0);
+
+    currentTranscript = {
+      ...transcript,
+      messages: [
+        ...transcript.messages,
+        {
+          id: "message-final",
+          threadId: thread.id,
+          sequence: 2,
+          author: {
+            kind: "agent",
+            id: workerAgent.id,
+            name: workerAgent.name,
+            handle: workerAgent.handle,
+          },
+          content: "Final response",
+          mentions: [],
+          artifactIds: [],
+          triggerMessageId: "message-stream",
+          createdAt: now,
+        },
+      ],
+      runs: [{ ...run, status: "completed" }],
+    };
+    await act(async () => {
+      sources[0]?.emit("thread", { revision: 4, refresh: true, activities: [] });
+    });
+    await screen.findByText("Final response");
+    await waitFor(() => expect(screen.queryByText("Thinking")).not.toBeInTheDocument());
+    expect(screen.queryByText("read")).not.toBeInTheDocument();
   });
 });
 

@@ -33,6 +33,7 @@ export interface RuntimeToolUpdate {
 
 export interface AgentActivityHooks {
   status(stage: "thinking" | "tool" | "responding", detail: string): void;
+  thinking(value: string, mode: "append" | "replace"): void;
   text(value: string, mode: "append" | "replace"): void;
   tool(update: RuntimeToolUpdate): Promise<void>;
 }
@@ -367,6 +368,7 @@ export class LocalAgentRunner implements AgentRunner {
           instructions: system,
           input,
           stream: true,
+          reasoning: { summary: "auto" },
           ...(toolsEnabled ? { tools: tools.definitions } : { tool_choice: "none" }),
         },
         invocation.activityHooks,
@@ -730,6 +732,16 @@ function streamProviderActivity(
   if (protocol === "openai-chat") {
     const choice = Array.isArray(event.choices) ? event.choices[0] : undefined;
     if (!isRecord(choice) || !isRecord(choice.delta)) return;
+    const reasoning =
+      typeof choice.delta.reasoning_content === "string"
+        ? choice.delta.reasoning_content
+        : typeof choice.delta.reasoning === "string"
+          ? choice.delta.reasoning
+          : "";
+    if (reasoning) {
+      hooks.status("thinking", "Reasoning");
+      hooks.thinking(reasoning, "append");
+    }
     const delta = chatContentText(choice.delta.content);
     if (delta) {
       hooks.status("responding", "Writing a response");
@@ -740,6 +752,15 @@ function streamProviderActivity(
   if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
     hooks.status("responding", "Writing a response");
     hooks.text(event.delta, "append");
+    return;
+  }
+  if (
+    (event.type === "response.reasoning_summary_text.delta" ||
+      event.type === "response.reasoning_text.delta") &&
+    typeof event.delta === "string"
+  ) {
+    hooks.status("thinking", "Reasoning");
+    hooks.thinking(event.delta, "append");
   }
 }
 
@@ -920,6 +941,9 @@ function handleCodexActivity(
   }
   if (type === "reasoning") {
     hooks.status("thinking", "Reasoning");
+    if (typeof item.text === "string" && item.text.trim()) {
+      hooks.thinking(`${item.text.trim()}\n\n`, "append");
+    }
     return;
   }
   if (!isCodexToolItem(type)) {
@@ -960,6 +984,9 @@ function handleOpenCodeActivity(
   }
   if (event.type === "reasoning") {
     hooks.status("thinking", "Reasoning");
+    if (typeof part?.text === "string" && part.text.trim()) {
+      hooks.thinking(`${part.text.trim()}\n\n`, "append");
+    }
     return;
   }
   if (event.type === "text" && part?.type === "text" && typeof part.text === "string") {

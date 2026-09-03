@@ -977,6 +977,50 @@ kbd {
 .live-run-response .message-markdown {
   line-height: 1.55;
 }
+.thinking-activity {
+  margin: 8px 28px 10px 77px;
+  border: 1px solid #383c44;
+  border-radius: 7px;
+  background: #1b1e24;
+  color: #aaa6af;
+  font-size: 12px;
+}
+.thinking-activity summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.thinking-activity summary::-webkit-details-marker {
+  display: none;
+}
+.thinking-activity summary:hover {
+  color: #ddd8e1;
+}
+.thinking-activity summary span {
+  color: #d8d3dc;
+  font-weight: 700;
+}
+.thinking-activity summary small {
+  margin-left: auto;
+  color: #7f7b85;
+  font-size: 10px;
+}
+.thinking-activity[open] summary {
+  border-bottom: 1px solid #343840;
+}
+.thinking-content {
+  padding: 5px 12px 11px 32px;
+}
+.thinking-content .message-markdown,
+.thinking-content .message-markdown-fallback {
+  color: #aaa6af;
+  font-size: 12px;
+  line-height: 1.55;
+}
 .stream-caret {
   display: inline-block;
   width: 2px;

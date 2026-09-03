@@ -33,8 +33,9 @@ The shared Zod contracts in `src/shared/contracts.ts` define the boundary betwee
 
 The SPA performs no periodic requests while the selected workspace is idle. While the visible
 thread has queued, running, approval-waiting, or input-waiting work, it opens one Server-Sent Events
-connection. The dispatcher publishes phase changes and accumulated response text directly, and
-marks events that require the browser to reload durable messages, runs, or tools. Browsers without
+connection. The dispatcher publishes phase changes, runtime-emitted reasoning, and accumulated
+response text directly, and marks events that require the browser to reload durable messages, runs,
+or tools. Browsers without
 EventSource retain the one-second active-thread polling fallback. If work continues after the user
 navigates elsewhere, a lightweight activity endpoint is polled instead; the full workspace
 bootstrap is refreshed once when activity finishes. The dispatcher keeps the live run and response
@@ -148,12 +149,17 @@ head or tail preview; the full redacted result is stored in the protected run di
 to the current invocation's exact read allowlist. Custom-provider requests retry transient network,
 408, 409, 429, and 5xx failures with bounded backoff and `Retry-After` support.
 
-Custom Chat Completions and Responses requests use their SSE streaming protocols. Text deltas update
-the in-memory run projection and are replaced by one final agent message after completion. Codex
+Custom Chat Completions and Responses requests use their SSE streaming protocols. Reasoning and
+text deltas update the in-memory run projection and are replaced by one final agent message after
+completion. Responses requests ask for an automatic reasoning summary and parse both official
+reasoning-summary and reasoning-text deltas; compatible Chat Completions providers may expose
+reasoning through `reasoning_content` or `reasoning`. Codex
 `exec --json` and OpenCode `run --format json --thinking` stdout is parsed incrementally, including
 records split across process chunks. Native CLI tool events are normalized into the same durable
-`tool.updated` history used by the provider-neutral Master. Reasoning content is not copied into the
-thread; the UI exposes only a phase label, observable tool activity, and user-facing response text.
+`tool.updated` history used by the provider-neutral Master. Reasoning content is redacted, bounded,
+and kept only in the process-local run projection. The UI presents it in a collapsed disclosure
+while the run is active. After successful completion, the run row—including thinking and tool
+cards—is hidden and only the durable final agent message remains visible.
 
 Harness and shell child processes close stdin, enforce timeouts and output caps, kill the process group, and inherit
 only allowlisted environment variables to reduce the risk of exposing server secrets. A timeout
@@ -197,6 +203,8 @@ Full access mode is deliberately explicit because it bypasses that sandbox.
 - Skill discovery supports local `SKILL.md` trees but not remote catalogs or flat Markdown skills.
 - Codex and OpenCode CLI JSON modes do not expose every answer token. Nexestra streams every
   lifecycle record they emit, while custom OpenAI-compatible providers provide token-level text.
+  Thinking shows only reasoning or summaries explicitly emitted by a runtime; hidden model
+  chain-of-thought is unavailable.
 - Queues live in process. A restart marks runs interrupted, and the user must click Retry.
 - Markdown code blocks do not yet have syntax highlighting, and web links are not unfurled.
 - Artifact deletion, nested replies, reactions, and multi-user authentication are not supported.

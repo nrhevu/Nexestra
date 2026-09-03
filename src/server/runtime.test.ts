@@ -207,8 +207,13 @@ describe("Worker harness arguments", () => {
   it("forwards split Codex JSONL tool and response events while the command runs", async () => {
     const { agent, invocation, runner } = await workerFixture("codex");
     const tool = vi.fn(async (_update: RuntimeToolUpdate) => undefined);
+    const thinking = vi.fn();
     const text = vi.fn();
     const output = [
+      JSON.stringify({
+        type: "item.completed",
+        item: { id: "reasoning-1", type: "reasoning", text: "Inspecting the workspace." },
+      }),
       JSON.stringify({
         type: "item.started",
         item: { id: "item-1", type: "command_execution", command: "pwd", status: "in_progress" },
@@ -244,9 +249,10 @@ describe("Worker harness arguments", () => {
     await expect(
       runner.invoke(agent, {
         ...invocation,
-        activityHooks: { status: vi.fn(), text, tool },
+        activityHooks: { status: vi.fn(), thinking, text, tool },
       }),
     ).resolves.toBe("Done.");
+    expect(thinking).toHaveBeenCalledWith("Inspecting the workspace.\n\n", "append");
     expect(text).toHaveBeenCalledWith("Done.", "replace");
     expect(tool.mock.calls.map(([update]) => update.status)).toEqual(["running", "completed"]);
     expect(tool).toHaveBeenLastCalledWith(
@@ -257,8 +263,13 @@ describe("Worker harness arguments", () => {
   it("forwards OpenCode tool and text events while the command runs", async () => {
     const { agent, invocation, runner } = await workerFixture("opencode");
     const tool = vi.fn(async (_update: RuntimeToolUpdate) => undefined);
+    const thinking = vi.fn();
     const text = vi.fn();
     const output = [
+      JSON.stringify({
+        type: "reasoning",
+        part: { type: "reasoning", text: "Checking the relevant file." },
+      }),
       JSON.stringify({
         type: "tool_use",
         part: {
@@ -285,9 +296,10 @@ describe("Worker harness arguments", () => {
     await expect(
       runner.invoke(agent, {
         ...invocation,
-        activityHooks: { status: vi.fn(), text, tool },
+        activityHooks: { status: vi.fn(), thinking, text, tool },
       }),
     ).resolves.toBe("Done.");
+    expect(thinking).toHaveBeenCalledWith("Checking the relevant file.\n\n", "append");
     expect(text).toHaveBeenCalledWith("Done.", "replace");
     expect(tool).toHaveBeenCalledWith(
       expect.objectContaining({ name: "read", status: "completed", permission: "read" }),
@@ -355,9 +367,13 @@ describe("parseProviderReply", () => {
 
   it("streams Chat Completions text deltas while preserving the final reply", async () => {
     const { agent, invocation, store } = await customMasterFixture("openai-chat");
+    const thinking = vi.fn();
     const text = vi.fn();
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       sseResponse([
+        { choices: [{ delta: { reasoning_content: "Considering the request. " } }] },
+        { choices: [{ delta: { reasoning_content: "Preparing the answer." } }] },
+        { choices: [{ delta: { reasoning: " Verifying details." } }] },
         { choices: [{ delta: { content: "Hello" } }] },
         { choices: [{ delta: { content: " from the stream." }, finish_reason: "stop" }] },
       ]),
@@ -368,6 +384,7 @@ describe("parseProviderReply", () => {
         ...invocation,
         activityHooks: {
           status: vi.fn(),
+          thinking,
           text,
           tool: vi.fn(async () => undefined),
         },
@@ -376,6 +393,11 @@ describe("parseProviderReply", () => {
     expect(text.mock.calls).toEqual([
       ["Hello", "append"],
       [" from the stream.", "append"],
+    ]);
+    expect(thinking.mock.calls).toEqual([
+      ["Considering the request. ", "append"],
+      ["Preparing the answer.", "append"],
+      [" Verifying details.", "append"],
     ]);
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ stream: true });
   });
@@ -437,9 +459,13 @@ describe("parseProviderReply", () => {
 
   it("streams Responses API text deltas and accepts the completed response", async () => {
     const { agent, invocation, store } = await customMasterFixture("openai-responses");
+    const thinking = vi.fn();
     const text = vi.fn();
-    const fetchMock = vi.fn(async () =>
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       sseResponse([
+        { type: "response.reasoning_summary_text.delta", delta: "Reviewing " },
+        { type: "response.reasoning_summary_text.delta", delta: "the context." },
+        { type: "response.reasoning_text.delta", delta: " Verifying details." },
         { type: "response.output_text.delta", delta: "Live" },
         { type: "response.output_text.delta", delta: " response" },
         {
@@ -462,6 +488,7 @@ describe("parseProviderReply", () => {
         ...invocation,
         activityHooks: {
           status: vi.fn(),
+          thinking,
           text,
           tool: vi.fn(async () => undefined),
         },
@@ -471,6 +498,14 @@ describe("parseProviderReply", () => {
       ["Live", "append"],
       [" response", "append"],
     ]);
+    expect(thinking.mock.calls).toEqual([
+      ["Reviewing ", "append"],
+      ["the context.", "append"],
+      [" Verifying details.", "append"],
+    ]);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      reasoning: { summary: "auto" },
+    });
   });
 
   it("sends a shared transcript to a custom provider without exposing its key elsewhere", async () => {

@@ -51,10 +51,12 @@ executed, unsafe link schemes are disabled, and external HTTP(S) links open in a
 Markdown source remains unchanged in the shared transcript and agent context.
 
 While an agent is active, the thread receives a live event stream with its current phase, tool
-activity, and in-progress answer. Custom OpenAI-compatible providers stream response tokens through
-their native SSE protocols. Codex and OpenCode stream the JSONL lifecycle events their CLIs expose.
-Completed tool calls and the final answer remain in the canonical transcript; transient text deltas
-do not create duplicate chat messages.
+activity, runtime-emitted reasoning, and in-progress answer. Reasoning is collapsed behind a
+**Thinking** disclosure. Custom OpenAI-compatible providers stream response and reasoning deltas
+through their native SSE protocols. Codex and OpenCode stream the JSONL lifecycle events their CLIs
+expose. When a run completes successfully, transient thinking and tool activity disappear so the
+thread shows only the final answer. Durable tool records remain in the canonical transcript for
+recovery and audit; transient reasoning and text deltas are never persisted as chat messages.
 
 The composer accepts up to 10 files per message, with a 20 MB per-file and 50 MB combined limit.
 Safe raster images render inline; other files download rather than execute in the browser. Every

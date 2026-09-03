@@ -1242,7 +1242,10 @@ const ThreadTranscript = memo(function ThreadTranscript({
   const transcriptVersion = `${messages.length}:${artifacts.length}:${runs
     .map((run) => `${run.id}-${run.status}`)
     .join(",")}:${toolCalls.map((call) => `${call.id}-${call.status}`).join(",")}:${runActivities
-    .map((activity) => `${activity.runId}-${activity.updatedAt}-${activity.text.length}`)
+    .map(
+      (activity) =>
+        `${activity.runId}-${activity.updatedAt}-${activity.thinking.length}-${activity.text.length}`,
+    )
     .join(",")}`;
   useEffect(() => {
     if (!transcriptVersion) return;
@@ -1587,7 +1590,7 @@ function RunRow({
       ))}
     </div>
   );
-  if (run.status === "completed") return toolActivity || null;
+  if (run.status === "completed") return null;
   if (
     run.status === "queued" ||
     run.status === "running" ||
@@ -1605,6 +1608,20 @@ function RunRow({
             : "Working with the repository");
     return (
       <>
+        {activity?.thinking && (
+          <details className="thinking-activity">
+            <summary>
+              <Sparkles size={14} />
+              <span>Thinking</span>
+              <small>Click to view</small>
+            </summary>
+            <div className="thinking-content">
+              <Suspense fallback={<p className="message-markdown-fallback">{activity.thinking}</p>}>
+                <RichMessage content={activity.thinking} knownHandles={knownHandles} />
+              </Suspense>
+            </div>
+          </details>
+        )}
         {toolActivity}
         <div className={activity?.text ? "live-run live-run-with-text" : "live-run"}>
           <div className="live-run-status">

@@ -145,6 +145,7 @@ export class AgentDispatcher {
           threadId: queued.threadId,
           agentId: queued.agentId,
           stage: "queued",
+          thinking: "",
           text: "",
           detail: "Waiting in the queue",
           updatedAt: now,
@@ -311,6 +312,7 @@ export class AgentDispatcher {
         },
         activityHooks: {
           status: (stage, detail) => this.updateActivity(currentRun, stage, detail),
+          thinking: (value, mode) => this.updateActivityThinking(currentRun, value, mode),
           text: (value, mode) => this.updateActivityText(currentRun, value, mode),
           tool: async (update) => {
             const toolCall = this.runtimeToolCall(
@@ -366,8 +368,27 @@ export class AgentDispatcher {
       threadId: run.threadId,
       agentId: run.agentId,
       stage,
+      thinking: current?.thinking ?? "",
       text: current?.text ?? "",
       detail: this.store.redactSecrets(detail).slice(0, 500),
+      updatedAt: new Date().toISOString(),
+    });
+    this.notifyThread(run.threadId, false);
+  }
+
+  private updateActivityThinking(run: AgentRun, value: string, mode: "append" | "replace"): void {
+    const current = this.liveActivities.get(run.id);
+    const thinking = this.store
+      .redactSecrets(mode === "append" ? `${current?.thinking ?? ""}${value}` : value)
+      .slice(0, 40_000);
+    this.liveActivities.set(run.id, {
+      runId: run.id,
+      threadId: run.threadId,
+      agentId: run.agentId,
+      stage: "thinking",
+      thinking,
+      text: current?.text ?? "",
+      detail: "Reasoning",
       updatedAt: new Date().toISOString(),
     });
     this.notifyThread(run.threadId, false);
@@ -383,6 +404,7 @@ export class AgentDispatcher {
       threadId: run.threadId,
       agentId: run.agentId,
       stage: "responding",
+      thinking: current?.thinking ?? "",
       text,
       detail: "Writing a response",
       updatedAt: new Date().toISOString(),

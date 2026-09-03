@@ -18,11 +18,11 @@ half-formed Markdown after restart.
 ## Decision
 
 Keep one process-local activity projection per live run. It contains the current public phase and
-the accumulated user-facing answer, but no private reasoning text. Publish snapshots over a
-thread-scoped Server-Sent Events endpoint. Each event carries a monotonic process-local revision and
-a refresh flag; response-only changes update React directly, while run, message, and tool changes
-reload the durable thread projection. Fall back to active-thread polling only when EventSource is
-unavailable.
+the accumulated user-facing answer. Reasoning visibility is amended by ADR 0012. Publish snapshots
+over a thread-scoped Server-Sent Events endpoint. Each event carries a monotonic process-local
+revision and a refresh flag; response-only changes update React directly, while run, message, and
+tool changes reload the durable thread projection. Fall back to active-thread polling only when
+EventSource is unavailable.
 
 Request SSE from both supported custom-provider protocols. Incrementally parse Chat Completions
 content and fragmented tool calls, plus Responses text deltas, function-call arguments, and the
@@ -31,8 +31,8 @@ Continue enforcing the one-megabyte response limit while reading the stream.
 
 Read Codex and OpenCode JSONL stdout as it arrives and preserve partial lines between process
 chunks. Convert their native tool records to Nexestra `tool.updated` events with bounded, redacted
-input and summaries. OpenCode runs with `--thinking` so lifecycle reasoning events are observable,
-but expose only the phase rather than copying reasoning content into the shared chat.
+input and summaries. OpenCode runs with `--thinking` so lifecycle reasoning events are observable.
+ADR 0012 permits their transient display without copying reasoning content into the shared chat.
 
 Persist completed tool state and exactly one final agent message. Remove the live response after
 the final message and run status are durable. Activity snapshots never become transcript messages.

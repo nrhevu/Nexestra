@@ -221,6 +221,7 @@ export const RunActivitySchema = z.object({
   threadId: z.string(),
   agentId: z.string(),
   stage: z.enum(["queued", "thinking", "tool", "responding"]),
+  thinking: z.string().max(40_000),
   text: z.string().max(40_000),
   detail: z.string().max(500),
   updatedAt: z.string(),

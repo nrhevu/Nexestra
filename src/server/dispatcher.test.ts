@@ -69,6 +69,7 @@ class StreamingRunner implements AgentRunner {
 
   async invoke(_agent: Agent, invocation: AgentInvocation) {
     invocation.activityHooks?.status("thinking", "Inspecting the repository");
+    invocation.activityHooks?.thinking("Checking the current implementation.", "append");
     invocation.activityHooks?.text("Live answer", "append");
     await invocation.activityHooks?.tool({
       id: "native-read",
@@ -196,6 +197,11 @@ describe("mention dispatch", () => {
     expect(
       events.some((event) => event.activities.some((item) => item.text === "Live answer")),
     ).toBe(true);
+    expect(
+      events.some((event) =>
+        event.activities.some((item) => item.thinking === "Checking the current implementation."),
+      ),
+    ).toBe(true);
     expect(events.at(-1)).toMatchObject({ refresh: true, activities: [] });
     expect((await store.threadData(thread.id)).toolCalls).toContainEqual(
       expect.objectContaining({
@@ -203,6 +209,9 @@ describe("mention dispatch", () => {
         status: "completed",
         input: '{"filePath":"README.md"}',
       }),
+    );
+    expect(await store.transcriptSnapshot(thread.id)).not.toContain(
+      "Checking the current implementation.",
     );
   });
 
