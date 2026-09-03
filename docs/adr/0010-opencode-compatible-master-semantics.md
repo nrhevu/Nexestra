@@ -51,7 +51,7 @@ This is behavioral compatibility for Nexestra's requested Master tool surface, n
 of OpenCode. LSP remains excluded by product decision. Nexestra also does not expose OpenCode's task
 subagents or experimental plan/code-mode tools. MCP remains per invocation and does not implement
 interactive OAuth, prompts, or resources. Exact edit has no fuzzy fallbacks, formatter hooks, or LSP
-diagnostics. Browser chat still receives a completed answer rather than token deltas. Custom tool
+diagnostics. Live activity and response transport is defined separately by ADR 0011. Custom tool
 metadata and nested permission requests are accepted as no-ops after Nexestra's coarse tool-level
 permission check, and custom tool attachments are not promoted into thread artifacts.
 

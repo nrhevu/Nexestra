@@ -216,6 +216,23 @@ export const RunSchema = z.object({
 });
 export type AgentRun = z.infer<typeof RunSchema>;
 
+export const RunActivitySchema = z.object({
+  runId: z.string(),
+  threadId: z.string(),
+  agentId: z.string(),
+  stage: z.enum(["queued", "thinking", "tool", "responding"]),
+  text: z.string().max(40_000),
+  detail: z.string().max(500),
+  updatedAt: z.string(),
+});
+export type RunActivity = z.infer<typeof RunActivitySchema>;
+
+export interface ThreadStreamEvent {
+  revision: number;
+  refresh: boolean;
+  activities: RunActivity[];
+}
+
 export const HarnessToolNameSchema = z.enum([
   "list",
   "glob",

@@ -949,16 +949,48 @@ kbd {
 .avatar-green {
   background: linear-gradient(145deg, #58c897, #28785f);
 }
-.typing-row {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  margin: 10px 28px;
+.live-run {
+  margin: 10px 28px 10px 77px;
   color: #98949d;
   font-size: 12px;
 }
-.typing-row b {
-  color: #c4c0c7;
+.live-run-with-text {
+  padding: 10px 12px 12px;
+  border: 1px solid rgba(130, 87, 154, 0.32);
+  border-radius: 9px;
+  background: rgba(88, 52, 104, 0.09);
+}
+.live-run-status {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.live-run-status b {
+  color: #d3ced7;
+}
+.live-run-response {
+  position: relative;
+  margin: 9px 0 0 36px;
+  color: #d9d9de;
+  font-size: 14px;
+}
+.live-run-response .message-markdown {
+  line-height: 1.55;
+}
+.stream-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 3px;
+  vertical-align: -0.12em;
+  border-radius: 1px;
+  background: #c68ce5;
+  animation: stream-caret 0.9s steps(1) infinite;
+}
+@keyframes stream-caret {
+  50% {
+    opacity: 0;
+  }
 }
 .typing-dots {
   display: flex;

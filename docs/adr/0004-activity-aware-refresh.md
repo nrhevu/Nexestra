@@ -34,4 +34,5 @@ restart recovery remains based on the durable transcript.
 
 ## Status
 
-Accepted for Milestone M9.
+Accepted for Milestone M9 and amended by ADR 0011, which replaces active-thread polling with SSE
+when EventSource is available while retaining the idle and background behavior described here.

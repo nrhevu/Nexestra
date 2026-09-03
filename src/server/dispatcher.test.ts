@@ -2,7 +2,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { Agent, RuntimeStatus, ToolCall } from "../shared/contracts.js";
+import type { Agent, RuntimeStatus, ThreadStreamEvent, ToolCall } from "../shared/contracts.js";
 import { AgentDispatcher, ChatService } from "./dispatcher.js";
 import type { AgentInvocation, AgentRunner } from "./runtime.js";
 import { FileStore, StoreError } from "./store.js";
@@ -59,6 +59,26 @@ class ConcurrentApprovalRunner implements AgentRunner {
       }),
     );
     return "approved";
+  }
+}
+
+class StreamingRunner implements AgentRunner {
+  async runtimeStatus() {
+    return readyRuntime;
+  }
+
+  async invoke(_agent: Agent, invocation: AgentInvocation) {
+    invocation.activityHooks?.status("thinking", "Inspecting the repository");
+    invocation.activityHooks?.text("Live answer", "append");
+    await invocation.activityHooks?.tool({
+      id: "native-read",
+      name: "read",
+      permission: "read",
+      status: "completed",
+      input: '{"filePath":"README.md"}',
+      summary: "Read README.md",
+    });
+    return "Live answer";
   }
 }
 
@@ -149,6 +169,41 @@ describe("mention dispatch", () => {
     const data = await store.threadData(thread.id);
     expect(data.messages).toHaveLength(3);
     expect(data.runs.every((run) => run.status === "completed")).toBe(true);
+  });
+
+  it("publishes transient response activity and persists native tool events", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-dispatch-stream-"));
+    const store = await FileStore.open({ root, workspacePath: root });
+    const dispatcher = new AgentDispatcher(store, new StreamingRunner());
+    const chat = new ChatService(store, dispatcher);
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const agent = await store.createAgent({
+      kind: "worker",
+      name: "Codex",
+      handle: "codex",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    const events: ThreadStreamEvent[] = [];
+    const unsubscribe = dispatcher.subscribeThread(thread.id, (event) => events.push(event));
+
+    await chat.send(thread.id, { content: `@${agent.handle} stream this` });
+    await dispatcher.waitForIdle();
+    unsubscribe();
+
+    expect(
+      events.some((event) => event.activities.some((item) => item.text === "Live answer")),
+    ).toBe(true);
+    expect(events.at(-1)).toMatchObject({ refresh: true, activities: [] });
+    expect((await store.threadData(thread.id)).toolCalls).toContainEqual(
+      expect.objectContaining({
+        name: "read",
+        status: "completed",
+        input: '{"filePath":"README.md"}',
+      }),
+    );
   });
 
   it("keeps each queued invocation bound to its own trigger message", async () => {

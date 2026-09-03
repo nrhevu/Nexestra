@@ -15,6 +15,8 @@ interface RunCommandOptions {
   maxOutputBytes?: number;
   terminationGraceMs?: number;
   env?: NodeJS.ProcessEnv;
+  onStdout?: (chunk: string) => void;
+  onStderr?: (chunk: string) => void;
 }
 
 export async function runCommand(
@@ -42,13 +44,27 @@ export async function runCommand(
 
     child.stdout.on("data", (chunk: Buffer) => {
       totalBytes += chunk.byteLength;
-      if (totalBytes <= maxBytes) stdout += chunk.toString("utf8");
-      else terminate(new Error("Agent returned too much data."));
+      if (totalBytes <= maxBytes) {
+        const text = chunk.toString("utf8");
+        stdout += text;
+        try {
+          options.onStdout?.(text);
+        } catch (error) {
+          terminate(error instanceof Error ? error : new Error("Could not process agent output."));
+        }
+      } else terminate(new Error("Agent returned too much data."));
     });
     child.stderr.on("data", (chunk: Buffer) => {
       totalBytes += chunk.byteLength;
-      if (totalBytes <= maxBytes) stderr += chunk.toString("utf8");
-      else terminate(new Error("Agent returned too much data."));
+      if (totalBytes <= maxBytes) {
+        const text = chunk.toString("utf8");
+        stderr += text;
+        try {
+          options.onStderr?.(text);
+        } catch (error) {
+          terminate(error instanceof Error ? error : new Error("Could not process agent output."));
+        }
+      } else terminate(new Error("Agent returned too much data."));
     });
     child.on("error", (error) => finish(error));
     child.on("close", (exitCode) => {

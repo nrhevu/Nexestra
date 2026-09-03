@@ -4,8 +4,16 @@ import {
   CreateMessageSchema,
   extractMentionHandles,
   type Message,
+  type RunActivity,
+  type ThreadStreamEvent,
+  type ToolCall,
 } from "../shared/contracts.js";
-import { type AgentInvocation, type AgentRunner, agentView } from "./runtime.js";
+import {
+  type AgentInvocation,
+  type AgentRunner,
+  agentView,
+  type RuntimeToolUpdate,
+} from "./runtime.js";
 import { type FileStore, StoreError, type UploadArtifactInput } from "./store.js";
 
 export class AgentDispatcher {
@@ -15,6 +23,9 @@ export class AgentDispatcher {
   private readonly deletingAgentIds = new Set<string>();
   private readonly retryingRunIds = new Set<string>();
   private readonly liveRuns = new Map<string, AgentRun>();
+  private readonly liveActivities = new Map<string, RunActivity>();
+  private readonly threadSubscribers = new Map<string, Set<(event: ThreadStreamEvent) => void>>();
+  private readonly threadRevisions = new Map<string, number>();
   private readonly pendingApprovals = new Map<
     string,
     { runId: string; resolve: (approved: boolean) => void }
@@ -40,6 +51,26 @@ export class AgentDispatcher {
         return this.store.getThread(run.threadId)?.workspaceId === workspaceId;
       })
       .map((run) => structuredClone(run));
+  }
+
+  threadStreamSnapshot(threadId: string, refresh = true): ThreadStreamEvent {
+    return {
+      revision: this.threadRevisions.get(threadId) ?? 0,
+      refresh,
+      activities: [...this.liveActivities.values()]
+        .filter((activity) => activity.threadId === threadId)
+        .map((activity) => structuredClone(activity)),
+    };
+  }
+
+  subscribeThread(threadId: string, listener: (event: ThreadStreamEvent) => void): () => void {
+    const listeners = this.threadSubscribers.get(threadId) ?? new Set();
+    listeners.add(listener);
+    this.threadSubscribers.set(threadId, listeners);
+    return () => {
+      listeners.delete(listener);
+      if (listeners.size === 0) this.threadSubscribers.delete(threadId);
+    };
   }
 
   hasPendingWork(agentId: string): boolean {
@@ -109,6 +140,16 @@ export class AgentDispatcher {
         };
         const queued = await this.store.updateRun(run);
         this.liveRuns.set(queued.id, queued);
+        this.liveActivities.set(queued.id, {
+          runId: queued.id,
+          threadId: queued.threadId,
+          agentId: queued.agentId,
+          stage: "queued",
+          text: "",
+          detail: "Waiting in the queue",
+          updatedAt: now,
+        });
+        this.notifyThread(queued.threadId, true);
         runs.push(queued);
         this.enqueueRun(queued, agent, trigger);
       }
@@ -186,6 +227,8 @@ export class AgentDispatcher {
       });
       currentRun = running;
       this.liveRuns.set(running.id, running);
+      this.updateActivity(running, "thinking", "Starting agent");
+      this.notifyThread(running.threadId, true);
       const thread = this.store.getThread(run.threadId);
       if (!thread) throw new StoreError("not_found", "Thread not found.");
       const [transcriptSnapshot, artifacts] = await Promise.all([
@@ -203,10 +246,19 @@ export class AgentDispatcher {
             updatedAt: new Date().toISOString(),
           });
           this.liveRuns.set(currentRun.id, currentRun);
+          const detail =
+            status === "waiting_approval"
+              ? "Waiting for tool approval"
+              : status === "waiting_input"
+                ? "Waiting for your answer"
+                : "Working";
+          this.updateActivity(currentRun, status === "running" ? "thinking" : "tool", detail);
+          this.notifyThread(currentRun.threadId, true);
         });
         runStatusQueue = update.catch(() => undefined);
         return update;
       };
+      const runtimeToolCalls = new Map<string, ToolCall>();
       const invocation: AgentInvocation = {
         runId: run.id,
         thread,
@@ -215,13 +267,22 @@ export class AgentDispatcher {
         transcriptSnapshot,
         artifacts,
         toolHooks: {
-          update: (toolCall) => this.store.updateToolCall(toolCall).then(() => undefined),
+          update: async (toolCall) => {
+            await this.store.updateToolCall(toolCall);
+            this.updateActivity(
+              currentRun,
+              "tool",
+              `${toolCall.status.replace("_", " ")} ${toolCall.name}`,
+            );
+            this.notifyThread(run.threadId, true);
+          },
           requestApproval: async (toolCall) => {
             const decision = new Promise<boolean>((resolve) => {
               this.pendingApprovals.set(toolCall.id, { runId: run.id, resolve });
             });
             try {
               await this.store.updateToolCall(toolCall);
+              this.notifyThread(run.threadId, true);
               pendingInteractions.set(toolCall.id, "waiting_approval");
               await refreshInteractionStatus();
               return await decision;
@@ -237,6 +298,7 @@ export class AgentDispatcher {
             });
             try {
               await this.store.updateToolCall(toolCall);
+              this.notifyThread(run.threadId, true);
               pendingInteractions.set(toolCall.id, "waiting_input");
               await refreshInteractionStatus();
               return await response;
@@ -245,6 +307,20 @@ export class AgentDispatcher {
               pendingInteractions.delete(toolCall.id);
               await refreshInteractionStatus();
             }
+          },
+        },
+        activityHooks: {
+          status: (stage, detail) => this.updateActivity(currentRun, stage, detail),
+          text: (value, mode) => this.updateActivityText(currentRun, value, mode),
+          tool: async (update) => {
+            const toolCall = this.runtimeToolCall(
+              currentRun,
+              update,
+              runtimeToolCalls.get(update.id),
+            );
+            runtimeToolCalls.set(update.id, toolCall);
+            await this.store.updateToolCall(toolCall);
+            this.notifyThread(run.threadId, true);
           },
         },
       };
@@ -277,8 +353,68 @@ export class AgentDispatcher {
         input.resolve([]);
       }
       this.liveRuns.delete(run.id);
+      this.liveActivities.delete(run.id);
       this.busy.delete(agent.id);
+      this.notifyThread(run.threadId, true);
     }
+  }
+
+  private updateActivity(run: AgentRun, stage: RunActivity["stage"], detail: string): void {
+    const current = this.liveActivities.get(run.id);
+    this.liveActivities.set(run.id, {
+      runId: run.id,
+      threadId: run.threadId,
+      agentId: run.agentId,
+      stage,
+      text: current?.text ?? "",
+      detail: this.store.redactSecrets(detail).slice(0, 500),
+      updatedAt: new Date().toISOString(),
+    });
+    this.notifyThread(run.threadId, false);
+  }
+
+  private updateActivityText(run: AgentRun, value: string, mode: "append" | "replace"): void {
+    const current = this.liveActivities.get(run.id);
+    const text = this.store
+      .redactSecrets(mode === "append" ? `${current?.text ?? ""}${value}` : value)
+      .slice(0, 40_000);
+    this.liveActivities.set(run.id, {
+      runId: run.id,
+      threadId: run.threadId,
+      agentId: run.agentId,
+      stage: "responding",
+      text,
+      detail: "Writing a response",
+      updatedAt: new Date().toISOString(),
+    });
+    this.notifyThread(run.threadId, false);
+  }
+
+  private runtimeToolCall(run: AgentRun, update: RuntimeToolUpdate, previous?: ToolCall): ToolCall {
+    const now = new Date().toISOString();
+    return {
+      id: `${run.id}:${update.id}`,
+      runId: run.id,
+      threadId: run.threadId,
+      agentId: run.agentId,
+      name: update.name,
+      permission: update.permission,
+      status: update.status,
+      input: this.store.redactSecrets(update.input).slice(0, 4_000),
+      ...(update.summary
+        ? { summary: this.store.redactSecrets(update.summary).slice(0, 500) }
+        : {}),
+      ...(update.error ? { error: this.store.redactSecrets(update.error).slice(0, 2_000) } : {}),
+      createdAt: previous?.createdAt ?? now,
+      updatedAt: now,
+    };
+  }
+
+  private notifyThread(threadId: string, refresh: boolean): void {
+    const revision = (this.threadRevisions.get(threadId) ?? 0) + 1;
+    this.threadRevisions.set(threadId, revision);
+    const event = this.threadStreamSnapshot(threadId, refresh);
+    for (const listener of this.threadSubscribers.get(threadId) ?? []) listener(event);
   }
 }
 

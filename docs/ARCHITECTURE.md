@@ -12,7 +12,7 @@ and Settings navigation.
 
 ```text
 React SPA
-   │ HTTP + polling
+   │ HTTP + thread SSE
    ▼
 Hono API ── FileStore ── state.json / credentials.json
    │                    ├─ threads/<id>.jsonl
@@ -32,10 +32,14 @@ The shared Zod contracts in `src/shared/contracts.ts` define the boundary betwee
 ## Refresh and rendering model
 
 The SPA performs no periodic requests while the selected workspace is idle. While the visible
-thread has queued, running, approval-waiting, or input-waiting work, it polls only that thread once per second. If work continues
-after the user navigates elsewhere, a lightweight activity endpoint is polled instead; the full
-workspace bootstrap is refreshed once when activity finishes. The dispatcher keeps this live-run
-projection in memory, while JSONL run events remain the durable source used for restart recovery.
+thread has queued, running, approval-waiting, or input-waiting work, it opens one Server-Sent Events
+connection. The dispatcher publishes phase changes and accumulated response text directly, and
+marks events that require the browser to reload durable messages, runs, or tools. Browsers without
+EventSource retain the one-second active-thread polling fallback. If work continues after the user
+navigates elsewhere, a lightweight activity endpoint is polled instead; the full workspace
+bootstrap is refreshed once when activity finishes. The dispatcher keeps the live run and response
+projection in memory, while JSONL run and tool events remain the durable source used for restart
+recovery.
 
 Harness installation and ChatGPT login status are cached for 30 seconds and explicitly invalidated
 by the login flow. In React, search input owns its local state and the transcript is a memoized render
@@ -144,6 +148,13 @@ head or tail preview; the full redacted result is stored in the protected run di
 to the current invocation's exact read allowlist. Custom-provider requests retry transient network,
 408, 409, 429, and 5xx failures with bounded backoff and `Retry-After` support.
 
+Custom Chat Completions and Responses requests use their SSE streaming protocols. Text deltas update
+the in-memory run projection and are replaced by one final agent message after completion. Codex
+`exec --json` and OpenCode `run --format json --thinking` stdout is parsed incrementally, including
+records split across process chunks. Native CLI tool events are normalized into the same durable
+`tool.updated` history used by the provider-neutral Master. Reasoning content is not copied into the
+thread; the UI exposes only a phase label, observable tool activity, and user-facing response text.
+
 Harness and shell child processes close stdin, enforce timeouts and output caps, kill the process group, and inherit
 only allowlisted environment variables to reduce the risk of exposing server secrets. A timeout
 sends TERM, then KILL after a grace period, and reports an error only after the process exits.
@@ -157,7 +168,7 @@ to loopback and rejects browser mutations whose Origin is outside loopback. Code
 tokens. Custom API keys remain plaintext at rest in a `0600` file, which fits the local single-user
 threat model but does not replace an OS keychain. Custom base URLs may not contain user info, a
 query, or a fragment; remote endpoints require HTTPS, while HTTP is permitted only on loopback.
-Provider responses have a byte limit enforced before parsing.
+Provider responses have a byte limit enforced before or while parsing.
 Only redacted tool metadata and non-content summaries enter the canonical transcript. Large redacted
 tool results are stored as private `0600` run files so the same invocation can continue reading
 them; known custom-provider credentials are redacted. Custom-provider shell commands still run with the
@@ -167,7 +178,6 @@ Full access mode is deliberately explicit because it bypasses that sandbox.
 
 ## Known gaps
 
-- Active chat runs currently poll once per second instead of streaming tokens in real time.
 - Worker chat runs in read-only discussion mode; Taskboard does not yet dispatch coding jobs or manage worktrees.
 - OpenCode `plan` is an application policy, not an independent OS or container sandbox.
 - Agent profiles cannot yet edit their full configuration after creation; enable, disable, archive,
@@ -185,7 +195,8 @@ Full access mode is deliberately explicit because it bypasses that sandbox.
 - Exact edit does not yet include OpenCode's fuzzy replacement fallbacks, formatter integration, or
   file diagnostics. Binary/image/PDF reads do not produce tool-result attachments.
 - Skill discovery supports local `SKILL.md` trees but not remote catalogs or flat Markdown skills.
-- ChatGPT/Codex native tool calls are not yet mirrored into Nexestra's per-tool activity history.
+- Codex and OpenCode CLI JSON modes do not expose every answer token. Nexestra streams every
+  lifecycle record they emit, while custom OpenAI-compatible providers provide token-level text.
 - Queues live in process. A restart marks runs interrupted, and the user must click Retry.
 - Markdown code blocks do not yet have syntax highlighting, and web links are not unfurled.
 - Artifact deletion, nested replies, reactions, and multi-user authentication are not supported.

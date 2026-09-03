@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
+import { streamSSE } from "hono/streaming";
 import { ZodError } from "zod";
 import { type BootstrapData, ToolAnswersSchema } from "../shared/contracts.js";
 import { ChatGptAuthManager } from "./auth.js";
@@ -120,6 +121,28 @@ export function createApp(options: CreateAppOptions) {
 
   app.get("/api/threads/:id", async (context) => {
     return context.json(await options.store.threadData(context.req.param("id")));
+  });
+
+  app.get("/api/threads/:id/events", (context) => {
+    const threadId = context.req.param("id");
+    if (!options.store.getThread(threadId)) {
+      throw new StoreError("not_found", "Thread not found.");
+    }
+    return streamSSE(context, async (stream) => {
+      let writes = Promise.resolve();
+      const send = (event: ReturnType<typeof dispatcher.threadStreamSnapshot>) => {
+        writes = writes
+          .then(() => stream.writeSSE({ event: "thread", data: JSON.stringify(event) }))
+          .catch(() => stream.abort());
+      };
+      send(dispatcher.threadStreamSnapshot(threadId));
+      const unsubscribe = dispatcher.subscribeThread(threadId, send);
+      try {
+        await new Promise<void>((resolve) => stream.onAbort(resolve));
+      } finally {
+        unsubscribe();
+      }
+    });
   });
 
   app.post("/api/threads/:id/messages", async (context) => {

@@ -47,9 +47,11 @@ import type {
   Artifact,
   BootstrapData,
   Message,
+  RunActivity,
   Task,
   Thread,
   ThreadData,
+  ThreadStreamEvent,
   ToolCall,
   Workspace,
 } from "../shared/contracts.js";
@@ -79,11 +81,13 @@ export function App() {
   const [route, setRoute] = useState<RouteState>(() => routeFromLocation());
   const [data, setData] = useState<BootstrapData>();
   const [threadData, setThreadData] = useState<ThreadData>();
+  const [runActivities, setRunActivities] = useState<RunActivity[]>([]);
   const [modal, setModal] = useState<ModalName>(null);
   const [notice, setNotice] = useState<string>();
   const [error, setError] = useState<string>();
   const [taskStatus, setTaskStatus] = useState<Task["status"]>("todo");
   const [agentToDelete, setAgentToDelete] = useState<AgentView>();
+  const deferredRunActivities = useDeferredValue(runActivities);
   const workspaceIdRef = useRef<string | undefined>(
     window.localStorage.getItem("nexestra.workspaceId") ?? undefined,
   );
@@ -144,6 +148,7 @@ export function App() {
 
   useEffect(() => {
     if (route.view !== "threads" || !route.threadId || !routeThreadExists) return;
+    setRunActivities([]);
     void loadThread(route.threadId);
   }, [loadThread, route.threadId, route.view, routeThreadExists]);
 
@@ -154,12 +159,14 @@ export function App() {
       run.status === "waiting_approval" ||
       run.status === "waiting_input",
   );
-  const isPollingActiveThread = Boolean(
+  const isWatchingActiveThread = Boolean(
     hasActiveThreadRuns &&
       route.view === "threads" &&
       route.threadId &&
       route.threadId === threadData?.thread.id,
   );
+  const supportsThreadStreaming = typeof window.EventSource === "function";
+  const isPollingActiveThread = isWatchingActiveThread && !supportsThreadStreaming;
   const isLoadingCurrentThread = Boolean(
     route.view === "threads" && route.threadId && route.threadId !== threadData?.thread.id,
   );
@@ -188,8 +195,55 @@ export function App() {
     return () => window.clearInterval(timer);
   }, [isPollingActiveThread, loadThread, refresh, route.threadId]);
 
+  useEffect(() => {
+    if (!isWatchingActiveThread || !supportsThreadStreaming || !route.threadId) return;
+    const threadId = route.threadId;
+    const source = new window.EventSource(`/api/threads/${encodeURIComponent(threadId)}/events`);
+    let requestInFlight = false;
+    let refreshQueued = false;
+    const reload = () => {
+      if (requestInFlight) {
+        refreshQueued = true;
+        return;
+      }
+      requestInFlight = true;
+      void loadThread(threadId, true)
+        .then((next) => {
+          const stillActive = next?.runs.some(
+            (run) =>
+              run.status === "queued" ||
+              run.status === "running" ||
+              run.status === "waiting_approval" ||
+              run.status === "waiting_input",
+          );
+          if (next && !stillActive) void refresh(true);
+        })
+        .finally(() => {
+          requestInFlight = false;
+          if (refreshQueued) {
+            refreshQueued = false;
+            reload();
+          }
+        });
+    };
+    const onThreadEvent = (raw: Event) => {
+      try {
+        const event = JSON.parse((raw as MessageEvent<string>).data) as ThreadStreamEvent;
+        setRunActivities(event.activities);
+        if (event.refresh) reload();
+      } catch {
+        // EventSource reconnects automatically; a malformed event must not break the thread.
+      }
+    };
+    source.addEventListener("thread", onThreadEvent);
+    return () => {
+      source.removeEventListener("thread", onThreadEvent);
+      source.close();
+    };
+  }, [isWatchingActiveThread, loadThread, refresh, route.threadId, supportsThreadStreaming]);
+
   const hasBackgroundRuns =
-    Boolean(data?.activeRuns.length) && !isPollingActiveThread && !isLoadingCurrentThread;
+    Boolean(data?.activeRuns.length) && !isWatchingActiveThread && !isLoadingCurrentThread;
   useEffect(() => {
     if (!hasBackgroundRuns || !data) return;
     const workspaceId = data.workspace.id;
@@ -300,6 +354,7 @@ export function App() {
             key={route.threadId}
             data={data}
             threadData={threadData}
+            runActivities={deferredRunActivities}
             onSend={async (content, files) => {
               if (!route.threadId) return;
               const body = new FormData();
@@ -775,6 +830,7 @@ function Sidebar(props: {
 function ThreadView(props: {
   data: BootstrapData;
   threadData?: ThreadData;
+  runActivities: RunActivity[];
   onSend: (content: string, files: File[]) => Promise<void>;
   onRetry: (runId: string) => Promise<unknown>;
   onToolDecision: (toolCallId: string, approved: boolean) => Promise<void>;
@@ -949,6 +1005,7 @@ function ThreadView(props: {
           artifacts={props.threadData.artifacts}
           runs={props.threadData.runs}
           toolCalls={props.threadData.toolCalls ?? []}
+          runActivities={props.runActivities}
           agents={props.data.agents}
           onRetry={props.onRetry}
           onToolDecision={props.onToolDecision}
@@ -1130,6 +1187,7 @@ const ThreadTranscript = memo(function ThreadTranscript({
   artifacts,
   runs,
   toolCalls,
+  runActivities,
   agents,
   onRetry,
   onToolDecision,
@@ -1140,6 +1198,7 @@ const ThreadTranscript = memo(function ThreadTranscript({
   artifacts: Artifact[];
   runs: AgentRun[];
   toolCalls: ToolCall[];
+  runActivities: RunActivity[];
   agents: AgentView[];
   onRetry: (runId: string) => Promise<unknown>;
   onToolDecision: (toolCallId: string, approved: boolean) => Promise<void>;
@@ -1148,6 +1207,7 @@ const ThreadTranscript = memo(function ThreadTranscript({
   const bottomRef = useRef<HTMLDivElement>(null);
   const agentsById = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
   const currentAgentHandles = useMemo(() => agents.map((agent) => agent.handle), [agents]);
+  const knownAgentHandles = useMemo(() => new Set(currentAgentHandles), [currentAgentHandles]);
   const artifactsByMessage = useMemo(() => {
     const grouped = new Map<string, Artifact[]>();
     for (const artifact of artifacts) {
@@ -1175,9 +1235,15 @@ const ThreadTranscript = memo(function ThreadTranscript({
     }
     return grouped;
   }, [toolCalls]);
+  const activitiesByRun = useMemo(
+    () => new Map(runActivities.map((activity) => [activity.runId, activity])),
+    [runActivities],
+  );
   const transcriptVersion = `${messages.length}:${artifacts.length}:${runs
     .map((run) => `${run.id}-${run.status}`)
-    .join(",")}:${toolCalls.map((call) => `${call.id}-${call.status}`).join(",")}`;
+    .join(",")}:${toolCalls.map((call) => `${call.id}-${call.status}`).join(",")}:${runActivities
+    .map((activity) => `${activity.runId}-${activity.updatedAt}-${activity.text.length}`)
+    .join(",")}`;
   useEffect(() => {
     if (!transcriptVersion) return;
     bottomRef.current?.scrollIntoView?.({ block: "end" });
@@ -1222,6 +1288,8 @@ const ThreadTranscript = memo(function ThreadTranscript({
               }
               onRetry={onRetry}
               toolCalls={toolCallsByRun.get(run.id) ?? []}
+              activity={activitiesByRun.get(run.id)}
+              knownHandles={knownAgentHandles}
               onToolDecision={onToolDecision}
               onToolResponse={onToolResponse}
             />
@@ -1490,6 +1558,8 @@ function RunRow({
   historicalHandle,
   onRetry,
   toolCalls,
+  activity,
+  knownHandles,
   onToolDecision,
   onToolResponse,
 }: {
@@ -1498,12 +1568,14 @@ function RunRow({
   historicalHandle?: string;
   onRetry: (id: string) => Promise<unknown>;
   toolCalls: ToolCall[];
+  activity?: RunActivity;
+  knownHandles: ReadonlySet<string>;
   onToolDecision: (id: string, approved: boolean) => Promise<void>;
   onToolResponse: (id: string, answers: string[][]) => Promise<void>;
 }) {
   const [retrying, setRetrying] = useState(false);
   const handle = agent?.handle ?? historicalHandle;
-  const activity = toolCalls.length > 0 && (
+  const toolActivity = toolCalls.length > 0 && (
     <div className="tool-activity">
       {toolCalls.map((toolCall) => (
         <ToolCallRow
@@ -1515,40 +1587,57 @@ function RunRow({
       ))}
     </div>
   );
-  if (run.status === "completed") return activity || null;
+  if (run.status === "completed") return toolActivity || null;
   if (
     run.status === "queued" ||
     run.status === "running" ||
     run.status === "waiting_approval" ||
     run.status === "waiting_input"
   ) {
+    const detail =
+      activity?.detail ||
+      (run.status === "queued"
+        ? "Waiting in the queue"
+        : run.status === "waiting_approval"
+          ? "Waiting for tool approval"
+          : run.status === "waiting_input"
+            ? "Waiting for your answer"
+            : "Working with the repository");
     return (
       <>
-        {activity}
-        <div className="typing-row">
-          {agent ? <Avatar agent={agent} small /> : <span className="avatar avatar-blue">A</span>}
-          <span>
-            <b>{handle ? `@${handle}` : "Deleted agent"}</b>{" "}
-            {run.status === "queued"
-              ? "is waiting in the queue"
-              : run.status === "waiting_approval"
-                ? "is waiting for tool approval"
-                : run.status === "waiting_input"
-                  ? "is waiting for your answer"
-                  : "is working with the repository"}
-          </span>
-          <span className="typing-dots">
-            <i />
-            <i />
-            <i />
-          </span>
+        {toolActivity}
+        <div className={activity?.text ? "live-run live-run-with-text" : "live-run"}>
+          <div className="live-run-status">
+            {agent ? <Avatar agent={agent} small /> : <span className="avatar avatar-blue">A</span>}
+            <span>
+              <b>{handle ? `@${handle}` : "Deleted agent"}</b> {detail}
+            </span>
+            <span className="typing-dots" role="status" aria-label="Agent is working">
+              <i />
+              <i />
+              <i />
+            </span>
+          </div>
+          {activity?.text && (
+            <div
+              className="live-run-response"
+              role="log"
+              aria-live="polite"
+              aria-label="Streaming response"
+            >
+              <Suspense fallback={<p className="message-markdown-fallback">{activity.text}</p>}>
+                <RichMessage content={activity.text} knownHandles={knownHandles} />
+              </Suspense>
+              <span className="stream-caret" aria-hidden="true" />
+            </div>
+          )}
         </div>
       </>
     );
   }
   return (
     <>
-      {activity}
+      {toolActivity}
       <div className="run-error">
         <CircleAlert size={15} />
         <div>

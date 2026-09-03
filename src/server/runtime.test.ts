@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MasterAccessMode } from "../shared/contracts.js";
+import type { RuntimeToolUpdate } from "./runtime.js";
 import {
   LocalAgentRunner,
   parseCodexReply,
@@ -139,6 +140,7 @@ describe("Worker harness arguments", () => {
       "anthropic/claude-sonnet-4",
       "--variant",
       "high",
+      "--thinking",
       "--file",
       invocation.transcriptPath,
       "--",
@@ -201,6 +203,96 @@ describe("Worker harness arguments", () => {
       expect(args).toContain(harness === "codex" ? "--image" : "--file");
     },
   );
+
+  it("forwards split Codex JSONL tool and response events while the command runs", async () => {
+    const { agent, invocation, runner } = await workerFixture("codex");
+    const tool = vi.fn(async (_update: RuntimeToolUpdate) => undefined);
+    const text = vi.fn();
+    const output = [
+      JSON.stringify({
+        type: "item.started",
+        item: { id: "item-1", type: "command_execution", command: "pwd", status: "in_progress" },
+      }),
+      JSON.stringify({
+        type: "item.completed",
+        item: {
+          id: "item-1",
+          type: "command_execution",
+          command: "pwd",
+          status: "completed",
+          aggregated_output: "/workspace",
+        },
+      }),
+      JSON.stringify({
+        type: "item.completed",
+        item: { type: "agent_message", text: "Done." },
+      }),
+    ].join("\n");
+    processMocks.findExecutable.mockResolvedValue("/fake/codex");
+    processMocks.runCommand.mockImplementation(
+      async (
+        _command: string,
+        _args: string[],
+        options: { onStdout?: (chunk: string) => void },
+      ) => {
+        options.onStdout?.(output.slice(0, 37));
+        options.onStdout?.(output.slice(37));
+        return { stdout: output, stderr: "", exitCode: 0 };
+      },
+    );
+
+    await expect(
+      runner.invoke(agent, {
+        ...invocation,
+        activityHooks: { status: vi.fn(), text, tool },
+      }),
+    ).resolves.toBe("Done.");
+    expect(text).toHaveBeenCalledWith("Done.", "replace");
+    expect(tool.mock.calls.map(([update]) => update.status)).toEqual(["running", "completed"]);
+    expect(tool).toHaveBeenLastCalledWith(
+      expect.objectContaining({ name: "bash", input: '{"command":"pwd"}' }),
+    );
+  });
+
+  it("forwards OpenCode tool and text events while the command runs", async () => {
+    const { agent, invocation, runner } = await workerFixture("opencode");
+    const tool = vi.fn(async (_update: RuntimeToolUpdate) => undefined);
+    const text = vi.fn();
+    const output = [
+      JSON.stringify({
+        type: "tool_use",
+        part: {
+          id: "part-1",
+          type: "tool",
+          tool: "read",
+          state: { status: "completed", input: { filePath: "README.md" }, title: "Read README.md" },
+        },
+      }),
+      JSON.stringify({ type: "text", part: { type: "text", text: "Done." } }),
+    ].join("\n");
+    processMocks.findExecutable.mockResolvedValue("/fake/opencode");
+    processMocks.runCommand.mockImplementation(
+      async (
+        _command: string,
+        _args: string[],
+        options: { onStdout?: (chunk: string) => void },
+      ) => {
+        options.onStdout?.(output);
+        return { stdout: output, stderr: "", exitCode: 0 };
+      },
+    );
+
+    await expect(
+      runner.invoke(agent, {
+        ...invocation,
+        activityHooks: { status: vi.fn(), text, tool },
+      }),
+    ).resolves.toBe("Done.");
+    expect(text).toHaveBeenCalledWith("Done.", "replace");
+    expect(tool).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "read", status: "completed", permission: "read" }),
+    );
+  });
 });
 
 describe("ChatGPT Master harness arguments", () => {
@@ -259,6 +351,126 @@ describe("parseProviderReply", () => {
   it("supports chat completions and responses payloads", () => {
     expect(parseProviderReply({ choices: [{ message: { content: "hello" } }] })).toBe("hello");
     expect(parseProviderReply({ output_text: "world" })).toBe("world");
+  });
+
+  it("streams Chat Completions text deltas while preserving the final reply", async () => {
+    const { agent, invocation, store } = await customMasterFixture("openai-chat");
+    const text = vi.fn();
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      sseResponse([
+        { choices: [{ delta: { content: "Hello" } }] },
+        { choices: [{ delta: { content: " from the stream." }, finish_reason: "stop" }] },
+      ]),
+    );
+
+    await expect(
+      new LocalAgentRunner({ store, fetch: fetchMock as typeof fetch }).invoke(agent, {
+        ...invocation,
+        activityHooks: {
+          status: vi.fn(),
+          text,
+          tool: vi.fn(async () => undefined),
+        },
+      }),
+    ).resolves.toBe("Hello from the stream.");
+    expect(text.mock.calls).toEqual([
+      ["Hello", "append"],
+      [" from the stream.", "append"],
+    ]);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ stream: true });
+  });
+
+  it("assembles fragmented streamed Chat Completions tool calls", async () => {
+    const { agent, invocation, root, store } = await customMasterFixture("openai-chat");
+    await writeFile(join(root, "stream.txt"), "streamed tool result\n");
+    const responses = [
+      sseResponse([
+        {
+          choices: [
+            {
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: "call-read",
+                    function: { name: "re", arguments: '{"file' },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+        {
+          choices: [
+            {
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    function: { name: "ad", arguments: 'Path":"stream.txt"}' },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ]),
+      sseResponse([{ choices: [{ delta: { content: "Read the streamed file." } }] }]),
+    ];
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        responses.shift() ?? new Response("missing", { status: 500 }),
+    );
+
+    await expect(
+      new LocalAgentRunner({ store, fetch: fetchMock as typeof fetch }).invoke(agent, invocation),
+    ).resolves.toBe("Read the streamed file.");
+    const secondBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(secondBody.messages).toContainEqual(
+      expect.objectContaining({
+        role: "tool",
+        tool_call_id: "call-read",
+        content: expect.stringContaining("streamed tool result"),
+      }),
+    );
+  });
+
+  it("streams Responses API text deltas and accepts the completed response", async () => {
+    const { agent, invocation, store } = await customMasterFixture("openai-responses");
+    const text = vi.fn();
+    const fetchMock = vi.fn(async () =>
+      sseResponse([
+        { type: "response.output_text.delta", delta: "Live" },
+        { type: "response.output_text.delta", delta: " response" },
+        {
+          type: "response.completed",
+          response: {
+            output: [
+              {
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: "Live response" }],
+              },
+            ],
+          },
+        },
+      ]),
+    );
+
+    await expect(
+      new LocalAgentRunner({ store, fetch: fetchMock as typeof fetch }).invoke(agent, {
+        ...invocation,
+        activityHooks: {
+          status: vi.fn(),
+          text,
+          tool: vi.fn(async () => undefined),
+        },
+      }),
+    ).resolves.toBe("Live response");
+    expect(text.mock.calls).toEqual([
+      ["Live", "append"],
+      [" response", "append"],
+    ]);
   });
 
   it("sends a shared transcript to a custom provider without exposing its key elsewhere", async () => {
@@ -652,6 +864,23 @@ async function customMasterFixture(
       artifacts: await store.agentArtifacts(thread.id, trigger.id),
     },
   };
+}
+
+function sseResponse(events: unknown[]): Response {
+  const encoded = new TextEncoder().encode(
+    `${events.map((event) => `data: ${JSON.stringify(event)}\r\n\r\n`).join("")}data: [DONE]\r\n\r\n`,
+  );
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        for (let offset = 0; offset < encoded.length; offset += 17) {
+          controller.enqueue(encoded.slice(offset, offset + 17));
+        }
+        controller.close();
+      },
+    }),
+    { headers: { "content-type": "text/event-stream" } },
+  );
 }
 
 async function workerFixture(

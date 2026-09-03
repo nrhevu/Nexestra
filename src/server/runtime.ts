@@ -4,6 +4,7 @@ import type {
   Agent,
   AgentReadiness,
   AgentView,
+  HarnessPermissionKey,
   MasterAgent,
   Message,
   RuntimeStatus,
@@ -20,6 +21,22 @@ import {
 import { findExecutable, runCommand, safeProcessEnv } from "./process.js";
 import type { AgentArtifact, FileStore } from "./store.js";
 
+export interface RuntimeToolUpdate {
+  id: string;
+  name: string;
+  permission: HarnessPermissionKey;
+  status: "running" | "completed" | "failed";
+  input: string;
+  summary?: string;
+  error?: string;
+}
+
+export interface AgentActivityHooks {
+  status(stage: "thinking" | "tool" | "responding", detail: string): void;
+  text(value: string, mode: "append" | "replace"): void;
+  tool(update: RuntimeToolUpdate): Promise<void>;
+}
+
 export interface AgentInvocation {
   runId?: string;
   thread: Thread;
@@ -28,6 +45,7 @@ export interface AgentInvocation {
   transcriptSnapshot: string;
   artifacts?: AgentArtifact[];
   toolHooks?: MasterToolHooks;
+  activityHooks?: AgentActivityHooks;
 }
 
 export interface AgentRunner {
@@ -136,11 +154,19 @@ export class LocalAgentRunner implements AgentRunner {
       }
     }
     args.push(prompt);
+    invocation.activityHooks?.status("thinking", "Starting Codex");
+    const toolUpdates = queuedToolUpdates(invocation.activityHooks);
+    const consume = jsonLineConsumer((event) => {
+      handleCodexActivity(event, invocation.activityHooks, toolUpdates.emit);
+    });
     const result = await runCommand(binary, args, {
       cwd: this.options.store.workspacePath,
       timeoutMs: 5 * 60_000,
       env: safeProcessEnv(this.env),
+      onStdout: consume.push,
     });
+    consume.end();
+    await toolUpdates.drain();
     if (result.exitCode !== 0) {
       throw new Error(
         cleanProcessError(result.stderr || result.stdout, "Codex exited with an error."),
@@ -167,16 +193,25 @@ export class LocalAgentRunner implements AgentRunner {
     ];
     if (agent.model) args.push("-m", agent.model);
     if (agent.reasoningEffort) args.push("--variant", agent.reasoningEffort);
+    args.push("--thinking");
     args.push("--file", invocation.transcriptPath);
     for (const entry of invocation.artifacts ?? []) {
       if (entry.localPath) args.push("--file", entry.localPath);
     }
     args.push("--", localHarnessPrompt(agent, invocation));
+    invocation.activityHooks?.status("thinking", "Starting OpenCode");
+    const toolUpdates = queuedToolUpdates(invocation.activityHooks);
+    const consume = jsonLineConsumer((event) => {
+      handleOpenCodeActivity(event, invocation.activityHooks, toolUpdates.emit);
+    });
     const result = await runCommand(binary, args, {
       cwd: this.options.store.workspacePath,
       timeoutMs: 5 * 60_000,
       env: safeProcessEnv(this.env),
+      onStdout: consume.push,
     });
+    consume.end();
+    await toolUpdates.drain();
     if (result.exitCode !== 0) {
       throw new Error(
         cleanProcessError(result.stderr || result.stdout, "OpenCode exited with an error."),
@@ -253,22 +288,33 @@ export class LocalAgentRunner implements AgentRunner {
     const recentCalls: string[] = [];
     for (let turn = 0; turn <= 12; turn += 1) {
       const toolsEnabled = turn < 12;
-      const payload = await this.providerRequest(agent, url, headers, {
-        model: customProviderModel(agent),
-        messages,
-        ...(toolsEnabled
-          ? {
-              tools: tools.definitions.map((tool) => ({
-                type: "function",
-                function: {
-                  name: tool.name,
-                  description: tool.description,
-                  parameters: tool.parameters,
-                },
-              })),
-            }
-          : { tool_choice: "none" }),
-      });
+      invocation.activityHooks?.status(
+        "thinking",
+        turn === 0 ? "Thinking" : "Reviewing tool results",
+      );
+      const payload = await this.providerRequest(
+        agent,
+        url,
+        headers,
+        {
+          model: customProviderModel(agent),
+          messages,
+          stream: true,
+          ...(toolsEnabled
+            ? {
+                tools: tools.definitions.map((tool) => ({
+                  type: "function",
+                  function: {
+                    name: tool.name,
+                    description: tool.description,
+                    parameters: tool.parameters,
+                  },
+                })),
+              }
+            : { tool_choice: "none" }),
+        },
+        invocation.activityHooks,
+      );
       const calls = parseChatToolCalls(payload);
       if (calls.length === 0) return parseProviderReply(payload);
       if (!toolsEnabled) throw new Error("Provider continued calling tools after the step limit.");
@@ -308,12 +354,23 @@ export class LocalAgentRunner implements AgentRunner {
     const recentCalls: string[] = [];
     for (let turn = 0; turn <= 12; turn += 1) {
       const toolsEnabled = turn < 12;
-      const payload = await this.providerRequest(agent, url, headers, {
-        model: customProviderModel(agent),
-        instructions: system,
-        input,
-        ...(toolsEnabled ? { tools: tools.definitions } : { tool_choice: "none" }),
-      });
+      invocation.activityHooks?.status(
+        "thinking",
+        turn === 0 ? "Thinking" : "Reviewing tool results",
+      );
+      const payload = await this.providerRequest(
+        agent,
+        url,
+        headers,
+        {
+          model: customProviderModel(agent),
+          instructions: system,
+          input,
+          stream: true,
+          ...(toolsEnabled ? { tools: tools.definitions } : { tool_choice: "none" }),
+        },
+        invocation.activityHooks,
+      );
       const calls = parseResponsesToolCalls(payload);
       if (calls.length === 0) return parseProviderReply(payload);
       if (!toolsEnabled) throw new Error("Provider continued calling tools after the step limit.");
@@ -336,6 +393,7 @@ export class LocalAgentRunner implements AgentRunner {
     url: string,
     headers: Record<string, string>,
     body: Record<string, unknown>,
+    activityHooks?: AgentActivityHooks,
   ): Promise<unknown> {
     for (let attempt = 0; attempt <= 5; attempt += 1) {
       let response: Response;
@@ -351,8 +409,8 @@ export class LocalAgentRunner implements AgentRunner {
         await retryDelay(attempt + 1);
         continue;
       }
-      const text = await readBoundedResponse(response, 1024 * 1024);
       if (!response.ok) {
+        const text = await readBoundedResponse(response, 1024 * 1024);
         if (attempt < 5 && isRetryableProviderStatus(response.status)) {
           await retryDelay(attempt + 1, response.headers);
           continue;
@@ -363,8 +421,19 @@ export class LocalAgentRunner implements AgentRunner {
           ),
         );
       }
+      if (response.headers.get("content-type")?.includes("text/event-stream")) {
+        return readProviderStream(
+          response,
+          agent.provider.type === "custom" ? agent.provider.protocol : "openai-responses",
+          activityHooks,
+        );
+      }
+      const text = await readBoundedResponse(response, 1024 * 1024);
       try {
-        return JSON.parse(text);
+        const payload = JSON.parse(text);
+        const reply = parseProviderReply(payload);
+        if (reply) activityHooks?.text(reply, "replace");
+        return payload;
       } catch {
         throw new Error(`Provider ${customProviderName(agent)} did not return valid JSON.`);
       }
@@ -592,6 +661,413 @@ async function readBoundedResponse(response: Response, maxBytes: number): Promis
     return text + decoder.decode();
   } finally {
     reader.releaseLock();
+  }
+}
+
+async function readProviderStream(
+  response: Response,
+  protocol: "openai-chat" | "openai-responses",
+  hooks?: AgentActivityHooks,
+): Promise<unknown> {
+  if (!response.body) throw new Error("Custom provider returned an empty stream.");
+  const events: unknown[] = [];
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let buffer = "";
+  const consumeBlock = (block: string) => {
+    const data = block
+      .split("\n")
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n");
+    if (!data || data === "[DONE]") return;
+    try {
+      events.push(JSON.parse(data));
+    } catch {
+      // Ignore provider comments and malformed non-data diagnostics.
+    }
+  };
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > 1024 * 1024) {
+        await reader.cancel();
+        throw new Error("Custom provider returned too much data.");
+      }
+      buffer = `${buffer}${decoder.decode(value, { stream: true })}`.replace(/\r\n/g, "\n");
+      let boundary = buffer.indexOf("\n\n");
+      while (boundary >= 0) {
+        const previousCount = events.length;
+        consumeBlock(buffer.slice(0, boundary));
+        if (events.length > previousCount) {
+          streamProviderActivity(events.at(-1), protocol, hooks);
+        }
+        buffer = buffer.slice(boundary + 2);
+        boundary = buffer.indexOf("\n\n");
+      }
+    }
+    buffer += decoder.decode();
+    if (buffer.trim()) {
+      const previousCount = events.length;
+      consumeBlock(buffer);
+      if (events.length > previousCount) streamProviderActivity(events.at(-1), protocol, hooks);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return protocol === "openai-chat" ? assembleChatStream(events) : assembleResponsesStream(events);
+}
+
+function streamProviderActivity(
+  event: unknown,
+  protocol: "openai-chat" | "openai-responses",
+  hooks?: AgentActivityHooks,
+): void {
+  if (!hooks || !isRecord(event)) return;
+  if (protocol === "openai-chat") {
+    const choice = Array.isArray(event.choices) ? event.choices[0] : undefined;
+    if (!isRecord(choice) || !isRecord(choice.delta)) return;
+    const delta = chatContentText(choice.delta.content);
+    if (delta) {
+      hooks.status("responding", "Writing a response");
+      hooks.text(delta, "append");
+    }
+    return;
+  }
+  if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
+    hooks.status("responding", "Writing a response");
+    hooks.text(event.delta, "append");
+  }
+}
+
+function assembleChatStream(events: unknown[]): unknown {
+  let content = "";
+  let completedPayload: unknown;
+  const calls = new Map<number, { id: string; name: string; arguments: string }>();
+  for (const event of events) {
+    if (!isRecord(event) || !Array.isArray(event.choices)) continue;
+    completedPayload = event;
+    const choice = event.choices[0];
+    if (!isRecord(choice)) continue;
+    if (isRecord(choice.message)) {
+      const full = chatContentText(choice.message.content);
+      if (full) content = full;
+    }
+    if (!isRecord(choice.delta)) continue;
+    content += chatContentText(choice.delta.content);
+    if (!Array.isArray(choice.delta.tool_calls)) continue;
+    for (const rawCall of choice.delta.tool_calls) {
+      if (!isRecord(rawCall)) continue;
+      const index = typeof rawCall.index === "number" ? rawCall.index : calls.size;
+      const call = calls.get(index) ?? { id: "", name: "", arguments: "" };
+      if (typeof rawCall.id === "string") call.id += rawCall.id;
+      if (isRecord(rawCall.function)) {
+        if (typeof rawCall.function.name === "string") call.name += rawCall.function.name;
+        if (typeof rawCall.function.arguments === "string") {
+          call.arguments += rawCall.function.arguments;
+        }
+      }
+      calls.set(index, call);
+    }
+  }
+  if (!content && calls.size === 0 && completedPayload) return completedPayload;
+  return {
+    choices: [
+      {
+        message: {
+          role: "assistant",
+          content,
+          ...(calls.size > 0
+            ? {
+                tool_calls: [...calls.entries()]
+                  .sort(([left], [right]) => left - right)
+                  .map(([, call], index) => ({
+                    id: call.id || `call_${index}`,
+                    type: "function",
+                    function: { name: call.name, arguments: call.arguments },
+                  })),
+              }
+            : {}),
+        },
+      },
+    ],
+  };
+}
+
+function assembleResponsesStream(events: unknown[]): unknown {
+  let completed: unknown;
+  let outputText = "";
+  const output = new Map<number, Record<string, unknown>>();
+  for (const event of events) {
+    if (!isRecord(event)) continue;
+    if (event.type === "response.completed" && isRecord(event.response)) {
+      completed = event.response;
+    }
+    if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
+      outputText += event.delta;
+    }
+    const index = typeof event.output_index === "number" ? event.output_index : output.size;
+    if (event.type === "response.output_item.added" && isRecord(event.item)) {
+      output.set(index, { ...event.item });
+    }
+    if (
+      event.type === "response.function_call_arguments.delta" &&
+      typeof event.delta === "string"
+    ) {
+      const item = output.get(index);
+      if (item)
+        item.arguments = `${typeof item.arguments === "string" ? item.arguments : ""}${event.delta}`;
+    }
+    if (event.type === "response.output_item.done" && isRecord(event.item)) {
+      output.set(index, { ...event.item });
+    }
+  }
+  if (completed) return completed;
+  if (outputText) {
+    output.set(-1, {
+      type: "message",
+      role: "assistant",
+      content: [{ type: "output_text", text: outputText }],
+    });
+  }
+  return { output_text: outputText, output: [...output.values()] };
+}
+
+function chatContentText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .flatMap((part) => (isRecord(part) && typeof part.text === "string" ? [part.text] : []))
+    .join("");
+}
+
+function jsonLineConsumer(onEvent: (event: Record<string, unknown>) => void): {
+  push: (chunk: string) => void;
+  end: () => void;
+} {
+  let buffer = "";
+  const consume = (line: string) => {
+    if (!line.trim()) return;
+    try {
+      const event = JSON.parse(line);
+      if (isRecord(event)) onEvent(event);
+    } catch {
+      // CLI diagnostics can be interleaved with the JSONL stream.
+    }
+  };
+  return {
+    push(chunk) {
+      buffer += chunk;
+      let newline = buffer.indexOf("\n");
+      while (newline >= 0) {
+        consume(buffer.slice(0, newline).replace(/\r$/, ""));
+        buffer = buffer.slice(newline + 1);
+        newline = buffer.indexOf("\n");
+      }
+    },
+    end() {
+      consume(buffer);
+      buffer = "";
+    },
+  };
+}
+
+function queuedToolUpdates(hooks?: AgentActivityHooks): {
+  emit: (update: RuntimeToolUpdate) => void;
+  drain: () => Promise<void>;
+} {
+  let queue = Promise.resolve();
+  let failure: unknown;
+  return {
+    emit(update) {
+      if (!hooks) return;
+      queue = queue
+        .then(() => hooks.tool(update))
+        .catch((error) => {
+          failure ??= error;
+        });
+    },
+    async drain() {
+      await queue;
+      if (failure) throw failure;
+    },
+  };
+}
+
+function handleCodexActivity(
+  event: Record<string, unknown>,
+  hooks: AgentActivityHooks | undefined,
+  emitTool: (update: RuntimeToolUpdate) => void,
+): void {
+  if (!hooks) return;
+  const item = isRecord(event.item) ? event.item : undefined;
+  if (!item) {
+    if (event.type === "turn.started" || event.type === "thread.started") {
+      hooks.status("thinking", "Thinking");
+    }
+    return;
+  }
+  const type = typeof item.type === "string" ? item.type : "activity";
+  if (type === "agent_message") {
+    if (typeof item.text === "string" && item.text) {
+      hooks.status("responding", "Writing a response");
+      hooks.text(item.text, "replace");
+    }
+    return;
+  }
+  if (type === "reasoning") {
+    hooks.status("thinking", "Reasoning");
+    return;
+  }
+  if (!isCodexToolItem(type)) {
+    hooks.status("thinking", humanizeActivity(type));
+    return;
+  }
+  const failed =
+    item.status === "failed" ||
+    item.status === "error" ||
+    item.status === "declined" ||
+    item.status === "cancelled" ||
+    (typeof item.exit_code === "number" && item.exit_code !== 0) ||
+    Boolean(item.error);
+  const completed = event.type === "item.completed" || item.status === "completed" || failed;
+  const name = codexToolName(type, item);
+  emitTool({
+    id: typeof item.id === "string" ? item.id : `${type}-${crypto.randomUUID()}`,
+    name,
+    permission: permissionForTool(name, type),
+    status: failed ? "failed" : completed ? "completed" : "running",
+    input: compactJson(codexToolInput(type, item), 4_000),
+    summary: failed ? undefined : codexToolSummary(type, item, completed),
+    error: failed ? compactText(item.error ?? item.message ?? "Tool failed.", 2_000) : undefined,
+  });
+  hooks.status("tool", `${completed ? "Used" : "Using"} ${name}`);
+}
+
+function handleOpenCodeActivity(
+  event: Record<string, unknown>,
+  hooks: AgentActivityHooks | undefined,
+  emitTool: (update: RuntimeToolUpdate) => void,
+): void {
+  if (!hooks) return;
+  const part = isRecord(event.part) ? event.part : undefined;
+  if (event.type === "step_start") {
+    hooks.status("thinking", "Thinking");
+    return;
+  }
+  if (event.type === "reasoning") {
+    hooks.status("thinking", "Reasoning");
+    return;
+  }
+  if (event.type === "text" && part?.type === "text" && typeof part.text === "string") {
+    hooks.status("responding", "Writing a response");
+    hooks.text(part.text, "replace");
+    return;
+  }
+  if (event.type !== "tool_use" || part?.type !== "tool" || !isRecord(part.state)) return;
+  const name = safeToolName(typeof part.tool === "string" ? part.tool : "tool");
+  const failed = part.state.status === "error";
+  emitTool({
+    id: typeof part.id === "string" ? part.id : `tool-${crypto.randomUUID()}`,
+    name,
+    permission: permissionForTool(name),
+    status: failed ? "failed" : "completed",
+    input: compactJson(part.state.input ?? {}, 4_000),
+    summary: failed ? undefined : compactText(part.state.title ?? "Tool completed.", 500),
+    error: failed ? compactText(part.state.error ?? "Tool failed.", 2_000) : undefined,
+  });
+  hooks.status("tool", `${failed ? "Failed" : "Used"} ${name}`);
+}
+
+function isCodexToolItem(type: string): boolean {
+  return [
+    "command_execution",
+    "file_change",
+    "mcp_tool_call",
+    "web_search",
+    "dynamic_tool_call",
+    "collab_tool_call",
+    "todo_list",
+  ].includes(type);
+}
+
+function codexToolName(type: string, item: Record<string, unknown>): string {
+  if (type === "command_execution") return "bash";
+  if (type === "file_change") return "apply_patch";
+  if (type === "web_search") return "websearch";
+  if (type === "todo_list") return "todowrite";
+  if (typeof item.tool === "string") return safeToolName(item.tool);
+  if (typeof item.name === "string") return safeToolName(item.name);
+  return safeToolName(type);
+}
+
+function codexToolInput(type: string, item: Record<string, unknown>): unknown {
+  if (type === "command_execution") return { command: item.command };
+  if (type === "web_search") return { query: item.query };
+  return item.arguments ?? item.input ?? item.changes ?? {};
+}
+
+function codexToolSummary(type: string, item: Record<string, unknown>, completed: boolean): string {
+  if (!completed) return "Tool started.";
+  if (type === "command_execution" && typeof item.exit_code === "number") {
+    return `Command exited with code ${item.exit_code}.`;
+  }
+  if (type === "file_change" && Array.isArray(item.changes)) {
+    return `Applied ${item.changes.length} file change${item.changes.length === 1 ? "" : "s"}.`;
+  }
+  return "Tool completed.";
+}
+
+function permissionForTool(name: string, type?: string): HarnessPermissionKey {
+  if (["list", "glob", "grep", "read"].includes(name)) return "read";
+  if (["edit", "write", "apply_patch"].includes(name) || type === "file_change") return "edit";
+  if (["bash", "command", "command_execution"].includes(name) || type === "command_execution") {
+    return "bash";
+  }
+  if (name === "skill") return "skill";
+  if (name === "todowrite" || name === "todo_list") return "todowrite";
+  if (name === "webfetch") return "webfetch";
+  if (name === "websearch" || type === "web_search") return "websearch";
+  if (name === "question") return "question";
+  return "external";
+}
+
+function safeToolName(value: string): string {
+  return (
+    value
+      .replace(/[^a-zA-Z0-9_-]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 100) || "tool"
+  );
+}
+
+function humanizeActivity(value: string): string {
+  const label = value.replace(/[_-]+/g, " ");
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+function compactJson(value: unknown, limit: number): string {
+  if (typeof value === "string") return compactText(value, limit);
+  try {
+    return compactText(JSON.stringify(value ?? {}), limit);
+  } catch {
+    return "{}";
+  }
+}
+
+function compactText(value: unknown, limit: number): string {
+  const text = typeof value === "string" ? value : compactJsonFallback(value);
+  return text.length <= limit ? text : `${text.slice(0, Math.max(0, limit - 1))}…`;
+}
+
+function compactJsonFallback(value: unknown): string {
+  try {
+    return JSON.stringify(value ?? "");
+  } catch {
+    return String(value);
   }
 }
 

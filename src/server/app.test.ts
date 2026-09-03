@@ -274,6 +274,22 @@ describe("HTTP app", () => {
     await expect(idle.json()).resolves.toEqual({ activeRuns: [] });
   });
 
+  it("opens a thread event stream with an immediate activity snapshot", async () => {
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+
+    const response = await app.request(`/api/threads/${thread.id}/events`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("expected event stream body");
+    const chunk = await reader.read();
+    await reader.cancel();
+
+    expect(new TextDecoder().decode(chunk.value)).toContain("event: thread");
+    expect(new TextDecoder().decode(chunk.value)).toContain('"activities":[]');
+  });
+
   it("rejects mutating browser requests from a non-loopback origin", async () => {
     const response = await app.request("/api/threads", {
       method: "POST",

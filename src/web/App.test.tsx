@@ -153,6 +153,116 @@ describe("Activity-aware refresh", () => {
       fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/bootstrap")),
     ).toHaveLength(2);
   });
+
+  it("renders live response events and does not poll an EventSource-backed thread", async () => {
+    const thread = {
+      id: "thread-stream",
+      workspaceId: workspace.id,
+      name: "general",
+      slug: "general",
+      createdAt: now,
+      updatedAt: now,
+      messageCount: 1,
+      lastMessageAt: now,
+    };
+    const run = {
+      id: "run-stream",
+      threadId: thread.id,
+      triggerMessageId: "message-stream",
+      agentId: workerAgent.id,
+      attempt: 1,
+      status: "running" as const,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const transcript: ThreadData = {
+      thread,
+      messages: [
+        {
+          id: "message-stream",
+          threadId: thread.id,
+          sequence: 1,
+          author: { kind: "user", id: "local-user", name: "You" },
+          content: "@planner stream",
+          mentions: [{ agentId: workerAgent.id, handle: workerAgent.handle }],
+          artifactIds: [],
+          createdAt: now,
+        },
+      ],
+      artifacts: [],
+      runs: [run],
+      toolCalls: [],
+    };
+    const sources: MockEventSource[] = [];
+    class MockEventSource {
+      private readonly listeners = new Map<string, Set<EventListener>>();
+
+      constructor(readonly url: string) {
+        sources.push(this);
+      }
+
+      addEventListener(type: string, listener: EventListener) {
+        const listeners = this.listeners.get(type) ?? new Set();
+        listeners.add(listener);
+        this.listeners.set(type, listeners);
+      }
+
+      removeEventListener(type: string, listener: EventListener) {
+        this.listeners.get(type)?.delete(listener);
+      }
+
+      close() {}
+
+      emit(type: string, data: unknown) {
+        const event = new MessageEvent(type, { data: JSON.stringify(data) });
+        for (const listener of this.listeners.get(type) ?? []) listener(event);
+      }
+    }
+    vi.stubGlobal("EventSource", MockEventSource);
+    const intervalSpy = vi.spyOn(window, "setInterval");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input) === "/api/bootstrap") {
+          return jsonResponse({
+            ...bootstrapData,
+            agents: [{ ...workerAgent, readiness: "busy", readinessLabel: "Responding" }],
+            threads: [thread],
+            activeRuns: [run],
+          });
+        }
+        if (String(input) === `/api/threads/${thread.id}`) return jsonResponse(transcript);
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      }),
+    );
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+
+    render(<App />);
+    await waitFor(() => expect(sources).toHaveLength(1));
+    await act(async () => {
+      sources[0]?.emit("thread", {
+        revision: 3,
+        refresh: false,
+        activities: [
+          {
+            runId: run.id,
+            threadId: thread.id,
+            agentId: workerAgent.id,
+            stage: "responding",
+            text: "**Live** response",
+            detail: "Writing a response",
+            updatedAt: now,
+          },
+        ],
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Streaming response")).toHaveTextContent("Live response");
+    });
+    expect(screen.getByText("Writing a response")).toBeInTheDocument();
+    expect(intervalSpy.mock.calls.filter(([, delay]) => delay === 1_000)).toHaveLength(0);
+  });
 });
 
 describe("Workspace navigation", () => {
