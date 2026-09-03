@@ -6,6 +6,7 @@ Milestone M9 is a fresh rebuild focused on two primary workflows:
 - create **Worker agents** powered by Codex or OpenCode;
 - create **Master agents** using ChatGPT OAuth through Codex CLI or an OpenAI-compatible endpoint;
 - chat in shared threads and invoke agents only with an `@handle`;
+- attach files and images, and browse each thread's indexed files and links;
 - manage tasks and agents in the first two surfaces: Taskboard and Agents.
 
 Workspaces are selected from the far-left rail. Each workspace has its own threads, agents, and
@@ -30,6 +31,8 @@ By default, data is stored in `.nexestra/` in the running repository:
 .nexestra/
 ├── state.json          # workspace, agent, thread, and task metadata
 ├── credentials.json    # custom API keys, mode 0600
+├── artifacts/
+│   └── <thread-id>/<artifact-id> # uploaded bytes, mode 0600
 └── threads/
     └── <thread-id>.jsonl  # the thread's shared append-only transcript
 ```
@@ -41,6 +44,17 @@ Set `NEXESTRA_HOME=/another/path` to keep data outside the repository.
 Messages without a mention are only saved to the transcript. A message containing `@maya`,
 `@codex`, or multiple handles creates one run for each invoked agent. Agent replies are recorded
 in the same transcript file. Agent replies do not trigger other agents, which prevents loops.
+
+The composer accepts up to 10 files per message, with a 20 MB per-file and 50 MB combined limit.
+Safe raster images render inline; other files download rather than execute in the browser. Every
+thread has a **Files & links** view with search and type filters. Nexestra automatically indexes
+HTTP(S) links in user and agent messages, plus existing workspace files referenced by Markdown
+links or inline-code paths. Uploaded files remain immutable; workspace-file references always open
+the current file contents.
+
+Artifacts on the triggering message are passed to the invoked agent. Codex receives image inputs,
+OpenCode receives file inputs, and custom OpenAI-compatible providers receive bounded text-file
+content and safe raster images in their native multimodal request shape.
 
 Workers run in read-only discussion mode. Custom-provider Master agents have a provider-neutral
 harness with `list`, `glob`, `grep`, `read`, `edit`, `write`, `bash`, `apply_patch`, `skill`,

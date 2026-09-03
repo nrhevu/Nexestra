@@ -17,6 +17,7 @@ const runtime: RuntimeStatus = {
 
 class FakeRunner implements AgentRunner {
   invocations = 0;
+  lastInvocation?: AgentInvocation;
   gate?: Promise<void>;
   requireToolApproval = false;
   requireToolQuestion = false;
@@ -45,6 +46,7 @@ class FakeRunner implements AgentRunner {
 
   async invoke(agent: Agent, invocation: AgentInvocation) {
     this.invocations += 1;
+    this.lastInvocation = invocation;
     await this.gate;
     if (this.requireToolApproval) {
       if (!invocation.runId || !invocation.toolHooks) throw new Error("missing tool hooks");
@@ -193,6 +195,48 @@ describe("HTTP app", () => {
     expect(runner.invocations).toBe(1);
     const data = await store.threadData(thread.id);
     expect(data.messages.at(-1)?.content).toBe("Hello from Codex");
+  });
+
+  it("uploads an image with a message and serves it from the thread artifact endpoint", async () => {
+    await store.createAgent({
+      kind: "worker",
+      name: "Codex",
+      handle: "codex",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const form = new FormData();
+    form.append("content", "@codex inspect this image");
+    form.append(
+      "files",
+      new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], "diagram.png", {
+        type: "image/png",
+      }),
+    );
+
+    const sent = await app.request(`/api/threads/${thread.id}/messages`, {
+      method: "POST",
+      body: form,
+    });
+    expect(sent.status).toBe(201);
+    await app.dispatcher.waitForIdle();
+    expect(runner.lastInvocation?.artifacts).toMatchObject([
+      { artifact: { kind: "image", name: "diagram.png" } },
+    ]);
+
+    const data = await store.threadData(thread.id);
+    const artifact = data.artifacts.find((entry) => entry.name === "diagram.png");
+    if (!artifact) throw new Error("expected image artifact");
+    const response = await app.request(
+      `/api/threads/${thread.id}/artifacts/${artifact.id}/content`,
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/png");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect([...new Uint8Array(await response.arrayBuffer())]).toEqual([0x89, 0x50, 0x4e, 0x47]);
   });
 
   it("reports live activity without scanning persisted thread history", async () => {

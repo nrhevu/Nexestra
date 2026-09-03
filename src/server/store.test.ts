@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -105,6 +105,79 @@ describe("FileStore", () => {
     const transcript = await readFile(store.transcriptPath(thread.id), "utf8");
     expect(transcript).toContain("@codex hello");
     expect(transcript).toContain("Hello.");
+  });
+
+  it("stores uploads and indexes web and workspace-file references in the thread transcript", async () => {
+    const store = await openStore();
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    await mkdir(join(store.workspacePath, "notes"), { recursive: true });
+    await writeFile(join(store.workspacePath, "notes", "plan.md"), "# Plan\n");
+    const message = await store.createUserMessage(
+      thread.id,
+      "See https://example.com/spec and `notes/plan.md`.",
+      [],
+      [
+        {
+          name: "diagram.png",
+          mediaType: "image/png",
+          bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+        },
+      ],
+    );
+
+    const data = await store.threadData(thread.id);
+    expect(message.artifactIds).toHaveLength(3);
+    expect(data.artifacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "image", source: "upload", name: "diagram.png" }),
+        expect.objectContaining({ kind: "link", url: "https://example.com/spec" }),
+        expect.objectContaining({ kind: "file", path: "notes/plan.md" }),
+      ]),
+    );
+    const upload = data.artifacts.find((artifact) => artifact.source === "upload");
+    if (!upload) throw new Error("expected uploaded artifact");
+    const content = await store.artifactContent(thread.id, upload.id);
+    expect([...new Uint8Array(await readFile(content.file))]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+
+    const reopened = await FileStore.open({ root: store.root, workspacePath: store.workspacePath });
+    await expect(reopened.threadData(thread.id)).resolves.toMatchObject({
+      artifacts: expect.arrayContaining([
+        expect.objectContaining({ id: upload.id, messageId: message.id }),
+      ]),
+    });
+  });
+
+  it("indexes links and safe workspace files referenced by an agent reply", async () => {
+    const store = await openStore();
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const agent = await store.createAgent({
+      kind: "worker",
+      name: "Codex",
+      handle: "codex",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    await writeFile(join(store.workspacePath, "result.txt"), "done\n");
+    const trigger = await store.createUserMessage(thread.id, "@codex report", [
+      { agentId: agent.id, handle: agent.handle },
+    ]);
+    const reply = await store.createAgentMessage(
+      thread.id,
+      agent,
+      "I used [the result](result.txt) and https://example.com/run.",
+      trigger.id,
+    );
+
+    const data = await store.threadData(thread.id);
+    expect(data.artifacts.filter((artifact) => artifact.messageId === reply.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "file", path: "result.txt" }),
+        expect.objectContaining({ kind: "link", url: "https://example.com/run" }),
+      ]),
+    );
   });
 
   it("persists trimmed Worker model settings across restarts", async () => {

@@ -143,30 +143,57 @@ export const MentionSchema = z.object({
   handle: HandleSchema,
 });
 
+export const MessageAuthorSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("user"), id: z.literal("local-user"), name: z.string() }),
+  z.object({
+    kind: z.literal("agent"),
+    id: z.string(),
+    name: z.string(),
+    handle: HandleSchema,
+  }),
+  z.object({ kind: z.literal("system"), id: z.literal("system"), name: z.string() }),
+]);
+
 export const MessageSchema = z.object({
   id: z.string(),
   threadId: z.string(),
   sequence: z.number().int().positive(),
-  author: z.discriminatedUnion("kind", [
-    z.object({ kind: z.literal("user"), id: z.literal("local-user"), name: z.string() }),
-    z.object({
-      kind: z.literal("agent"),
-      id: z.string(),
-      name: z.string(),
-      handle: HandleSchema,
-    }),
-    z.object({ kind: z.literal("system"), id: z.literal("system"), name: z.string() }),
-  ]),
+  author: MessageAuthorSchema,
   content: z.string(),
   mentions: z.array(MentionSchema),
+  artifactIds: z.array(z.string()).max(40).default([]),
   triggerMessageId: z.string().optional(),
   createdAt: z.string(),
 });
 export type Message = z.infer<typeof MessageSchema>;
 
 export const CreateMessageSchema = z.object({
-  content: z.string().trim().min(1).max(40_000),
+  content: z.string().trim().max(40_000),
 });
+
+const ArtifactUrlSchema = z
+  .string()
+  .url()
+  .max(4_096)
+  .refine((value) => ["http:", "https:"].includes(new URL(value).protocol), {
+    message: "Artifact links must use HTTP or HTTPS.",
+  });
+
+export const ArtifactSchema = z.object({
+  id: z.string(),
+  threadId: z.string(),
+  messageId: z.string(),
+  sequence: z.number().int().positive(),
+  kind: z.enum(["file", "image", "link"]),
+  source: z.enum(["upload", "reference"]),
+  name: z.string().trim().min(1).max(255),
+  mediaType: z.string().trim().max(160).optional(),
+  size: z.number().int().nonnegative().optional(),
+  url: ArtifactUrlSchema.optional(),
+  path: z.string().trim().max(1_024).optional(),
+  createdAt: z.string(),
+});
+export type Artifact = z.infer<typeof ArtifactSchema>;
 
 export const RunSchema = z.object({
   id: z.string(),
@@ -323,6 +350,7 @@ export interface BootstrapData {
 export interface ThreadData {
   thread: Thread;
   messages: Message[];
+  artifacts: Artifact[];
   runs: AgentRun[];
   toolCalls: ToolCall[];
 }

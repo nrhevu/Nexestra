@@ -7,7 +7,14 @@ import { type BootstrapData, ToolAnswersSchema } from "../shared/contracts.js";
 import { ChatGptAuthManager } from "./auth.js";
 import { AgentDispatcher, ChatService } from "./dispatcher.js";
 import { type AgentRunner, agentView, LocalAgentRunner } from "./runtime.js";
-import { type FileStore, StoreError } from "./store.js";
+import {
+  type FileStore,
+  MAX_UPLOAD_BYTES,
+  MAX_UPLOAD_FILES,
+  MAX_UPLOAD_TOTAL_BYTES,
+  StoreError,
+  type UploadArtifactInput,
+} from "./store.js";
 
 interface CreateAppOptions {
   store: FileStore;
@@ -116,7 +123,45 @@ export function createApp(options: CreateAppOptions) {
   });
 
   app.post("/api/threads/:id/messages", async (context) => {
-    return context.json(await chat.send(context.req.param("id"), await context.req.json()), 201);
+    const contentType = context.req.header("content-type") ?? "";
+    if (!contentType.toLowerCase().startsWith("multipart/form-data")) {
+      return context.json(await chat.send(context.req.param("id"), await context.req.json()), 201);
+    }
+    const body = await context.req.parseBody({ all: true });
+    const content = typeof body.content === "string" ? body.content : "";
+    const files = toFiles(body.files);
+    validateFileHeaders(files);
+    const uploads: UploadArtifactInput[] = await Promise.all(
+      files.map(async (file) => ({
+        name: file.name,
+        mediaType: file.type,
+        bytes: new Uint8Array(await file.arrayBuffer()),
+      })),
+    );
+    return context.json(await chat.send(context.req.param("id"), { content }, uploads), 201);
+  });
+
+  app.get("/api/threads/:threadId/artifacts/:artifactId/content", async (context) => {
+    const { artifact, file } = await options.store.artifactContent(
+      context.req.param("threadId"),
+      context.req.param("artifactId"),
+    );
+    const bytes = await readFile(file);
+    const inline =
+      artifact.kind === "image" &&
+      isSafeImageMediaType(artifact.mediaType) &&
+      context.req.query("download") !== "1";
+    const mediaType = inline
+      ? (artifact.mediaType ?? "application/octet-stream")
+      : "application/octet-stream";
+    return new Response(new Uint8Array(bytes), {
+      headers: {
+        "cache-control": "private, no-store",
+        "content-disposition": `${inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(artifact.name)}`,
+        "content-type": mediaType,
+        "x-content-type-options": "nosniff",
+      },
+    });
   });
 
   app.post("/api/runs/:id/retry", async (context) => {
@@ -223,4 +268,30 @@ function isLoopbackOrigin(origin: string): boolean {
   } catch {
     return false;
   }
+}
+
+function toFiles(value: string | File | (string | File)[] | undefined): File[] {
+  const values = Array.isArray(value) ? value : value === undefined ? [] : [value];
+  if (values.some((entry) => !(entry instanceof File))) {
+    throw new StoreError("invalid", "Attachments must be uploaded as files.");
+  }
+  return values as File[];
+}
+
+function validateFileHeaders(files: File[]): void {
+  if (files.length > MAX_UPLOAD_FILES) {
+    throw new StoreError("invalid", `Attach no more than ${MAX_UPLOAD_FILES} files at once.`);
+  }
+  if (files.some((file) => file.size > MAX_UPLOAD_BYTES)) {
+    throw new StoreError("invalid", "Each attachment must be 20 MB or smaller.");
+  }
+  if (files.reduce((total, file) => total + file.size, 0) > MAX_UPLOAD_TOTAL_BYTES) {
+    throw new StoreError("invalid", "Attachments must be 50 MB or smaller in total.");
+  }
+}
+
+function isSafeImageMediaType(mediaType?: string): boolean {
+  return ["image/avif", "image/gif", "image/jpeg", "image/png", "image/webp"].includes(
+    mediaType ?? "",
+  );
 }

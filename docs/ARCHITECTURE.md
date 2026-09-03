@@ -15,7 +15,8 @@ React SPA
    │ HTTP + polling
    ▼
 Hono API ── FileStore ── state.json / credentials.json
-   │                    └─ threads/<id>.jsonl
+   │                    ├─ threads/<id>.jsonl
+   │                    └─ artifacts/<thread-id>/<artifact-id>
    ▼
 ChatService ── AgentDispatcher ── LocalAgentRunner
                                   ├─ codex exec --json (read-only / workspace-write / full)
@@ -58,12 +59,21 @@ assignments, and releases the handle for reuse. Credential removal is persisted 
 so an interrupted multi-file write favors removing the secret. Thread JSONL files are never rewritten
 for agent deletion; historical author and mention snapshots remain part of the canonical transcript.
 
-Each thread has one canonical JSONL file. The `message.created`, `run.updated`, and `tool.updated` events use a
-monotonically increasing sequence. User messages are appended and fsynced before agents are queued.
-Read projections select messages by sequence and the final state of each run. On startup, only an
-incomplete JSONL tail is truncated. After a restart, queued, running, approval-waiting, or input-waiting runs are
-completed if their replies were fsynced; otherwise, they and any unfinished tools are marked
-interrupted and can be retried.
+Each thread has one canonical JSONL file. The `message.created`, `artifact.created`, `run.updated`,
+and `tool.updated` events use a monotonically increasing sequence. Artifact metadata and message
+IDs are committed in the same append; uploaded bytes live under a thread-scoped private directory.
+User messages are appended and fsynced before agents are queued. Read projections select messages
+and artifacts by sequence and the final state of each run. On startup, only an incomplete JSONL tail
+is truncated. After a restart, queued, running, approval-waiting, or input-waiting runs are completed
+if their replies were fsynced; otherwise, they and any unfinished tools are marked interrupted and
+can be retried.
+
+The upload boundary validates file count and size before converting multipart files to byte buffers.
+Images are classified from a small MIME allowlist; SVG and every other file type are downloaded with
+`nosniff`. HTTP(S) URLs are indexed from both user and agent messages. Markdown links and inline-code
+paths are indexed only when they resolve through a real path to a regular file inside the workspace;
+app data and Git internals are excluded. The content endpoint repeats that containment check so a
+changed symlink cannot escape the workspace.
 
 ## Mention and dispatch
 
@@ -71,8 +81,8 @@ interrupted and can be retried.
 duplicates. Unknown handles remain plain text. Each known handle creates one run; disabled or
 unavailable agents create explicit failed runs. The dispatcher maintains one promise queue per
 agent, so each agent replies serially while different agents can run in parallel. Every invocation
-is tied to the exact triggering message ID and content; stale or duplicate retries are rejected.
-Agent output goes directly to the transcript without passing through the mention parser.
+is tied to the exact triggering message ID, content, and artifacts; stale or duplicate retries are
+rejected. Agent output goes directly to the transcript without passing through the mention parser.
 
 Chat reserves each resolved agent before persisting the user's message, without starting dispatch.
 Deletion is rejected while a reservation or per-agent queue is pending or running, and a deletion
@@ -93,6 +103,11 @@ following:
   memory, and tokens never enter the app.
 - Custom: uses OpenAI Chat Completions or Responses with an API root, model, optional API key, and
   the provider-neutral Master tool loop.
+
+Codex receives safe raster images through `--image`; OpenCode receives each local artifact through
+`--file`. Custom providers receive safe raster images as data URLs in the selected OpenAI protocol
+shape and up to 512 KB of attached text context. Image provider payloads are capped at 10 MB; larger
+artifacts remain indexed but are represented only by metadata.
 
 The Master tool registry provides repository list, glob, grep, read, exact edit, file write,
 multi-file patch, bounded shell, skill loading, per-run todos, bounded public web fetch/search, and
@@ -149,6 +164,6 @@ Full access mode is deliberately explicit because it bypasses that sandbox.
 - ChatGPT/Codex native tool calls are not yet mirrored into Nexestra's per-tool activity history.
 - Queues live in process. A restart marks runs interrupted, and the user must click Retry.
 - Agent messages currently render as plain text, without Markdown, code blocks, or link previews.
-- Uploads, nested replies, reactions, and multi-user authentication are not supported.
+- Artifact deletion, nested replies, reactions, and multi-user authentication are not supported.
 - Transcripts use one file per thread, not one file for the entire workspace; this boundary reduces
   contention while preserving one shared source of context for every participant in the thread.

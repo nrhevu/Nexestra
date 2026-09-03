@@ -6,7 +6,7 @@ import {
   type Message,
 } from "../shared/contracts.js";
 import { type AgentInvocation, type AgentRunner, agentView } from "./runtime.js";
-import { type FileStore, StoreError } from "./store.js";
+import { type FileStore, StoreError, type UploadArtifactInput } from "./store.js";
 
 export class AgentDispatcher {
   private readonly queues = new Map<string, Promise<void>>();
@@ -188,12 +188,17 @@ export class AgentDispatcher {
       this.liveRuns.set(running.id, running);
       const thread = this.store.getThread(run.threadId);
       if (!thread) throw new StoreError("not_found", "Thread not found.");
+      const [transcriptSnapshot, artifacts] = await Promise.all([
+        this.store.transcriptSnapshot(run.threadId),
+        this.store.agentArtifacts(run.threadId, trigger.id),
+      ]);
       const invocation: AgentInvocation = {
         runId: run.id,
         thread,
         trigger,
         transcriptPath: this.store.transcriptPath(run.threadId),
-        transcriptSnapshot: await this.store.transcriptSnapshot(run.threadId),
+        transcriptSnapshot,
+        artifacts,
         toolHooks: {
           update: (toolCall) => this.store.updateToolCall(toolCall).then(() => undefined),
           requestApproval: async (toolCall) => {
@@ -284,8 +289,15 @@ export class ChatService {
     private readonly dispatcher: AgentDispatcher,
   ) {}
 
-  async send(threadId: string, rawInput: unknown): Promise<{ message: Message; runs: AgentRun[] }> {
+  async send(
+    threadId: string,
+    rawInput: unknown,
+    uploads: UploadArtifactInput[] = [],
+  ): Promise<{ message: Message; runs: AgentRun[] }> {
     const { content } = CreateMessageSchema.parse(rawInput);
+    if (!content && uploads.length === 0) {
+      throw new StoreError("invalid", "Write a message or attach at least one file.");
+    }
     const thread = this.store.getThread(threadId);
     if (!thread) throw new StoreError("not_found", "Thread not found.");
     const agents: Agent[] = [];
@@ -300,7 +312,7 @@ export class ChatService {
     }
     try {
       const mentions = agents.map((agent) => ({ agentId: agent.id, handle: agent.handle }));
-      const message = await this.store.createUserMessage(threadId, content, mentions);
+      const message = await this.store.createUserMessage(threadId, content, mentions, uploads);
       const runs = await this.dispatcher.enqueue(message, agents);
       return { message, runs };
     } finally {

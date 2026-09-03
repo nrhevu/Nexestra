@@ -125,7 +125,9 @@ describe("Activity-aware refresh", () => {
         return jsonResponse({
           thread,
           messages: [],
+          artifacts: [],
           runs: [{ ...run, status: threadReads === 1 ? "running" : "completed" }],
+          toolCalls: [],
         });
       }
       return jsonResponse({ error: { message: "Not found" } }, 404);
@@ -363,9 +365,11 @@ describe("Master harness", () => {
           author: { kind: "user", id: "local-user", name: "You" },
           content: "@maya run the tests",
           mentions: [{ agentId: masterAgent.id, handle: masterAgent.handle }],
+          artifactIds: [],
           createdAt: now,
         },
       ],
+      artifacts: [],
       runs: [
         {
           id: "run-tools",
@@ -586,6 +590,7 @@ describe("Agent deletion", () => {
           author: { kind: "user", id: "local-user", name: "You" },
           content: "Please retry @former-planner",
           mentions: [{ agentId: "deleted-agent", handle: "former-planner" }],
+          artifactIds: [],
           createdAt: now,
         },
         {
@@ -600,10 +605,12 @@ describe("Agent deletion", () => {
           },
           content: "A reply worth keeping.",
           mentions: [],
+          artifactIds: [],
           triggerMessageId: "message-trigger",
           createdAt: now,
         },
       ],
+      artifacts: [],
       runs: [
         {
           id: "run-1",
@@ -656,7 +663,13 @@ describe("Agent deletion", () => {
       lastMessageAt: null,
     };
     window.history.replaceState({}, "", `/threads/${thread.id}`);
-    const emptyTranscript: ThreadData = { thread, messages: [], runs: [], toolCalls: [] };
+    const emptyTranscript: ThreadData = {
+      thread,
+      messages: [],
+      artifacts: [],
+      runs: [],
+      toolCalls: [],
+    };
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
       if (path === "/api/bootstrap") {
@@ -687,6 +700,150 @@ describe("Agent deletion", () => {
       });
     });
     expect(screen.queryByText("Unknown @former-planner.")).not.toBeInTheDocument();
+  });
+});
+
+describe("Thread artifacts", () => {
+  it("sends selected files as multipart attachments", async () => {
+    const user = userEvent.setup();
+    const thread = {
+      id: "thread-attachments",
+      workspaceId: workspace.id,
+      name: "general",
+      slug: "general",
+      createdAt: now,
+      updatedAt: now,
+      messageCount: 0,
+      lastMessageAt: null,
+    };
+    const transcript: ThreadData = {
+      thread,
+      messages: [],
+      artifacts: [],
+      runs: [],
+      toolCalls: [],
+    };
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/bootstrap") {
+        return jsonResponse({ ...bootstrapData, threads: [thread] });
+      }
+      if (path === `/api/threads/${thread.id}` && !init?.method) {
+        return jsonResponse(transcript);
+      }
+      if (path === `/api/threads/${thread.id}/messages` && init?.method === "POST") {
+        return jsonResponse({ message: {}, runs: [] }, 201);
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+
+    const input = await screen.findByLabelText("Choose files or images");
+    const file = new File(["diagram"], "diagram.png", { type: "image/png" });
+    await user.upload(input, file);
+    expect(screen.getByText("diagram.png")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      const request = fetchMock.mock.calls.find(
+        ([value, init]) =>
+          String(value) === `/api/threads/${thread.id}/messages` && init?.method === "POST",
+      );
+      expect(request?.[1]?.body).toBeInstanceOf(FormData);
+      const body = request?.[1]?.body as FormData;
+      expect(body.get("content")).toBe("");
+      expect((body.get("files") as File).name).toBe("diagram.png");
+    });
+  });
+
+  it("lists and filters uploaded files, images, and referenced links", async () => {
+    const user = userEvent.setup();
+    const thread = {
+      id: "thread-artifacts",
+      workspaceId: workspace.id,
+      name: "general",
+      slug: "general",
+      createdAt: now,
+      updatedAt: now,
+      messageCount: 1,
+      lastMessageAt: now,
+    };
+    const message = {
+      id: "message-artifacts",
+      threadId: thread.id,
+      sequence: 1,
+      author: { kind: "user" as const, id: "local-user" as const, name: "You" },
+      content: "Artifacts",
+      mentions: [],
+      artifactIds: ["image", "file", "link"],
+      createdAt: now,
+    };
+    const transcript: ThreadData = {
+      thread,
+      messages: [message],
+      artifacts: [
+        {
+          id: "image",
+          threadId: thread.id,
+          messageId: message.id,
+          sequence: 2,
+          kind: "image",
+          source: "upload",
+          name: "diagram.png",
+          mediaType: "image/png",
+          size: 2048,
+          createdAt: now,
+        },
+        {
+          id: "file",
+          threadId: thread.id,
+          messageId: message.id,
+          sequence: 3,
+          kind: "file",
+          source: "upload",
+          name: "brief.md",
+          mediaType: "text/markdown",
+          size: 1024,
+          createdAt: now,
+        },
+        {
+          id: "link",
+          threadId: thread.id,
+          messageId: message.id,
+          sequence: 4,
+          kind: "link",
+          source: "reference",
+          name: "https://example.com/spec",
+          url: "https://example.com/spec",
+          createdAt: now,
+        },
+      ],
+      runs: [],
+      toolCalls: [],
+    };
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/bootstrap") {
+          return jsonResponse({ ...bootstrapData, threads: [thread] });
+        }
+        if (path === `/api/threads/${thread.id}`) return jsonResponse(transcript);
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      }),
+    );
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: /Files & links/ }));
+    expect(screen.getByAltText("diagram.png")).toBeInTheDocument();
+    expect(screen.getByText("brief.md")).toBeInTheDocument();
+    expect(screen.getByText("https://example.com/spec")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Links" }));
+    expect(screen.queryByText("brief.md")).not.toBeInTheDocument();
+    expect(screen.getByText("https://example.com/spec")).toBeInTheDocument();
   });
 });
 

@@ -538,6 +538,28 @@ kbd {
   color: var(--quiet);
   font-size: 12px;
 }
+.thread-tabs button {
+  height: 100%;
+  border: 0;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--quiet);
+  font: inherit;
+}
+.thread-tabs button:hover {
+  color: var(--text);
+}
+.thread-tab-count {
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: #343039;
+  color: #aaa5ae;
+  font-size: 10px;
+  font-style: normal;
+}
 .thread-tabs .active {
   position: relative;
   align-self: stretch;
@@ -645,6 +667,76 @@ kbd {
   font-size: 14px;
   line-height: 1.55;
   white-space: pre-wrap;
+}
+.message-artifacts {
+  width: min(560px, 100%);
+  margin-top: 7px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.message-image {
+  position: relative;
+  width: min(240px, 100%);
+  height: 150px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #15171b;
+}
+.message-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.message-image span {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  overflow: hidden;
+  padding: 20px 9px 7px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.8));
+  color: #fff;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.message-file {
+  width: min(360px, 100%);
+  min-height: 52px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: #202329;
+  color: var(--muted);
+}
+.message-file:hover {
+  border-color: #595d66;
+  color: var(--text);
+}
+.message-file > span {
+  min-width: 0;
+  display: grid;
+  flex: 1;
+}
+.message-file strong,
+.message-file small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.message-file strong {
+  color: var(--text);
+  font-size: 12px;
+}
+.message-file small {
+  margin-top: 2px;
+  color: var(--quiet);
+  font-size: 10px;
 }
 .message mark {
   border-radius: 3px;
@@ -910,10 +1002,71 @@ kbd {
   padding: 0 20px 12px;
 }
 .composer {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
   border: 1px solid #4a4e56;
   border-radius: 10px;
   background: #202329;
   box-shadow: 0 3px 16px rgba(0, 0, 0, 0.14);
+}
+.composer.dragging {
+  border-color: var(--accent);
+  background: rgba(191, 107, 219, 0.08);
+  box-shadow: 0 0 0 2px rgba(191, 107, 219, 0.14);
+}
+.file-input {
+  display: none;
+}
+.pending-attachments {
+  padding: 8px 10px 1px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.pending-attachments {
+  margin: 0;
+  list-style: none;
+}
+.pending-attachments > li {
+  min-width: 0;
+  max-width: 310px;
+  height: 30px;
+  padding: 0 4px 0 8px;
+  border: 1px solid #484b53;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #292c32;
+  color: #bbb7c0;
+}
+.pending-attachments b {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pending-attachments small {
+  flex: none;
+  color: var(--quiet);
+  font-size: 9px;
+}
+.pending-attachments button {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  display: grid;
+  place-items: center;
+  color: var(--quiet);
+}
+.pending-attachments button:hover {
+  background: #3a3e45;
+  color: #fff;
 }
 .composer:focus-within {
   border-color: #6f737c;
@@ -969,6 +1122,9 @@ kbd {
 .composer-toolbar .mention-button {
   font-size: 17px;
 }
+.composer-toolbar .attachment-button {
+  color: #b8b3bd;
+}
 .composer-toolbar .send-button {
   background: var(--accent-strong);
   color: #fff;
@@ -986,6 +1142,187 @@ kbd {
   align-items: center;
   gap: 5px;
   color: #e28e91;
+}
+.artifacts-view {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 22px clamp(20px, 6vw, 78px) 36px;
+}
+.artifact-search {
+  height: 43px;
+  border: 1px solid #484b53;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 13px;
+  color: var(--quiet);
+  background: #1c1f24;
+}
+.artifact-search:focus-within {
+  border-color: #737780;
+  box-shadow: 0 0 0 1px #737780;
+}
+.artifact-search input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+}
+.artifact-filters {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  margin: 18px 0 28px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.artifact-filters button {
+  height: 31px;
+  padding: 0 12px;
+  border: 1px solid #50545c;
+  border-radius: 6px;
+  background: transparent;
+  color: #c2bec6;
+  font: inherit;
+  font-size: 12px;
+}
+.artifact-filters button:hover,
+.artifact-filters button.active {
+  border-color: var(--cyan);
+  background: var(--cyan);
+  color: #10242a;
+}
+.artifact-filters span {
+  margin-left: auto;
+  color: var(--quiet);
+  font-size: 11px;
+}
+.artifact-media-section h2 {
+  margin: 0 0 11px;
+  font-size: 13px;
+}
+.artifact-media-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+.artifact-media-grid a {
+  position: relative;
+  height: 145px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #14161a;
+}
+.artifact-media-grid img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 160ms ease;
+}
+.artifact-media-grid a:hover img {
+  transform: scale(1.025);
+}
+.artifact-media-grid span {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  overflow: hidden;
+  padding: 22px 9px 8px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.84));
+  color: #fff;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.artifact-list {
+  margin-top: 20px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  overflow: hidden;
+}
+.artifact-list article {
+  min-height: 64px;
+  padding: 9px 11px;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 10px;
+  background: #1b1e23;
+}
+.artifact-list article + article {
+  border-top: 1px solid var(--border-soft);
+}
+.artifact-list article:hover {
+  background: #202329;
+}
+.artifact-kind {
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: #42464d;
+  color: #ddd9e0;
+}
+.artifact-kind.link {
+  background: #315663;
+  color: #7ed7ee;
+}
+.artifact-list article > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.artifact-list article > div > a {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.artifact-list small {
+  overflow: hidden;
+  color: var(--quiet);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.artifact-action {
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  color: var(--quiet);
+}
+.artifact-action:hover {
+  background: #34383f;
+  color: #fff;
+}
+.artifact-empty {
+  min-height: 260px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 7px;
+  color: var(--quiet);
+  text-align: center;
+}
+.artifact-empty strong {
+  color: var(--text);
+  font-size: 14px;
+}
+.artifact-empty p {
+  margin: 0;
+  font-size: 12px;
 }
 .mention-menu {
   position: absolute;

@@ -12,10 +12,11 @@ export class ApiError extends Error {
 }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const jsonBody = init?.body && !(init.body instanceof FormData);
   const response = await fetch(path, {
     ...init,
     headers: {
-      ...(init?.body ? { "content-type": "application/json" } : {}),
+      ...(jsonBody ? { "content-type": "application/json" } : {}),
       ...init?.headers,
     },
   });

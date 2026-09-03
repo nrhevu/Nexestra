@@ -1,11 +1,24 @@
 import { constants } from "node:fs";
-import { access, chmod, mkdir, open, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import {
+  access,
+  chmod,
+  mkdir,
+  open,
+  readFile,
+  realpath,
+  rename,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { z } from "zod";
 import {
   type Agent,
   type AgentRun,
   AgentSchema,
+  type Artifact,
+  ArtifactSchema,
   CreateAgentSchema,
   CreateTaskSchema,
   CreateThreadSchema,
@@ -75,8 +88,28 @@ const CredentialSchema = z.object({
 
 type TranscriptEvent =
   | { type: "message.created"; sequence: number; message: Message }
+  | { type: "artifact.created"; sequence: number; artifact: Artifact }
   | { type: "run.updated"; sequence: number; run: AgentRun }
   | { type: "tool.updated"; sequence: number; toolCall: ToolCall };
+
+export const MAX_UPLOAD_FILES = 10;
+export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+export const MAX_UPLOAD_TOTAL_BYTES = 50 * 1024 * 1024;
+
+export interface UploadArtifactInput {
+  name: string;
+  mediaType?: string;
+  bytes: Uint8Array;
+}
+
+export interface AgentArtifact {
+  artifact: Artifact;
+  localPath?: string;
+}
+
+interface ArtifactDraft extends Omit<Artifact, "sequence"> {
+  bytes?: Uint8Array;
+}
 
 interface FileStoreOptions {
   root?: string;
@@ -98,6 +131,7 @@ export class FileStore {
   readonly stateFile: string;
   readonly credentialFile: string;
   readonly threadDirectory: string;
+  readonly artifactDirectory: string;
 
   private state: PersistedState;
   private credentials: Record<string, string>;
@@ -111,6 +145,7 @@ export class FileStore {
       stateFile: string;
       credentialFile: string;
       threadDirectory: string;
+      artifactDirectory: string;
     },
     state: PersistedState,
     credentials: Record<string, string>,
@@ -120,6 +155,7 @@ export class FileStore {
     this.stateFile = paths.stateFile;
     this.credentialFile = paths.credentialFile;
     this.threadDirectory = paths.threadDirectory;
+    this.artifactDirectory = paths.artifactDirectory;
     this.state = state;
     this.credentials = credentials;
   }
@@ -135,8 +171,12 @@ export class FileStore {
       stateFile: join(root, "state.json"),
       credentialFile: join(root, "credentials.json"),
       threadDirectory: join(root, "threads"),
+      artifactDirectory: join(root, "artifacts"),
     };
-    await mkdir(paths.threadDirectory, { recursive: true, mode: 0o700 });
+    await Promise.all([
+      mkdir(paths.threadDirectory, { recursive: true, mode: 0o700 }),
+      mkdir(paths.artifactDirectory, { recursive: true, mode: 0o700 }),
+    ]);
     const { state, needsWrite } = await readState(paths.stateFile);
     if (needsWrite) await writeJsonAtomic(paths.stateFile, state, 0o600);
     const credentialDocument = await readJson(paths.credentialFile, CredentialSchema, {
@@ -216,6 +256,33 @@ export class FileStore {
 
   transcriptPath(threadId: string): string {
     return join(this.threadDirectory, `${threadId}.jsonl`);
+  }
+
+  async artifactContent(
+    threadId: string,
+    artifactId: string,
+  ): Promise<{ artifact: Artifact; file: string }> {
+    const data = await this.threadData(threadId);
+    const artifact = data.artifacts.find((entry) => entry.id === artifactId);
+    if (!artifact) throw new StoreError("not_found", "Artifact not found.");
+    const file = await this.resolveArtifactFile(artifact);
+    if (!file) throw new StoreError("invalid", "Link artifacts do not have local content.");
+    return { artifact, file };
+  }
+
+  async agentArtifacts(threadId: string, messageId: string): Promise<AgentArtifact[]> {
+    const data = await this.threadData(threadId);
+    return Promise.all(
+      data.artifacts
+        .filter((artifact) => artifact.messageId === messageId)
+        .map(async (artifact) => {
+          const localPath =
+            artifact.kind === "link"
+              ? undefined
+              : await this.resolveArtifactFile(artifact).catch(() => undefined);
+          return { artifact, ...(localPath ? { localPath } : {}) };
+        }),
+    );
   }
 
   async createWorkspace(rawInput: unknown): Promise<Workspace> {
@@ -362,15 +429,21 @@ export class FileStore {
     threadId: string,
     content: string,
     mentions: Message["mentions"],
+    uploads: UploadArtifactInput[] = [],
   ): Promise<Message> {
-    return this.appendMessage(threadId, {
-      id: crypto.randomUUID(),
+    return this.appendMessage(
       threadId,
-      author: { kind: "user", id: "local-user", name: "You" },
-      content,
-      mentions,
-      createdAt: new Date().toISOString(),
-    });
+      {
+        id: crypto.randomUUID(),
+        threadId,
+        author: { kind: "user", id: "local-user", name: "You" },
+        content,
+        mentions,
+        artifactIds: [],
+        createdAt: new Date().toISOString(),
+      },
+      uploads,
+    );
   }
 
   async createAgentMessage(
@@ -390,6 +463,7 @@ export class FileStore {
       },
       content,
       mentions: [],
+      artifactIds: [],
       triggerMessageId,
       createdAt: new Date().toISOString(),
     });
@@ -429,16 +503,19 @@ export class FileStore {
     const thread = this.requireThread(threadId);
     const events = await this.readEvents(threadId);
     const messages: Message[] = [];
+    const artifacts: Artifact[] = [];
     const runs = new Map<string, AgentRun>();
     const toolCalls = new Map<string, ToolCall>();
     for (const event of events) {
       if (event.type === "message.created") messages.push(event.message);
+      else if (event.type === "artifact.created") artifacts.push(event.artifact);
       else if (event.type === "run.updated") runs.set(event.run.id, event.run);
-      else toolCalls.set(event.toolCall.id, event.toolCall);
+      else if (event.type === "tool.updated") toolCalls.set(event.toolCall.id, event.toolCall);
     }
     return {
       thread: structuredClone(thread),
       messages: messages.sort((left, right) => left.sequence - right.sequence),
+      artifacts: artifacts.sort((left, right) => left.sequence - right.sequence),
       runs: [...runs.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
       toolCalls: [...toolCalls.values()].sort((left, right) =>
         left.createdAt.localeCompare(right.createdAt),
@@ -448,10 +525,20 @@ export class FileStore {
 
   async transcriptSnapshot(threadId: string): Promise<string> {
     const data = await this.threadData(threadId);
+    const artifactsByMessage = new Map<string, Artifact[]>();
+    for (const artifact of data.artifacts) {
+      const artifacts = artifactsByMessage.get(artifact.messageId) ?? [];
+      artifacts.push(artifact);
+      artifactsByMessage.set(artifact.messageId, artifacts);
+    }
     return data.messages
       .map((message) => {
         const handle = message.author.kind === "agent" ? ` @${message.author.handle}` : "";
-        return `[${message.createdAt}] ${message.author.name}${handle}:\n${message.content}`;
+        const artifacts = artifactsByMessage.get(message.id) ?? [];
+        const artifactText = artifacts.length
+          ? `\nArtifacts:\n${artifacts.map(formatArtifactForTranscript).join("\n")}`
+          : "";
+        return `[${message.createdAt}] ${message.author.name}${handle}:\n${message.content}${artifactText}`;
       })
       .join("\n\n");
   }
@@ -502,23 +589,170 @@ export class FileStore {
   private async appendMessage(
     threadId: string,
     input: Omit<Message, "sequence">,
+    uploads: UploadArtifactInput[] = [],
   ): Promise<Message> {
     return this.withWrite(async () => {
       const thread = this.requireThread(threadId);
-      const sequence = await this.nextSequence(threadId);
-      const message = MessageSchema.parse({ ...input, sequence });
-      await appendSynced(this.transcriptPath(threadId), {
-        type: "message.created",
-        sequence,
-        message,
-      } satisfies TranscriptEvent);
-      this.sequenceByThread.set(threadId, sequence);
+      const artifactDrafts = await this.createArtifactDrafts(input, uploads);
+      const messageSequence = await this.nextSequence(threadId);
+      const artifacts = artifactDrafts.map((draft, index) =>
+        ArtifactSchema.parse({ ...draft, sequence: messageSequence + index + 1 }),
+      );
+      const message = MessageSchema.parse({
+        ...input,
+        artifactIds: artifacts.map((artifact) => artifact.id),
+        sequence: messageSequence,
+      });
+      const writtenUploads: string[] = [];
+      try {
+        for (const draft of artifactDrafts) {
+          if (!draft.bytes) continue;
+          const file = this.uploadArtifactPath(threadId, draft.id);
+          await writePrivateFile(file, draft.bytes);
+          writtenUploads.push(file);
+        }
+        await appendManySynced(this.transcriptPath(threadId), [
+          { type: "message.created", sequence: messageSequence, message },
+          ...artifacts.map(
+            (artifact): TranscriptEvent => ({
+              type: "artifact.created",
+              sequence: artifact.sequence,
+              artifact,
+            }),
+          ),
+        ]);
+      } catch (error) {
+        await Promise.all(writtenUploads.map((file) => unlink(file).catch(() => undefined)));
+        throw error;
+      }
+      this.sequenceByThread.set(threadId, artifacts.at(-1)?.sequence ?? messageSequence);
       thread.messageCount += 1;
       thread.lastMessageAt = message.createdAt;
       thread.updatedAt = message.createdAt;
       await this.writeState();
       return structuredClone(message);
     });
+  }
+
+  private async createArtifactDrafts(
+    message: Omit<Message, "sequence">,
+    uploads: UploadArtifactInput[],
+  ): Promise<ArtifactDraft[]> {
+    validateUploads(uploads);
+    const drafts: ArtifactDraft[] = uploads.map((upload) => {
+      const mediaType = normaliseMediaType(upload.mediaType) || inferMediaType(upload.name);
+      return {
+        id: crypto.randomUUID(),
+        threadId: message.threadId,
+        messageId: message.id,
+        kind: isSafeImageType(mediaType) ? "image" : "file",
+        source: "upload",
+        name: normaliseArtifactName(upload.name),
+        ...(mediaType ? { mediaType } : {}),
+        size: upload.bytes.byteLength,
+        createdAt: message.createdAt,
+        bytes: upload.bytes,
+      };
+    });
+    const seen = new Set(drafts.map((artifact) => `upload:${artifact.name}:${artifact.size}`));
+    for (const reference of await this.discoverReferences(message)) {
+      const key = reference.url ? `url:${reference.url}` : `path:${reference.path}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      drafts.push(reference);
+      if (drafts.length >= 40) break;
+    }
+    return drafts;
+  }
+
+  private async discoverReferences(message: Omit<Message, "sequence">): Promise<ArtifactDraft[]> {
+    const references: ArtifactDraft[] = [];
+    for (const url of extractWebUrls(message.content)) {
+      references.push({
+        id: crypto.randomUUID(),
+        threadId: message.threadId,
+        messageId: message.id,
+        kind: "link",
+        source: "reference",
+        name: url,
+        url,
+        createdAt: message.createdAt,
+      });
+    }
+    for (const candidate of extractFileCandidates(message.content)) {
+      const resolved = await this.resolveWorkspaceReference(candidate);
+      if (!resolved) continue;
+      const mediaType = inferMediaType(resolved.relativePath);
+      references.push({
+        id: crypto.randomUUID(),
+        threadId: message.threadId,
+        messageId: message.id,
+        kind: isSafeImageType(mediaType) ? "image" : "file",
+        source: "reference",
+        name: basename(resolved.relativePath),
+        ...(mediaType ? { mediaType } : {}),
+        size: resolved.size,
+        path: resolved.relativePath,
+        createdAt: message.createdAt,
+      });
+    }
+    return references;
+  }
+
+  private async resolveWorkspaceReference(
+    candidate: string,
+  ): Promise<{ relativePath: string; size: number } | undefined> {
+    const cleaned = cleanFileCandidate(candidate);
+    if (!cleaned) return undefined;
+    let candidatePath = isAbsolute(cleaned)
+      ? resolve(cleaned)
+      : resolve(this.workspacePath, cleaned);
+    let details = await stat(candidatePath).catch(() => undefined);
+    if (!details?.isFile()) {
+      const withoutLocation = cleaned.replace(/:\d+(?::\d+)?$/, "");
+      if (withoutLocation === cleaned) return undefined;
+      candidatePath = isAbsolute(withoutLocation)
+        ? resolve(withoutLocation)
+        : resolve(this.workspacePath, withoutLocation);
+      details = await stat(candidatePath).catch(() => undefined);
+    }
+    if (!details?.isFile() || details.size > MAX_UPLOAD_BYTES) return undefined;
+    const [workspaceRealPath, fileRealPath] = await Promise.all([
+      realpath(this.workspacePath),
+      realpath(candidatePath),
+    ]);
+    const relativePath = relative(workspaceRealPath, fileRealPath).replaceAll("\\", "/");
+    if (
+      !relativePath ||
+      relativePath === "." ||
+      relativePath.startsWith("../") ||
+      isAbsolute(relativePath) ||
+      /^(?:\.git|\.nexestra)(?:\/|$)/.test(relativePath)
+    ) {
+      return undefined;
+    }
+    return { relativePath, size: details.size };
+  }
+
+  private async resolveArtifactFile(artifact: Artifact): Promise<string | undefined> {
+    if (artifact.kind === "link") return undefined;
+    if (artifact.source === "upload") {
+      const file = this.uploadArtifactPath(artifact.threadId, artifact.id);
+      const details = await stat(file).catch(() => undefined);
+      if (!details?.isFile()) throw new StoreError("not_found", "Artifact content not found.");
+      return file;
+    }
+    if (!artifact.path) throw new StoreError("invalid", "Artifact path is missing.");
+    const resolved = await this.resolveWorkspaceReference(artifact.path);
+    if (!resolved) throw new StoreError("not_found", "Referenced file is no longer available.");
+    return resolve(this.workspacePath, resolved.relativePath);
+  }
+
+  private uploadArtifactPath(threadId: string, artifactId: string): string {
+    if (!isStorageId(threadId) || !isStorageId(artifactId)) {
+      throw new StoreError("invalid", "Invalid artifact storage identifier.");
+    }
+    return join(this.artifactDirectory, threadId, artifactId);
   }
 
   private async nextSequence(threadId: string): Promise<number> {
@@ -780,6 +1014,131 @@ function isLoopbackHost(hostname: string): boolean {
   );
 }
 
+const SAFE_IMAGE_TYPES = new Set([
+  "image/avif",
+  "image/gif",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
+
+const MEDIA_TYPES_BY_EXTENSION: Record<string, string> = {
+  ".avif": "image/avif",
+  ".gif": "image/gif",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
+  ".csv": "text/csv",
+  ".json": "application/json",
+  ".md": "text/markdown",
+  ".pdf": "application/pdf",
+  ".txt": "text/plain",
+  ".yaml": "application/yaml",
+  ".yml": "application/yaml",
+  ".zip": "application/zip",
+};
+
+function validateUploads(uploads: UploadArtifactInput[]): void {
+  if (uploads.length > MAX_UPLOAD_FILES) {
+    throw new StoreError("invalid", `Attach no more than ${MAX_UPLOAD_FILES} files at once.`);
+  }
+  let total = 0;
+  for (const upload of uploads) {
+    if (!(upload.bytes instanceof Uint8Array)) {
+      throw new StoreError("invalid", "An attachment could not be read.");
+    }
+    if (upload.bytes.byteLength > MAX_UPLOAD_BYTES) {
+      throw new StoreError("invalid", "Each attachment must be 20 MB or smaller.");
+    }
+    normaliseArtifactName(upload.name);
+    total += upload.bytes.byteLength;
+  }
+  if (total > MAX_UPLOAD_TOTAL_BYTES) {
+    throw new StoreError("invalid", "Attachments must be 50 MB or smaller in total.");
+  }
+}
+
+function normaliseArtifactName(value: string): string {
+  const rawName = value.split(/[\\/]/).at(-1) ?? "";
+  const name = [...rawName]
+    .filter((character) => {
+      const code = character.charCodeAt(0);
+      return code >= 32 && code !== 127;
+    })
+    .join("")
+    .trim();
+  if (!name) throw new StoreError("invalid", "Every attachment needs a file name.");
+  return name.slice(0, 255);
+}
+
+function normaliseMediaType(value?: string): string {
+  return (value ?? "").split(";", 1)[0]?.trim().toLowerCase().slice(0, 160) ?? "";
+}
+
+function inferMediaType(name: string): string {
+  return MEDIA_TYPES_BY_EXTENSION[extname(name).toLowerCase()] ?? "";
+}
+
+function isSafeImageType(mediaType: string): boolean {
+  return SAFE_IMAGE_TYPES.has(mediaType);
+}
+
+function extractWebUrls(content: string): string[] {
+  const urls = new Set<string>();
+  for (const match of content.matchAll(/https?:\/\/[^\s<>"']+/gi)) {
+    const candidate = match[0].replace(/[),.;!?\]}]+$/, "");
+    try {
+      const url = new URL(candidate);
+      if (url.protocol === "http:" || url.protocol === "https:") urls.add(url.toString());
+    } catch {
+      // A malformed URL remains ordinary message text.
+    }
+  }
+  return [...urls];
+}
+
+function extractFileCandidates(content: string): string[] {
+  const candidates = new Set<string>();
+  for (const match of content.matchAll(/\[[^\]\n]+\]\(([^)\n]+)\)/g)) {
+    if (match[1]) candidates.add(match[1]);
+  }
+  for (const match of content.matchAll(/`([^`\n]+)`/g)) {
+    if (match[1]) candidates.add(match[1]);
+  }
+  return [...candidates];
+}
+
+function cleanFileCandidate(value: string): string | undefined {
+  let candidate = value.trim().replace(/^<|>$/g, "");
+  if (!candidate || /^(?:https?:|data:|#)/i.test(candidate) || candidate.includes("\0")) {
+    return undefined;
+  }
+  try {
+    candidate = decodeURIComponent(candidate);
+  } catch {
+    return undefined;
+  }
+  candidate = candidate.replace(/#L\d+(?:-L\d+)?$/, "");
+  if (
+    !candidate.includes("/") &&
+    !candidate.includes("\\") &&
+    !/\.[a-zA-Z0-9]{1,12}(?::\d+(?::\d+)?)?$/.test(candidate)
+  ) {
+    return undefined;
+  }
+  return candidate;
+}
+
+function formatArtifactForTranscript(artifact: Artifact): string {
+  const target = artifact.url ?? artifact.path;
+  return `- [${artifact.kind}] ${artifact.name}${target ? ` (${target})` : ""}`;
+}
+
+function isStorageId(value: string): boolean {
+  return /^[a-zA-Z0-9_-]{1,200}$/.test(value);
+}
+
 function parseTranscriptEvent(line: string): TranscriptEvent | undefined {
   const parsed = JSON.parse(line) as Record<string, unknown>;
   const sequence = z.number().int().positive().parse(parsed.sequence);
@@ -788,6 +1147,13 @@ function parseTranscriptEvent(line: string): TranscriptEvent | undefined {
       type: "message.created",
       sequence,
       message: MessageSchema.parse(parsed.message),
+    };
+  }
+  if (parsed.type === "artifact.created") {
+    return {
+      type: "artifact.created",
+      sequence,
+      artifact: ArtifactSchema.parse(parsed.artifact),
     };
   }
   if (parsed.type === "run.updated") {
@@ -831,10 +1197,25 @@ async function repairTranscriptTail(file: string): Promise<void> {
 }
 
 async function appendSynced(file: string, event: TranscriptEvent): Promise<void> {
+  await appendManySynced(file, [event]);
+}
+
+async function appendManySynced(file: string, events: TranscriptEvent[]): Promise<void> {
   await mkdir(dirname(file), { recursive: true, mode: 0o700 });
   const handle = await open(file, "a", 0o600);
   try {
-    await handle.appendFile(`${JSON.stringify(event)}\n`, "utf8");
+    await handle.appendFile(`${events.map((event) => JSON.stringify(event)).join("\n")}\n`, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+async function writePrivateFile(file: string, bytes: Uint8Array): Promise<void> {
+  await mkdir(dirname(file), { recursive: true, mode: 0o700 });
+  const handle = await open(file, "wx", 0o600);
+  try {
+    await handle.writeFile(bytes);
     await handle.sync();
   } finally {
     await handle.close();

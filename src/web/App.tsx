@@ -7,8 +7,14 @@ import {
   CircleAlert,
   Columns3,
   Copy,
+  Download,
+  ExternalLink,
+  FileText,
+  Image as ImageIcon,
+  Link as LinkIcon,
   LoaderCircle,
   MessageSquareMore,
+  Paperclip,
   Plus,
   RefreshCw,
   Search,
@@ -36,6 +42,7 @@ import {
 import type {
   AgentRun,
   AgentView,
+  Artifact,
   BootstrapData,
   Message,
   Task,
@@ -286,14 +293,20 @@ export function App() {
       <section className="workspace">
         {route.view === "threads" ? (
           <ThreadView
+            key={route.threadId}
             data={data}
             threadData={threadData}
-            onSend={async (content) => {
+            onSend={async (content, files) => {
               if (!route.threadId) return;
-              await api(`/api/threads/${route.threadId}/messages`, {
-                method: "POST",
-                body: JSON.stringify({ content }),
-              });
+              const body = new FormData();
+              body.append("content", content);
+              for (const file of files) body.append("files", file);
+              await api(
+                `/api/threads/${route.threadId}/messages`,
+                files.length > 0
+                  ? { method: "POST", body }
+                  : { method: "POST", body: JSON.stringify({ content }) },
+              );
               await Promise.all([refresh(true), loadThread(route.threadId)]);
             }}
             onRetry={(runId) =>
@@ -758,7 +771,7 @@ function Sidebar(props: {
 function ThreadView(props: {
   data: BootstrapData;
   threadData?: ThreadData;
-  onSend: (content: string) => Promise<void>;
+  onSend: (content: string, files: File[]) => Promise<void>;
   onRetry: (runId: string) => Promise<unknown>;
   onToolDecision: (toolCallId: string, approved: boolean) => Promise<void>;
   onToolResponse: (toolCallId: string, answers: string[][]) => Promise<void>;
@@ -768,6 +781,10 @@ function ThreadView(props: {
   const [localError, setLocalError] = useState<string>();
   const [mentionMenuOpen, setMentionMenuOpen] = useState(true);
   const [activeSuggestion, setActiveSuggestion] = useState(0);
+  const [activeTab, setActiveTab] = useState<"messages" | "artifacts">("messages");
+  const [attachments, setAttachments] = useState<File[]>([]);
+  const [draggingFiles, setDraggingFiles] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const mentionAgents = useMemo(
     () =>
       props.data.agents
@@ -790,7 +807,7 @@ function ThreadView(props: {
 
   const send = async () => {
     const content = draft.trim();
-    if (!content || sending) return;
+    if ((!content && attachments.length === 0) || sending) return;
     const agentsByHandle = new Map(props.data.agents.map((agent) => [agent.handle, agent]));
     const requestedHandles = extractMentionHandles(content);
     const unavailable = requestedHandles
@@ -803,14 +820,33 @@ function ThreadView(props: {
     setSending(true);
     setLocalError(undefined);
     try {
-      await props.onSend(content);
+      await props.onSend(content, attachments);
       setDraft("");
+      setAttachments([]);
       setMentionMenuOpen(true);
     } catch (caught) {
       setLocalError(messageFrom(caught));
     } finally {
       setSending(false);
     }
+  };
+
+  const addAttachments = (files: File[]) => {
+    const next = [...attachments, ...files];
+    if (next.length > 10) {
+      setLocalError("Attach no more than 10 files at once.");
+      return;
+    }
+    if (next.some((file) => file.size > 20 * 1024 * 1024)) {
+      setLocalError("Each attachment must be 20 MB or smaller.");
+      return;
+    }
+    if (next.reduce((total, file) => total + file.size, 0) > 50 * 1024 * 1024) {
+      setLocalError("Attachments must be 50 MB or smaller in total.");
+      return;
+    }
+    setAttachments(next);
+    setLocalError(undefined);
   };
 
   const pickMention = (agent: AgentView) => {
@@ -884,111 +920,202 @@ function ThreadView(props: {
         </div>
       </header>
       <div className="thread-tabs">
-        <span className="active">Messages</span>
-        <span>{thread.messageCount} messages</span>
+        <button
+          type="button"
+          className={activeTab === "messages" ? "active" : ""}
+          onClick={() => setActiveTab("messages")}
+        >
+          <MessageSquareMore size={15} /> Messages
+        </button>
+        <button
+          type="button"
+          className={activeTab === "artifacts" ? "active" : ""}
+          onClick={() => setActiveTab("artifacts")}
+        >
+          <Paperclip size={15} /> Files &amp; links
+          {props.threadData.artifacts.length > 0 && (
+            <em className="thread-tab-count">{props.threadData.artifacts.length}</em>
+          )}
+        </button>
       </div>
-      <ThreadTranscript
-        thread={thread}
-        messages={props.threadData.messages}
-        runs={props.threadData.runs}
-        toolCalls={props.threadData.toolCalls ?? []}
-        agents={props.data.agents}
-        onRetry={props.onRetry}
-        onToolDecision={props.onToolDecision}
-        onToolResponse={props.onToolResponse}
-      />
-      <div className="composer-wrap">
-        {mentionMenuOpen && suggestions.length > 0 && (
-          <div
-            className="mention-menu"
-            id="mention-suggestions"
-            role="listbox"
-            aria-label="Choose an agent"
-          >
-            <p>Mention an agent</p>
-            {suggestions.map((agent, index) => (
-              <button
-                type="button"
-                role="option"
-                id={`mention-option-${agent.id}`}
-                aria-selected={index === selectedSuggestionIndex}
-                aria-disabled={!canCallAgent(agent)}
-                disabled={!canCallAgent(agent)}
-                className={index === selectedSuggestionIndex ? "active" : ""}
-                key={agent.id}
-                onClick={() => pickMention(agent)}
-                onMouseEnter={() => setActiveSuggestion(index)}
-              >
-                <Avatar agent={agent} small />
-                <span>
-                  <strong>@{agent.handle}</strong>
-                  <small>{agent.kind === "master" ? "Master" : `${agent.harness} worker`}</small>
-                </span>
-                <em>{agent.readinessLabel}</em>
-              </button>
-            ))}
-          </div>
-        )}
-        <div className="composer">
-          <textarea
-            aria-label="Message"
-            role="combobox"
-            aria-autocomplete="list"
-            aria-expanded={mentionMenuOpen && suggestions.length > 0}
-            aria-controls="mention-suggestions"
-            aria-activedescendant={
-              mentionMenuOpen && suggestions[selectedSuggestionIndex]
-                ? `mention-option-${suggestions[selectedSuggestionIndex].id}`
-                : undefined
-            }
-            value={draft}
-            onChange={(event) => {
-              setDraft(event.target.value);
-              setMentionMenuOpen(true);
-              setActiveSuggestion(0);
-              setLocalError(undefined);
-            }}
-            onKeyDown={onKeyDown}
-            placeholder={`Message #${thread.slug} — type @ to mention an agent`}
-            rows={2}
-          />
-          <div className="composer-toolbar">
-            <div>
-              <button
-                className="mention-button"
-                type="button"
-                onClick={() => {
-                  setMentionMenuOpen(true);
-                  setActiveSuggestion(0);
-                  setDraft((value) => `${value}${value && !value.endsWith(" ") ? " " : ""}@`);
-                }}
-                aria-label="Mention an agent"
-              >
-                @
-              </button>
-              <span>Agents reply only when explicitly @mentioned</span>
-            </div>
-            <button
-              className="send-button"
-              type="button"
-              onClick={() => void send()}
-              disabled={!draft.trim() || sending}
-              aria-label="Send"
+      {activeTab === "messages" ? (
+        <ThreadTranscript
+          thread={thread}
+          messages={props.threadData.messages}
+          artifacts={props.threadData.artifacts}
+          runs={props.threadData.runs}
+          toolCalls={props.threadData.toolCalls ?? []}
+          agents={props.data.agents}
+          onRetry={props.onRetry}
+          onToolDecision={props.onToolDecision}
+          onToolResponse={props.onToolResponse}
+        />
+      ) : (
+        <ThreadArtifacts
+          thread={thread}
+          artifacts={props.threadData.artifacts}
+          messages={props.threadData.messages}
+        />
+      )}
+      {activeTab === "messages" && (
+        <div className="composer-wrap">
+          {mentionMenuOpen && suggestions.length > 0 && (
+            <div
+              className="mention-menu"
+              id="mention-suggestions"
+              role="listbox"
+              aria-label="Choose an agent"
             >
-              {sending ? <LoaderCircle className="spin" size={17} /> : <SendHorizontal size={17} />}
-            </button>
-          </div>
-        </div>
-        <p>
-          <kbd>Enter</kbd> to send · <kbd>Shift Enter</kbd> for a new line
-        </p>
-        {localError && (
-          <p className="inline-error">
-            <CircleAlert size={13} />
-            {localError}
+              <p>Mention an agent</p>
+              {suggestions.map((agent, index) => (
+                <button
+                  type="button"
+                  role="option"
+                  id={`mention-option-${agent.id}`}
+                  aria-selected={index === selectedSuggestionIndex}
+                  aria-disabled={!canCallAgent(agent)}
+                  disabled={!canCallAgent(agent)}
+                  className={index === selectedSuggestionIndex ? "active" : ""}
+                  key={agent.id}
+                  onClick={() => pickMention(agent)}
+                  onMouseEnter={() => setActiveSuggestion(index)}
+                >
+                  <Avatar agent={agent} small />
+                  <span>
+                    <strong>@{agent.handle}</strong>
+                    <small>{agent.kind === "master" ? "Master" : `${agent.harness} worker`}</small>
+                  </span>
+                  <em>{agent.readinessLabel}</em>
+                </button>
+              ))}
+            </div>
+          )}
+          <fieldset
+            className={`composer${draggingFiles ? " dragging" : ""}`}
+            aria-label="Message composer"
+            onDragEnter={(event) => {
+              event.preventDefault();
+              setDraggingFiles(true);
+            }}
+            onDragOver={(event) => event.preventDefault()}
+            onDragLeave={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                setDraggingFiles(false);
+              }
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              setDraggingFiles(false);
+              addAttachments([...event.dataTransfer.files]);
+            }}
+          >
+            <input
+              ref={fileInputRef}
+              className="file-input"
+              type="file"
+              multiple
+              aria-label="Choose files or images"
+              onChange={(event) => {
+                addAttachments([...(event.target.files ?? [])]);
+                event.target.value = "";
+              }}
+            />
+            {attachments.length > 0 && (
+              <ul className="pending-attachments" aria-label="Attachments ready to send">
+                {attachments.map((file, index) => (
+                  <li key={`${file.name}:${file.size}:${file.lastModified}:${file.type}`}>
+                    {file.type.startsWith("image/") ? (
+                      <ImageIcon size={14} />
+                    ) : (
+                      <FileText size={14} />
+                    )}
+                    <b>{file.name}</b>
+                    <small>{formatBytes(file.size)}</small>
+                    <button
+                      type="button"
+                      aria-label={`Remove ${file.name}`}
+                      onClick={() =>
+                        setAttachments((current) => current.filter((_, item) => item !== index))
+                      }
+                    >
+                      <X size={13} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <textarea
+              aria-label="Message"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded={mentionMenuOpen && suggestions.length > 0}
+              aria-controls="mention-suggestions"
+              aria-activedescendant={
+                mentionMenuOpen && suggestions[selectedSuggestionIndex]
+                  ? `mention-option-${suggestions[selectedSuggestionIndex].id}`
+                  : undefined
+              }
+              value={draft}
+              onChange={(event) => {
+                setDraft(event.target.value);
+                setMentionMenuOpen(true);
+                setActiveSuggestion(0);
+                setLocalError(undefined);
+              }}
+              onKeyDown={onKeyDown}
+              placeholder={`Message #${thread.slug} — type @ to mention an agent`}
+              rows={2}
+            />
+            <div className="composer-toolbar">
+              <div>
+                <button
+                  className="attachment-button"
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  aria-label="Attach files or images"
+                >
+                  <Paperclip size={16} />
+                </button>
+                <button
+                  className="mention-button"
+                  type="button"
+                  onClick={() => {
+                    setMentionMenuOpen(true);
+                    setActiveSuggestion(0);
+                    setDraft((value) => `${value}${value && !value.endsWith(" ") ? " " : ""}@`);
+                  }}
+                  aria-label="Mention an agent"
+                >
+                  @
+                </button>
+                <span>Agents reply only when explicitly @mentioned</span>
+              </div>
+              <button
+                className="send-button"
+                type="button"
+                onClick={() => void send()}
+                disabled={(!draft.trim() && attachments.length === 0) || sending}
+                aria-label="Send"
+              >
+                {sending ? (
+                  <LoaderCircle className="spin" size={17} />
+                ) : (
+                  <SendHorizontal size={17} />
+                )}
+              </button>
+            </div>
+          </fieldset>
+          <p>
+            <kbd>Enter</kbd> to send · <kbd>Shift Enter</kbd> for a new line
           </p>
-        )}
-      </div>
+          {localError && (
+            <p className="inline-error">
+              <CircleAlert size={13} />
+              {localError}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -996,6 +1123,7 @@ function ThreadView(props: {
 const ThreadTranscript = memo(function ThreadTranscript({
   thread,
   messages,
+  artifacts,
   runs,
   toolCalls,
   agents,
@@ -1005,6 +1133,7 @@ const ThreadTranscript = memo(function ThreadTranscript({
 }: {
   thread: Thread;
   messages: Message[];
+  artifacts: Artifact[];
   runs: AgentRun[];
   toolCalls: ToolCall[];
   agents: AgentView[];
@@ -1015,6 +1144,15 @@ const ThreadTranscript = memo(function ThreadTranscript({
   const bottomRef = useRef<HTMLDivElement>(null);
   const agentsById = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
   const currentAgentHandles = useMemo(() => agents.map((agent) => agent.handle), [agents]);
+  const artifactsByMessage = useMemo(() => {
+    const grouped = new Map<string, Artifact[]>();
+    for (const artifact of artifacts) {
+      const messageArtifacts = grouped.get(artifact.messageId) ?? [];
+      messageArtifacts.push(artifact);
+      grouped.set(artifact.messageId, messageArtifacts);
+    }
+    return grouped;
+  }, [artifacts]);
   const runsByTrigger = useMemo(() => {
     const grouped = new Map<string, AgentRun[]>();
     for (const run of latestAttempts(runs)) {
@@ -1033,7 +1171,7 @@ const ThreadTranscript = memo(function ThreadTranscript({
     }
     return grouped;
   }, [toolCalls]);
-  const transcriptVersion = `${messages.length}:${runs
+  const transcriptVersion = `${messages.length}:${artifacts.length}:${runs
     .map((run) => `${run.id}-${run.status}`)
     .join(",")}:${toolCalls.map((call) => `${call.id}-${call.status}`).join(",")}`;
   useEffect(() => {
@@ -1060,6 +1198,7 @@ const ThreadTranscript = memo(function ThreadTranscript({
         <div key={message.id}>
           <MessageRow
             message={message}
+            artifacts={artifactsByMessage.get(message.id) ?? []}
             knownHandles={
               new Set([
                 ...currentAgentHandles,
@@ -1092,10 +1231,12 @@ const ThreadTranscript = memo(function ThreadTranscript({
 
 function MessageRow({
   message,
+  artifacts,
   agent,
   knownHandles,
 }: {
   message: Message;
+  artifacts: Artifact[];
   agent?: AgentView;
   knownHandles: ReadonlySet<string>;
 }) {
@@ -1121,10 +1262,218 @@ function MessageRow({
           )}
           <time>{formatTime(message.createdAt)}</time>
         </div>
-        <p>{highlightMentions(message.content, knownHandles)}</p>
+        {message.content && <p>{highlightMentions(message.content, knownHandles)}</p>}
+        {artifacts.length > 0 && <MessageArtifacts artifacts={artifacts} />}
       </div>
     </article>
   );
+}
+
+function MessageArtifacts({ artifacts }: { artifacts: Artifact[] }) {
+  return (
+    <div className="message-artifacts">
+      {artifacts.map((artifact) => {
+        if (artifact.kind === "image") {
+          const href = artifactContentUrl(artifact);
+          return (
+            <a
+              className="message-image"
+              href={href}
+              target="_blank"
+              rel="noreferrer"
+              key={artifact.id}
+              aria-label={`Open ${artifact.name}`}
+            >
+              <img src={href} alt={artifact.name} loading="lazy" />
+              <span>{artifact.name}</span>
+            </a>
+          );
+        }
+        const href = artifact.url ?? artifactContentUrl(artifact);
+        return (
+          <a
+            className="message-file"
+            href={href}
+            target="_blank"
+            rel="noreferrer"
+            key={artifact.id}
+          >
+            {artifact.kind === "link" ? <LinkIcon size={16} /> : <FileText size={16} />}
+            <span>
+              <strong>{artifact.name}</strong>
+              <small>
+                {artifact.kind === "link"
+                  ? safeHostname(artifact.url)
+                  : artifact.size === undefined
+                    ? "File"
+                    : formatBytes(artifact.size)}
+              </small>
+            </span>
+            <ExternalLink size={14} />
+          </a>
+        );
+      })}
+    </div>
+  );
+}
+
+function ThreadArtifacts({
+  thread,
+  artifacts,
+  messages,
+}: {
+  thread: Thread;
+  artifacts: Artifact[];
+  messages: Message[];
+}) {
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<"all" | "files" | "media" | "links">("all");
+  const deferredQuery = useDeferredValue(query.trim().toLowerCase());
+  const messagesById = useMemo(
+    () => new Map(messages.map((message) => [message.id, message])),
+    [messages],
+  );
+  const visible = useMemo(
+    () =>
+      artifacts
+        .filter((artifact) => {
+          if (filter === "files" && artifact.kind !== "file") return false;
+          if (filter === "media" && artifact.kind !== "image") return false;
+          if (filter === "links" && artifact.kind !== "link") return false;
+          if (!deferredQuery) return true;
+          return [artifact.name, artifact.url, artifact.path, artifact.mediaType]
+            .filter(Boolean)
+            .some((value) => value?.toLowerCase().includes(deferredQuery));
+        })
+        .sort((left, right) => right.sequence - left.sequence),
+    [artifacts, deferredQuery, filter],
+  );
+  const images = visible.filter((artifact) => artifact.kind === "image");
+  const rows = visible.filter((artifact) => artifact.kind !== "image");
+
+  return (
+    <section className="artifacts-view" aria-label={`Files and links in ${thread.name}`}>
+      <label className="artifact-search">
+        <Search size={18} />
+        <input
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search files and links"
+          aria-label="Search files and links"
+        />
+      </label>
+      <fieldset className="artifact-filters" aria-label="Artifact type">
+        {(["all", "files", "media", "links"] as const).map((value) => (
+          <button
+            type="button"
+            className={filter === value ? "active" : ""}
+            aria-pressed={filter === value}
+            onClick={() => setFilter(value)}
+            key={value}
+          >
+            {value[0]?.toUpperCase()}
+            {value.slice(1)}
+          </button>
+        ))}
+        <span>Newest first</span>
+      </fieldset>
+      {visible.length === 0 ? (
+        <div className="artifact-empty">
+          <Paperclip size={24} />
+          <strong>
+            {artifacts.length === 0 ? "No files or links yet" : "No matching artifacts"}
+          </strong>
+          <p>
+            {artifacts.length === 0
+              ? "Attach files in Messages or share a link to collect it here."
+              : "Try another search or filter."}
+          </p>
+        </div>
+      ) : (
+        <>
+          {images.length > 0 && (
+            <div className="artifact-media-section">
+              <h2>Photos</h2>
+              <div className="artifact-media-grid">
+                {images.map((artifact) => {
+                  const href = artifactContentUrl(artifact);
+                  return (
+                    <a href={href} target="_blank" rel="noreferrer" key={artifact.id}>
+                      <img src={href} alt={artifact.name} loading="lazy" />
+                      <span>{artifact.name}</span>
+                    </a>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {rows.length > 0 && (
+            <div className="artifact-list">
+              {rows.map((artifact) => {
+                const message = messagesById.get(artifact.messageId);
+                const href = artifact.url ?? artifactContentUrl(artifact);
+                return (
+                  <article key={artifact.id}>
+                    <span className={`artifact-kind ${artifact.kind}`}>
+                      {artifact.kind === "link" ? <LinkIcon size={18} /> : <FileText size={18} />}
+                    </span>
+                    <div>
+                      <a href={href} target="_blank" rel="noreferrer">
+                        {artifact.name}
+                      </a>
+                      <small>
+                        {artifact.source === "upload" ? "Shared" : "Referenced"} by{" "}
+                        {message?.author.name ?? "Unknown"}
+                        {artifact.size !== undefined ? ` · ${formatBytes(artifact.size)}` : ""}
+                        {artifact.kind === "link" ? ` · ${safeHostname(artifact.url)}` : ""}
+                      </small>
+                    </div>
+                    <a
+                      className="artifact-action"
+                      href={
+                        artifact.kind === "link"
+                          ? href
+                          : `${artifactContentUrl(artifact)}?download=1`
+                      }
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label={`${artifact.kind === "link" ? "Open" : "Download"} ${artifact.name}`}
+                    >
+                      {artifact.kind === "link" ? (
+                        <ExternalLink size={16} />
+                      ) : (
+                        <Download size={16} />
+                      )}
+                    </a>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function artifactContentUrl(artifact: Artifact): string {
+  return `/api/threads/${encodeURIComponent(artifact.threadId)}/artifacts/${encodeURIComponent(artifact.id)}/content`;
+}
+
+function safeHostname(value?: string): string {
+  if (!value) return "Link";
+  try {
+    return new URL(value).hostname;
+  } catch {
+    return "Link";
+  }
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function RunRow({

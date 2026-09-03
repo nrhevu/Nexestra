@@ -9,3 +9,4 @@
 | [0005](0005-provider-neutral-master-harness.md) | Superseded by 0007 | Provider-neutral Master tools and explicit permissions |
 | [0006](0006-complete-master-tool-surface.md) | Accepted | Complete Master tool surface except LSP |
 | [0007](0007-master-access-modes.md) | Accepted | Replace per-tool profile permissions with three access modes |
+| [0008](0008-thread-artifacts.md) | Accepted | Thread-scoped uploads and indexed artifact references |

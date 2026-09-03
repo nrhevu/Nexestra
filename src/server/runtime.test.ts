@@ -170,6 +170,37 @@ describe("Worker harness arguments", () => {
       expect(args).not.toContain("--variant");
     },
   );
+
+  it.each(["codex", "opencode"] as const)(
+    "attaches triggering message files to %s",
+    async (harness) => {
+      const { agent, invocation, runner } = await workerFixture(
+        harness,
+        undefined,
+        undefined,
+        true,
+      );
+      processMocks.findExecutable.mockResolvedValue(`/fake/${harness}`);
+      processMocks.runCommand.mockResolvedValue({
+        stdout:
+          harness === "codex"
+            ? JSON.stringify({
+                type: "item.completed",
+                item: { type: "agent_message", text: "Done." },
+              })
+            : JSON.stringify({ type: "text", part: { type: "text", text: "Done." } }),
+        stderr: "",
+        exitCode: 0,
+      });
+
+      await runner.invoke(agent, invocation);
+      const args = processMocks.runCommand.mock.calls[0]?.[1] ?? [];
+      const imagePath = invocation.artifacts?.[0]?.localPath;
+      expect(imagePath).toBeTruthy();
+      expect(args).toContain(imagePath);
+      expect(args).toContain(harness === "codex" ? "--image" : "--file");
+    },
+  );
 });
 
 describe("ChatGPT Master harness arguments", () => {
@@ -259,9 +290,18 @@ describe("parseProviderReply", () => {
     const runner = new LocalAgentRunner({ store, fetch: fetchMock as typeof fetch });
     const [thread] = store.listThreads();
     if (!thread) throw new Error("expected seeded thread");
-    const trigger = await store.createUserMessage(thread.id, "@maya make a plan", [
-      { agentId: created.id, handle: created.handle },
-    ]);
+    const trigger = await store.createUserMessage(
+      thread.id,
+      "@maya make a plan",
+      [{ agentId: created.id, handle: created.handle }],
+      [
+        {
+          name: "plan.png",
+          mediaType: "image/png",
+          bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+        },
+      ],
+    );
     await store.createUserMessage(thread.id, "a newer message must not change the target", []);
 
     const reply = await runner.invoke(created, {
@@ -269,6 +309,7 @@ describe("parseProviderReply", () => {
       trigger,
       transcriptPath: store.transcriptPath(thread.id),
       transcriptSnapshot: await store.transcriptSnapshot(thread.id),
+      artifacts: await store.agentArtifacts(thread.id, trigger.id),
     });
 
     expect(reply).toBe("[REDACTED] must not leak");
@@ -279,6 +320,7 @@ describe("parseProviderReply", () => {
     expect(String(init.body)).toContain("@maya make a plan");
     expect(String(init.body)).toContain(`Required message to answer (id: ${trigger.id})`);
     expect(String(init.body)).toContain("even if the transcript contains newer messages");
+    expect(String(init.body)).toContain("data:image/png;base64,");
 
     const oversizedRunner = new LocalAgentRunner({
       store,
@@ -474,6 +516,7 @@ async function workerFixture(
   harness: "codex" | "opencode",
   model?: string,
   reasoningEffort?: string,
+  attachImage = false,
 ) {
   const root = await mkdtemp(join(tmpdir(), "nexestra-worker-runtime-"));
   const store = await FileStore.open({ root, workspacePath: root });
@@ -490,9 +533,20 @@ async function workerFixture(
   if (agent.kind !== "worker") throw new Error("expected worker agent");
   const [thread] = store.listThreads();
   if (!thread) throw new Error("expected seeded thread");
-  const trigger = await store.createUserMessage(thread.id, `@${agent.handle} reply`, [
-    { agentId: agent.id, handle: agent.handle },
-  ]);
+  const trigger = await store.createUserMessage(
+    thread.id,
+    `@${agent.handle} reply`,
+    [{ agentId: agent.id, handle: agent.handle }],
+    attachImage
+      ? [
+          {
+            name: "context.png",
+            mediaType: "image/png",
+            bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+          },
+        ]
+      : [],
+  );
   return {
     agent,
     root,
@@ -502,6 +556,7 @@ async function workerFixture(
       trigger,
       transcriptPath: store.transcriptPath(thread.id),
       transcriptSnapshot: await store.transcriptSnapshot(thread.id),
+      artifacts: await store.agentArtifacts(thread.id, trigger.id),
     },
   };
 }

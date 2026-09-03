@@ -18,7 +18,7 @@ import {
   type MasterToolSession,
 } from "./master-harness.js";
 import { findExecutable, runCommand, safeProcessEnv } from "./process.js";
-import type { FileStore } from "./store.js";
+import type { AgentArtifact, FileStore } from "./store.js";
 
 export interface AgentInvocation {
   runId?: string;
@@ -26,6 +26,7 @@ export interface AgentInvocation {
   trigger: Message;
   transcriptPath: string;
   transcriptSnapshot: string;
+  artifacts?: AgentArtifact[];
   toolHooks?: MasterToolHooks;
 }
 
@@ -129,6 +130,11 @@ export class LocalAgentRunner implements AgentRunner {
     } else if (agent.provider.type === "chatgpt" && agent.provider.model) {
       args.push("-m", agent.provider.model);
     }
+    for (const entry of invocation.artifacts ?? []) {
+      if (entry.localPath && entry.artifact.kind === "image") {
+        args.push("--image", entry.localPath);
+      }
+    }
     args.push(prompt);
     const result = await runCommand(binary, args, {
       cwd: this.options.store.workspacePath,
@@ -161,7 +167,11 @@ export class LocalAgentRunner implements AgentRunner {
     ];
     if (agent.model) args.push("-m", agent.model);
     if (agent.reasoningEffort) args.push("--variant", agent.reasoningEffort);
-    args.push("--file", invocation.transcriptPath, "--", localHarnessPrompt(agent, invocation));
+    args.push("--file", invocation.transcriptPath);
+    for (const entry of invocation.artifacts ?? []) {
+      if (entry.localPath) args.push("--file", entry.localPath);
+    }
+    args.push("--", localHarnessPrompt(agent, invocation));
     const result = await runCommand(binary, args, {
       cwd: this.options.store.workspacePath,
       timeoutMs: 5 * 60_000,
@@ -234,7 +244,7 @@ export class LocalAgentRunner implements AgentRunner {
   ): Promise<string> {
     const messages: Record<string, unknown>[] = [
       { role: "system", content: system },
-      { role: "user", content: providerUserPrompt(invocation) },
+      { role: "user", content: await providerChatUserContent(invocation) },
     ];
     const repeatedCalls = new Map<string, number>();
     for (let turn = 0; turn <= 12; turn += 1) {
@@ -287,7 +297,9 @@ export class LocalAgentRunner implements AgentRunner {
     invocation: AgentInvocation,
     tools: MasterToolSession,
   ): Promise<string> {
-    const input: unknown[] = [{ role: "user", content: providerUserPrompt(invocation) }];
+    const input: unknown[] = [
+      { role: "user", content: await providerResponsesUserContent(invocation) },
+    ];
     const repeatedCalls = new Map<string, number>();
     for (let turn = 0; turn <= 12; turn += 1) {
       const toolsEnabled = turn < 12;
@@ -382,6 +394,7 @@ export function agentView(
 
 function localHarnessPrompt(agent: Agent, invocation: AgentInvocation): string {
   const role = agent.kind === "master" ? "Master agent" : `${agent.harness} worker`;
+  const artifactContext = formatInvocationArtifacts(invocation);
   return [
     `You are ${agent.name} (@${agent.handle}), a ${role} in Nexestra.`,
     `The user just mentioned you in thread #${invocation.thread.slug}.`,
@@ -389,6 +402,7 @@ function localHarnessPrompt(agent: Agent, invocation: AgentInvocation): string {
     "Answer the message above even if the transcript contains newer messages.",
     `Shared transcript path: ${invocation.transcriptPath}`,
     "Read the transcript for relevant context.",
+    artifactContext,
     agent.kind === "worker"
       ? "This is a discussion turn: do not modify files or run commands that change state."
       : masterCodexAccessPrompt(agent),
@@ -397,6 +411,17 @@ function localHarnessPrompt(agent: Agent, invocation: AgentInvocation): string {
   ]
     .filter(Boolean)
     .join("\n\n");
+}
+
+function formatInvocationArtifacts(invocation: AgentInvocation): string {
+  if (!invocation.artifacts?.length) return "";
+  return [
+    "Artifacts attached or referenced by the required message:",
+    ...invocation.artifacts.map(({ artifact, localPath }) => {
+      const target = localPath ?? artifact.url ?? artifact.path ?? "metadata only";
+      return `- [${artifact.kind}] ${artifact.name}: ${target}`;
+    }),
+  ].join("\n");
 }
 
 function masterCodexAccessPrompt(agent: MasterAgent): string {
@@ -414,9 +439,87 @@ function providerUserPrompt(invocation: AgentInvocation): string {
     `Required message to answer (id: ${invocation.trigger.id}):`,
     invocation.trigger.content,
     "Answer the message above even if the transcript contains newer messages.",
+    formatInvocationArtifacts(invocation),
     `Shared transcript for #${invocation.thread.slug}:`,
     invocation.transcriptSnapshot,
   ].join("\n\n");
+}
+
+async function providerChatUserContent(
+  invocation: AgentInvocation,
+): Promise<string | Record<string, unknown>[]> {
+  const attachments = await providerAttachments(invocation);
+  const text = [providerUserPrompt(invocation), attachments.text].filter(Boolean).join("\n\n");
+  if (attachments.images.length === 0) return text;
+  return [
+    { type: "text", text },
+    ...attachments.images.map((image) => ({
+      type: "image_url",
+      image_url: { url: image.dataUrl },
+    })),
+  ];
+}
+
+async function providerResponsesUserContent(
+  invocation: AgentInvocation,
+): Promise<Record<string, unknown>[]> {
+  const attachments = await providerAttachments(invocation);
+  return [
+    {
+      type: "input_text",
+      text: [providerUserPrompt(invocation), attachments.text].filter(Boolean).join("\n\n"),
+    },
+    ...attachments.images.map((image) => ({
+      type: "input_image",
+      image_url: image.dataUrl,
+    })),
+  ];
+}
+
+async function providerAttachments(invocation: AgentInvocation): Promise<{
+  text: string;
+  images: { dataUrl: string }[];
+}> {
+  const textParts: string[] = [];
+  const images: { dataUrl: string }[] = [];
+  let textBytes = 0;
+  let imageBytes = 0;
+  for (const { artifact, localPath } of invocation.artifacts ?? []) {
+    if (!localPath) continue;
+    if (artifact.kind === "image") {
+      if (imageBytes + (artifact.size ?? 0) > 10 * 1024 * 1024) {
+        textParts.push(`[Image omitted from provider payload because of size: ${artifact.name}]`);
+        continue;
+      }
+      const bytes = await readFile(localPath);
+      if (imageBytes + bytes.byteLength > 10 * 1024 * 1024) {
+        textParts.push(`[Image omitted from provider payload because of size: ${artifact.name}]`);
+        continue;
+      }
+      imageBytes += bytes.byteLength;
+      images.push({
+        dataUrl: `data:${artifact.mediaType ?? "application/octet-stream"};base64,${bytes.toString("base64")}`,
+      });
+      continue;
+    }
+    if (!isTextArtifact(artifact.mediaType) || textBytes >= 512 * 1024) continue;
+    const bytes = await readFile(localPath);
+    const remaining = 512 * 1024 - textBytes;
+    const included = bytes.subarray(0, Math.min(bytes.byteLength, remaining));
+    textBytes += included.byteLength;
+    textParts.push(
+      [`Attached text file: ${artifact.name}`, "```", included.toString("utf8"), "```"].join("\n"),
+    );
+  }
+  return { text: textParts.join("\n\n"), images };
+}
+
+function isTextArtifact(mediaType?: string): boolean {
+  return Boolean(
+    mediaType?.startsWith("text/") ||
+      mediaType === "application/json" ||
+      mediaType === "application/yaml",
+  );
 }
 
 function providerEndpoint(baseUrl: string, protocol: "openai-chat" | "openai-responses"): string {
