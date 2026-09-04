@@ -1363,6 +1363,97 @@ describe("Agent deletion", () => {
   });
 });
 
+describe("Thread composer", () => {
+  it("provides Slack-style composer controls and applies Markdown formatting", async () => {
+    const user = userEvent.setup();
+    const thread = {
+      id: "thread-composer",
+      workspaceId: workspace.id,
+      name: "general",
+      slug: "general",
+      createdAt: now,
+      updatedAt: now,
+      messageCount: 0,
+      lastMessageAt: null,
+    };
+    const transcript: ThreadData = {
+      thread,
+      messages: [],
+      artifacts: [],
+      runs: [],
+      toolCalls: [],
+    };
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/bootstrap") {
+          return jsonResponse({ ...bootstrapData, agents: [workerAgent], threads: [thread] });
+        }
+        if (path === `/api/threads/${thread.id}`) return jsonResponse(transcript);
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      }),
+    );
+    render(<App />);
+
+    const composer = await screen.findByRole("combobox", { name: "Message" });
+    const formatToggle = screen.getByRole("button", { name: "Toggle formatting" });
+    expect(screen.getByRole("toolbar", { name: "Message formatting" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Attach files or images" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Mention an agent" })).toBeVisible();
+    for (const name of [
+      "Bold",
+      "Italic",
+      "Strikethrough",
+      "Link",
+      "Numbered list",
+      "Bulleted list",
+      "Quote",
+      "Inline code",
+      "Code block",
+    ]) {
+      expect(screen.getByRole("button", { name })).toBeVisible();
+    }
+    expect(screen.queryByRole("button", { name: "Reference knowledge" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /record video/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /record audio/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /shortcut/i })).not.toBeInTheDocument();
+
+    await user.click(formatToggle);
+    expect(screen.queryByRole("toolbar", { name: "Message formatting" })).not.toBeInTheDocument();
+    await user.click(formatToggle);
+
+    await user.type(composer, "hello world");
+    act(() => {
+      composer.focus();
+      (composer as HTMLTextAreaElement).setSelectionRange(6, 11);
+    });
+    await user.click(screen.getByRole("button", { name: "Bold" }));
+    await waitFor(() => expect(composer).toHaveValue("hello **world**"));
+    expect(composer).toHaveFocus();
+    expect((composer as HTMLTextAreaElement).selectionStart).toBe(8);
+    expect((composer as HTMLTextAreaElement).selectionEnd).toBe(13);
+    await user.click(screen.getByRole("button", { name: "Bulleted list" }));
+    await waitFor(() => expect(composer).toHaveValue("- hello **world**"));
+    await user.click(screen.getByRole("button", { name: "Bulleted list" }));
+    await waitFor(() => expect(composer).toHaveValue("hello **world**"));
+
+    act(() => {
+      (composer as HTMLTextAreaElement).setSelectionRange(15, 15);
+    });
+    await user.click(screen.getByRole("button", { name: "Mention an agent" }));
+    expect(await screen.findByRole("listbox", { name: "Choose an agent" })).toBeVisible();
+    await user.keyboard("{Enter}");
+    expect(composer).toHaveValue("hello **world** @planner ");
+
+    const fileInput = screen.getByLabelText("Choose files or images");
+    const fileInputClick = vi.spyOn(fileInput, "click");
+    await user.click(screen.getByRole("button", { name: "Attach files or images" }));
+    expect(fileInputClick).toHaveBeenCalledOnce();
+  });
+});
+
 describe("Thread artifacts", () => {
   it("sends selected files as multipart attachments", async () => {
     const user = userEvent.setup();

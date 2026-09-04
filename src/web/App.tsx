@@ -2,10 +2,12 @@ import {
   Archive,
   ArrowLeft,
   ArrowRight,
+  Bold,
   BookOpen,
   Bot,
   Check,
   CircleAlert,
+  CodeXml,
   Columns3,
   Copy,
   Download,
@@ -13,19 +15,25 @@ import {
   FileText,
   GitBranch,
   Image as ImageIcon,
+  Italic,
   Link as LinkIcon,
+  List,
+  ListOrdered,
   LoaderCircle,
   MessageSquareMore,
   Moon,
   Paperclip,
   Pencil,
   Plus,
+  Quote,
   RefreshCw,
   Search,
   SendHorizontal,
   Settings,
   Sparkles,
   Square,
+  SquareCode,
+  Strikethrough,
   Sun,
   TerminalSquare,
   Trash2,
@@ -1090,6 +1098,20 @@ function Sidebar(props: {
   );
 }
 
+function ComposerFormatButton(props: { label: string; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      aria-label={props.label}
+      title={props.label}
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={props.onClick}
+    >
+      {props.children}
+    </button>
+  );
+}
+
 function ThreadView(props: {
   data: BootstrapData;
   threadData?: ThreadData;
@@ -1107,7 +1129,10 @@ function ThreadView(props: {
   const [activeTab, setActiveTab] = useState<"messages" | "artifacts">("messages");
   const [attachments, setAttachments] = useState<File[]>([]);
   const [draggingFiles, setDraggingFiles] = useState(false);
+  const [formattingOpen, setFormattingOpen] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const pendingSelectionRef = useRef<{ start: number; end: number } | null>(null);
 
   // Load draft from localStorage when thread changes
   useEffect(() => {
@@ -1128,6 +1153,80 @@ function ThreadView(props: {
       window.localStorage.removeItem(`nexestra.draft.${threadId}`);
     }
   }, [draft, threadId]);
+
+  useEffect(() => {
+    const selection = pendingSelectionRef.current;
+    if (!selection) return;
+    pendingSelectionRef.current = null;
+    const boundedSelection = {
+      start: Math.min(selection.start, draft.length),
+      end: Math.min(selection.end, draft.length),
+    };
+    textareaRef.current?.focus();
+    textareaRef.current?.setSelectionRange(boundedSelection.start, boundedSelection.end);
+  }, [draft]);
+
+  const updateDraft = (value: string, start: number, end = start) => {
+    pendingSelectionRef.current = { start, end };
+    setDraft(value);
+    setMentionMenuOpen(false);
+    setLocalError(undefined);
+  };
+
+  const applyInlineFormatting = (before: string, after: string, placeholder: string) => {
+    const start = textareaRef.current?.selectionStart ?? draft.length;
+    const end = textareaRef.current?.selectionEnd ?? start;
+    const selected = draft.slice(start, end);
+    const alreadyFormatted =
+      start >= before.length &&
+      draft.slice(start - before.length, start) === before &&
+      draft.slice(end, end + after.length) === after;
+
+    if (alreadyFormatted) {
+      const value = `${draft.slice(0, start - before.length)}${selected}${draft.slice(
+        end + after.length,
+      )}`;
+      updateDraft(value, start - before.length, end - before.length);
+      return;
+    }
+
+    const content = selected || placeholder;
+    const value = `${draft.slice(0, start)}${before}${content}${after}${draft.slice(end)}`;
+    updateDraft(value, start + before.length, start + before.length + content.length);
+  };
+
+  const applyLineFormatting = (
+    prefixForLine: (index: number) => string,
+    existingPrefix: RegExp,
+  ) => {
+    const selectionStart = textareaRef.current?.selectionStart ?? draft.length;
+    const selectionEnd = textareaRef.current?.selectionEnd ?? selectionStart;
+    const lineStart = selectionStart === 0 ? 0 : draft.lastIndexOf("\n", selectionStart - 1) + 1;
+    const nextNewline = draft.indexOf("\n", selectionEnd);
+    const lineEnd = nextNewline === -1 ? draft.length : nextNewline;
+    const block = draft.slice(lineStart, lineEnd);
+    const lines = block ? block.split("\n") : ["List item"];
+    const removeFormatting = lines.every((line) => existingPrefix.test(line));
+    const replacement = lines
+      .map((line, index) =>
+        removeFormatting ? line.replace(existingPrefix, "") : `${prefixForLine(index)}${line}`,
+      )
+      .join("\n");
+    const value = `${draft.slice(0, lineStart)}${replacement}${draft.slice(lineEnd)}`;
+    updateDraft(value, lineStart, lineStart + replacement.length);
+  };
+
+  const insertMentionTrigger = () => {
+    const needsSpace = Boolean(draft && !draft.endsWith(" "));
+    const insertion = `${needsSpace ? " " : ""}@`;
+    const value = `${draft}${insertion}`;
+    const cursor = value.length;
+    pendingSelectionRef.current = { start: cursor, end: cursor };
+    setDraft(value);
+    setMentionMenuOpen(true);
+    setActiveSuggestion(0);
+    setLocalError(undefined);
+  };
 
   const mentionAgents = useMemo(
     () =>
@@ -1450,6 +1549,75 @@ function ThreadView(props: {
                 event.target.value = "";
               }}
             />
+            {formattingOpen && (
+              <div
+                className="composer-formatbar"
+                id="message-formatting-toolbar"
+                role="toolbar"
+                aria-label="Message formatting"
+              >
+                <div className="composer-format-group">
+                  <ComposerFormatButton
+                    label="Bold"
+                    onClick={() => applyInlineFormatting("**", "**", "bold text")}
+                  >
+                    <Bold size={17} />
+                  </ComposerFormatButton>
+                  <ComposerFormatButton
+                    label="Italic"
+                    onClick={() => applyInlineFormatting("_", "_", "italic text")}
+                  >
+                    <Italic size={17} />
+                  </ComposerFormatButton>
+                  <ComposerFormatButton
+                    label="Strikethrough"
+                    onClick={() => applyInlineFormatting("~~", "~~", "struck text")}
+                  >
+                    <Strikethrough size={17} />
+                  </ComposerFormatButton>
+                  <ComposerFormatButton
+                    label="Link"
+                    onClick={() => applyInlineFormatting("[", "](https://)", "link text")}
+                  >
+                    <LinkIcon size={17} />
+                  </ComposerFormatButton>
+                </div>
+                <div className="composer-format-group">
+                  <ComposerFormatButton
+                    label="Numbered list"
+                    onClick={() => applyLineFormatting((index) => `${index + 1}. `, /^\d+\.\s/)}
+                  >
+                    <ListOrdered size={17} />
+                  </ComposerFormatButton>
+                  <ComposerFormatButton
+                    label="Bulleted list"
+                    onClick={() => applyLineFormatting(() => "- ", /^-\s/)}
+                  >
+                    <List size={17} />
+                  </ComposerFormatButton>
+                  <ComposerFormatButton
+                    label="Quote"
+                    onClick={() => applyLineFormatting(() => "> ", /^>\s/)}
+                  >
+                    <Quote size={17} />
+                  </ComposerFormatButton>
+                </div>
+                <div className="composer-format-group">
+                  <ComposerFormatButton
+                    label="Inline code"
+                    onClick={() => applyInlineFormatting("`", "`", "code")}
+                  >
+                    <CodeXml size={17} />
+                  </ComposerFormatButton>
+                  <ComposerFormatButton
+                    label="Code block"
+                    onClick={() => applyInlineFormatting("```\n", "\n```", "code")}
+                  >
+                    <SquareCode size={17} />
+                  </ComposerFormatButton>
+                </div>
+              </div>
+            )}
             {attachments.length > 0 && (
               <ul className="pending-attachments" aria-label="Attachments ready to send">
                 {attachments.map((file, index) => (
@@ -1475,6 +1643,7 @@ function ThreadView(props: {
               </ul>
             )}
             <textarea
+              ref={textareaRef}
               aria-label="Message"
               role="combobox"
               aria-autocomplete="list"
@@ -1505,44 +1674,40 @@ function ThreadView(props: {
                 setLocalError(undefined);
               }}
               onKeyDown={onKeyDown}
-              placeholder={`Message #${thread.slug} — use @ for agents or # for knowledge`}
-              rows={2}
+              placeholder={`Message #${thread.slug}`}
+              rows={3}
             />
             <div className="composer-toolbar">
-              <div>
+              <div className="composer-actions">
                 <button
                   className="attachment-button"
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   aria-label="Attach files or images"
+                  title="Add files or images"
                 >
-                  <Paperclip size={16} />
+                  <Plus size={20} />
+                </button>
+                <button
+                  className={`format-toggle${formattingOpen ? " active" : ""}`}
+                  type="button"
+                  onClick={() => setFormattingOpen((open) => !open)}
+                  aria-label="Toggle formatting"
+                  aria-controls="message-formatting-toolbar"
+                  aria-pressed={formattingOpen}
+                  title="Formatting"
+                >
+                  <span aria-hidden="true">Aa</span>
                 </button>
                 <button
                   className="mention-button"
                   type="button"
-                  onClick={() => {
-                    setMentionMenuOpen(true);
-                    setActiveSuggestion(0);
-                    setDraft((value) => `${value}${value && !value.endsWith(" ") ? " " : ""}@`);
-                  }}
+                  onClick={insertMentionTrigger}
                   aria-label="Mention an agent"
+                  title="Mention an agent"
                 >
                   @
                 </button>
-                <button
-                  className="mention-button"
-                  type="button"
-                  onClick={() => {
-                    setMentionMenuOpen(true);
-                    setActiveSuggestion(0);
-                    setDraft((value) => `${value}${value && !value.endsWith(" ") ? " " : ""}#`);
-                  }}
-                  aria-label="Reference knowledge"
-                >
-                  #
-                </button>
-                <span>@ invokes an agent · # shares workspace knowledge</span>
               </div>
               <button
                 className="send-button"
@@ -1559,9 +1724,6 @@ function ThreadView(props: {
               </button>
             </div>
           </fieldset>
-          <p>
-            <kbd>Enter</kbd> to send · <kbd>Shift Enter</kbd> for a new line
-          </p>
           {localError && (
             <p className="inline-error">
               <CircleAlert size={13} />

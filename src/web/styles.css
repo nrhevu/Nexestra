@@ -1469,10 +1469,11 @@ kbd {
   min-width: 0;
   margin: 0;
   padding: 0;
+  overflow: hidden;
   border: 1px solid var(--composer-border);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--composer-bg);
-  box-shadow: 0 3px 16px var(--shadow);
+  box-shadow: 0 2px 12px var(--shadow);
 }
 .composer.dragging {
   border-color: var(--accent);
@@ -1481,6 +1482,48 @@ kbd {
 }
 .file-input {
   display: none;
+}
+.composer-formatbar {
+  min-height: 40px;
+  padding: 5px 9px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border-soft);
+  display: flex;
+  align-items: center;
+  scrollbar-width: none;
+}
+.composer-formatbar::-webkit-scrollbar {
+  display: none;
+}
+.composer-format-group {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: 6px;
+  padding-right: 6px;
+  border-right: 1px solid var(--border);
+}
+.composer-format-group:last-child {
+  margin-right: 0;
+  padding-right: 0;
+  border-right: 0;
+}
+.composer-formatbar button {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+.composer-formatbar button:hover {
+  background: var(--panel-raised);
+  color: var(--text);
 }
 .pending-attachments {
   padding: 8px 10px 1px;
@@ -1533,79 +1576,91 @@ kbd {
   color: #fff;
 }
 .composer:focus-within {
-  border-color: #6f737c;
-  box-shadow: 0 0 0 1px #6f737c;
+  border-color: var(--muted);
+  box-shadow: 0 0 0 1px var(--muted);
 }
 .composer textarea {
   display: block;
   width: 100%;
-  min-height: 54px;
+  min-height: 76px;
   resize: none;
   border: 0;
   outline: 0;
-  padding: 12px 14px 4px;
+  padding: 13px 14px 7px;
   background: transparent;
   color: var(--text);
   font-size: 14px;
+  line-height: 1.5;
 }
 .composer textarea::placeholder {
-  color: #777a81;
+  color: var(--quiet);
 }
 .composer-toolbar {
+  min-height: 46px;
+  padding: 5px 9px 9px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 5px 7px 7px;
 }
-.composer-toolbar > div {
+.composer-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
-}
-.composer-toolbar > div > span {
-  color: #777a82;
-  font-size: 11px;
+  gap: 3px;
 }
 .composer-toolbar button {
-  height: 29px;
-  min-width: 29px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
   border: 0;
   border-radius: 6px;
   background: transparent;
   display: grid;
   place-items: center;
-  color: #aaa7af;
+  color: var(--muted);
 }
-.composer-toolbar button:hover {
-  background: #2e3239;
-  color: #fff;
-}
-.composer-toolbar .format-button {
-  font-weight: 700;
-}
-.composer-toolbar .mention-button {
-  font-size: 17px;
+.composer-toolbar button:hover:not(:disabled) {
+  background: var(--panel-raised);
+  color: var(--text);
 }
 .composer-toolbar .attachment-button {
-  color: #b8b3bd;
+  margin-right: 2px;
+  border-radius: 50%;
+  background: var(--panel-raised);
+  color: var(--text);
+}
+.composer-toolbar .format-toggle {
+  width: 36px;
+  font-size: 17px;
+}
+.composer-toolbar .format-toggle span {
+  padding-bottom: 1px;
+  border-bottom: 1px solid currentColor;
+}
+.composer-toolbar .format-toggle.active {
+  color: var(--text);
+}
+.composer-toolbar .mention-button {
+  font-size: 20px;
 }
 .composer-toolbar .send-button {
   background: var(--accent-strong);
   color: #fff;
 }
-.composer-toolbar .send-button:hover {
-  background: #c47be1;
+.composer-toolbar .send-button:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--canvas);
 }
-.composer-wrap > p {
-  margin: 6px 4px 0;
-  color: #6f6c74;
-  font-size: 11px;
+.composer-toolbar .send-button:disabled {
+  background: transparent;
+  color: var(--quiet);
 }
 .composer-wrap > .inline-error {
+  margin: 6px 4px 0;
   display: flex;
   align-items: center;
   gap: 5px;
   color: #e28e91;
+  font-size: 11px;
 }
 .artifacts-view {
   flex: 1;
@@ -1791,14 +1846,16 @@ kbd {
 .mention-menu {
   position: absolute;
   z-index: 10;
+  top: 0;
   left: 26px;
-  bottom: 118px;
+  bottom: auto;
   width: min(360px, calc(100% - 52px));
   padding: 6px;
   border: 1px solid var(--border);
   border-radius: 9px;
   background: var(--mention-menu-bg);
   box-shadow: 0 15px 45px var(--shadow);
+  transform: translateY(calc(-100% - 8px));
 }
 .mention-menu > p {
   margin: 4px 7px 6px;
@@ -3237,6 +3294,14 @@ kbd {
   .composer-wrap {
     padding-left: 10px;
     padding-right: 10px;
+  }
+  .mention-menu {
+    left: 16px;
+    width: min(360px, calc(100% - 32px));
+  }
+  .composer-formatbar {
+    padding-right: 7px;
+    padding-left: 7px;
   }
   .stat-strip {
     grid-template-columns: repeat(2, 1fr);
