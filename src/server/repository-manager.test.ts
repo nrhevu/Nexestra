@@ -66,7 +66,26 @@ describe("RepositoryManager", () => {
         source: "https://token@example.com/owner/repository.git",
       }),
     ).rejects.toThrow("must not contain credentials");
-    expect(JSON.stringify(store.listKnowledge())).not.toContain("token@");
+    await expect(
+      manager.addRepository({
+        name: "Unsafe query repository",
+        handle: "unsafe-query-repo",
+        source:
+          "https://example.com/owner/repository.git?access_token=query-secret#fragment-secret",
+      }),
+    ).rejects.toThrow("must not contain credentials");
+    await expect(
+      manager.addRepository({
+        name: "Unsafe SSH repository",
+        handle: "unsafe-ssh-repo",
+        source: "git@example.com:owner/repository.git?access_token=scp-secret",
+      }),
+    ).rejects.toThrow("must not contain credentials");
+    const persisted = await readFile(join(root, "state.json"), "utf8");
+    expect(persisted).not.toContain("token@");
+    expect(persisted).not.toContain("query-secret");
+    expect(persisted).not.toContain("fragment-secret");
+    expect(persisted).not.toContain("scp-secret");
   });
 
   it("keeps a visible failed record when a repository cannot be cloned", async () => {

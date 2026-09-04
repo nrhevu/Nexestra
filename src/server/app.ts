@@ -1,5 +1,6 @@
+import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -23,6 +24,7 @@ interface CreateAppOptions {
   runner?: AgentRunner;
   auth?: ChatGptAuthManager;
   productionAssets?: boolean;
+  launchPath?: (path: string, reveal: boolean) => Promise<void>;
 }
 
 export function createApp(options: CreateAppOptions) {
@@ -30,6 +32,7 @@ export function createApp(options: CreateAppOptions) {
   const repositories = new RepositoryManager(options.store);
   const dispatcher = new AgentDispatcher(options.store, runner, repositories);
   const chat = new ChatService(options.store, dispatcher);
+  const launchPath = options.launchPath ?? launchDesktopPath;
   const localRunner = runner instanceof LocalAgentRunner ? runner : undefined;
   const auth =
     options.auth ?? (localRunner ? new ChatGptAuthManager(options.store, localRunner) : undefined);
@@ -308,48 +311,15 @@ export function createApp(options: CreateAppOptions) {
   });
 
   app.post("/api/assignments/:id/open", async (context) => {
-    const assignmentId = context.req.param("id");
-    const assignment = options.store.listAssignments().find((a) => a.id === assignmentId);
-    if (!assignment) throw new StoreError("not_found", "Assignment not found.");
-    const worktreePath = assignment.worktreePath;
-    // Open in VS Code or default editor
-    const { exec } = await import("node:child_process");
-    const openCommand =
-      process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
-    return new Promise<void>((resolve, reject) => {
-      exec(`${openCommand} "${worktreePath}"`, (error) => {
-        if (error) reject(error);
-        else {
-          context.body(null, 204);
-          resolve();
-        }
-      });
-    });
+    const worktreePath = assignmentWorktreePath(options.store, context.req.param("id"));
+    await launchPath(worktreePath, false);
+    return context.body(null, 204);
   });
 
   app.post("/api/assignments/:id/reveal", async (context) => {
-    const assignmentId = context.req.param("id");
-    const assignment = options.store.listAssignments().find((a) => a.id === assignmentId);
-    if (!assignment) throw new StoreError("not_found", "Assignment not found.");
-    const worktreePath = assignment.worktreePath;
-    const { exec } = await import("node:child_process");
-    let command: string;
-    if (process.platform === "darwin") {
-      command = `open -R "${worktreePath}"`;
-    } else if (process.platform === "win32") {
-      command = `explorer /select,"${worktreePath}"`;
-    } else {
-      command = `xdg-open "$(dirname "${worktreePath}")"`;
-    }
-    return new Promise<void>((resolve, reject) => {
-      exec(command, (error) => {
-        if (error) reject(error);
-        else {
-          context.body(null, 204);
-          resolve();
-        }
-      });
-    });
+    const worktreePath = assignmentWorktreePath(options.store, context.req.param("id"));
+    await launchPath(worktreePath, true);
+    return context.body(null, 204);
   });
 
   app.patch("/api/tasks/:id", async (context) => {
@@ -474,4 +444,45 @@ function isSafeImageMediaType(mediaType?: string): boolean {
   return ["image/avif", "image/gif", "image/jpeg", "image/png", "image/webp"].includes(
     mediaType ?? "",
   );
+}
+
+function assignmentWorktreePath(store: FileStore, assignmentId: string): string {
+  const assignment = store.listAssignments().find((entry) => entry.id === assignmentId);
+  if (!assignment) throw new StoreError("not_found", "Assignment not found.");
+  const root = resolve(store.root);
+  const worktreePath = resolve(root, assignment.worktreePath);
+  if (worktreePath !== root && !worktreePath.startsWith(`${root}${sep}`)) {
+    throw new StoreError("invalid", "Assignment worktree path is outside the data directory.");
+  }
+  return worktreePath;
+}
+
+async function launchDesktopPath(path: string, reveal: boolean): Promise<void> {
+  const [command, args] =
+    process.platform === "darwin"
+      ? ["open", reveal ? ["-R", path] : [path]]
+      : process.platform === "win32"
+        ? ["explorer.exe", reveal ? [`/select,${path}`] : [path]]
+        : ["xdg-open", [reveal ? dirname(path) : path]];
+  await new Promise<void>((resolveLaunch, rejectLaunch) => {
+    const child = spawn(command, args, { stdio: "ignore" });
+    let settled = false;
+    const timeout = setTimeout(() => {
+      child.kill();
+      finish(new Error("Desktop launcher timed out."));
+    }, 15_000);
+    timeout.unref();
+    child.once("error", finish);
+    child.once("close", (code) => {
+      finish(code === 0 ? undefined : new Error(`Desktop launcher exited with code ${code ?? 1}.`));
+    });
+
+    function finish(error?: Error): void {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (error) rejectLaunch(error);
+      else resolveLaunch();
+    }
+  });
 }

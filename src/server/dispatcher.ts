@@ -31,7 +31,6 @@ export class AgentDispatcher {
   private readonly liveActivities = new Map<string, RunActivity>();
   private readonly runControllers = new Map<string, AbortController>();
   private readonly stoppingRunIds = new Set<string>();
-  private readonly autoRetryAttempts = new Map<string, number>();
   private static readonly MAX_AUTO_RETRIES = 2;
   private readonly threadSubscribers = new Map<string, Set<(event: ThreadStreamEvent) => void>>();
   private readonly threadRevisions = new Map<string, number>();
@@ -399,7 +398,9 @@ export class AgentDispatcher {
           },
         },
       };
-      const response = (await this.runner.invoke(agent, invocation)).trim();
+      const response = this.store.redactSecrets(
+        (await this.runner.invoke(agent, invocation)).trim(),
+      );
       if (!response) throw new Error("The agent returned an empty response.");
       await this.store.createAgentMessage(run.threadId, agent, response, trigger.id);
       await this.store.updateRun({
@@ -418,30 +419,31 @@ export class AgentDispatcher {
         updatedAt: new Date().toISOString(),
       });
 
-      // Auto-retry logic for transient errors
       const isRetryable = this.isRetryableError(errorMessage);
-      const currentRetryCount = this.autoRetryAttempts.get(run.id) ?? 0;
+      const retriesUsed = run.attempt - 1;
 
-      if (isRetryable && currentRetryCount < AgentDispatcher.MAX_AUTO_RETRIES) {
-        this.autoRetryAttempts.set(run.id, currentRetryCount + 1);
+      if (isRetryable && retriesUsed < AgentDispatcher.MAX_AUTO_RETRIES) {
         this.notifyThread(run.threadId, true);
         console.log(
-          `[Auto-retry] Run ${run.id} failed (attempt ${currentRetryCount + 1}/${AgentDispatcher.MAX_AUTO_RETRIES}): ${errorMessage}. Retrying...`,
+          `[Auto-retry] Run ${run.id} failed (retry ${retriesUsed + 1}/${AgentDispatcher.MAX_AUTO_RETRIES}): ${errorMessage}. Retrying...`,
         );
-        // Wait a bit before retrying
-        await new Promise((resolve) => setTimeout(resolve, 1000 * (currentRetryCount + 1)));
-        // Retry the run
+        await new Promise((resolve) => setTimeout(resolve, 1000 * (retriesUsed + 1)));
+        const now = new Date().toISOString();
         await this.execute(
-          { ...run, id: crypto.randomUUID(), attempt: run.attempt + 1 },
+          {
+            ...run,
+            id: crypto.randomUUID(),
+            attempt: run.attempt + 1,
+            createdAt: now,
+            updatedAt: now,
+          },
           agent,
           trigger,
         );
-        this.autoRetryAttempts.delete(run.id);
-      } else if (currentRetryCount >= AgentDispatcher.MAX_AUTO_RETRIES) {
+      } else if (isRetryable) {
         console.log(
-          `[Auto-retry] Run ${run.id} exhausted retries after ${currentRetryCount} attempts.`,
+          `[Auto-retry] Run ${run.id} exhausted ${AgentDispatcher.MAX_AUTO_RETRIES} retries.`,
         );
-        this.autoRetryAttempts.delete(run.id);
       }
     } finally {
       for (const [toolCallId, approval] of this.pendingApprovals) {
@@ -560,7 +562,7 @@ export class AgentDispatcher {
           createdAt: now,
         };
 
-        const response = (
+        const rawResponse = (
           await this.runner.invoke(worker, {
             runId: id,
             thread,
@@ -579,6 +581,7 @@ export class AgentDispatcher {
             },
           })
         ).trim();
+        const response = this.store.redactSecrets(rawResponse);
 
         await this.store.createAgentMessage(thread.id, worker, response, trigger.id);
         await this.store.updateAssignment(assignment.id, {
@@ -726,7 +729,7 @@ export class AgentDispatcher {
             artifactIds: [],
           };
           const runtimeToolCalls = new Map<string, ToolCall>();
-          const response = (
+          const rawResponse = (
             await this.runner.invoke(worker, {
               runId: assignment.id,
               thread,
@@ -754,6 +757,7 @@ export class AgentDispatcher {
               },
             })
           ).trim();
+          const response = this.store.redactSecrets(rawResponse);
           controller.signal.throwIfAborted();
           if (!response) throw new Error("The Worker returned an empty response.");
 
@@ -977,7 +981,6 @@ export class AgentDispatcher {
     for (const listener of this.threadSubscribers.get(threadId) ?? []) listener(event);
   }
 
-  // Check if an error is likely transient and worth retrying
   private isRetryableError(message: string): boolean {
     const transientPatterns = [
       /timeout/i,

@@ -103,7 +103,7 @@ type PersistedState = z.infer<typeof StateSchema>;
 
 const CredentialSchema = z.object({
   version: z.literal(1),
-  credentials: z.record(z.string(), z.string()),
+  credentials: z.record(z.string(), z.string().max(4_096)),
 });
 
 type TranscriptEvent =
@@ -313,7 +313,14 @@ export class FileStore {
   redactSecrets(value: string): string {
     let redacted = value;
     for (const credential of Object.values(this.credentials)) {
-      if (credential) redacted = redacted.replaceAll(credential, "[REDACTED]");
+      if (!credential) continue;
+      if (credential.length >= 8) {
+        redacted = redacted.replaceAll(credential, "[REDACTED]");
+        continue;
+      }
+      const escaped = credential.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const token = new RegExp(`(^|[^\\p{L}\\p{N}_])${escaped}(?=$|[^\\p{L}\\p{N}_])`, "gu");
+      redacted = redacted.replace(token, (_match, prefix: string) => `${prefix}[REDACTED]`);
     }
     return redacted;
   }

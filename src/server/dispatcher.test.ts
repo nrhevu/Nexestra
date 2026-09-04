@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Agent, RuntimeStatus, ThreadStreamEvent, ToolCall } from "../shared/contracts.js";
 import { AgentDispatcher, ChatService } from "./dispatcher.js";
 import type { AssignmentLocation, AssignmentRepositoryManager } from "./repository-manager.js";
@@ -81,6 +81,31 @@ class StreamingRunner implements AgentRunner {
       summary: "Read README.md",
     });
     return "Live answer";
+  }
+}
+
+class FailingNetworkRunner implements AgentRunner {
+  readonly invocations: AgentInvocation[] = [];
+
+  async runtimeStatus() {
+    return readyRuntime;
+  }
+
+  async invoke(_agent: Agent, invocation: AgentInvocation): Promise<string> {
+    this.invocations.push(invocation);
+    throw new Error("Network unavailable.");
+  }
+}
+
+class SecretLeakingRunner implements AgentRunner {
+  constructor(private readonly secret: string) {}
+
+  async runtimeStatus() {
+    return readyRuntime;
+  }
+
+  async invoke(): Promise<string> {
+    return `accidental output: ${this.secret}`;
   }
 }
 
@@ -244,6 +269,47 @@ describe("mention dispatch", () => {
     expect((await store.threadData(thread.id)).messages).toHaveLength(1);
   });
 
+  it("redacts stored credentials from Worker replies before persisting them", async () => {
+    const secret = "sk-test-transcript-secret";
+    const root = await mkdtemp(join(tmpdir(), "nexestra-dispatch-redaction-"));
+    const store = await FileStore.open({ root, workspacePath: root });
+    const dispatcher = new AgentDispatcher(store, new SecretLeakingRunner(secret));
+    const chat = new ChatService(store, dispatcher);
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    await store.createAgent({
+      kind: "master",
+      name: "Gateway",
+      handle: "gateway",
+      description: "",
+      instructions: "",
+      accessMode: "ask",
+      provider: {
+        type: "custom",
+        name: "Gateway",
+        baseUrl: "https://example.test/v1",
+        model: "model-a",
+        protocol: "openai-chat",
+        apiKey: secret,
+      },
+    });
+    const worker = await store.createAgent({
+      kind: "worker",
+      name: "Codex",
+      handle: "codex",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+
+    await chat.send(thread.id, { content: `@${worker.handle} inspect this` });
+    await dispatcher.waitForIdle();
+
+    const snapshot = await store.transcriptSnapshot(thread.id);
+    expect(snapshot).toContain("accidental output: [REDACTED]");
+    expect(snapshot).not.toContain(secret);
+  });
+
   it("invokes every mentioned agent once with the same shared snapshot", async () => {
     const { chat, dispatcher, runner, store, thread } = await setup();
     for (const [name, handle, harness] of [
@@ -405,6 +471,41 @@ describe("mention dispatch", () => {
     expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
     await expect(dispatcher.retry(failed.id)).rejects.toBeInstanceOf(StoreError);
     expect((await store.threadData(thread.id)).runs).toHaveLength(2);
+  });
+
+  it("stops automatically retrying a transient failure after two retries", async () => {
+    const timeout = vi.spyOn(globalThis, "setTimeout").mockImplementation((handler) => {
+      handler();
+      return 0 as unknown as NodeJS.Timeout;
+    });
+    try {
+      const root = await mkdtemp(join(tmpdir(), "nexestra-dispatch-auto-retry-"));
+      const store = await FileStore.open({ root, workspacePath: root });
+      const runner = new FailingNetworkRunner();
+      const dispatcher = new AgentDispatcher(store, runner);
+      const chat = new ChatService(store, dispatcher);
+      const [thread] = store.listThreads();
+      if (!thread) throw new Error("expected seeded thread");
+      const agent = await store.createAgent({
+        kind: "worker",
+        name: "Codex",
+        handle: "codex",
+        description: "",
+        instructions: "",
+        harness: "codex",
+      });
+
+      await chat.send(thread.id, { content: `@${agent.handle} retry a transient failure` });
+      await dispatcher.waitForIdle();
+
+      expect(runner.invocations).toHaveLength(3);
+      const runs = (await store.threadData(thread.id)).runs;
+      expect(runs.map((run) => run.attempt)).toEqual([1, 2, 3]);
+      expect(runs.every((run) => run.status === "failed")).toBe(true);
+      expect(dispatcher.activeRuns()).toEqual([]);
+    } finally {
+      timeout.mockRestore();
+    }
   });
 
   it("keeps a run waiting until every concurrent approval is resolved", async () => {

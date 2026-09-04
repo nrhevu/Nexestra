@@ -30,8 +30,10 @@ view that joins this run data with the assignment and follows the thread event s
 
 When delegation inputs are available, a custom-provider Master may not finalize while tasks created
 by its current `plan` call remain undelegated. A premature final answer becomes a corrective provider
-turn instructing the Master to call `delegate` for each remaining task. Missing Workers or a missing
-repository reference remain explicit blockers instead of forcing invalid assignments.
+turn instructing the Master to call `delegate` for each remaining task. The Master receives the ready
+repositories in its workspace as delegation choices, even when the triggering message did not
+reference one. Missing Workers or a missing ready repository remain explicit blockers instead of
+forcing invalid assignments.
 
 ## Consequences
 

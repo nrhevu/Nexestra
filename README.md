@@ -50,6 +50,8 @@ Set `NEXESTRA_HOME=/another/path` to keep data outside the repository.
 Messages without a mention are only saved to the transcript. A message containing `@maya`,
 `@codex`, or multiple handles creates one run for each invoked agent. Agent replies are recorded
 in the same transcript file. Agent replies do not trigger other agents, which prevents loops.
+Transient run failures receive at most two automatic retries; every attempt remains visible in the
+canonical thread history.
 
 Messages render as safe GitHub Flavored Markdown with headings, emphasis, lists, task lists, tables,
 quotes, links, inline code, fenced code blocks, and KaTeX math. Raw HTML is shown as text instead of
@@ -202,10 +204,10 @@ OpenCode receives `--model` (in `provider/model` form) and the provider-specific
   approval review, and Full access bypasses the Codex sandbox and approvals. Codex CLI manages
   OAuth tokens; Nexestra never reads or stores them.
 - **Custom:** enter an API root and model, then select OpenAI Chat Completions or OpenAI Responses.
-  The API key may be left blank for a local endpoint. Remote endpoints must use HTTPS; HTTP is
-  accepted only on loopback. Select one access mode for the entire agent. Shell, custom tools, and
-  local MCP servers run as the current local OS user, so use Full access only when the provider and
-  extension code are trusted.
+  The API key may be left blank for a local endpoint; a non-empty key must contain at least eight
+  characters. Remote endpoints must use HTTPS; HTTP is accepted only on loopback. Select one access
+  mode for the entire agent. Shell, custom tools, and local MCP servers run as the current local OS
+  user, so use Full access only when the provider and extension code are trusted.
 
 ## Verification
 

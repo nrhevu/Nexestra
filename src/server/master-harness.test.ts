@@ -508,6 +508,11 @@ describe("Master harness tools", () => {
     await expect(call(context, "webfetch", { url: "http://127.0.0.1/private" })).resolves.toContain(
       "Private-network web URLs are blocked",
     );
+    const publicRequestCount = requests.length;
+    await expect(
+      call(context, "webfetch", { url: "http://[::ffff:127.0.0.1]/private" }),
+    ).resolves.toContain("Private-network web URLs are blocked");
+    expect(requests).toHaveLength(publicRequestCount);
   });
 
   it("pauses question tools until the user supplies an answer", async () => {

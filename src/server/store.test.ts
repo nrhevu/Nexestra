@@ -430,6 +430,22 @@ describe("FileStore", () => {
     expect(JSON.stringify(store.listAgents())).not.toContain(secret);
   });
 
+  it("redacts legacy short credentials without corrupting ordinary text", async () => {
+    const store = await openStore();
+    await writeFile(
+      store.credentialFile,
+      `${JSON.stringify({ version: 1, credentials: { legacy: "a" } })}\n`,
+    );
+    const reopened = await FileStore.open({
+      root: store.root,
+      workspacePath: store.workspacePath,
+    });
+
+    expect(reopened.redactSecrets("data; key=a; exact a")).toBe(
+      "data; key=[REDACTED]; exact [REDACTED]",
+    );
+  });
+
   it("permanently deletes an agent, its credential, and current task assignments", async () => {
     const store = await openStore();
     const [thread] = store.listThreads();

@@ -1371,7 +1371,16 @@ async function validatePublicUrl(value: string, context: MasterToolContext): Pro
 function isPrivateAddress(address: string): boolean {
   const normalized = address.toLowerCase();
   if (normalized.includes(":")) {
-    if (normalized.startsWith("::ffff:")) return isPrivateAddress(normalized.slice(7));
+    if (normalized.startsWith("::ffff:")) {
+      const mapped = normalized.slice(7);
+      if (!mapped.includes(":")) return isPrivateAddress(mapped);
+      const groups = mapped.split(":");
+      if (groups.length !== 2 || groups.some((group) => !/^[0-9a-f]{1,4}$/.test(group))) {
+        return true;
+      }
+      const [high = 0, low = 0] = groups.map((group) => Number.parseInt(group, 16));
+      return isPrivateAddress(`${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`);
+    }
     return (
       normalized === "::" ||
       normalized === "::1" ||

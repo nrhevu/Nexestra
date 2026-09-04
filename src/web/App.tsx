@@ -109,6 +109,7 @@ export function App() {
   const workspaceIdRef = useRef<string | undefined>(
     window.localStorage.getItem("nexestra.workspaceId") ?? undefined,
   );
+  const latestThreadRequestRef = useRef(0);
 
   // Apply theme to document
   useEffect(() => {
@@ -158,13 +159,15 @@ export function App() {
   }, []);
 
   const loadThread = useCallback(async (threadId: string, quiet = false) => {
+    const requestId = ++latestThreadRequestRef.current;
     try {
       const next = await api<ThreadData>(`/api/threads/${threadId}`);
+      if (requestId !== latestThreadRequestRef.current) return undefined;
       setThreadData(next);
       if (!quiet) setError(undefined);
       return next;
     } catch (caught) {
-      if (!quiet) setError(messageFrom(caught));
+      if (requestId === latestThreadRequestRef.current && !quiet) setError(messageFrom(caught));
       return undefined;
     }
   }, []);
@@ -215,6 +218,7 @@ export function App() {
   const isLoadingCurrentThread = Boolean(
     route.view === "threads" && route.threadId && route.threadId !== threadData?.thread.id,
   );
+  const visibleThreadData = route.threadId === threadData?.thread.id ? threadData : undefined;
   useEffect(() => {
     if (!isPollingActiveThread || !route.threadId) return;
     const threadId = route.threadId;
@@ -400,7 +404,7 @@ export function App() {
           <ThreadView
             key={route.threadId}
             data={data}
-            threadData={threadData}
+            threadData={visibleThreadData}
             runActivities={deferredRunActivities}
             onSend={async (content, files) => {
               if (!route.threadId) return;
@@ -2838,7 +2842,7 @@ function TaskProcessDialog({
                 <div className="worktree-actions">
                   <button
                     type="button"
-                    title="Open in editor"
+                    title="Open worktree"
                     onClick={async () => {
                       try {
                         await api(`/api/assignments/${encodeURIComponent(assignment.id)}/open`, {
@@ -3497,10 +3501,11 @@ function CustomProviderFields() {
         <Field label="Model ID">
           <input name="model" placeholder="model-name" required />
         </Field>
-        <Field label="API key" optional hint="May be left blank for a local endpoint">
+        <Field label="API key" optional hint="Leave blank or enter at least 8 characters">
           <input
             name="apiKey"
             type="password"
+            minLength={8}
             autoComplete="new-password"
             placeholder="••••••••••"
           />

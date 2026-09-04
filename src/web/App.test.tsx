@@ -379,6 +379,96 @@ describe("Workspace navigation", () => {
   });
 });
 
+describe("Thread navigation", () => {
+  it("keeps an older thread request from replacing the selected transcript", async () => {
+    const firstThread = {
+      id: "thread-first",
+      workspaceId: workspace.id,
+      name: "First thread",
+      slug: "first-thread",
+      createdAt: now,
+      updatedAt: now,
+      messageCount: 1,
+      lastMessageAt: now,
+    };
+    const secondThread = {
+      ...firstThread,
+      id: "thread-second",
+      name: "Second thread",
+      slug: "second-thread",
+    };
+    const transcript = (thread: typeof firstThread, content: string): ThreadData => ({
+      thread,
+      messages: [
+        {
+          id: `message-${thread.id}`,
+          threadId: thread.id,
+          sequence: 1,
+          author: { kind: "user", id: "local-user", name: "You" },
+          content,
+          mentions: [],
+          knowledgeReferences: [],
+          artifactIds: [],
+          createdAt: now,
+        },
+      ],
+      artifacts: [],
+      runs: [],
+      toolCalls: [],
+    });
+    let firstReads = 0;
+    let resolveOlderReload: (response: Response) => void = () => undefined;
+    let resolveSecond: (response: Response) => void = () => undefined;
+    const olderReload = new Promise<Response>((resolve) => {
+      resolveOlderReload = resolve;
+    });
+    const secondLoad = new Promise<Response>((resolve) => {
+      resolveSecond = resolve;
+    });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        return jsonResponse({ ...bootstrapData, threads: [firstThread, secondThread] });
+      }
+      if (path === `/api/threads/${firstThread.id}/messages` && init?.method === "POST") {
+        return jsonResponse({ message: {}, runs: [] }, 201);
+      }
+      if (path === `/api/threads/${firstThread.id}`) {
+        firstReads += 1;
+        return firstReads === 1
+          ? jsonResponse(transcript(firstThread, "First transcript"))
+          : olderReload;
+      }
+      if (path === `/api/threads/${secondThread.id}`) return secondLoad;
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${firstThread.id}`);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText("First transcript");
+    await user.type(screen.getByRole("combobox", { name: "Message" }), "Save this note");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(firstReads).toBe(2));
+    await user.click(screen.getByRole("button", { name: /Second thread/ }));
+
+    expect(screen.getByText("Loading transcript…")).toBeVisible();
+    expect(screen.queryByText("First transcript")).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveSecond(jsonResponse(transcript(secondThread, "Second transcript")));
+    });
+    await screen.findByText("Second transcript");
+    await act(async () => {
+      resolveOlderReload(jsonResponse(transcript(firstThread, "Stale first transcript")));
+    });
+
+    await waitFor(() => expect(screen.getByText("Second transcript")).toBeVisible());
+    expect(screen.queryByText("Stale first transcript")).not.toBeInTheDocument();
+  });
+});
+
 describe("Knowledge surface", () => {
   it("lists #references and uploads a document into the active workspace", async () => {
     window.history.replaceState({}, "", "/surfaces/knowledge");

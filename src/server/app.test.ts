@@ -1,7 +1,7 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Agent, RuntimeStatus } from "../shared/contracts.js";
 import { createApp } from "./app.js";
 import type { AgentInvocation, AgentRunner } from "./runtime.js";
@@ -690,5 +690,60 @@ describe("HTTP app", () => {
     const response = await app.request("/api");
     expect(response.status).toBe(404);
     expect(response.headers.get("content-type")).toContain("application/json");
+  });
+
+  it("opens assignment worktrees by absolute path without invoking a shell", async () => {
+    const [workspace] = store.listWorkspaces();
+    const [thread] = store.listThreads();
+    if (!workspace || !thread) throw new Error("expected seeded workspace and thread");
+    const now = new Date().toISOString();
+    const assignmentId = "assignment-open";
+    const relativeWorktree = `workspaces/${workspace.id}/worktrees/${assignmentId}`;
+    await store.createAssignment({
+      id: assignmentId,
+      workspaceId: workspace.id,
+      taskId: "task-open",
+      threadId: thread.id,
+      masterRunId: "run-master",
+      workerAgentId: "agent-worker",
+      repositoryId: "repository-open",
+      status: "completed",
+      branch: `nexestra/${assignmentId}`,
+      worktreePath: relativeWorktree,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const launchPath = vi.fn(async () => undefined);
+    app = createApp({ store, runner, launchPath });
+
+    const opened = await app.request(`/api/assignments/${assignmentId}/open`, { method: "POST" });
+    const revealed = await app.request(`/api/assignments/${assignmentId}/reveal`, {
+      method: "POST",
+    });
+
+    expect(opened.status).toBe(204);
+    expect(revealed.status).toBe(204);
+    expect(launchPath).toHaveBeenNthCalledWith(1, join(store.root, relativeWorktree), false);
+    expect(launchPath).toHaveBeenNthCalledWith(2, join(store.root, relativeWorktree), true);
+
+    await store.createAssignment({
+      id: "assignment-outside",
+      workspaceId: workspace.id,
+      taskId: "task-outside",
+      threadId: thread.id,
+      masterRunId: "run-master",
+      workerAgentId: "agent-worker",
+      repositoryId: "repository-open",
+      status: "completed",
+      branch: "nexestra/assignment-outside",
+      worktreePath: "../../outside",
+      createdAt: now,
+      updatedAt: now,
+    });
+    const blocked = await app.request("/api/assignments/assignment-outside/open", {
+      method: "POST",
+    });
+    expect(blocked.status).toBe(400);
+    expect(launchPath).toHaveBeenCalledTimes(2);
   });
 });

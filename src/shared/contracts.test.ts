@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { extractKnowledgeHandles, extractMentionHandles, handleFromName } from "./contracts.js";
+import {
+  CreateAgentSchema,
+  extractKnowledgeHandles,
+  extractMentionHandles,
+  handleFromName,
+} from "./contracts.js";
 
 describe("extractMentionHandles", () => {
   it("deduplicates handles case-insensitively and ignores email addresses", () => {
@@ -33,5 +38,38 @@ describe("extractKnowledgeHandles", () => {
     expect(extractKnowledgeHandles("https://example.com/page#section and #x but #xy")).toEqual([
       "xy",
     ]);
+  });
+});
+
+describe("CreateAgentSchema", () => {
+  const customMaster = {
+    kind: "master" as const,
+    name: "Gateway",
+    handle: "gateway",
+    description: "",
+    instructions: "",
+    accessMode: "ask" as const,
+    provider: {
+      type: "custom" as const,
+      name: "Gateway",
+      baseUrl: "https://example.test/v1",
+      model: "model-a",
+      protocol: "openai-chat" as const,
+    },
+  };
+
+  it("allows a blank custom-provider key but rejects unsafe short keys", () => {
+    expect(
+      CreateAgentSchema.safeParse({
+        ...customMaster,
+        provider: { ...customMaster.provider, apiKey: "" },
+      }).success,
+    ).toBe(true);
+    expect(
+      CreateAgentSchema.safeParse({
+        ...customMaster,
+        provider: { ...customMaster.provider, apiKey: "short" },
+      }).success,
+    ).toBe(false);
   });
 });
