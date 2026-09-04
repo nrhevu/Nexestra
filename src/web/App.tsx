@@ -1129,9 +1129,13 @@ function ThreadView(props: {
   const [activeTab, setActiveTab] = useState<"messages" | "artifacts">("messages");
   const [attachments, setAttachments] = useState<File[]>([]);
   const [draggingFiles, setDraggingFiles] = useState(false);
-  const [formattingOpen, setFormattingOpen] = useState(true);
+  const [formattingOpen, setFormattingOpen] = useState(false);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const addMenuRef = useRef<HTMLDivElement>(null);
+  const addButtonRef = useRef<HTMLButtonElement>(null);
+  const addFileButtonRef = useRef<HTMLButtonElement>(null);
   const pendingSelectionRef = useRef<{ start: number; end: number } | null>(null);
 
   // Load draft from localStorage when thread changes
@@ -1166,10 +1170,23 @@ function ThreadView(props: {
     textareaRef.current?.setSelectionRange(boundedSelection.start, boundedSelection.end);
   }, [draft]);
 
+  useEffect(() => {
+    if (!addMenuOpen) return;
+    addFileButtonRef.current?.focus();
+    const closeAddMenu = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (addMenuRef.current?.contains(target) || addButtonRef.current?.contains(target)) return;
+      setAddMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", closeAddMenu);
+    return () => document.removeEventListener("pointerdown", closeAddMenu);
+  }, [addMenuOpen]);
+
   const updateDraft = (value: string, start: number, end = start) => {
     pendingSelectionRef.current = { start, end };
     setDraft(value);
     setMentionMenuOpen(false);
+    setAddMenuOpen(false);
     setLocalError(undefined);
   };
 
@@ -1224,6 +1241,7 @@ function ThreadView(props: {
     pendingSelectionRef.current = { start: cursor, end: cursor };
     setDraft(value);
     setMentionMenuOpen(true);
+    setAddMenuOpen(false);
     setActiveSuggestion(0);
     setLocalError(undefined);
   };
@@ -1277,6 +1295,7 @@ function ThreadView(props: {
       setDraft("");
       setAttachments([]);
       setMentionMenuOpen(true);
+      setAddMenuOpen(false);
       // Clear draft from localStorage after sending
       const threadId = props.threadData?.thread.id;
       if (threadId) window.localStorage.removeItem(`nexestra.draft.${threadId}`);
@@ -1457,6 +1476,38 @@ function ThreadView(props: {
       )}
       {activeTab === "messages" && (
         <div className="composer-wrap">
+          {addMenuOpen && (
+            <div
+              ref={addMenuRef}
+              className="composer-add-menu"
+              id="composer-add-menu"
+              role="menu"
+              aria-label="Add to message"
+              onKeyDown={(event) => {
+                if (event.key !== "Escape") return;
+                event.preventDefault();
+                setAddMenuOpen(false);
+                addButtonRef.current?.focus();
+              }}
+            >
+              <button
+                ref={addFileButtonRef}
+                type="button"
+                role="menuitem"
+                aria-label="File"
+                onClick={() => {
+                  setAddMenuOpen(false);
+                  fileInputRef.current?.click();
+                }}
+              >
+                <FileText size={18} />
+                <span>
+                  <strong>File</strong>
+                  <small>Upload from your computer</small>
+                </span>
+              </button>
+            </div>
+          )}
           {mentionMenuOpen &&
             (suggestionMode === "knowledge"
               ? knowledgeSuggestions.length > 0
@@ -1535,6 +1586,7 @@ function ThreadView(props: {
             onDrop={(event) => {
               event.preventDefault();
               setDraggingFiles(false);
+              setAddMenuOpen(false);
               addAttachments([...event.dataTransfer.files]);
             }}
           >
@@ -1670,28 +1722,40 @@ function ThreadView(props: {
               onChange={(event) => {
                 setDraft(event.target.value);
                 setMentionMenuOpen(true);
+                setAddMenuOpen(false);
                 setActiveSuggestion(0);
                 setLocalError(undefined);
               }}
+              onFocus={() => setAddMenuOpen(false)}
               onKeyDown={onKeyDown}
               placeholder={`Message #${thread.slug}`}
-              rows={3}
+              rows={2}
             />
             <div className="composer-toolbar">
               <div className="composer-actions">
                 <button
-                  className="attachment-button"
+                  ref={addButtonRef}
+                  className={`attachment-button${addMenuOpen ? " active" : ""}`}
                   type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  aria-label="Attach files or images"
-                  title="Add files or images"
+                  onClick={() => {
+                    setMentionMenuOpen(false);
+                    setAddMenuOpen((open) => !open);
+                  }}
+                  aria-label="Add to message"
+                  aria-controls="composer-add-menu"
+                  aria-expanded={addMenuOpen}
+                  aria-haspopup="menu"
+                  title={addMenuOpen ? "Close add menu" : "Add to message"}
                 >
-                  <Plus size={20} />
+                  {addMenuOpen ? <X size={18} /> : <Plus size={19} />}
                 </button>
                 <button
                   className={`format-toggle${formattingOpen ? " active" : ""}`}
                   type="button"
-                  onClick={() => setFormattingOpen((open) => !open)}
+                  onClick={() => {
+                    setAddMenuOpen(false);
+                    setFormattingOpen((open) => !open);
+                  }}
                   aria-label="Toggle formatting"
                   aria-controls="message-formatting-toolbar"
                   aria-pressed={formattingOpen}

@@ -1399,9 +1399,13 @@ describe("Thread composer", () => {
 
     const composer = await screen.findByRole("combobox", { name: "Message" });
     const formatToggle = screen.getByRole("button", { name: "Toggle formatting" });
-    expect(screen.getByRole("toolbar", { name: "Message formatting" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Attach files or images" })).toBeVisible();
+    expect(formatToggle).toHaveAttribute("aria-pressed", "false");
+    expect(screen.queryByRole("toolbar", { name: "Message formatting" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add to message" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Mention an agent" })).toBeVisible();
+
+    await user.click(formatToggle);
+    expect(screen.getByRole("toolbar", { name: "Message formatting" })).toBeVisible();
     for (const name of [
       "Bold",
       "Italic",
@@ -1419,10 +1423,6 @@ describe("Thread composer", () => {
     expect(screen.queryByRole("button", { name: /record video/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /record audio/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /shortcut/i })).not.toBeInTheDocument();
-
-    await user.click(formatToggle);
-    expect(screen.queryByRole("toolbar", { name: "Message formatting" })).not.toBeInTheDocument();
-    await user.click(formatToggle);
 
     await user.type(composer, "hello world");
     act(() => {
@@ -1449,8 +1449,34 @@ describe("Thread composer", () => {
 
     const fileInput = screen.getByLabelText("Choose files or images");
     const fileInputClick = vi.spyOn(fileInput, "click");
-    await user.click(screen.getByRole("button", { name: "Attach files or images" }));
+    const addButton = screen.getByRole("button", { name: "Add to message" });
+    expect(addButton).toHaveAttribute("aria-expanded", "false");
+    await user.click(addButton);
+    expect(fileInputClick).not.toHaveBeenCalled();
+    expect(addButton).toHaveAttribute("aria-expanded", "true");
+    const addMenu = screen.getByRole("menu", { name: "Add to message" });
+    const addItems = within(addMenu).getAllByRole("menuitem");
+    expect(addItems).toHaveLength(1);
+    expect(addItems[0]).toHaveAccessibleName("File");
+    expect(addItems[0]).toHaveFocus();
+    await user.click(addButton);
+    expect(addButton).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("menu", { name: "Add to message" })).not.toBeInTheDocument();
+
+    await user.click(addButton);
+    expect(screen.getByRole("menuitem", { name: "File" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu", { name: "Add to message" })).not.toBeInTheDocument();
+    expect(addButton).toHaveFocus();
+
+    await user.click(addButton);
+    const fileItem = within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+      "menuitem",
+      { name: "File" },
+    );
+    await user.click(fileItem);
     expect(fileInputClick).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("menu", { name: "Add to message" })).not.toBeInTheDocument();
   });
 });
 

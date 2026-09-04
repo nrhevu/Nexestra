@@ -1463,7 +1463,7 @@ kbd {
 }
 .composer-wrap {
   position: relative;
-  padding: 0 20px 12px;
+  padding: 0 20px 10px;
 }
 .composer {
   min-width: 0;
@@ -1471,9 +1471,9 @@ kbd {
   padding: 0;
   overflow: hidden;
   border: 1px solid var(--composer-border);
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--composer-bg);
-  box-shadow: 0 2px 12px var(--shadow);
+  box-shadow: 0 1px 8px var(--shadow);
 }
 .composer.dragging {
   border-color: var(--accent);
@@ -1484,8 +1484,8 @@ kbd {
   display: none;
 }
 .composer-formatbar {
-  min-height: 40px;
-  padding: 5px 9px;
+  min-height: 34px;
+  padding: 3px 7px;
   overflow-x: auto;
   border-bottom: 1px solid var(--border-soft);
   display: flex;
@@ -1499,9 +1499,9 @@ kbd {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 2px;
-  margin-right: 6px;
-  padding-right: 6px;
+  gap: 1px;
+  margin-right: 4px;
+  padding-right: 4px;
   border-right: 1px solid var(--border);
 }
 .composer-format-group:last-child {
@@ -1510,9 +1510,9 @@ kbd {
   border-right: 0;
 }
 .composer-formatbar button {
-  width: 28px;
-  height: 28px;
-  flex: 0 0 28px;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
   padding: 0;
   border: 0;
   border-radius: 5px;
@@ -1582,11 +1582,11 @@ kbd {
 .composer textarea {
   display: block;
   width: 100%;
-  min-height: 76px;
+  min-height: 52px;
   resize: none;
   border: 0;
   outline: 0;
-  padding: 13px 14px 7px;
+  padding: 9px 12px 3px;
   background: transparent;
   color: var(--text);
   font-size: 14px;
@@ -1596,8 +1596,8 @@ kbd {
   color: var(--quiet);
 }
 .composer-toolbar {
-  min-height: 46px;
-  padding: 5px 9px 9px;
+  min-height: 40px;
+  padding: 4px 7px 6px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1608,8 +1608,8 @@ kbd {
   gap: 3px;
 }
 .composer-toolbar button {
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   padding: 0;
   border: 0;
   border-radius: 6px;
@@ -1628,9 +1628,13 @@ kbd {
   background: var(--panel-raised);
   color: var(--text);
 }
+.composer-toolbar .attachment-button.active {
+  background: var(--muted);
+  color: var(--canvas);
+}
 .composer-toolbar .format-toggle {
-  width: 36px;
-  font-size: 17px;
+  width: 34px;
+  font-size: 16px;
 }
 .composer-toolbar .format-toggle span {
   padding-bottom: 1px;
@@ -1640,7 +1644,7 @@ kbd {
   color: var(--text);
 }
 .composer-toolbar .mention-button {
-  font-size: 20px;
+  font-size: 19px;
 }
 .composer-toolbar .send-button {
   background: var(--accent-strong);
@@ -1842,6 +1846,53 @@ kbd {
 .artifact-empty p {
   margin: 0;
   font-size: 12px;
+}
+.composer-add-menu {
+  position: absolute;
+  z-index: 11;
+  top: 0;
+  left: 26px;
+  width: min(216px, calc(100% - 52px));
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--mention-menu-bg);
+  box-shadow: 0 12px 32px var(--shadow);
+  transform: translateY(calc(-100% - 7px));
+}
+.composer-add-menu button {
+  width: 100%;
+  min-height: 42px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--text);
+  text-align: left;
+}
+.composer-add-menu button:hover,
+.composer-add-menu button:focus-visible {
+  background: var(--panel-raised);
+}
+.composer-add-menu svg {
+  flex: none;
+  color: var(--muted);
+}
+.composer-add-menu span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.composer-add-menu strong {
+  font-size: 12px;
+}
+.composer-add-menu small {
+  color: var(--quiet);
+  font-size: 10px;
 }
 .mention-menu {
   position: absolute;
@@ -3298,6 +3349,10 @@ kbd {
   .mention-menu {
     left: 16px;
     width: min(360px, calc(100% - 32px));
+  }
+  .composer-add-menu {
+    left: 16px;
+    width: min(216px, calc(100% - 32px));
   }
   .composer-formatbar {
     padding-right: 7px;
