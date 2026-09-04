@@ -173,9 +173,8 @@ describe("Worker harness arguments", () => {
       const [, args, options] = processMocks.runCommand.mock.calls[0] ?? [];
       expect(options).toMatchObject({ cwd: worktree });
       if (harness === "codex") {
-        expect(args).toEqual(
-          expect.arrayContaining(["-C", worktree, "-s", "workspace-write", "--approve-for-me"]),
-        );
+        expect(args).toEqual(expect.arrayContaining(["-C", worktree, "--approve-for-me"]));
+        expect(args).not.toContain("-s");
       } else {
         expect(args).toEqual(expect.arrayContaining(["--agent", "build", "--dir", worktree]));
       }
@@ -344,7 +343,7 @@ describe("Worker harness arguments", () => {
 describe("ChatGPT Master harness arguments", () => {
   it.each([
     ["ask", "read-only", false, false],
-    ["auto", "workspace-write", true, false],
+    ["auto", undefined, true, false],
     ["full", undefined, false, true],
   ] as const)(
     "maps %s access to the expected Codex sandbox and approval flags",

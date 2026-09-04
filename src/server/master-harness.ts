@@ -18,6 +18,7 @@ import {
   dirname,
   extname,
   isAbsolute,
+  join,
   matchesGlob,
   relative,
   resolve,
@@ -379,7 +380,7 @@ function builtInTools(
     ),
     zodTool(
       "delegate",
-      "Assign one planned task to a Worker in an isolated worktree of a #repository.",
+      "Assign one planned task to a Worker in an isolated worktree of a ready #repository. Use any Worker handle and repository handle listed in the conversation context.",
       "edit",
       objectSchema(
         {
@@ -1528,11 +1529,15 @@ function isSensitivePath(context: MasterToolContext, target: string): boolean {
   const dataRoot = resolve(context.dataPath);
   const workspace = resolve(context.workspacePath);
   const resolvedTarget = resolve(target);
+  if (isCredentialPath(context, resolvedTarget)) return true;
+  if (resolve(resolvedTarget) === resolve(dataRoot, "state.json")) return true;
   const nestedDataRoot = dataRoot !== workspace && isWithin(workspace, dataRoot);
-  return (
-    (nestedDataRoot && isWithin(dataRoot, resolvedTarget)) ||
-    isCredentialPath(context, resolvedTarget)
-  );
+  if (!nestedDataRoot || !isWithin(dataRoot, resolvedTarget)) return false;
+  if (isWithin(join(dataRoot, "workspaces"), resolvedTarget)) return false;
+  if (isWithin(join(dataRoot, "threads"), resolvedTarget)) return true;
+  if (isWithin(join(dataRoot, "runs"), resolvedTarget)) return true;
+  if (isWithin(join(dataRoot, "artifacts"), resolvedTarget)) return true;
+  return true;
 }
 
 function isCredentialPath(context: MasterToolContext, target: string): boolean {

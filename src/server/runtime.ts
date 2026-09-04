@@ -5,6 +5,7 @@ import type {
   AgentReadiness,
   AgentView,
   HarnessPermissionKey,
+  KnowledgeRepository,
   MasterAgent,
   Message,
   RuntimeStatus,
@@ -142,11 +143,12 @@ export class LocalAgentRunner implements AgentRunner {
     const args = ["exec", "--json", "-C", workingDirectory];
     if (masterAccessMode === "full") {
       args.push("--dangerously-bypass-approvals-and-sandbox");
+    } else if (masterAccessMode === "auto" || taskWorker) {
+      args.push("--approve-for-me");
     } else {
-      args.push("-s", masterAccessMode === "auto" || taskWorker ? "workspace-write" : "read-only");
+      args.push("-s", "read-only");
     }
     args.push("--skip-git-repo-check", "--ephemeral", "-o", lastMessageFile);
-    if (masterAccessMode === "auto" || taskWorker) args.push("--approve-for-me");
     if (agent.kind === "worker") {
       if (agent.model) args.push("-m", agent.model);
       if (agent.reasoningEffort) {
@@ -266,19 +268,28 @@ export class LocalAgentRunner implements AgentRunner {
         (candidate) =>
           `- @${candidate.handle}: ${candidate.harness}${candidate.model ? `, model ${candidate.model}` : ""}`,
       );
-    const delegationAvailable =
-      workers.length > 0 &&
-      (invocation.knowledge ?? []).some(
-        ({ item }) => item.kind === "repository" && item.status === "ready",
-      );
+    const repositories = this.options.store
+      .listKnowledge(invocation.thread.workspaceId)
+      .filter(
+        (item): item is KnowledgeRepository =>
+          item.kind === "repository" && item.status === "ready",
+      )
+      .map((item) => `- #${item.handle}: ${item.name}`);
+    const delegationAvailable = workers.length > 0 && repositories.length > 0;
     const system = [
       `You are ${agent.name} (@${agent.handle}), Nexestra's internal Master agent.`,
       "You are responding in a shared thread with the user and other agents.",
       "Answer the exact message that just @mentioned you. Use tools when repository evidence or a code change is needed.",
-      "For repository implementation requests, call plan first, delegate each independent planned task to an available Worker and a referenced #repository, then synthesize the Worker results. Never invent task IDs, Worker handles, or repository handles.",
+      "For repository implementation requests, call plan first to break the work into concrete tasks, delegate each independent planned task to an available Worker and a ready #repository, then synthesize the Worker results. Never invent task IDs, Worker handles, or repository handles — use only the ones listed below.",
       workers.length > 0
         ? `Workers available for delegation:\n${workers.join("\n")}`
         : "No Workers are currently available for delegation. Explain this blocker instead of inventing a handle.",
+      repositories.length > 0
+        ? `Repositories available for delegation:\n${repositories.join("\n")}`
+        : "No repositories are currently ready for delegation. Explain this blocker if the user asks for code changes.",
+      delegationAvailable
+        ? "When the user asks for implementation work, use plan to create tasks, then delegate each task to a Worker with the appropriate #repository handle. The delegate tool requires a task ID from plan, a Worker handle from the list above, and a repository handle from the list above."
+        : "",
       "Keep working through tool results until the request is resolved, then return a concise final answer in the user's language.",
       tools.warnings.length > 0
         ? `Some configured extensions could not start:\n${tools.warnings.map((warning) => `- ${warning}`).join("\n")}`

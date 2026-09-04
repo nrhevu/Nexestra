@@ -801,6 +801,95 @@ export class FileStore {
       .join("\n\n");
   }
 
+  async exportThreadMarkdown(threadId: string): Promise<string> {
+    const thread = this.requireThread(threadId);
+    const data = await this.threadData(threadId);
+    const lines: string[] = [];
+    lines.push(`# ${thread.name}`);
+    lines.push("");
+    lines.push(`> Exported from Nexestra on ${new Date().toLocaleString()}`);
+    lines.push("");
+
+    // Group messages by date
+    const messagesByDate = new Map<string, typeof data.messages>();
+    for (const message of data.messages) {
+      const date = message.createdAt.split("T")[0] ?? "unknown";
+      const existing = messagesByDate.get(date) ?? [];
+      existing.push(message);
+      messagesByDate.set(date, existing);
+    }
+
+    const artifactsByMessage = new Map<string, Artifact[]>();
+    for (const artifact of data.artifacts) {
+      const artifacts = artifactsByMessage.get(artifact.messageId) ?? [];
+      artifacts.push(artifact);
+      artifactsByMessage.set(artifact.messageId, artifacts);
+    }
+
+    for (const [date, messages] of messagesByDate) {
+      const formattedDate = new Date(date).toLocaleDateString("en-US", {
+        weekday: "long",
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      });
+      lines.push(`## ${formattedDate}`);
+      lines.push("");
+
+      for (const message of messages) {
+        const time = new Date(message.createdAt).toLocaleTimeString("en-US", {
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+        const authorLabel =
+          message.author.kind === "agent"
+            ? `**${message.author.name}** @${message.author.handle}`
+            : `**${message.author.name}**`;
+
+        lines.push(`### ${authorLabel} — ${time}`);
+        lines.push("");
+        lines.push(
+          message.content
+            .split("\n")
+            .map((line) => `> ${line}`)
+            .join("\n"),
+        );
+        lines.push("");
+
+        // Include artifacts
+        const artifacts = artifactsByMessage.get(message.id) ?? [];
+        if (artifacts.length > 0) {
+          lines.push("**Attachments:**");
+          for (const artifact of artifacts) {
+            if (artifact.kind === "link") {
+              lines.push(`- [Link] ${artifact.name}: ${artifact.url}`);
+            } else if (artifact.kind === "image") {
+              lines.push(`- [Image] ${artifact.name}`);
+            } else {
+              lines.push(
+                `- [File] ${artifact.name}${artifact.size ? ` (${formatBytes(artifact.size)})` : ""}`,
+              );
+            }
+          }
+          lines.push("");
+        }
+
+        // Include knowledge references
+        if (message.knowledgeReferences.length > 0) {
+          lines.push(
+            `**Knowledge:** ${message.knowledgeReferences.map((ref) => `#${ref.handle}`).join(", ")}`,
+          );
+          lines.push("");
+        }
+
+        lines.push("---");
+        lines.push("");
+      }
+    }
+
+    return lines.join("\n");
+  }
+
   async createTask(rawInput: unknown): Promise<Task> {
     const input = CreateTaskSchema.parse(rawInput);
     return this.withWrite(async () => {
@@ -1473,6 +1562,12 @@ function cleanFileCandidate(value: string): string | undefined {
 function formatArtifactForTranscript(artifact: Artifact): string {
   const target = artifact.url ?? artifact.path;
   return `- [${artifact.kind}] ${artifact.name}${target ? ` (${target})` : ""}`;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function isStorageId(value: string): boolean {

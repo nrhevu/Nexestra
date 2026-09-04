@@ -543,6 +543,67 @@ describe("mention dispatch", () => {
     });
   });
 
+  it("delegates work without requiring #repository in the user message", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-dispatch-no-ref-"));
+    const store = await FileStore.open({ root, workspacePath: root });
+    const runner = new DelegatingMasterRunner();
+    const dispatcher = new AgentDispatcher(
+      store,
+      runner,
+      new FakeAssignmentRepositories(store.root),
+    );
+    const chat = new ChatService(store, dispatcher);
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    await store.createAgent({
+      kind: "master",
+      name: "Lead",
+      handle: "lead",
+      description: "",
+      instructions: "",
+      accessMode: "full",
+      provider: {
+        type: "custom",
+        name: "Test provider",
+        baseUrl: "https://example.test/v1",
+        model: "test-model",
+        protocol: "openai-chat",
+      },
+    });
+    await store.createAgent({
+      kind: "worker",
+      name: "Builder",
+      handle: "builder",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    const repository = await store.createKnowledgeRepository({
+      name: "Product repository",
+      handle: "product-repo",
+      source: "https://github.com/example/product.git",
+    });
+    await store.updateKnowledgeRepository(repository.id, {
+      status: "ready",
+      defaultBranch: "main",
+    });
+
+    const sent = await chat.send(thread.id, {
+      content: "@lead implement the feature",
+    });
+    await dispatcher.waitForIdle();
+
+    expect(sent.message.knowledgeReferences).toEqual([]);
+    expect(runner.invocations.map(({ agent }) => agent.id)).toHaveLength(2);
+    const [assignment] = store.listAssignments();
+    expect(assignment).toEqual(
+      expect.objectContaining({
+        status: "completed",
+        repositoryId: repository.id,
+      }),
+    );
+  });
+
   it("stops an active Worker process and preserves interrupted run and tool history", async () => {
     const root = await mkdtemp(join(tmpdir(), "nexestra-dispatch-stop-"));
     const store = await FileStore.open({ root, workspacePath: root });

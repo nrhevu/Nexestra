@@ -16,6 +16,7 @@ import {
   Link as LinkIcon,
   LoaderCircle,
   MessageSquareMore,
+  Moon,
   Paperclip,
   Pencil,
   Plus,
@@ -25,6 +26,7 @@ import {
   Settings,
   Sparkles,
   Square,
+  Sun,
   TerminalSquare,
   Trash2,
   Unplug,
@@ -99,10 +101,41 @@ export function App() {
   const [knowledgeToEdit, setKnowledgeToEdit] = useState<KnowledgeItem>();
   const [knowledgeToDelete, setKnowledgeToDelete] = useState<KnowledgeItem>();
   const [agentToDelete, setAgentToDelete] = useState<AgentView>();
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
+    const stored = window.localStorage.getItem("nexestra.theme") as "dark" | "light" | null;
+    return stored ?? "dark";
+  });
   const deferredRunActivities = useDeferredValue(runActivities);
   const workspaceIdRef = useRef<string | undefined>(
     window.localStorage.getItem("nexestra.workspaceId") ?? undefined,
   );
+
+  // Apply theme to document
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    window.localStorage.setItem("nexestra.theme", theme);
+  }, [theme]);
+
+  const toggleTheme = useCallback(() => {
+    setTheme((prev) => (prev === "dark" ? "light" : "dark"));
+  }, []);
+
+  // Handle custom events from command palette
+  useEffect(() => {
+    const handleNewThread = () => setModal("thread");
+    const handleNewTask = () => {
+      setTaskStatus("todo");
+      setModal("task");
+    };
+
+    document.addEventListener("nexestra:new-thread", handleNewThread);
+    document.addEventListener("nexestra:new-task", handleNewTask);
+
+    return () => {
+      document.removeEventListener("nexestra:new-thread", handleNewThread);
+      document.removeEventListener("nexestra:new-task", handleNewTask);
+    };
+  }, []);
 
   const navigate = useCallback((nextPath: string, nextRoute: RouteState, replace = false) => {
     window.history[replace ? "replaceState" : "pushState"]({}, "", nextPath);
@@ -331,6 +364,8 @@ export function App() {
       <TopBar
         key={`${data.workspace.id}:${route.view}:${route.threadId ?? route.surface}`}
         data={data}
+        theme={theme}
+        onThemeToggle={toggleTheme}
         onThread={openThread}
         onSurface={openSurface}
         onSettings={() => setModal("settings")}
@@ -674,6 +709,8 @@ export function App() {
 
 function TopBar(props: {
   data: BootstrapData;
+  theme: "dark" | "light";
+  onThemeToggle: () => void;
   onThread: (id: string) => void;
   onSurface: (surface: Surface) => void;
   onSettings: () => void;
@@ -692,42 +729,108 @@ function TopBar(props: {
     return () => window.removeEventListener("keydown", onShortcut);
   }, []);
   const query = deferredQueryText.trim().toLowerCase();
-  const results = query
+
+  // Command palette actions (shown when query starts with /)
+  const isCommand = query.startsWith("/");
+  const commandResults = isCommand
     ? [
-        ...props.data.threads
-          .filter((thread) => thread.name.toLowerCase().includes(query))
-          .map((thread) => ({
-            id: thread.id,
-            label: `# ${thread.name}`,
-            type: "Thread",
-            action: () => props.onThread(thread.id),
-          })),
-        ...props.data.agents
-          .filter((agent) => `${agent.name} ${agent.handle}`.toLowerCase().includes(query))
-          .map((agent) => ({
-            id: agent.id,
-            label: `@${agent.handle}`,
-            type: "Agent",
-            action: () => props.onSurface("agents" as const),
-          })),
-        ...props.data.tasks
-          .filter((task) => task.title.toLowerCase().includes(query))
-          .map((task) => ({
-            id: task.id,
-            label: task.title,
-            type: "Task",
-            action: () => props.onSurface("taskboard" as const),
-          })),
-        ...props.data.knowledge
-          .filter((item) => `${item.name} ${item.handle}`.toLowerCase().includes(query))
-          .map((item) => ({
-            id: item.id,
-            label: `#${item.handle}`,
-            type: item.kind === "document" ? "Document" : "Repository",
-            action: () => props.onSurface("knowledge" as const),
-          })),
-      ].slice(0, 8)
+        {
+          id: "new-thread",
+          label: "New thread",
+          description: "Create a new conversation thread",
+          action: () => {
+            setQueryText("");
+            // Trigger new thread dialog via keyboard shortcut simulation
+            document.dispatchEvent(new CustomEvent("nexestra:new-thread"));
+          },
+        },
+        {
+          id: "new-task",
+          label: "New task",
+          description: "Create a new task on the board",
+          action: () => {
+            setQueryText("");
+            document.dispatchEvent(new CustomEvent("nexestra:new-task"));
+          },
+        },
+        {
+          id: "taskboard",
+          label: "Go to Taskboard",
+          description: "Open the task management surface",
+          action: () => {
+            props.onSurface("taskboard");
+            setQueryText("");
+          },
+        },
+        {
+          id: "agents",
+          label: "Go to Agents",
+          description: "Manage your agents",
+          action: () => {
+            props.onSurface("agents");
+            setQueryText("");
+          },
+        },
+        {
+          id: "knowledge",
+          label: "Go to Knowledge",
+          description: "Manage your documents and repositories",
+          action: () => {
+            props.onSurface("knowledge");
+            setQueryText("");
+          },
+        },
+        {
+          id: "settings",
+          label: "Open Settings",
+          description: "Configure your workspace",
+          action: () => {
+            props.onSettings();
+            setQueryText("");
+          },
+        },
+      ].filter((cmd) => cmd.label.toLowerCase().includes(query.slice(1)))
     : [];
+
+  const searchResults =
+    query && !isCommand
+      ? [
+          ...props.data.threads
+            .filter((thread) => thread.name.toLowerCase().includes(query))
+            .map((thread) => ({
+              id: thread.id,
+              label: `# ${thread.name}`,
+              type: "Thread",
+              action: () => props.onThread(thread.id),
+            })),
+          ...props.data.agents
+            .filter((agent) => `${agent.name} ${agent.handle}`.toLowerCase().includes(query))
+            .map((agent) => ({
+              id: agent.id,
+              label: `@${agent.handle}`,
+              type: "Agent",
+              action: () => props.onSurface("agents" as const),
+            })),
+          ...props.data.tasks
+            .filter((task) => task.title.toLowerCase().includes(query))
+            .map((task) => ({
+              id: task.id,
+              label: task.title,
+              type: "Task",
+              action: () => props.onSurface("taskboard" as const),
+            })),
+          ...props.data.knowledge
+            .filter((item) => `${item.name} ${item.handle}`.toLowerCase().includes(query))
+            .map((item) => ({
+              id: item.id,
+              label: `#${item.handle}`,
+              type: item.kind === "document" ? "Document" : "Repository",
+              action: () => props.onSurface("knowledge" as const),
+            })),
+        ].slice(0, 8)
+      : [];
+
+  const results = isCommand ? commandResults : searchResults;
   return (
     <header className="topbar">
       <div className="global-search">
@@ -737,40 +840,58 @@ function TopBar(props: {
           aria-label="Search threads, tasks, agents, or knowledge"
           value={queryText}
           onChange={(event) => setQueryText(event.target.value)}
-          placeholder="Search threads, tasks, agents, or knowledge"
+          placeholder={
+            isCommand ? "Type a command..." : "Search threads, tasks, agents, or knowledge"
+          }
         />
         <kbd>⌘/Ctrl K</kbd>
         {query && (
           <div className="search-results">
             {results.length === 0 ? (
-              <p>No results found.</p>
+              <p>{isCommand ? "No commands found." : "No results found."}</p>
             ) : (
               results.map((result) => (
                 <button
                   type="button"
-                  key={`${result.type}-${result.id}`}
+                  key={`${"type" in result ? result.type : "command"}-${result.id}`}
                   onClick={() => {
                     result.action();
                     setQueryText("");
                   }}
                 >
                   <span>{result.label}</span>
-                  <small>{result.type}</small>
+                  <small>
+                    {"description" in result
+                      ? result.description
+                      : "type" in result
+                        ? result.type
+                        : ""}
+                  </small>
                 </button>
               ))
             )}
           </div>
         )}
       </div>
-      <button
-        className="profile-button"
-        type="button"
-        aria-label="Open settings"
-        onClick={props.onSettings}
-      >
-        ME
-        <span />
-      </button>
+      <div className="topbar-actions">
+        <button
+          className="theme-toggle"
+          type="button"
+          aria-label={`Switch to ${props.theme === "dark" ? "light" : "dark"} theme`}
+          onClick={props.onThemeToggle}
+        >
+          {props.theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+        </button>
+        <button
+          className="profile-button"
+          type="button"
+          aria-label="Open settings"
+          onClick={props.onSettings}
+        >
+          ME
+          <span />
+        </button>
+      </div>
     </header>
   );
 }
@@ -983,6 +1104,27 @@ function ThreadView(props: {
   const [attachments, setAttachments] = useState<File[]>([]);
   const [draggingFiles, setDraggingFiles] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Load draft from localStorage when thread changes
+  useEffect(() => {
+    const threadId = props.threadData?.thread?.id;
+    if (!threadId) return;
+    const stored = window.localStorage.getItem(`nexestra.draft.${threadId}`);
+    if (stored) setDraft(stored);
+    else setDraft("");
+  }, [props.threadData?.thread?.id]);
+
+  // Save draft to localStorage when it changes
+  const threadId = props.threadData?.thread?.id;
+  useEffect(() => {
+    if (!threadId) return;
+    if (draft) {
+      window.localStorage.setItem(`nexestra.draft.${threadId}`, draft);
+    } else {
+      window.localStorage.removeItem(`nexestra.draft.${threadId}`);
+    }
+  }, [draft, threadId]);
+
   const mentionAgents = useMemo(
     () =>
       props.data.agents
@@ -1032,6 +1174,9 @@ function ThreadView(props: {
       setDraft("");
       setAttachments([]);
       setMentionMenuOpen(true);
+      // Clear draft from localStorage after sending
+      const threadId = props.threadData?.thread.id;
+      if (threadId) window.localStorage.removeItem(`nexestra.draft.${threadId}`);
     } catch (caught) {
       setLocalError(messageFrom(caught));
     } finally {
@@ -1149,11 +1294,22 @@ function ThreadView(props: {
           <p className="eyebrow">THREAD</p>
           <h1># {thread.name}</h1>
         </div>
-        <div className="thread-summary">
-          <UsersRound size={16} />
-          <span>{props.data.agents.filter((agent) => !agent.archived).length} agents</span>
-          <i />
-          Shared transcript
+        <div className="header-actions">
+          <a
+            href={`/api/threads/${encodeURIComponent(thread.id)}/export`}
+            download={`${thread.slug}.md`}
+            className="export-button"
+            title="Export thread as Markdown"
+          >
+            <Download size={15} />
+            <span>Export</span>
+          </a>
+          <div className="thread-summary">
+            <UsersRound size={16} />
+            <span>{props.data.agents.filter((agent) => !agent.archived).length} agents</span>
+            <i />
+            Shared transcript
+          </div>
         </div>
       </header>
       <div className="thread-tabs">
@@ -2678,6 +2834,32 @@ function TaskProcessDialog({
                 <div>
                   <span>Worktree</span>
                   <code>{assignment.worktreePath}</code>
+                </div>
+                <div className="worktree-actions">
+                  <button
+                    type="button"
+                    title="Open in editor"
+                    onClick={async () => {
+                      try {
+                        await api(`/api/assignments/${encodeURIComponent(assignment.id)}/open`, {
+                          method: "POST",
+                        });
+                      } catch {
+                        // Silently fail - user might not have VS Code
+                      }
+                    }}
+                  >
+                    <ExternalLink size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    title="Copy path"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(assignment.worktreePath);
+                    }}
+                  >
+                    <Copy size={13} />
+                  </button>
                 </div>
               </div>
 

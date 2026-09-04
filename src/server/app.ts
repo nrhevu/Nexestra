@@ -191,6 +191,20 @@ export function createApp(options: CreateAppOptions) {
     return context.json(await options.store.threadData(context.req.param("id")));
   });
 
+  app.get("/api/threads/:id/export", async (context) => {
+    const threadId = context.req.param("id");
+    const thread = options.store.getThread(threadId);
+    if (!thread) throw new StoreError("not_found", "Thread not found.");
+    const markdown = await options.store.exportThreadMarkdown(threadId);
+    return new Response(markdown, {
+      headers: {
+        "content-type": "text/markdown; charset=utf-8",
+        "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(`${thread.slug}.md`)}`,
+        "cache-control": "private, no-store",
+      },
+    });
+  });
+
   app.get("/api/threads/:id/events", (context) => {
     const threadId = context.req.param("id");
     if (!options.store.getThread(threadId)) {
@@ -293,6 +307,51 @@ export function createApp(options: CreateAppOptions) {
     return context.json(await dispatcher.stopTask(context.req.param("id")));
   });
 
+  app.post("/api/assignments/:id/open", async (context) => {
+    const assignmentId = context.req.param("id");
+    const assignment = options.store.listAssignments().find((a) => a.id === assignmentId);
+    if (!assignment) throw new StoreError("not_found", "Assignment not found.");
+    const worktreePath = assignment.worktreePath;
+    // Open in VS Code or default editor
+    const { exec } = await import("node:child_process");
+    const openCommand =
+      process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+    return new Promise<void>((resolve, reject) => {
+      exec(`${openCommand} "${worktreePath}"`, (error) => {
+        if (error) reject(error);
+        else {
+          context.body(null, 204);
+          resolve();
+        }
+      });
+    });
+  });
+
+  app.post("/api/assignments/:id/reveal", async (context) => {
+    const assignmentId = context.req.param("id");
+    const assignment = options.store.listAssignments().find((a) => a.id === assignmentId);
+    if (!assignment) throw new StoreError("not_found", "Assignment not found.");
+    const worktreePath = assignment.worktreePath;
+    const { exec } = await import("node:child_process");
+    let command: string;
+    if (process.platform === "darwin") {
+      command = `open -R "${worktreePath}"`;
+    } else if (process.platform === "win32") {
+      command = `explorer /select,"${worktreePath}"`;
+    } else {
+      command = `xdg-open "$(dirname "${worktreePath}")"`;
+    }
+    return new Promise<void>((resolve, reject) => {
+      exec(command, (error) => {
+        if (error) reject(error);
+        else {
+          context.body(null, 204);
+          resolve();
+        }
+      });
+    });
+  });
+
   app.patch("/api/tasks/:id", async (context) => {
     return context.json(
       await options.store.updateTask(context.req.param("id"), await context.req.json()),
@@ -302,6 +361,13 @@ export function createApp(options: CreateAppOptions) {
   app.delete("/api/tasks/:id", async (context) => {
     await options.store.deleteTask(context.req.param("id"));
     return context.body(null, 204);
+  });
+
+  app.post("/api/tasks/:taskId/delegate", async (context) => {
+    const taskId = context.req.param("taskId");
+    const body = await context.req.json();
+    const { workerHandle, repositoryHandle } = body;
+    return context.json(await dispatcher.delegateFromTask(taskId, workerHandle, repositoryHandle));
   });
 
   app.post("/api/auth/chatgpt/start", async (context) => {
