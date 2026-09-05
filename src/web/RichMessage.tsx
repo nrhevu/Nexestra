@@ -7,7 +7,9 @@ import {
   memo,
   type ReactElement,
   type ReactNode,
+  useCallback,
   useMemo,
+  useState,
 } from "react";
 import Markdown, { type Components } from "react-markdown";
 import rehypeKatex from "rehype-katex";
@@ -59,6 +61,7 @@ function RichMessageView({
       ),
       a: MarkdownLink,
       code: MarkdownCode,
+      pre: CodeBlock,
     }),
     [knownHandles, knownKnowledgeHandles],
   );
@@ -142,6 +145,48 @@ function MarkdownCode({
   ...props
 }: ComponentPropsWithoutRef<"code"> & { node?: unknown }) {
   return <code {...props} />;
+}
+
+function CodeBlock({ children, ...props }: ComponentPropsWithoutRef<"pre"> & { node?: unknown }) {
+  const [copied, setCopied] = useState(false);
+
+  // Extract code content from children
+  const codeContent = useCallback(() => {
+    if (!children) return "";
+    const extractText = (node: ReactNode): string => {
+      if (typeof node === "string") return node;
+      if (typeof node === "number") return String(node);
+      if (Array.isArray(node)) return node.map(extractText).join("");
+      if (isValidElement(node)) {
+        const element = node as ReactElement<{ children?: ReactNode }>;
+        return extractText(element.props.children);
+      }
+      return "";
+    };
+    return extractText(children).trim();
+  }, [children]);
+
+  const handleCopy = useCallback(() => {
+    const text = codeContent();
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [codeContent]);
+
+  return (
+    <pre {...props} className="code-block">
+      <button
+        type="button"
+        className={`code-copy-button${copied ? " copied" : ""}`}
+        onClick={handleCopy}
+        aria-label={copied ? "Copied!" : "Copy code"}
+      >
+        {copied ? "Copied!" : "Copy"}
+      </button>
+      {children}
+    </pre>
+  );
 }
 
 function highlightTextReferences(

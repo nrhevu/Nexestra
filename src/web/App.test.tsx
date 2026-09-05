@@ -379,6 +379,96 @@ describe("Workspace navigation", () => {
   });
 });
 
+describe("Thread navigation", () => {
+  it("keeps an older thread request from replacing the selected transcript", async () => {
+    const firstThread = {
+      id: "thread-first",
+      workspaceId: workspace.id,
+      name: "First thread",
+      slug: "first-thread",
+      createdAt: now,
+      updatedAt: now,
+      messageCount: 1,
+      lastMessageAt: now,
+    };
+    const secondThread = {
+      ...firstThread,
+      id: "thread-second",
+      name: "Second thread",
+      slug: "second-thread",
+    };
+    const transcript = (thread: typeof firstThread, content: string): ThreadData => ({
+      thread,
+      messages: [
+        {
+          id: `message-${thread.id}`,
+          threadId: thread.id,
+          sequence: 1,
+          author: { kind: "user", id: "local-user", name: "You" },
+          content,
+          mentions: [],
+          knowledgeReferences: [],
+          artifactIds: [],
+          createdAt: now,
+        },
+      ],
+      artifacts: [],
+      runs: [],
+      toolCalls: [],
+    });
+    let firstReads = 0;
+    let resolveOlderReload: (response: Response) => void = () => undefined;
+    let resolveSecond: (response: Response) => void = () => undefined;
+    const olderReload = new Promise<Response>((resolve) => {
+      resolveOlderReload = resolve;
+    });
+    const secondLoad = new Promise<Response>((resolve) => {
+      resolveSecond = resolve;
+    });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        return jsonResponse({ ...bootstrapData, threads: [firstThread, secondThread] });
+      }
+      if (path === `/api/threads/${firstThread.id}/messages` && init?.method === "POST") {
+        return jsonResponse({ message: {}, runs: [] }, 201);
+      }
+      if (path === `/api/threads/${firstThread.id}`) {
+        firstReads += 1;
+        return firstReads === 1
+          ? jsonResponse(transcript(firstThread, "First transcript"))
+          : olderReload;
+      }
+      if (path === `/api/threads/${secondThread.id}`) return secondLoad;
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${firstThread.id}`);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText("First transcript");
+    await user.type(screen.getByRole("combobox", { name: "Message" }), "Save this note");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(firstReads).toBe(2));
+    await user.click(screen.getByRole("button", { name: /Second thread/ }));
+
+    expect(screen.getByText("Loading transcript…")).toBeVisible();
+    expect(screen.queryByText("First transcript")).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveSecond(jsonResponse(transcript(secondThread, "Second transcript")));
+    });
+    await screen.findByText("Second transcript");
+    await act(async () => {
+      resolveOlderReload(jsonResponse(transcript(firstThread, "Stale first transcript")));
+    });
+
+    await waitFor(() => expect(screen.getByText("Second transcript")).toBeVisible());
+    expect(screen.queryByText("Stale first transcript")).not.toBeInTheDocument();
+  });
+});
+
 describe("Knowledge surface", () => {
   it("lists #references and uploads a document into the active workspace", async () => {
     window.history.replaceState({}, "", "/surfaces/knowledge");
@@ -679,9 +769,9 @@ describe("Taskboard Worker process", () => {
       createdAt: now,
       updatedAt: now,
     };
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
-      if (path === "/api/bootstrap") {
+      if (path.startsWith("/api/bootstrap")) {
         return jsonResponse({
           ...bootstrapData,
           agents: [workerAgent],
@@ -723,6 +813,22 @@ describe("Taskboard Worker process", () => {
           ],
         });
       }
+      if (path === `/api/tasks/${task.id}/stop` && init?.method === "POST") {
+        return jsonResponse({
+          task: { ...task, status: "todo", assigneeId: null },
+          assignment: {
+            ...assignment,
+            status: "interrupted",
+            error: "Worker process stopped by the user.",
+          },
+          run: {
+            ...run,
+            status: "interrupted",
+            error: "Worker process stopped by the user.",
+          },
+          toolCalls: [],
+        });
+      }
       return jsonResponse({ error: { message: "Not found" } }, 404);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -739,6 +845,14 @@ describe("Taskboard Worker process", () => {
     expect(within(dialog).getByText("Implementing the change…")).toBeVisible();
     await user.click(within(dialog).getByText("Thinking"));
     expect(await within(dialog).findByText("Inspecting")).toBeVisible();
+    await user.click(within(dialog).getByRole("button", { name: "Stop process" }));
+    expect(await within(dialog).findByText("Worker process stopped")).toBeVisible();
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) =>
+          String(input) === `/api/tasks/${task.id}/stop` && init?.method === "POST",
+      ),
+    ).toBe(true);
   });
 
   it("shows task details and supports editing and deletion", async () => {
@@ -1246,6 +1360,123 @@ describe("Agent deletion", () => {
       });
     });
     expect(screen.queryByText("Unknown @former-planner.")).not.toBeInTheDocument();
+  });
+});
+
+describe("Thread composer", () => {
+  it("provides Slack-style composer controls and applies Markdown formatting", async () => {
+    const user = userEvent.setup();
+    const thread = {
+      id: "thread-composer",
+      workspaceId: workspace.id,
+      name: "general",
+      slug: "general",
+      createdAt: now,
+      updatedAt: now,
+      messageCount: 0,
+      lastMessageAt: null,
+    };
+    const transcript: ThreadData = {
+      thread,
+      messages: [],
+      artifacts: [],
+      runs: [],
+      toolCalls: [],
+    };
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/bootstrap") {
+          return jsonResponse({ ...bootstrapData, agents: [workerAgent], threads: [thread] });
+        }
+        if (path === `/api/threads/${thread.id}`) return jsonResponse(transcript);
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      }),
+    );
+    render(<App />);
+
+    const composer = await screen.findByRole("combobox", { name: "Message" });
+    const formatToggle = screen.getByRole("button", { name: "Toggle formatting" });
+    expect(formatToggle).toHaveAttribute("aria-pressed", "false");
+    expect(screen.queryByRole("toolbar", { name: "Message formatting" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add to message" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Mention an agent" })).toBeVisible();
+
+    await user.click(formatToggle);
+    expect(screen.getByRole("toolbar", { name: "Message formatting" })).toBeVisible();
+    for (const name of [
+      "Bold",
+      "Italic",
+      "Strikethrough",
+      "Link",
+      "Numbered list",
+      "Bulleted list",
+      "Quote",
+      "Inline code",
+      "Code block",
+    ]) {
+      expect(screen.getByRole("button", { name })).toBeVisible();
+    }
+    expect(screen.queryByRole("button", { name: "Reference knowledge" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /record video/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /record audio/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /shortcut/i })).not.toBeInTheDocument();
+
+    await user.type(composer, "hello world");
+    act(() => {
+      composer.focus();
+      (composer as HTMLTextAreaElement).setSelectionRange(6, 11);
+    });
+    await user.click(screen.getByRole("button", { name: "Bold" }));
+    await waitFor(() => expect(composer).toHaveValue("hello **world**"));
+    expect(composer).toHaveFocus();
+    expect((composer as HTMLTextAreaElement).selectionStart).toBe(8);
+    expect((composer as HTMLTextAreaElement).selectionEnd).toBe(13);
+    await user.click(screen.getByRole("button", { name: "Bulleted list" }));
+    await waitFor(() => expect(composer).toHaveValue("- hello **world**"));
+    await user.click(screen.getByRole("button", { name: "Bulleted list" }));
+    await waitFor(() => expect(composer).toHaveValue("hello **world**"));
+
+    act(() => {
+      (composer as HTMLTextAreaElement).setSelectionRange(15, 15);
+    });
+    await user.click(screen.getByRole("button", { name: "Mention an agent" }));
+    expect(await screen.findByRole("listbox", { name: "Choose an agent" })).toBeVisible();
+    await user.keyboard("{Enter}");
+    expect(composer).toHaveValue("hello **world** @planner ");
+
+    const fileInput = screen.getByLabelText("Choose files or images");
+    const fileInputClick = vi.spyOn(fileInput, "click");
+    const addButton = screen.getByRole("button", { name: "Add to message" });
+    expect(addButton).toHaveAttribute("aria-expanded", "false");
+    await user.click(addButton);
+    expect(fileInputClick).not.toHaveBeenCalled();
+    expect(addButton).toHaveAttribute("aria-expanded", "true");
+    const addMenu = screen.getByRole("menu", { name: "Add to message" });
+    const addItems = within(addMenu).getAllByRole("menuitem");
+    expect(addItems).toHaveLength(1);
+    expect(addItems[0]).toHaveAccessibleName("File");
+    expect(addItems[0]).toHaveFocus();
+    await user.click(addButton);
+    expect(addButton).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("menu", { name: "Add to message" })).not.toBeInTheDocument();
+
+    await user.click(addButton);
+    expect(screen.getByRole("menuitem", { name: "File" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu", { name: "Add to message" })).not.toBeInTheDocument();
+    expect(addButton).toHaveFocus();
+
+    await user.click(addButton);
+    const fileItem = within(screen.getByRole("menu", { name: "Add to message" })).getByRole(
+      "menuitem",
+      { name: "File" },
+    );
+    await user.click(fileItem);
+    expect(fileInputClick).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("menu", { name: "Add to message" })).not.toBeInTheDocument();
   });
 });
 

@@ -37,4 +37,19 @@ describe("runCommand", () => {
     expect(Date.now() - startedAt).toBeGreaterThanOrEqual(80);
     expect(Date.now() - startedAt).toBeLessThan(2_000);
   });
+
+  it("terminates the process group when the caller aborts", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "nexestra-process-abort-"));
+    const controller = new AbortController();
+    const command = runCommand(process.execPath, ["-e", "setInterval(()=>{},1000)"], {
+      cwd,
+      timeoutMs: 5_000,
+      terminationGraceMs: 50,
+      signal: controller.signal,
+    });
+
+    controller.abort(new Error("Stopped by the user."));
+
+    await expect(command).rejects.toThrow("Stopped by the user.");
+  });
 });

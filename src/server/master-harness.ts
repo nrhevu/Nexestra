@@ -18,6 +18,7 @@ import {
   dirname,
   extname,
   isAbsolute,
+  join,
   matchesGlob,
   relative,
   resolve,
@@ -379,7 +380,7 @@ function builtInTools(
     ),
     zodTool(
       "delegate",
-      "Assign one planned task to a Worker in an isolated worktree of a #repository.",
+      "Assign one planned task to a Worker in an isolated worktree of a ready #repository. Use any Worker handle and repository handle listed in the conversation context.",
       "edit",
       objectSchema(
         {
@@ -1370,7 +1371,16 @@ async function validatePublicUrl(value: string, context: MasterToolContext): Pro
 function isPrivateAddress(address: string): boolean {
   const normalized = address.toLowerCase();
   if (normalized.includes(":")) {
-    if (normalized.startsWith("::ffff:")) return isPrivateAddress(normalized.slice(7));
+    if (normalized.startsWith("::ffff:")) {
+      const mapped = normalized.slice(7);
+      if (!mapped.includes(":")) return isPrivateAddress(mapped);
+      const groups = mapped.split(":");
+      if (groups.length !== 2 || groups.some((group) => !/^[0-9a-f]{1,4}$/.test(group))) {
+        return true;
+      }
+      const [high = 0, low = 0] = groups.map((group) => Number.parseInt(group, 16));
+      return isPrivateAddress(`${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`);
+    }
     return (
       normalized === "::" ||
       normalized === "::1" ||
@@ -1528,11 +1538,15 @@ function isSensitivePath(context: MasterToolContext, target: string): boolean {
   const dataRoot = resolve(context.dataPath);
   const workspace = resolve(context.workspacePath);
   const resolvedTarget = resolve(target);
+  if (isCredentialPath(context, resolvedTarget)) return true;
+  if (resolve(resolvedTarget) === resolve(dataRoot, "state.json")) return true;
   const nestedDataRoot = dataRoot !== workspace && isWithin(workspace, dataRoot);
-  return (
-    (nestedDataRoot && isWithin(dataRoot, resolvedTarget)) ||
-    isCredentialPath(context, resolvedTarget)
-  );
+  if (!nestedDataRoot || !isWithin(dataRoot, resolvedTarget)) return false;
+  if (isWithin(join(dataRoot, "workspaces"), resolvedTarget)) return false;
+  if (isWithin(join(dataRoot, "threads"), resolvedTarget)) return true;
+  if (isWithin(join(dataRoot, "runs"), resolvedTarget)) return true;
+  if (isWithin(join(dataRoot, "artifacts"), resolvedTarget)) return true;
+  return true;
 }
 
 function isCredentialPath(context: MasterToolContext, target: string): boolean {

@@ -163,7 +163,14 @@ export const CreateAgentSchema = z.discriminatedUnion("kind", [
         baseUrl: z.string().trim().url(),
         model: z.string().trim().min(1).max(160),
         protocol: z.enum(["openai-chat", "openai-responses"]),
-        apiKey: z.string().max(4_096).optional(),
+        apiKey: z
+          .string()
+          .trim()
+          .max(4_096)
+          .refine((value) => value.length === 0 || value.length >= 8, {
+            message: "API key must be blank or at least 8 characters.",
+          })
+          .optional(),
       }),
     ]),
   }),
@@ -408,7 +415,7 @@ export const WorkAssignmentSchema = z.object({
   masterRunId: z.string(),
   workerAgentId: z.string(),
   repositoryId: z.string(),
-  status: z.enum(["queued", "running", "completed", "failed"]),
+  status: z.enum(["queued", "running", "completed", "failed", "interrupted"]),
   branch: z.string(),
   worktreePath: z.string(),
   result: z.string().max(20_000).optional(),

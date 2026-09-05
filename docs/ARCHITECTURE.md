@@ -105,7 +105,10 @@ duplicates. Unknown handles remain plain text. Each known handle creates one run
 unavailable agents create explicit failed runs. The dispatcher maintains one promise queue per
 agent, so each agent replies serially while different agents can run in parallel. Every invocation
 is tied to the exact triggering message ID, content, and artifacts; stale or duplicate retries are
-rejected. Agent output goes directly to the transcript without passing through the mention parser.
+rejected. Transient runtime failures receive at most two automatic retries with bounded backoff;
+each retry has a new durable run ID and a monotonically increasing attempt number. Known stored
+credentials are redacted from agent output before it goes to the transcript, and output does not
+pass through the mention parser.
 
 `ChatService` also resolves `#handles` inside the thread workspace and stores stable knowledge IDs
 on the message. Code spans and fenced code blocks are excluded from reference parsing. An
@@ -122,10 +125,11 @@ agent. Historical failed runs for a deleted profile cannot be retried.
 
 The provider-neutral Master tool session owns a per-run set of planned task IDs. `plan` creates
 durable Taskboard tasks linked to the triggering thread. `delegate` accepts only a task returned by
-that same session, an enabled Worker, and a ready repository referenced by the triggering message.
-When both a Worker and referenced repository are available, a custom-provider Master cannot return
-its final answer while that set still contains undelegated tasks; the runtime adds a corrective turn
-and keeps the tool loop active.
+that same session, an enabled Worker, and a ready repository in the thread's workspace. The runtime
+lists those repositories in the Master context, so the triggering message does not need to include
+the repository handle. When both a Worker and ready repository are available, a custom-provider
+Master cannot return its final answer while that set still contains undelegated tasks; the runtime
+adds a corrective turn and keeps the tool loop active.
 
 Each repository is cloned once under the owning workspace. Every assignment creates a unique
 `nexestra/<assignment-id>` branch and a Git worktree under the same managed workspace tree. The
@@ -134,6 +138,13 @@ can execute concurrently. A delegated Worker receives task mode, the worktree as
 the shared transcript snapshot, and the selected repository as knowledge. Success marks the
 assignment and task complete; failure records a redacted error and returns the task to To do.
 Branches and worktrees are retained for inspection. Nexestra never merges or pushes.
+
+Each delegated assignment owns an in-memory abort controller from before it is queued until its
+final cleanup. Stopping a task aborts both Git worktree preparation and the Worker harness process;
+CLI harnesses forward the signal to the detached process group and escalate from TERM to KILL after
+the normal grace period. The assignment, run, and unfinished tool calls become `interrupted`, while
+the task returns to To do and is unassigned. A stop request also repairs stale queued/running state
+left without an in-memory controller after a restart.
 
 The assignment ID is also the delegated Worker's durable run ID in the canonical thread JSONL.
 Native Worker tool events are normalized and persisted against that run, while reasoning and
@@ -224,9 +235,10 @@ current OS user's authority, so Ask is the default and broader modes should only
 trusted providers. ChatGPT Auto access instead relies on the Codex workspace-write sandbox; its
 Full access mode is deliberately explicit because it bypasses that sandbox.
 
-Git repository URLs with embedded usernames or passwords are rejected before metadata is written,
-so tokens cannot enter `state.json` or clone errors. Private repository access may use the current
-OS user's existing SSH and Git configuration; Nexestra does not store Git credentials.
+Git repository URLs with embedded usernames, passwords, query parameters, or fragments are rejected
+before metadata is written, so tokens cannot enter `state.json` or clone errors. Private repository
+access may use the current OS user's existing SSH and Git configuration; Nexestra does not store Git
+credentials.
 
 ## Known gaps
 

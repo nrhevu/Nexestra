@@ -17,6 +17,7 @@ interface RunCommandOptions {
   env?: NodeJS.ProcessEnv;
   onStdout?: (chunk: string) => void;
   onStderr?: (chunk: string) => void;
+  signal?: AbortSignal;
 }
 
 export async function runCommand(
@@ -24,6 +25,7 @@ export async function runCommand(
   args: string[],
   options: RunCommandOptions,
 ): Promise<CommandResult> {
+  if (options.signal?.aborted) return Promise.reject(abortReason(options.signal));
   return new Promise((resolvePromise, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
@@ -41,6 +43,8 @@ export async function runCommand(
     const timeout = setTimeout(() => {
       terminate(new Error(`Agent timed out after ${options.timeoutMs ?? 180_000}ms.`));
     }, options.timeoutMs ?? 180_000);
+    const onAbort = () => terminate(abortReason(options.signal));
+    options.signal?.addEventListener("abort", onAbort, { once: true });
 
     child.stdout.on("data", (chunk: Buffer) => {
       totalBytes += chunk.byteLength;
@@ -87,10 +91,15 @@ export async function runCommand(
       settled = true;
       clearTimeout(timeout);
       if (killTimer) clearTimeout(killTimer);
+      options.signal?.removeEventListener("abort", onAbort);
       if (error) reject(error);
       else if (result) resolvePromise(result);
     }
   });
+}
+
+function abortReason(signal?: AbortSignal): Error {
+  return signal?.reason instanceof Error ? signal.reason : new Error("Process stopped.");
 }
 
 export function safeProcessEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {

@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Agent, RuntimeStatus, ThreadStreamEvent, ToolCall } from "../shared/contracts.js";
 import { AgentDispatcher, ChatService } from "./dispatcher.js";
 import type { AssignmentLocation, AssignmentRepositoryManager } from "./repository-manager.js";
@@ -84,6 +84,31 @@ class StreamingRunner implements AgentRunner {
   }
 }
 
+class FailingNetworkRunner implements AgentRunner {
+  readonly invocations: AgentInvocation[] = [];
+
+  async runtimeStatus() {
+    return readyRuntime;
+  }
+
+  async invoke(_agent: Agent, invocation: AgentInvocation): Promise<string> {
+    this.invocations.push(invocation);
+    throw new Error("Network unavailable.");
+  }
+}
+
+class SecretLeakingRunner implements AgentRunner {
+  constructor(private readonly secret: string) {}
+
+  async runtimeStatus() {
+    return readyRuntime;
+  }
+
+  async invoke(): Promise<string> {
+    return `accidental output: ${this.secret}`;
+  }
+}
+
 class DelegatingMasterRunner implements AgentRunner {
   readonly invocations: { agent: Agent; invocation: AgentInvocation }[] = [];
 
@@ -120,6 +145,55 @@ class DelegatingMasterRunner implements AgentRunner {
       repositoryHandle: "product-repo",
     });
     return `Worker completed ${delegated.assignment.branch}: ${delegated.result}`;
+  }
+}
+
+class StoppableDelegatingMasterRunner implements AgentRunner {
+  workerStarted = false;
+
+  async runtimeStatus() {
+    return readyRuntime;
+  }
+
+  async invoke(agent: Agent, invocation: AgentInvocation) {
+    if (agent.kind === "worker") {
+      this.workerStarted = true;
+      await invocation.activityHooks?.tool({
+        id: "worker-write",
+        name: "write",
+        permission: "edit",
+        status: "running",
+        input: '{"filePath":"src/index.ts"}',
+      });
+      return new Promise<string>((_resolve, reject) => {
+        if (invocation.signal?.aborted) {
+          reject(invocation.signal.reason);
+          return;
+        }
+        invocation.signal?.addEventListener(
+          "abort",
+          () => reject(invocation.signal?.reason ?? new Error("Worker stopped.")),
+          { once: true },
+        );
+      });
+    }
+    if (!invocation.toolHooks?.createPlan || !invocation.toolHooks.delegate) {
+      throw new Error("expected planning and delegation hooks");
+    }
+    const [task] = await invocation.toolHooks.createPlan("Implementation plan", [
+      { title: "Implement feature", description: "Make the requested repository change." },
+    ]);
+    if (!task) throw new Error("expected planned task");
+    try {
+      await invocation.toolHooks.delegate({
+        taskId: task.id,
+        workerHandle: "builder",
+        repositoryHandle: "product-repo",
+      });
+    } catch {
+      return "The Worker process was stopped.";
+    }
+    return "The Worker completed unexpectedly.";
   }
 }
 
@@ -193,6 +267,47 @@ describe("mention dispatch", () => {
 
     expect(runner.invocations).toHaveLength(0);
     expect((await store.threadData(thread.id)).messages).toHaveLength(1);
+  });
+
+  it("redacts stored credentials from Worker replies before persisting them", async () => {
+    const secret = "sk-test-transcript-secret";
+    const root = await mkdtemp(join(tmpdir(), "nexestra-dispatch-redaction-"));
+    const store = await FileStore.open({ root, workspacePath: root });
+    const dispatcher = new AgentDispatcher(store, new SecretLeakingRunner(secret));
+    const chat = new ChatService(store, dispatcher);
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    await store.createAgent({
+      kind: "master",
+      name: "Gateway",
+      handle: "gateway",
+      description: "",
+      instructions: "",
+      accessMode: "ask",
+      provider: {
+        type: "custom",
+        name: "Gateway",
+        baseUrl: "https://example.test/v1",
+        model: "model-a",
+        protocol: "openai-chat",
+        apiKey: secret,
+      },
+    });
+    const worker = await store.createAgent({
+      kind: "worker",
+      name: "Codex",
+      handle: "codex",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+
+    await chat.send(thread.id, { content: `@${worker.handle} inspect this` });
+    await dispatcher.waitForIdle();
+
+    const snapshot = await store.transcriptSnapshot(thread.id);
+    expect(snapshot).toContain("accidental output: [REDACTED]");
+    expect(snapshot).not.toContain(secret);
   });
 
   it("invokes every mentioned agent once with the same shared snapshot", async () => {
@@ -358,6 +473,41 @@ describe("mention dispatch", () => {
     expect((await store.threadData(thread.id)).runs).toHaveLength(2);
   });
 
+  it("stops automatically retrying a transient failure after two retries", async () => {
+    const timeout = vi.spyOn(globalThis, "setTimeout").mockImplementation((handler) => {
+      handler();
+      return 0 as unknown as NodeJS.Timeout;
+    });
+    try {
+      const root = await mkdtemp(join(tmpdir(), "nexestra-dispatch-auto-retry-"));
+      const store = await FileStore.open({ root, workspacePath: root });
+      const runner = new FailingNetworkRunner();
+      const dispatcher = new AgentDispatcher(store, runner);
+      const chat = new ChatService(store, dispatcher);
+      const [thread] = store.listThreads();
+      if (!thread) throw new Error("expected seeded thread");
+      const agent = await store.createAgent({
+        kind: "worker",
+        name: "Codex",
+        handle: "codex",
+        description: "",
+        instructions: "",
+        harness: "codex",
+      });
+
+      await chat.send(thread.id, { content: `@${agent.handle} retry a transient failure` });
+      await dispatcher.waitForIdle();
+
+      expect(runner.invocations).toHaveLength(3);
+      const runs = (await store.threadData(thread.id)).runs;
+      expect(runs.map((run) => run.attempt)).toEqual([1, 2, 3]);
+      expect(runs.every((run) => run.status === "failed")).toBe(true);
+      expect(dispatcher.activeRuns()).toEqual([]);
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
   it("keeps a run waiting until every concurrent approval is resolved", async () => {
     const root = await mkdtemp(join(tmpdir(), "nexestra-dispatch-approvals-"));
     const store = await FileStore.open({ root, workspacePath: root });
@@ -492,6 +642,139 @@ describe("mention dispatch", () => {
       run: { id: assignment.id, status: "completed" },
       toolCalls: [{ runId: assignment.id, name: "read" }],
     });
+  });
+
+  it("delegates work without requiring #repository in the user message", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-dispatch-no-ref-"));
+    const store = await FileStore.open({ root, workspacePath: root });
+    const runner = new DelegatingMasterRunner();
+    const dispatcher = new AgentDispatcher(
+      store,
+      runner,
+      new FakeAssignmentRepositories(store.root),
+    );
+    const chat = new ChatService(store, dispatcher);
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    await store.createAgent({
+      kind: "master",
+      name: "Lead",
+      handle: "lead",
+      description: "",
+      instructions: "",
+      accessMode: "full",
+      provider: {
+        type: "custom",
+        name: "Test provider",
+        baseUrl: "https://example.test/v1",
+        model: "test-model",
+        protocol: "openai-chat",
+      },
+    });
+    await store.createAgent({
+      kind: "worker",
+      name: "Builder",
+      handle: "builder",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    const repository = await store.createKnowledgeRepository({
+      name: "Product repository",
+      handle: "product-repo",
+      source: "https://github.com/example/product.git",
+    });
+    await store.updateKnowledgeRepository(repository.id, {
+      status: "ready",
+      defaultBranch: "main",
+    });
+
+    const sent = await chat.send(thread.id, {
+      content: "@lead implement the feature",
+    });
+    await dispatcher.waitForIdle();
+
+    expect(sent.message.knowledgeReferences).toEqual([]);
+    expect(runner.invocations.map(({ agent }) => agent.id)).toHaveLength(2);
+    const [assignment] = store.listAssignments();
+    expect(assignment).toEqual(
+      expect.objectContaining({
+        status: "completed",
+        repositoryId: repository.id,
+      }),
+    );
+  });
+
+  it("stops an active Worker process and preserves interrupted run and tool history", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-dispatch-stop-"));
+    const store = await FileStore.open({ root, workspacePath: root });
+    const runner = new StoppableDelegatingMasterRunner();
+    const dispatcher = new AgentDispatcher(
+      store,
+      runner,
+      new FakeAssignmentRepositories(store.root),
+    );
+    const chat = new ChatService(store, dispatcher);
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    await store.createAgent({
+      kind: "master",
+      name: "Lead",
+      handle: "lead",
+      description: "",
+      instructions: "",
+      accessMode: "full",
+      provider: {
+        type: "custom",
+        name: "Test provider",
+        baseUrl: "https://example.test/v1",
+        model: "test-model",
+        protocol: "openai-chat",
+      },
+    });
+    await store.createAgent({
+      kind: "worker",
+      name: "Builder",
+      handle: "builder",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    const repository = await store.createKnowledgeRepository({
+      name: "Product repository",
+      handle: "product-repo",
+      source: "https://github.com/example/product.git",
+    });
+    await store.updateKnowledgeRepository(repository.id, {
+      status: "ready",
+      defaultBranch: "main",
+    });
+
+    await chat.send(thread.id, { content: "@lead implement the feature in #product-repo" });
+    await waitUntil(() => runner.workerStarted);
+    const [task] = store.listTasks();
+    if (!task) throw new Error("expected planned task");
+
+    await expect(dispatcher.stopTask(task.id)).resolves.toMatchObject({
+      assignment: { status: "interrupted" },
+      run: { status: "interrupted" },
+      toolCalls: [{ status: "interrupted" }],
+    });
+    await dispatcher.waitForIdle();
+
+    expect(store.getTask(task.id)).toMatchObject({ status: "todo", assigneeId: null });
+    expect(store.listAssignments()).toEqual([
+      expect.objectContaining({ status: "interrupted", error: expect.stringContaining("stopped") }),
+    ]);
+    const threadData = await store.threadData(thread.id);
+    expect(threadData.runs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ agentId: expect.any(String), status: "interrupted" }),
+      ]),
+    );
+    expect(threadData.toolCalls).toEqual([
+      expect.objectContaining({ name: "write", status: "interrupted" }),
+    ]);
   });
 });
 

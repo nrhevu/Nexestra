@@ -2,10 +2,12 @@ import {
   Archive,
   ArrowLeft,
   ArrowRight,
+  Bold,
   BookOpen,
   Bot,
   Check,
   CircleAlert,
+  CodeXml,
   Columns3,
   Copy,
   Download,
@@ -13,17 +15,26 @@ import {
   FileText,
   GitBranch,
   Image as ImageIcon,
+  Italic,
   Link as LinkIcon,
+  List,
+  ListOrdered,
   LoaderCircle,
   MessageSquareMore,
+  Moon,
   Paperclip,
   Pencil,
   Plus,
+  Quote,
   RefreshCw,
   Search,
   SendHorizontal,
   Settings,
   Sparkles,
+  Square,
+  SquareCode,
+  Strikethrough,
+  Sun,
   TerminalSquare,
   Trash2,
   Unplug,
@@ -98,10 +109,42 @@ export function App() {
   const [knowledgeToEdit, setKnowledgeToEdit] = useState<KnowledgeItem>();
   const [knowledgeToDelete, setKnowledgeToDelete] = useState<KnowledgeItem>();
   const [agentToDelete, setAgentToDelete] = useState<AgentView>();
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
+    const stored = window.localStorage.getItem("nexestra.theme") as "dark" | "light" | null;
+    return stored ?? "dark";
+  });
   const deferredRunActivities = useDeferredValue(runActivities);
   const workspaceIdRef = useRef<string | undefined>(
     window.localStorage.getItem("nexestra.workspaceId") ?? undefined,
   );
+  const latestThreadRequestRef = useRef(0);
+
+  // Apply theme to document
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    window.localStorage.setItem("nexestra.theme", theme);
+  }, [theme]);
+
+  const toggleTheme = useCallback(() => {
+    setTheme((prev) => (prev === "dark" ? "light" : "dark"));
+  }, []);
+
+  // Handle custom events from command palette
+  useEffect(() => {
+    const handleNewThread = () => setModal("thread");
+    const handleNewTask = () => {
+      setTaskStatus("todo");
+      setModal("task");
+    };
+
+    document.addEventListener("nexestra:new-thread", handleNewThread);
+    document.addEventListener("nexestra:new-task", handleNewTask);
+
+    return () => {
+      document.removeEventListener("nexestra:new-thread", handleNewThread);
+      document.removeEventListener("nexestra:new-task", handleNewTask);
+    };
+  }, []);
 
   const navigate = useCallback((nextPath: string, nextRoute: RouteState, replace = false) => {
     window.history[replace ? "replaceState" : "pushState"]({}, "", nextPath);
@@ -124,13 +167,15 @@ export function App() {
   }, []);
 
   const loadThread = useCallback(async (threadId: string, quiet = false) => {
+    const requestId = ++latestThreadRequestRef.current;
     try {
       const next = await api<ThreadData>(`/api/threads/${threadId}`);
+      if (requestId !== latestThreadRequestRef.current) return undefined;
       setThreadData(next);
       if (!quiet) setError(undefined);
       return next;
     } catch (caught) {
-      if (!quiet) setError(messageFrom(caught));
+      if (requestId === latestThreadRequestRef.current && !quiet) setError(messageFrom(caught));
       return undefined;
     }
   }, []);
@@ -181,6 +226,7 @@ export function App() {
   const isLoadingCurrentThread = Boolean(
     route.view === "threads" && route.threadId && route.threadId !== threadData?.thread.id,
   );
+  const visibleThreadData = route.threadId === threadData?.thread.id ? threadData : undefined;
   useEffect(() => {
     if (!isPollingActiveThread || !route.threadId) return;
     const threadId = route.threadId;
@@ -330,6 +376,8 @@ export function App() {
       <TopBar
         key={`${data.workspace.id}:${route.view}:${route.threadId ?? route.surface}`}
         data={data}
+        theme={theme}
+        onThemeToggle={toggleTheme}
         onThread={openThread}
         onSurface={openSurface}
         onSettings={() => setModal("settings")}
@@ -364,7 +412,7 @@ export function App() {
           <ThreadView
             key={route.threadId}
             data={data}
-            threadData={threadData}
+            threadData={visibleThreadData}
             runActivities={deferredRunActivities}
             onSend={async (content, files) => {
               if (!route.threadId) return;
@@ -545,6 +593,10 @@ export function App() {
             setTaskToInspect(undefined);
             setTaskToDelete(task);
           }}
+          onStopped={async () => {
+            await refresh(true);
+            flash("Worker process stopped.");
+          }}
         />
       )}
       {taskToEdit && (
@@ -669,6 +721,8 @@ export function App() {
 
 function TopBar(props: {
   data: BootstrapData;
+  theme: "dark" | "light";
+  onThemeToggle: () => void;
   onThread: (id: string) => void;
   onSurface: (surface: Surface) => void;
   onSettings: () => void;
@@ -687,42 +741,108 @@ function TopBar(props: {
     return () => window.removeEventListener("keydown", onShortcut);
   }, []);
   const query = deferredQueryText.trim().toLowerCase();
-  const results = query
+
+  // Command palette actions (shown when query starts with /)
+  const isCommand = query.startsWith("/");
+  const commandResults = isCommand
     ? [
-        ...props.data.threads
-          .filter((thread) => thread.name.toLowerCase().includes(query))
-          .map((thread) => ({
-            id: thread.id,
-            label: `# ${thread.name}`,
-            type: "Thread",
-            action: () => props.onThread(thread.id),
-          })),
-        ...props.data.agents
-          .filter((agent) => `${agent.name} ${agent.handle}`.toLowerCase().includes(query))
-          .map((agent) => ({
-            id: agent.id,
-            label: `@${agent.handle}`,
-            type: "Agent",
-            action: () => props.onSurface("agents" as const),
-          })),
-        ...props.data.tasks
-          .filter((task) => task.title.toLowerCase().includes(query))
-          .map((task) => ({
-            id: task.id,
-            label: task.title,
-            type: "Task",
-            action: () => props.onSurface("taskboard" as const),
-          })),
-        ...props.data.knowledge
-          .filter((item) => `${item.name} ${item.handle}`.toLowerCase().includes(query))
-          .map((item) => ({
-            id: item.id,
-            label: `#${item.handle}`,
-            type: item.kind === "document" ? "Document" : "Repository",
-            action: () => props.onSurface("knowledge" as const),
-          })),
-      ].slice(0, 8)
+        {
+          id: "new-thread",
+          label: "New thread",
+          description: "Create a new conversation thread",
+          action: () => {
+            setQueryText("");
+            // Trigger new thread dialog via keyboard shortcut simulation
+            document.dispatchEvent(new CustomEvent("nexestra:new-thread"));
+          },
+        },
+        {
+          id: "new-task",
+          label: "New task",
+          description: "Create a new task on the board",
+          action: () => {
+            setQueryText("");
+            document.dispatchEvent(new CustomEvent("nexestra:new-task"));
+          },
+        },
+        {
+          id: "taskboard",
+          label: "Go to Taskboard",
+          description: "Open the task management surface",
+          action: () => {
+            props.onSurface("taskboard");
+            setQueryText("");
+          },
+        },
+        {
+          id: "agents",
+          label: "Go to Agents",
+          description: "Manage your agents",
+          action: () => {
+            props.onSurface("agents");
+            setQueryText("");
+          },
+        },
+        {
+          id: "knowledge",
+          label: "Go to Knowledge",
+          description: "Manage your documents and repositories",
+          action: () => {
+            props.onSurface("knowledge");
+            setQueryText("");
+          },
+        },
+        {
+          id: "settings",
+          label: "Open Settings",
+          description: "Configure your workspace",
+          action: () => {
+            props.onSettings();
+            setQueryText("");
+          },
+        },
+      ].filter((cmd) => cmd.label.toLowerCase().includes(query.slice(1)))
     : [];
+
+  const searchResults =
+    query && !isCommand
+      ? [
+          ...props.data.threads
+            .filter((thread) => thread.name.toLowerCase().includes(query))
+            .map((thread) => ({
+              id: thread.id,
+              label: `# ${thread.name}`,
+              type: "Thread",
+              action: () => props.onThread(thread.id),
+            })),
+          ...props.data.agents
+            .filter((agent) => `${agent.name} ${agent.handle}`.toLowerCase().includes(query))
+            .map((agent) => ({
+              id: agent.id,
+              label: `@${agent.handle}`,
+              type: "Agent",
+              action: () => props.onSurface("agents" as const),
+            })),
+          ...props.data.tasks
+            .filter((task) => task.title.toLowerCase().includes(query))
+            .map((task) => ({
+              id: task.id,
+              label: task.title,
+              type: "Task",
+              action: () => props.onSurface("taskboard" as const),
+            })),
+          ...props.data.knowledge
+            .filter((item) => `${item.name} ${item.handle}`.toLowerCase().includes(query))
+            .map((item) => ({
+              id: item.id,
+              label: `#${item.handle}`,
+              type: item.kind === "document" ? "Document" : "Repository",
+              action: () => props.onSurface("knowledge" as const),
+            })),
+        ].slice(0, 8)
+      : [];
+
+  const results = isCommand ? commandResults : searchResults;
   return (
     <header className="topbar">
       <div className="global-search">
@@ -732,40 +852,58 @@ function TopBar(props: {
           aria-label="Search threads, tasks, agents, or knowledge"
           value={queryText}
           onChange={(event) => setQueryText(event.target.value)}
-          placeholder="Search threads, tasks, agents, or knowledge"
+          placeholder={
+            isCommand ? "Type a command..." : "Search threads, tasks, agents, or knowledge"
+          }
         />
         <kbd>⌘/Ctrl K</kbd>
         {query && (
           <div className="search-results">
             {results.length === 0 ? (
-              <p>No results found.</p>
+              <p>{isCommand ? "No commands found." : "No results found."}</p>
             ) : (
               results.map((result) => (
                 <button
                   type="button"
-                  key={`${result.type}-${result.id}`}
+                  key={`${"type" in result ? result.type : "command"}-${result.id}`}
                   onClick={() => {
                     result.action();
                     setQueryText("");
                   }}
                 >
                   <span>{result.label}</span>
-                  <small>{result.type}</small>
+                  <small>
+                    {"description" in result
+                      ? result.description
+                      : "type" in result
+                        ? result.type
+                        : ""}
+                  </small>
                 </button>
               ))
             )}
           </div>
         )}
       </div>
-      <button
-        className="profile-button"
-        type="button"
-        aria-label="Open settings"
-        onClick={props.onSettings}
-      >
-        ME
-        <span />
-      </button>
+      <div className="topbar-actions">
+        <button
+          className="theme-toggle"
+          type="button"
+          aria-label={`Switch to ${props.theme === "dark" ? "light" : "dark"} theme`}
+          onClick={props.onThemeToggle}
+        >
+          {props.theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+        </button>
+        <button
+          className="profile-button"
+          type="button"
+          aria-label="Open settings"
+          onClick={props.onSettings}
+        >
+          ME
+          <span />
+        </button>
+      </div>
     </header>
   );
 }
@@ -960,6 +1098,20 @@ function Sidebar(props: {
   );
 }
 
+function ComposerFormatButton(props: { label: string; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      aria-label={props.label}
+      title={props.label}
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={props.onClick}
+    >
+      {props.children}
+    </button>
+  );
+}
+
 function ThreadView(props: {
   data: BootstrapData;
   threadData?: ThreadData;
@@ -977,7 +1129,123 @@ function ThreadView(props: {
   const [activeTab, setActiveTab] = useState<"messages" | "artifacts">("messages");
   const [attachments, setAttachments] = useState<File[]>([]);
   const [draggingFiles, setDraggingFiles] = useState(false);
+  const [formattingOpen, setFormattingOpen] = useState(false);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const addMenuRef = useRef<HTMLDivElement>(null);
+  const addButtonRef = useRef<HTMLButtonElement>(null);
+  const addFileButtonRef = useRef<HTMLButtonElement>(null);
+  const pendingSelectionRef = useRef<{ start: number; end: number } | null>(null);
+
+  // Load draft from localStorage when thread changes
+  useEffect(() => {
+    const threadId = props.threadData?.thread?.id;
+    if (!threadId) return;
+    const stored = window.localStorage.getItem(`nexestra.draft.${threadId}`);
+    if (stored) setDraft(stored);
+    else setDraft("");
+  }, [props.threadData?.thread?.id]);
+
+  // Save draft to localStorage when it changes
+  const threadId = props.threadData?.thread?.id;
+  useEffect(() => {
+    if (!threadId) return;
+    if (draft) {
+      window.localStorage.setItem(`nexestra.draft.${threadId}`, draft);
+    } else {
+      window.localStorage.removeItem(`nexestra.draft.${threadId}`);
+    }
+  }, [draft, threadId]);
+
+  useEffect(() => {
+    const selection = pendingSelectionRef.current;
+    if (!selection) return;
+    pendingSelectionRef.current = null;
+    const boundedSelection = {
+      start: Math.min(selection.start, draft.length),
+      end: Math.min(selection.end, draft.length),
+    };
+    textareaRef.current?.focus();
+    textareaRef.current?.setSelectionRange(boundedSelection.start, boundedSelection.end);
+  }, [draft]);
+
+  useEffect(() => {
+    if (!addMenuOpen) return;
+    addFileButtonRef.current?.focus();
+    const closeAddMenu = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (addMenuRef.current?.contains(target) || addButtonRef.current?.contains(target)) return;
+      setAddMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", closeAddMenu);
+    return () => document.removeEventListener("pointerdown", closeAddMenu);
+  }, [addMenuOpen]);
+
+  const updateDraft = (value: string, start: number, end = start) => {
+    pendingSelectionRef.current = { start, end };
+    setDraft(value);
+    setMentionMenuOpen(false);
+    setAddMenuOpen(false);
+    setLocalError(undefined);
+  };
+
+  const applyInlineFormatting = (before: string, after: string, placeholder: string) => {
+    const start = textareaRef.current?.selectionStart ?? draft.length;
+    const end = textareaRef.current?.selectionEnd ?? start;
+    const selected = draft.slice(start, end);
+    const alreadyFormatted =
+      start >= before.length &&
+      draft.slice(start - before.length, start) === before &&
+      draft.slice(end, end + after.length) === after;
+
+    if (alreadyFormatted) {
+      const value = `${draft.slice(0, start - before.length)}${selected}${draft.slice(
+        end + after.length,
+      )}`;
+      updateDraft(value, start - before.length, end - before.length);
+      return;
+    }
+
+    const content = selected || placeholder;
+    const value = `${draft.slice(0, start)}${before}${content}${after}${draft.slice(end)}`;
+    updateDraft(value, start + before.length, start + before.length + content.length);
+  };
+
+  const applyLineFormatting = (
+    prefixForLine: (index: number) => string,
+    existingPrefix: RegExp,
+  ) => {
+    const selectionStart = textareaRef.current?.selectionStart ?? draft.length;
+    const selectionEnd = textareaRef.current?.selectionEnd ?? selectionStart;
+    const lineStart = selectionStart === 0 ? 0 : draft.lastIndexOf("\n", selectionStart - 1) + 1;
+    const nextNewline = draft.indexOf("\n", selectionEnd);
+    const lineEnd = nextNewline === -1 ? draft.length : nextNewline;
+    const block = draft.slice(lineStart, lineEnd);
+    const lines = block ? block.split("\n") : ["List item"];
+    const removeFormatting = lines.every((line) => existingPrefix.test(line));
+    const replacement = lines
+      .map((line, index) =>
+        removeFormatting ? line.replace(existingPrefix, "") : `${prefixForLine(index)}${line}`,
+      )
+      .join("\n");
+    const value = `${draft.slice(0, lineStart)}${replacement}${draft.slice(lineEnd)}`;
+    updateDraft(value, lineStart, lineStart + replacement.length);
+  };
+
+  const insertMentionTrigger = () => {
+    const needsSpace = Boolean(draft && !draft.endsWith(" "));
+    const insertion = `${needsSpace ? " " : ""}@`;
+    const value = `${draft}${insertion}`;
+    const cursor = value.length;
+    pendingSelectionRef.current = { start: cursor, end: cursor };
+    setDraft(value);
+    setMentionMenuOpen(true);
+    setAddMenuOpen(false);
+    setActiveSuggestion(0);
+    setLocalError(undefined);
+  };
+
   const mentionAgents = useMemo(
     () =>
       props.data.agents
@@ -1027,6 +1295,10 @@ function ThreadView(props: {
       setDraft("");
       setAttachments([]);
       setMentionMenuOpen(true);
+      setAddMenuOpen(false);
+      // Clear draft from localStorage after sending
+      const threadId = props.threadData?.thread.id;
+      if (threadId) window.localStorage.removeItem(`nexestra.draft.${threadId}`);
     } catch (caught) {
       setLocalError(messageFrom(caught));
     } finally {
@@ -1144,11 +1416,22 @@ function ThreadView(props: {
           <p className="eyebrow">THREAD</p>
           <h1># {thread.name}</h1>
         </div>
-        <div className="thread-summary">
-          <UsersRound size={16} />
-          <span>{props.data.agents.filter((agent) => !agent.archived).length} agents</span>
-          <i />
-          Shared transcript
+        <div className="header-actions">
+          <a
+            href={`/api/threads/${encodeURIComponent(thread.id)}/export`}
+            download={`${thread.slug}.md`}
+            className="export-button"
+            title="Export thread as Markdown"
+          >
+            <Download size={15} />
+            <span>Export</span>
+          </a>
+          <div className="thread-summary">
+            <UsersRound size={16} />
+            <span>{props.data.agents.filter((agent) => !agent.archived).length} agents</span>
+            <i />
+            Shared transcript
+          </div>
         </div>
       </header>
       <div className="thread-tabs">
@@ -1193,6 +1476,38 @@ function ThreadView(props: {
       )}
       {activeTab === "messages" && (
         <div className="composer-wrap">
+          {addMenuOpen && (
+            <div
+              ref={addMenuRef}
+              className="composer-add-menu"
+              id="composer-add-menu"
+              role="menu"
+              aria-label="Add to message"
+              onKeyDown={(event) => {
+                if (event.key !== "Escape") return;
+                event.preventDefault();
+                setAddMenuOpen(false);
+                addButtonRef.current?.focus();
+              }}
+            >
+              <button
+                ref={addFileButtonRef}
+                type="button"
+                role="menuitem"
+                aria-label="File"
+                onClick={() => {
+                  setAddMenuOpen(false);
+                  fileInputRef.current?.click();
+                }}
+              >
+                <FileText size={18} />
+                <span>
+                  <strong>File</strong>
+                  <small>Upload from your computer</small>
+                </span>
+              </button>
+            </div>
+          )}
           {mentionMenuOpen &&
             (suggestionMode === "knowledge"
               ? knowledgeSuggestions.length > 0
@@ -1271,6 +1586,7 @@ function ThreadView(props: {
             onDrop={(event) => {
               event.preventDefault();
               setDraggingFiles(false);
+              setAddMenuOpen(false);
               addAttachments([...event.dataTransfer.files]);
             }}
           >
@@ -1285,6 +1601,75 @@ function ThreadView(props: {
                 event.target.value = "";
               }}
             />
+            {formattingOpen && (
+              <div
+                className="composer-formatbar"
+                id="message-formatting-toolbar"
+                role="toolbar"
+                aria-label="Message formatting"
+              >
+                <div className="composer-format-group">
+                  <ComposerFormatButton
+                    label="Bold"
+                    onClick={() => applyInlineFormatting("**", "**", "bold text")}
+                  >
+                    <Bold size={17} />
+                  </ComposerFormatButton>
+                  <ComposerFormatButton
+                    label="Italic"
+                    onClick={() => applyInlineFormatting("_", "_", "italic text")}
+                  >
+                    <Italic size={17} />
+                  </ComposerFormatButton>
+                  <ComposerFormatButton
+                    label="Strikethrough"
+                    onClick={() => applyInlineFormatting("~~", "~~", "struck text")}
+                  >
+                    <Strikethrough size={17} />
+                  </ComposerFormatButton>
+                  <ComposerFormatButton
+                    label="Link"
+                    onClick={() => applyInlineFormatting("[", "](https://)", "link text")}
+                  >
+                    <LinkIcon size={17} />
+                  </ComposerFormatButton>
+                </div>
+                <div className="composer-format-group">
+                  <ComposerFormatButton
+                    label="Numbered list"
+                    onClick={() => applyLineFormatting((index) => `${index + 1}. `, /^\d+\.\s/)}
+                  >
+                    <ListOrdered size={17} />
+                  </ComposerFormatButton>
+                  <ComposerFormatButton
+                    label="Bulleted list"
+                    onClick={() => applyLineFormatting(() => "- ", /^-\s/)}
+                  >
+                    <List size={17} />
+                  </ComposerFormatButton>
+                  <ComposerFormatButton
+                    label="Quote"
+                    onClick={() => applyLineFormatting(() => "> ", /^>\s/)}
+                  >
+                    <Quote size={17} />
+                  </ComposerFormatButton>
+                </div>
+                <div className="composer-format-group">
+                  <ComposerFormatButton
+                    label="Inline code"
+                    onClick={() => applyInlineFormatting("`", "`", "code")}
+                  >
+                    <CodeXml size={17} />
+                  </ComposerFormatButton>
+                  <ComposerFormatButton
+                    label="Code block"
+                    onClick={() => applyInlineFormatting("```\n", "\n```", "code")}
+                  >
+                    <SquareCode size={17} />
+                  </ComposerFormatButton>
+                </div>
+              </div>
+            )}
             {attachments.length > 0 && (
               <ul className="pending-attachments" aria-label="Attachments ready to send">
                 {attachments.map((file, index) => (
@@ -1310,6 +1695,7 @@ function ThreadView(props: {
               </ul>
             )}
             <textarea
+              ref={textareaRef}
               aria-label="Message"
               role="combobox"
               aria-autocomplete="list"
@@ -1336,48 +1722,56 @@ function ThreadView(props: {
               onChange={(event) => {
                 setDraft(event.target.value);
                 setMentionMenuOpen(true);
+                setAddMenuOpen(false);
                 setActiveSuggestion(0);
                 setLocalError(undefined);
               }}
+              onFocus={() => setAddMenuOpen(false)}
               onKeyDown={onKeyDown}
-              placeholder={`Message #${thread.slug} — use @ for agents or # for knowledge`}
+              placeholder={`Message #${thread.slug}`}
               rows={2}
             />
             <div className="composer-toolbar">
-              <div>
+              <div className="composer-actions">
                 <button
-                  className="attachment-button"
+                  ref={addButtonRef}
+                  className={`attachment-button${addMenuOpen ? " active" : ""}`}
                   type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  aria-label="Attach files or images"
+                  onClick={() => {
+                    setMentionMenuOpen(false);
+                    setAddMenuOpen((open) => !open);
+                  }}
+                  aria-label="Add to message"
+                  aria-controls="composer-add-menu"
+                  aria-expanded={addMenuOpen}
+                  aria-haspopup="menu"
+                  title={addMenuOpen ? "Close add menu" : "Add to message"}
                 >
-                  <Paperclip size={16} />
+                  {addMenuOpen ? <X size={18} /> : <Plus size={19} />}
+                </button>
+                <button
+                  className={`format-toggle${formattingOpen ? " active" : ""}`}
+                  type="button"
+                  onClick={() => {
+                    setAddMenuOpen(false);
+                    setFormattingOpen((open) => !open);
+                  }}
+                  aria-label="Toggle formatting"
+                  aria-controls="message-formatting-toolbar"
+                  aria-pressed={formattingOpen}
+                  title="Formatting"
+                >
+                  <span aria-hidden="true">Aa</span>
                 </button>
                 <button
                   className="mention-button"
                   type="button"
-                  onClick={() => {
-                    setMentionMenuOpen(true);
-                    setActiveSuggestion(0);
-                    setDraft((value) => `${value}${value && !value.endsWith(" ") ? " " : ""}@`);
-                  }}
+                  onClick={insertMentionTrigger}
                   aria-label="Mention an agent"
+                  title="Mention an agent"
                 >
                   @
                 </button>
-                <button
-                  className="mention-button"
-                  type="button"
-                  onClick={() => {
-                    setMentionMenuOpen(true);
-                    setActiveSuggestion(0);
-                    setDraft((value) => `${value}${value && !value.endsWith(" ") ? " " : ""}#`);
-                  }}
-                  aria-label="Reference knowledge"
-                >
-                  #
-                </button>
-                <span>@ invokes an agent · # shares workspace knowledge</span>
               </div>
               <button
                 className="send-button"
@@ -1394,9 +1788,6 @@ function ThreadView(props: {
               </button>
             </div>
           </fieldset>
-          <p>
-            <kbd>Enter</kbd> to send · <kbd>Shift Enter</kbd> for a new line
-          </p>
           {localError && (
             <p className="inline-error">
               <CircleAlert size={13} />
@@ -2516,6 +2907,7 @@ function TaskProcessDialog({
   onThread,
   onEdit,
   onDelete,
+  onStopped,
 }: {
   task: Task;
   data: BootstrapData;
@@ -2523,9 +2915,12 @@ function TaskProcessDialog({
   onThread: (threadId: string) => void;
   onEdit: (task: Task) => void;
   onDelete: (task: Task) => void;
+  onStopped: () => Promise<void>;
 }) {
   const [process, setProcess] = useState<TaskProcessData>();
   const [loadError, setLoadError] = useState<string>();
+  const [stopping, setStopping] = useState(false);
+  const [stopError, setStopError] = useState<string>();
   const loadProcess = useCallback(
     async (quiet = false) => {
       try {
@@ -2620,6 +3015,7 @@ function TaskProcessDialog({
                 {isActive && <LoaderCircle className="spin" size={13} />}
                 {assignment?.status === "completed" && <Check size={13} />}
                 {assignment?.status === "failed" && <CircleAlert size={13} />}
+                {assignment?.status === "interrupted" && <Square size={11} />}
                 {status.replace("_", " ")}
               </strong>
             </div>
@@ -2668,6 +3064,32 @@ function TaskProcessDialog({
                 <div>
                   <span>Worktree</span>
                   <code>{assignment.worktreePath}</code>
+                </div>
+                <div className="worktree-actions">
+                  <button
+                    type="button"
+                    title="Open worktree"
+                    onClick={async () => {
+                      try {
+                        await api(`/api/assignments/${encodeURIComponent(assignment.id)}/open`, {
+                          method: "POST",
+                        });
+                      } catch {
+                        // Silently fail - user might not have VS Code
+                      }
+                    }}
+                  >
+                    <ExternalLink size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    title="Copy path"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(assignment.worktreePath);
+                    }}
+                  >
+                    <Copy size={13} />
+                  </button>
                 </div>
               </div>
 
@@ -2750,10 +3172,52 @@ function TaskProcessDialog({
                   </div>
                 </div>
               )}
+
+              {assignment.status === "interrupted" && (
+                <div className="task-process-interrupted">
+                  <Square size={13} />
+                  <div>
+                    <strong>Worker process stopped</strong>
+                    <p>{assignment.error ?? "Stopped by the user."}</p>
+                  </div>
+                </div>
+              )}
             </>
           )}
 
+          {stopError && (
+            <p className="form-error">
+              <CircleAlert size={14} />
+              {stopError}
+            </p>
+          )}
           <div className="modal-actions">
+            {isActive && (
+              <button
+                type="button"
+                className="stop-button"
+                disabled={stopping}
+                onClick={async () => {
+                  setStopping(true);
+                  setStopError(undefined);
+                  try {
+                    const next = await api<TaskProcessData>(
+                      `/api/tasks/${encodeURIComponent(process.task.id)}/stop`,
+                      { method: "POST" },
+                    );
+                    setProcess(next);
+                    await onStopped();
+                  } catch (caught) {
+                    setStopError(messageFrom(caught));
+                  } finally {
+                    setStopping(false);
+                  }
+                }}
+              >
+                {stopping ? <LoaderCircle className="spin" size={14} /> : <Square size={12} />}
+                {stopping ? "Stopping…" : "Stop process"}
+              </button>
+            )}
             <button type="button" onClick={() => onEdit(process.task)}>
               <Pencil size={14} />
               Edit
@@ -3263,10 +3727,11 @@ function CustomProviderFields() {
         <Field label="Model ID">
           <input name="model" placeholder="model-name" required />
         </Field>
-        <Field label="API key" optional hint="May be left blank for a local endpoint">
+        <Field label="API key" optional hint="Leave blank or enter at least 8 characters">
           <input
             name="apiKey"
             type="password"
+            minLength={8}
             autoComplete="new-password"
             placeholder="••••••••••"
           />

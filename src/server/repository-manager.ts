@@ -12,7 +12,11 @@ export interface AssignmentLocation {
 
 export interface AssignmentRepositoryManager {
   assignmentLocation(workspaceId: string, assignmentId: string): AssignmentLocation;
-  prepareAssignment(repository: KnowledgeRepository, location: AssignmentLocation): Promise<void>;
+  prepareAssignment(
+    repository: KnowledgeRepository,
+    location: AssignmentLocation,
+    signal?: AbortSignal,
+  ): Promise<void>;
 }
 
 export class RepositoryManager implements AssignmentRepositoryManager {
@@ -82,6 +86,7 @@ export class RepositoryManager implements AssignmentRepositoryManager {
   async prepareAssignment(
     repository: KnowledgeRepository,
     location: AssignmentLocation,
+    signal?: AbortSignal,
   ): Promise<void> {
     if (repository.status !== "ready") {
       throw new StoreError("conflict", `#${repository.handle} is not ready.`);
@@ -106,6 +111,7 @@ export class RepositoryManager implements AssignmentRepositoryManager {
         timeoutMs: 60_000,
         maxOutputBytes: 1024 * 1024,
         env: safeProcessEnv(this.env),
+        signal,
       },
     );
     if (result.exitCode !== 0) {
@@ -124,13 +130,18 @@ export class RepositoryManager implements AssignmentRepositoryManager {
 }
 
 function normaliseRepositorySource(source: string, workspacePath: string): string {
-  if (/^[\w.-]+@[\w.-]+:.+/.test(source)) return source;
+  if (/^[\w.-]+@[\w.-]+:.+/.test(source)) {
+    if (/[?#]/.test(source)) {
+      throw new StoreError("invalid", "Repository URLs must not contain credentials.");
+    }
+    return source;
+  }
   try {
     const url = new URL(source);
     if (!["https:", "ssh:"].includes(url.protocol)) {
       throw new StoreError("invalid", "Repository URLs must use HTTPS or SSH.");
     }
-    if (url.password || (url.protocol === "https:" && url.username)) {
+    if (url.password || (url.protocol === "https:" && url.username) || url.search || url.hash) {
       throw new StoreError("invalid", "Repository URLs must not contain credentials.");
     }
     return url.toString();

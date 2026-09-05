@@ -1,5 +1,6 @@
+import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -23,6 +24,7 @@ interface CreateAppOptions {
   runner?: AgentRunner;
   auth?: ChatGptAuthManager;
   productionAssets?: boolean;
+  launchPath?: (path: string, reveal: boolean) => Promise<void>;
 }
 
 export function createApp(options: CreateAppOptions) {
@@ -30,6 +32,7 @@ export function createApp(options: CreateAppOptions) {
   const repositories = new RepositoryManager(options.store);
   const dispatcher = new AgentDispatcher(options.store, runner, repositories);
   const chat = new ChatService(options.store, dispatcher);
+  const launchPath = options.launchPath ?? launchDesktopPath;
   const localRunner = runner instanceof LocalAgentRunner ? runner : undefined;
   const auth =
     options.auth ?? (localRunner ? new ChatGptAuthManager(options.store, localRunner) : undefined);
@@ -191,6 +194,20 @@ export function createApp(options: CreateAppOptions) {
     return context.json(await options.store.threadData(context.req.param("id")));
   });
 
+  app.get("/api/threads/:id/export", async (context) => {
+    const threadId = context.req.param("id");
+    const thread = options.store.getThread(threadId);
+    if (!thread) throw new StoreError("not_found", "Thread not found.");
+    const markdown = await options.store.exportThreadMarkdown(threadId);
+    return new Response(markdown, {
+      headers: {
+        "content-type": "text/markdown; charset=utf-8",
+        "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(`${thread.slug}.md`)}`,
+        "cache-control": "private, no-store",
+      },
+    });
+  });
+
   app.get("/api/threads/:id/events", (context) => {
     const threadId = context.req.param("id");
     if (!options.store.getThread(threadId)) {
@@ -289,6 +306,22 @@ export function createApp(options: CreateAppOptions) {
     return context.json(await dispatcher.taskProcess(context.req.param("id")));
   });
 
+  app.post("/api/tasks/:id/stop", async (context) => {
+    return context.json(await dispatcher.stopTask(context.req.param("id")));
+  });
+
+  app.post("/api/assignments/:id/open", async (context) => {
+    const worktreePath = assignmentWorktreePath(options.store, context.req.param("id"));
+    await launchPath(worktreePath, false);
+    return context.body(null, 204);
+  });
+
+  app.post("/api/assignments/:id/reveal", async (context) => {
+    const worktreePath = assignmentWorktreePath(options.store, context.req.param("id"));
+    await launchPath(worktreePath, true);
+    return context.body(null, 204);
+  });
+
   app.patch("/api/tasks/:id", async (context) => {
     return context.json(
       await options.store.updateTask(context.req.param("id"), await context.req.json()),
@@ -298,6 +331,13 @@ export function createApp(options: CreateAppOptions) {
   app.delete("/api/tasks/:id", async (context) => {
     await options.store.deleteTask(context.req.param("id"));
     return context.body(null, 204);
+  });
+
+  app.post("/api/tasks/:taskId/delegate", async (context) => {
+    const taskId = context.req.param("taskId");
+    const body = await context.req.json();
+    const { workerHandle, repositoryHandle } = body;
+    return context.json(await dispatcher.delegateFromTask(taskId, workerHandle, repositoryHandle));
   });
 
   app.post("/api/auth/chatgpt/start", async (context) => {
@@ -404,4 +444,45 @@ function isSafeImageMediaType(mediaType?: string): boolean {
   return ["image/avif", "image/gif", "image/jpeg", "image/png", "image/webp"].includes(
     mediaType ?? "",
   );
+}
+
+function assignmentWorktreePath(store: FileStore, assignmentId: string): string {
+  const assignment = store.listAssignments().find((entry) => entry.id === assignmentId);
+  if (!assignment) throw new StoreError("not_found", "Assignment not found.");
+  const root = resolve(store.root);
+  const worktreePath = resolve(root, assignment.worktreePath);
+  if (worktreePath !== root && !worktreePath.startsWith(`${root}${sep}`)) {
+    throw new StoreError("invalid", "Assignment worktree path is outside the data directory.");
+  }
+  return worktreePath;
+}
+
+async function launchDesktopPath(path: string, reveal: boolean): Promise<void> {
+  const [command, args] =
+    process.platform === "darwin"
+      ? ["open", reveal ? ["-R", path] : [path]]
+      : process.platform === "win32"
+        ? ["explorer.exe", reveal ? [`/select,${path}`] : [path]]
+        : ["xdg-open", [reveal ? dirname(path) : path]];
+  await new Promise<void>((resolveLaunch, rejectLaunch) => {
+    const child = spawn(command, args, { stdio: "ignore" });
+    let settled = false;
+    const timeout = setTimeout(() => {
+      child.kill();
+      finish(new Error("Desktop launcher timed out."));
+    }, 15_000);
+    timeout.unref();
+    child.once("error", finish);
+    child.once("close", (code) => {
+      finish(code === 0 ? undefined : new Error(`Desktop launcher exited with code ${code ?? 1}.`));
+    });
+
+    function finish(error?: Error): void {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (error) rejectLaunch(error);
+      else resolveLaunch();
+    }
+  });
 }
