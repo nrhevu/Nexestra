@@ -53,3 +53,9 @@ New assignments retain the exact Worker configuration selected by the dispatcher
 instruction fingerprint. Profile deletion and handle reuse do not change attribution. Null model
 overrides remain runtime defaults, and are not evidence of effective provider model identity.
 See ADR 0025 for replay and accounting limits.
+
+# 2026-09-06: Inspectable attempt history
+
+The process view can read earlier task-scoped assignments with their own files, profiles and
+reviews. Historical scope comes from the frozen contract and is read-only in the UI; current
+execution/review stays on the latest admitted attempt. See ADR 0026 for ordering and legacy limits.

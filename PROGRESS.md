@@ -120,11 +120,20 @@ fingerprint. Process UI preserves attribution after profile deletion or handle r
 defaults and separates configuration from actual execution/model identity. Targeted deletion/restart
 and historical UI tests passed. Full gate passed with 224 tests, lint, types and build. ADR 0025 records limits.
 
-## Next WIP: attempt inspection and final acceptance
+## Completed checkpoint: attempt history
 
-Make earlier task attempts inspectable from the process view, including their outputs/reviews.
-Then move the clean worktree to a durable ignored directory in the project; preserve the original
-checkout and rerun the required checks there. Audit final UI, recovery and remaining gaps.
+Task-scoped historical process API, admission-ordered attempt selector, original contract/source
+display and read-only historical controls. Late responses cannot replace a newer selection. Tests
+cover original artifacts/review, foreign-task rejection and moving between historical/latest UI.
+Full gate passed with 225 tests, lint, types and build. Browser QA selected the first 80-byte
+submission and its changes-requested review, then returned to the accepted 146-byte latest output.
+Historical controls were read-only and no browser errors appeared. ADR 0026 records limits.
+
+## Final acceptance work
+
+Audit planning-vs-execution intent, move the clean worktree to a durable ignored directory in the
+project, preserve the original checkout, and rerun required checks there. Record final UI evidence,
+remaining gaps and a practical user-facing handoff. Minimum work deadline still applies.
 
 ## Environment and verification
 
@@ -148,7 +157,7 @@ as established facts. Validate important mechanisms against primary engineering 
 
 ## Active preview and tooling
 
-- Preview process session: 51058; loopback port 4387. Script: `/private/tmp/nexestra-ui-preview.mts`.
+- Preview process session: 84039; loopback port 4387. Script: `/private/tmp/nexestra-ui-preview.mts`.
 - Preview data: `/private/tmp/nexestra-preview-data-octqCw`, disposable and independent of user data.
 - Restart preserving preview data with NEXESTRA_PREVIEW_ROOT set to that path. No live providers.
 - CUA binding `tab` (id "1", browser id "1"); session reset during QA, browser handle not currently bound. Browser is hidden.

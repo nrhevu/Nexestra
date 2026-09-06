@@ -80,18 +80,31 @@ export class AgentDispatcher {
       .map((run) => structuredClone(run));
   }
 
-  async taskProcess(taskId: string): Promise<TaskProcessData> {
+  async taskProcess(taskId: string, selectedAssignmentId?: string): Promise<TaskProcessData> {
     const task = this.store.getTask(taskId);
     if (!task) throw new StoreError("not_found", "Task not found.");
-    const assignment = this.store
-      .listAssignments(task.workspaceId)
-      .find((entry) => entry.taskId === task.id);
-    if (!assignment) return { task, toolCalls: [] };
+    const assignments = this.store.taskAssignments(task.id);
+    const assignment = selectedAssignmentId
+      ? assignments.find((entry) => entry.id === selectedAssignmentId)
+      : assignments[0];
+    if (selectedAssignmentId && !assignment)
+      throw new StoreError("not_found", "Attempt not found for this task.");
+    const attempts = assignments.map((entry, index) => ({
+      id: entry.id,
+      ordinal: assignments.length - index,
+      status: entry.status,
+      createdAt: entry.createdAt,
+      contractRevision: entry.contract?.revision ?? null,
+      ...(entry.review ? { reviewOutcome: entry.review.outcome } : {}),
+    }));
+    if (!assignment) return { task, toolCalls: [], attempts, isLatestAttempt: true };
     const thread = await this.store.threadData(assignment.threadId);
     const run = thread.runs.find((entry) => entry.id === assignment.id);
     const activity = this.liveActivities.get(assignment.id);
     return {
       task,
+      attempts,
+      isLatestAttempt: assignment.id === assignments[0]?.id,
       assignment,
       ...(run ? { run } : {}),
       ...(activity ? { activity: structuredClone(activity) } : {}),

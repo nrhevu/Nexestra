@@ -211,6 +211,18 @@ describe("General-purpose assignment execution", () => {
       taskRevision: 1,
       outputs: first.outputs,
     });
+    const history = await app.request(`/api/tasks/${task.id}/process?assignmentId=${first.id}`);
+    expect(history.status).toBe(200);
+    await expect(history.json()).resolves.toMatchObject({
+      isLatestAttempt: false,
+      assignment: { id: first.id, review: { outcome: "changes_requested" } },
+      artifacts: [{ id: first.outputs[0].artifactId }],
+      attempts: [{ ordinal: 3 }, { ordinal: 2 }, { ordinal: 1 }],
+    });
+    const unrelated = await store.createTask({ title: "Unrelated task", threadId: task.threadId });
+    expect(
+      (await app.request(`/api/tasks/${unrelated.id}/process?assignmentId=${first.id}`)).status,
+    ).toBe(404);
     const original = await store.artifactContent(task.threadId ?? "", first.outputs[0].artifactId);
     expect(await readFile(original.file, "utf8")).toBe("Original reviewed memo");
     if (!third) throw new Error("Expected revised assignment");

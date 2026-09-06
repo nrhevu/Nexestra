@@ -344,7 +344,15 @@ export class FileStore {
     return structuredClone(
       this.state.assignments
         .filter((assignment) => workspaceId === undefined || assignment.workspaceId === workspaceId)
+        .reverse()
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    );
+  }
+
+  taskAssignments(taskId: string): WorkAssignment[] {
+    // Admission order is authoritative even when clocks tie or move backward.
+    return structuredClone(
+      this.state.assignments.filter((entry) => entry.taskId === taskId).reverse(),
     );
   }
 

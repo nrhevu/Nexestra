@@ -379,7 +379,9 @@ export function createApp(options: CreateAppOptions) {
   });
 
   app.get("/api/tasks/:id/process", async (context) => {
-    return context.json(await dispatcher.taskProcess(context.req.param("id")));
+    return context.json(
+      await dispatcher.taskProcess(context.req.param("id"), context.req.query("assignmentId")),
+    );
   });
 
   app.post("/api/tasks/:id/stop", async (context) => {

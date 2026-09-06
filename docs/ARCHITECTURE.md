@@ -289,6 +289,12 @@ HTML from a Worker is hosted in the trusted app origin. Working directories are 
 
 ## Execution provenance
 
+`GET /api/tasks/:id/process?assignmentId=...` inspects a task-scoped historical attempt. The response
+includes lightweight attempt summaries and an isLatestAttempt flag. Canonical admission order
+identifies the latest attempt, including tied/backward timestamps. Historical UI uses the frozen
+contract and existing reviews, with mutation/launch/new-review controls hidden. Current server
+admission/review checks are unchanged. See [ADR 0026](adr/0026-inspectable-task-attempts.md).
+
 New assignment records retain the invoked Worker's configured name/handle/harness/model/reasoning
 settings, an instruction fingerprint and admission timestamp. The process UI uses this snapshot
 after profile deletion or handle reuse. Null overrides mean runtime default; the app does not claim

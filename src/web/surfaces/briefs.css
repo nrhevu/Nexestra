@@ -45,6 +45,31 @@
   font-size: 11px;
   overflow-wrap: anywhere;
 }
+.execution-profile h3 {
+  overflow-wrap: anywhere;
+}
+.attempt-history {
+  margin: 0 0 18px;
+}
+.attempt-history label {
+  display: grid;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 650;
+}
+.attempt-history select {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--panel-raised);
+}
+.attempt-history p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
 .brief-subtitle {
   color: var(--muted);
   font-size: 13px;

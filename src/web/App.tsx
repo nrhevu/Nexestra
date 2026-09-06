@@ -2983,33 +2983,48 @@ function TaskProcessDialog({
   const [loadError, setLoadError] = useState<string>();
   const [stopping, setStopping] = useState(false);
   const [stopError, setStopError] = useState<string>();
+  const [selectedAssignmentId, setSelectedAssignmentId] = useState("");
+  const processRequest = useRef(0);
   const loadProcess = useCallback(
     async (quiet = false) => {
+      const request = ++processRequest.current;
       try {
         const next = await api<TaskProcessData>(
-          `/api/tasks/${encodeURIComponent(task.id)}/process`,
+          `/api/tasks/${encodeURIComponent(task.id)}/process${selectedAssignmentId ? `?assignmentId=${encodeURIComponent(selectedAssignmentId)}` : ""}`,
         );
+        if (request !== processRequest.current) return undefined;
         setProcess(next);
         if (!quiet) setLoadError(undefined);
         return next;
       } catch (caught) {
+        if (request !== processRequest.current) return undefined;
         if (!quiet) setLoadError(messageFrom(caught));
         return undefined;
       }
     },
-    [task.id],
+    [task.id, selectedAssignmentId],
   );
 
   useEffect(() => {
     setProcess(undefined);
     setLoadError(undefined);
     void loadProcess();
+    return () => {
+      processRequest.current += 1;
+    };
   }, [loadProcess]);
 
   const assignment = process?.assignment;
   const assignmentId = assignment?.id;
   const assignmentThreadId = assignment?.threadId;
-  const isActive = assignment?.status === "queued" || assignment?.status === "running";
+  const isHistorical = process?.isLatestAttempt === false;
+  const isActive =
+    !isHistorical && (assignment?.status === "queued" || assignment?.status === "running");
+  const displayedTask = isHistorical
+    ? assignment?.contract && process
+      ? { ...process.task, ...assignment.contract }
+      : undefined
+    : process?.task;
   useEffect(() => {
     if (!isActive || !assignmentId || !assignmentThreadId) return;
     const refreshProcess = () => void loadProcess(true);
@@ -3051,7 +3066,7 @@ function TaskProcessDialog({
 
   return (
     <Modal
-      title={process?.task.title ?? task.title}
+      title={displayedTask?.title ?? (isHistorical ? "Historical attempt" : task.title)}
       eyebrow="WORKER PROCESS"
       onClose={onClose}
       wide
@@ -3073,6 +3088,39 @@ function TaskProcessDialog({
       )}
       {process && (
         <div className="task-process">
+          {(process.attempts?.length ?? 0) > 1 && (
+            <div className="attempt-history">
+              <label>
+                Attempt history
+                <select
+                  aria-label="Attempt history"
+                  value={selectedAssignmentId}
+                  onChange={(event) => {
+                    setSelectedAssignmentId(event.target.value);
+                    setStopError(undefined);
+                  }}
+                >
+                  <option value="">Latest attempt</option>
+                  {process.attempts?.map((entry) => (
+                    <option key={entry.id} value={entry.id}>
+                      Attempt {entry.ordinal} · {entry.status} · revision{" "}
+                      {entry.contractRevision ?? "unknown"}
+                      {entry.reviewOutcome ? ` · ${entry.reviewOutcome.replace("_", " ")}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {isHistorical && (
+                <p>
+                  Viewing a historical attempt
+                  {assignment?.contract
+                    ? " and its frozen scope"
+                    : "; the original requirements are unavailable"}
+                  . Select Latest attempt to continue or review current work.
+                </p>
+              )}
+            </div>
+          )}
           <div className="task-process-summary">
             <div>
               <span>Run status</span>
@@ -3118,19 +3166,27 @@ function TaskProcessDialog({
                 </small>
               </div>
             )}
-            {process.task.description ? (
+            {displayedTask?.description ? (
               <Suspense
-                fallback={<p className="message-markdown-fallback">{process.task.description}</p>}
+                fallback={<p className="message-markdown-fallback">{displayedTask.description}</p>}
               >
-                <RichMessage content={process.task.description} knownHandles={knownHandles} />
+                <RichMessage content={displayedTask.description} knownHandles={knownHandles} />
               </Suspense>
             ) : (
-              <p>No description.</p>
+              <p>
+                {isHistorical && !assignment?.contract
+                  ? "Original requirements are unavailable for this legacy attempt."
+                  : "No description."}
+              </p>
             )}
-            <small>Updated {formatDateTime(process.task.updatedAt)}</small>
+            <small>
+              {isHistorical && assignment
+                ? `Attempt queued ${formatDateTime(assignment.createdAt)}`
+                : `Updated ${formatDateTime(process.task.updatedAt)}`}
+            </small>
           </div>
 
-          {process.task.sourceBrief && <SourceBrief brief={process.task.sourceBrief} />}
+          {displayedTask?.sourceBrief && <SourceBrief brief={displayedTask.sourceBrief} />}
 
           {assignment?.executionProfile && (
             <section
@@ -3317,15 +3373,17 @@ function TaskProcessDialog({
                 </section>
               )}
 
-              <TaskReview
-                key={`${assignment.id}-${process.task.revision}`}
-                task={process.task}
-                assignment={assignment}
-                onReviewed={async () => {
-                  await loadProcess();
-                  await onReviewed();
-                }}
-              />
+              {(!isHistorical || assignment.review) && (
+                <TaskReview
+                  key={`${assignment.id}-${process.task.revision}`}
+                  task={process.task}
+                  assignment={assignment}
+                  onReviewed={async () => {
+                    await loadProcess();
+                    await onReviewed();
+                  }}
+                />
+              )}
 
               {assignment.status === "failed" && (
                 <div className="run-error task-process-error">
@@ -3349,16 +3407,19 @@ function TaskProcessDialog({
             </>
           )}
 
-          <TaskLaunch
-            key={`${process.task.id}-${process.task.revision}-${assignment?.id ?? "new"}`}
-            task={process.task}
-            data={data}
-            assignment={assignment}
-            onStarted={async () => {
-              await loadProcess();
-              await onStarted();
-            }}
-          />
+          {!isHistorical && (
+            <TaskLaunch
+              key={`${process.task.id}-${process.task.revision}-${assignment?.id ?? "new"}`}
+              task={process.task}
+              data={data}
+              assignment={assignment}
+              onStarted={async () => {
+                if (selectedAssignmentId) setSelectedAssignmentId("");
+                else await loadProcess();
+                await onStarted();
+              }}
+            />
+          )}
 
           {stopError && (
             <p className="form-error">
@@ -3393,16 +3454,27 @@ function TaskProcessDialog({
                 {stopping ? "Stopping…" : "Stop process"}
               </button>
             )}
-            <button type="button" onClick={() => onEdit(process.task)}>
-              <Pencil size={14} />
-              Edit
-            </button>
-            <button type="button" className="danger-button" onClick={() => onDelete(process.task)}>
-              <Trash2 size={14} />
-              Delete
-            </button>
-            {process.task.threadId && (
-              <button type="button" onClick={() => onThread(process.task.threadId ?? "")}>
+            {!isHistorical && (
+              <button type="button" onClick={() => onEdit(process.task)}>
+                <Pencil size={14} />
+                Edit
+              </button>
+            )}
+            {!isHistorical && (
+              <button
+                type="button"
+                className="danger-button"
+                onClick={() => onDelete(process.task)}
+              >
+                <Trash2 size={14} />
+                Delete
+              </button>
+            )}
+            {(assignment?.threadId ?? process.task.threadId) && (
+              <button
+                type="button"
+                onClick={() => onThread(assignment?.threadId ?? process.task.threadId ?? "")}
+              >
                 <MessageSquareMore size={14} />
                 Open thread
               </button>

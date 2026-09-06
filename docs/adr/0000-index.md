@@ -27,3 +27,4 @@
 | [0023](0023-reviewed-revision-inputs.md) | Accepted | Carry verified captured inputs into revisions without losing review provenance |
 | [0024](0024-tasks-from-saved-briefs.md) | Accepted | Draft editable tasks from saved briefs and retain the source scope |
 | [0025](0025-assignment-execution-profiles.md) | Accepted | Preserve configured Worker provenance for every new assignment |
+| [0026](0026-inspectable-task-attempts.md) | Accepted | Inspect earlier attempts with frozen scope and read-only controls |

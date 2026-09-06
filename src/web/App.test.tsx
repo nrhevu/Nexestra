@@ -708,6 +708,82 @@ describe("Worker creation", () => {
 });
 
 describe("Taskboard Worker process", () => {
+  it("browses historical scope read-only and returns to the latest review", async () => {
+    window.history.replaceState({}, "", "/surfaces/taskboard");
+    const task = {
+      id: "history-task",
+      workspaceId: workspace.id,
+      title: "Current scope",
+      description: "New requirements",
+      status: "in_review",
+      revision: 2,
+      kind: "document",
+      acceptanceCriteria: [{ behavior: "A memo exists", verification: "Read it" }],
+      threadId: "thread",
+      assigneeId: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const base = {
+      workspaceId: workspace.id,
+      taskId: task.id,
+      threadId: "thread",
+      masterRunId: "",
+      workerAgentId: "worker",
+      repositoryId: null,
+      environment: "directory",
+      status: "completed",
+      branch: "",
+      worktreePath: "directory",
+      createdAt: now,
+      updatedAt: now,
+    };
+    const first = {
+      ...base,
+      id: "first",
+      contract: {
+        ...task,
+        title: "Original scope",
+        description: "Original requirements",
+        revision: 1,
+      },
+      result: "Original result",
+    };
+    const latest = { ...base, id: "latest", contract: task, result: "Current result" };
+    const attempts = [
+      { id: "latest", ordinal: 2, status: "completed", contractRevision: 2, createdAt: now },
+      { id: "first", ordinal: 1, status: "completed", contractRevision: 1, createdAt: now },
+    ];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap"))
+        return jsonResponse({ ...bootstrapData, tasks: [task], assignments: [latest, first] });
+      const historical = path.endsWith("?assignmentId=first");
+      return jsonResponse({
+        task,
+        assignment: historical ? first : latest,
+        isLatestAttempt: !historical,
+        attempts,
+        toolCalls: [],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Open process for Current scope" }));
+    expect(await screen.findByLabelText("Review notes")).toBeVisible();
+    await user.selectOptions(screen.getByLabelText("Attempt history"), "first");
+    const old = await screen.findByRole("dialog", { name: "Original scope" });
+    expect(within(old).getByText("Original requirements")).toBeVisible();
+    expect(await within(old).findByText("Original result")).toBeVisible();
+    expect(within(old).queryByLabelText("Review notes")).not.toBeInTheDocument();
+    expect(within(old).queryByRole("button", { name: "Start Worker" })).not.toBeInTheDocument();
+    expect(within(old).queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+    await user.selectOptions(within(old).getByLabelText("Attempt history"), "");
+    await screen.findByRole("dialog", { name: "Current scope" });
+    expect(await screen.findByLabelText("Review notes")).toBeVisible();
+  });
+
   it("opens an editable task from a saved brief and saves its source revision without starting work", async () => {
     window.history.replaceState({}, "", "/surfaces/briefs");
     const thread = {

@@ -82,6 +82,10 @@ The task process view records the configured Worker harness, model and reasoning
 queue time. That attribution survives deleting a Worker or reusing its handle. A runtime-default
 model is labeled as such; the app does not infer which remote model was actually served.
 
+Use **Attempt history** in a task's process dialog to inspect earlier files, failures and reviews
+against their original scope. Historical views are read-only. Select **Latest attempt** to continue
+working or review a new result.
+
 Long conversations retain their complete canonical history and exports. Each invocation receives
 up to 48,000 characters of recent conversation, with explicit omission markers; pinned work briefs
 and assignment contracts remain separate. Custom Masters can use `read_history` to search, page

@@ -639,6 +639,15 @@ export interface ThreadData {
 
 export interface TaskProcessData {
   task: Task;
+  isLatestAttempt?: boolean;
+  attempts?: Array<{
+    id: string;
+    ordinal: number;
+    status: WorkAssignment["status"];
+    createdAt: string;
+    contractRevision: number | null;
+    reviewOutcome?: "accepted" | "changes_requested";
+  }>;
   assignment?: WorkAssignment;
   run?: AgentRun;
   activity?: RunActivity;
