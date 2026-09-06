@@ -399,9 +399,10 @@ export const TaskSchema = z.object({
   workspaceId: z.string(),
   title: z.string(),
   description: z.string(),
-  status: z.enum(["todo", "in_progress", "done"]),
+  status: z.enum(["todo", "in_progress", "blocked", "done"]),
   assigneeId: z.string().nullable(),
   threadId: z.string().nullable(),
+  verificationCommand: z.string().trim().max(2_000).default(""),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -420,6 +421,8 @@ export const WorkAssignmentSchema = z.object({
   worktreePath: z.string(),
   result: z.string().max(20_000).optional(),
   error: z.string().max(2_000).optional(),
+  verificationOutput: z.string().max(4_000).optional(),
+  verificationExitCode: z.number().int().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -429,17 +432,19 @@ export const CreateTaskSchema = z.object({
   workspaceId: z.string().optional(),
   title: z.string().trim().min(1).max(160),
   description: z.string().trim().max(2_000).default(""),
-  status: z.enum(["todo", "in_progress", "done"]).default("todo"),
+  status: z.enum(["todo", "in_progress", "blocked", "done"]).default("todo"),
   assigneeId: z.string().nullable().default(null),
   threadId: z.string().nullable().default(null),
+  verificationCommand: z.string().trim().max(2_000).default(""),
 });
 
 export const UpdateTaskSchema = z.object({
   title: z.string().trim().min(1).max(160).optional(),
   description: z.string().trim().max(2_000).optional(),
-  status: z.enum(["todo", "in_progress", "done"]).optional(),
+  status: z.enum(["todo", "in_progress", "blocked", "done"]).optional(),
   assigneeId: z.string().nullable().optional(),
   threadId: z.string().nullable().optional(),
+  verificationCommand: z.string().trim().max(2_000).optional(),
 });
 
 export interface RuntimeStatus {

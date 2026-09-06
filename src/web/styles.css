@@ -2332,10 +2332,10 @@ kbd {
 }
 .board {
   display: grid;
-  grid-template-columns: repeat(3, minmax(230px, 1fr));
+  grid-template-columns: repeat(4, minmax(220px, 1fr));
   gap: 12px;
   padding: 18px;
-  min-width: 760px;
+  min-width: 960px;
   background: var(--board-bg);
 }
 .board-column {
@@ -2377,6 +2377,9 @@ kbd {
 }
 .dot-2 {
   background: #59bf8e;
+}
+.dot-3 {
+  background: #e59094;
 }
 .task-card {
   margin-top: 8px;
@@ -2428,6 +2431,20 @@ kbd {
   font-size: 12px;
   line-height: 1.5;
 }
+.task-verification {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: -6px 0 12px;
+  color: var(--quiet);
+  font-size: 10px;
+}
+.task-verification code {
+  overflow: hidden;
+  max-width: 100%;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .task-card footer {
   display: flex;
   align-items: center;
@@ -2478,7 +2495,7 @@ kbd {
 }
 .task-process-summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
 }
 .task-process-summary > div {
@@ -2519,6 +2536,18 @@ kbd {
 .task-process-summary .status-interrupted {
   color: #d9a86d;
 }
+.task-process-summary .verification-pass {
+  color: #73d2a4;
+}
+.task-process-summary .verification-fail {
+  color: #e59094;
+}
+.task-process-summary .verification-pending {
+  color: #e8b35c;
+}
+.task-process-summary .verification-none {
+  color: var(--quiet);
+}
 .task-detail-copy {
   padding: 13px 14px;
   border: 1px solid var(--border-soft);
@@ -2536,6 +2565,40 @@ kbd {
   margin-top: 8px;
   color: var(--quiet);
   font-size: 10px;
+}
+.task-process-verification {
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+  padding: 10px;
+  border-radius: 7px;
+  background: rgba(45, 111, 81, 0.08);
+}
+.task-process-verification.fail {
+  background: rgba(168, 66, 73, 0.09);
+}
+.task-process-verification.pending {
+  background: rgba(229, 166, 77, 0.08);
+}
+.task-process-verification h3 {
+  margin: 0;
+  color: #d7d3da;
+  font-size: 11px;
+}
+.task-process-verification code,
+.task-process-verification pre {
+  margin: 0;
+  overflow: auto;
+  color: #d5d1d8;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.task-process-verification pre {
+  max-height: 180px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-soft);
 }
 .task-process-empty {
   display: flex;

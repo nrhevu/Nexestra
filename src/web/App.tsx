@@ -2756,6 +2756,7 @@ function Taskboard(props: {
   const columns: { status: Task["status"]; title: string }[] = [
     { status: "todo", title: "To do" },
     { status: "in_progress", title: "In progress" },
+    { status: "blocked", title: "Blocked" },
     { status: "done", title: "Done" },
   ];
   const agents = new Map(props.data.agents.map((agent) => [agent.id, agent]));
@@ -2828,7 +2829,7 @@ function TaskCard({
   onThread: (id: string) => void;
   onInspect: (task: Task) => void;
 }) {
-  const statuses: Task["status"][] = ["todo", "in_progress", "done"];
+  const statuses: Task["status"][] = ["todo", "in_progress", "blocked", "done"];
   const position = statuses.indexOf(task.status);
   const assignmentActive = assignment?.status === "queued" || assignment?.status === "running";
   return (
@@ -2842,6 +2843,12 @@ function TaskCard({
         <span className="task-id">NX-{task.id.slice(0, 4).toUpperCase()}</span>
         <h3>{task.title}</h3>
         {task.description && <p>{task.description}</p>}
+        {task.verificationCommand && (
+          <span className="task-verification">
+            <TerminalSquare size={11} />
+            <code>{task.verificationCommand}</code>
+          </span>
+        )}
         {assignment && (
           <span className="task-assignment">
             <GitBranch size={12} />
@@ -3027,6 +3034,26 @@ function TaskProcessDialog({
               <span>Repository</span>
               <strong>{repository ? `#${repository.handle}` : "—"}</strong>
             </div>
+            <div>
+              <span>Verification</span>
+              <strong
+                className={
+                  process.task.verificationCommand
+                    ? assignment?.verificationExitCode === 0
+                      ? "verification-pass"
+                      : assignment?.verificationExitCode === undefined
+                        ? "verification-pending"
+                        : "verification-fail"
+                    : "verification-none"
+                }
+              >
+                {!process.task.verificationCommand
+                  ? "Not configured"
+                  : assignment?.verificationExitCode === undefined
+                    ? "Not run yet"
+                    : `Exit ${assignment.verificationExitCode}`}
+              </strong>
+            </div>
           </div>
 
           <div className="task-detail-copy">
@@ -3038,6 +3065,22 @@ function TaskProcessDialog({
               </Suspense>
             ) : (
               <p>No description.</p>
+            )}
+            {process.task.verificationCommand && (
+              <section
+                className={`task-process-verification ${
+                  assignment?.verificationExitCode === 0
+                    ? "pass"
+                    : assignment?.verificationExitCode === undefined
+                      ? "pending"
+                      : "fail"
+                }`}
+                aria-label="Task verification"
+              >
+                <h3>Verification command</h3>
+                <code>{process.task.verificationCommand}</code>
+                {assignment?.verificationOutput && <pre>{assignment.verificationOutput}</pre>}
+              </section>
             )}
             <small>Updated {formatDateTime(process.task.updatedAt)}</small>
           </div>
@@ -4181,6 +4224,7 @@ function TaskDialog({
                 status: String(fields.get("status") ?? initialStatus),
                 assigneeId: String(fields.get("assigneeId") ?? "") || null,
                 threadId: String(fields.get("threadId") ?? "") || null,
+                verificationCommand: String(fields.get("verificationCommand") ?? ""),
               }),
             });
             await onCreated();
@@ -4216,6 +4260,7 @@ function TaskDialog({
             <select name="status" aria-label="Column" defaultValue={task?.status ?? initialStatus}>
               <option value="todo">To do</option>
               <option value="in_progress">In progress</option>
+              <option value="blocked">Blocked</option>
               <option value="done">Done</option>
             </select>
           </Field>
@@ -4232,6 +4277,19 @@ function TaskDialog({
             </select>
           </Field>
         </div>
+        <Field
+          label="Verification command"
+          optional
+          hint="Run in the Worker worktree after the Worker finishes. Exit 0 marks the task done; any other exit marks it blocked."
+        >
+          <input
+            name="verificationCommand"
+            aria-label="Verification command"
+            defaultValue={task?.verificationCommand}
+            placeholder="pnpm test -- --run"
+            maxLength={2000}
+          />
+        </Field>
         <Field label="Linked thread" optional>
           <select name="threadId" aria-label="Linked thread" defaultValue={task?.threadId ?? ""}>
             <option value="">No linked thread</option>

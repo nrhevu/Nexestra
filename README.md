@@ -92,9 +92,15 @@ Delegation creates `nexestra/<assignment-id>` from the selected `#repository` an
 an isolated managed worktree. The Worker runs there with write access, verifies its work, and
 commits on that branch. Nexestra does not merge or push the branch automatically.
 
+Each task can also carry a user-defined verification command. After the Worker finishes, Nexestra
+runs that command in the same worktree. Exit code 0 moves the task to Done; any other exit code
+moves it to Blocked and records the command output. The command is a user-owned contract, so the
+Master `plan` tool cannot invent or change it.
+
 Every assignment is also a durable Worker run. Click any Taskboard card to inspect its assignee,
-repository, isolated branch and worktree, current phase, live reasoning, streamed response, and
-tool calls. Completed cards retain the Worker result and tool history in this process view; a task
+repository, verification result, isolated branch and worktree, current phase, live reasoning,
+streamed response, and tool calls. Completed cards retain the Worker result and verification output
+in this process view; a task
 that was never delegated says so explicitly. The same detail view can edit every task field or
 permanently delete the task when no Worker assignment is active. While an assignment is queued or
 running, **Stop process** terminates its Codex/OpenCode process group, records the run and unfinished

@@ -728,6 +728,7 @@ describe("Taskboard Worker process", () => {
       status: "in_progress" as const,
       assigneeId: workerAgent.id,
       threadId: thread.id,
+      verificationCommand: "pnpm test",
       createdAt: now,
       updatedAt: now,
     };
@@ -756,6 +757,8 @@ describe("Taskboard Worker process", () => {
       status: "running" as const,
       branch: "nexestra/assignment-task",
       worktreePath: "workspaces/workspace-nexestra/worktrees/assignment-task",
+      verificationOutput: "all tests passed",
+      verificationExitCode: 0,
       createdAt: now,
       updatedAt: now,
     };
@@ -840,6 +843,9 @@ describe("Taskboard Worker process", () => {
     const dialog = await screen.findByRole("dialog", { name: task.title });
     expect(within(dialog).getByText("@planner")).toBeVisible();
     expect(within(dialog).getByText("#product-repo")).toBeVisible();
+    expect(within(dialog).getByText("Exit 0")).toBeVisible();
+    expect(within(dialog).getByText("pnpm test")).toBeVisible();
+    expect(within(dialog).getByText("all tests passed")).toBeVisible();
     expect(within(dialog).getByText("Using read")).toBeVisible();
     expect(within(dialog).getByText("read")).toBeVisible();
     expect(within(dialog).getByText("Implementing the change…")).toBeVisible();
@@ -853,6 +859,64 @@ describe("Taskboard Worker process", () => {
           String(input) === `/api/tasks/${task.id}/stop` && init?.method === "POST",
       ),
     ).toBe(true);
+  });
+
+  it("shows blocked tasks and their failed verification output", async () => {
+    window.history.replaceState({}, "", "/surfaces/taskboard");
+    const task = {
+      id: "task-blocked",
+      workspaceId: workspace.id,
+      title: "Fix the failing build",
+      description: "Repair the repository build.",
+      status: "blocked" as const,
+      assigneeId: workerAgent.id,
+      threadId: null,
+      verificationCommand: "pnpm test",
+      createdAt: now,
+      updatedAt: now,
+    };
+    const assignment = {
+      id: "assignment-blocked",
+      workspaceId: workspace.id,
+      taskId: task.id,
+      threadId: "thread-blocked",
+      masterRunId: "run-master",
+      workerAgentId: workerAgent.id,
+      repositoryId: "repository-product",
+      status: "completed" as const,
+      branch: "nexestra/assignment-blocked",
+      worktreePath: "workspaces/workspace-nexestra/worktrees/assignment-blocked",
+      verificationOutput: "1 failed test",
+      verificationExitCode: 42,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        return jsonResponse({
+          ...bootstrapData,
+          agents: [workerAgent],
+          tasks: [task],
+          assignments: [assignment],
+        });
+      }
+      if (path === `/api/tasks/${task.id}/process`) {
+        return jsonResponse({ task, assignment, toolCalls: [] });
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Blocked" })).toBeVisible();
+    expect(screen.getByText("pnpm test")).toBeVisible();
+    await user.click(await screen.findByRole("button", { name: `Open process for ${task.title}` }));
+
+    const dialog = await screen.findByRole("dialog", { name: task.title });
+    expect(within(dialog).getByText("Exit 42")).toBeVisible();
+    expect(within(dialog).getByText("1 failed test")).toBeVisible();
   });
 
   it("shows task details and supports editing and deletion", async () => {

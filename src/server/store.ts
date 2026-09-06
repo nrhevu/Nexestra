@@ -51,7 +51,7 @@ import {
 } from "../shared/contracts.js";
 
 const StateSchema = z.object({
-  version: z.literal(6),
+  version: z.literal(7),
   workspaces: z.array(WorkspaceSchema).min(1),
   agents: z.array(AgentSchema),
   threads: z.array(ThreadSchema),
@@ -66,6 +66,16 @@ const VersionFiveStateSchema = z.object({
   agents: z.array(AgentSchema),
   threads: z.array(ThreadSchema),
   tasks: z.array(TaskSchema),
+});
+
+const VersionSixStateSchema = z.object({
+  version: z.literal(6),
+  workspaces: z.array(WorkspaceSchema).min(1),
+  agents: z.array(AgentSchema),
+  threads: z.array(ThreadSchema),
+  tasks: z.array(z.record(z.string(), z.unknown())),
+  knowledge: z.array(KnowledgeItemSchema),
+  assignments: z.array(z.record(z.string(), z.unknown())),
 });
 
 const LegacyStateSchema = z.object({
@@ -911,6 +921,7 @@ export class FileStore {
         status: input.status,
         assigneeId: input.assigneeId,
         threadId: input.threadId,
+        verificationCommand: input.verificationCommand,
         createdAt: now,
         updatedAt: now,
       });
@@ -977,7 +988,12 @@ export class FileStore {
 
   async updateAssignment(
     id: string,
-    update: Partial<Pick<WorkAssignment, "status" | "result" | "error">>,
+    update: Partial<
+      Pick<
+        WorkAssignment,
+        "status" | "result" | "error" | "verificationOutput" | "verificationExitCode"
+      >
+    >,
   ): Promise<WorkAssignment> {
     return this.withWrite(async () => {
       const index = this.state.assignments.findIndex((assignment) => assignment.id === id);
@@ -1362,7 +1378,7 @@ function createInitialState(): PersistedState {
     updatedAt: now,
   });
   return {
-    version: 6,
+    version: 7,
     workspaces: [workspace],
     agents: [],
     threads: [createThreadRecord(workspace.id, "general", now, [])],
@@ -1692,13 +1708,30 @@ async function readState(file: string): Promise<{ state: PersistedState; needsWr
 
   try {
     const version = z.object({ version: z.number() }).parse(raw).version;
-    if (version === 6) return { state: StateSchema.parse(raw), needsWrite: false };
+    if (version === 7) return { state: StateSchema.parse(raw), needsWrite: false };
+    if (version === 6) {
+      const previous = VersionSixStateSchema.parse(raw);
+      return {
+        state: StateSchema.parse({
+          ...previous,
+          version: 7,
+          tasks: previous.tasks.map((task) => ({
+            ...task,
+            verificationCommand: "",
+          })),
+          assignments: previous.assignments.map((assignment) => ({
+            ...assignment,
+          })),
+        }),
+        needsWrite: true,
+      };
+    }
     if (version === 5) {
       const previous = VersionFiveStateSchema.parse(raw);
       return {
         state: StateSchema.parse({
           ...previous,
-          version: 6,
+          version: 7,
           knowledge: [],
           assignments: [],
         }),
@@ -1710,7 +1743,7 @@ async function readState(file: string): Promise<{ state: PersistedState; needsWr
       return {
         state: StateSchema.parse({
           ...previous,
-          version: 6,
+          version: 7,
           agents: previous.agents.map(migrateMasterAccessMode),
           knowledge: [],
           assignments: [],
@@ -1723,7 +1756,7 @@ async function readState(file: string): Promise<{ state: PersistedState; needsWr
       return {
         state: StateSchema.parse({
           ...previous,
-          version: 6,
+          version: 7,
           agents: previous.agents.map(migrateMasterAccessMode),
           knowledge: [],
           assignments: [],
@@ -1736,7 +1769,7 @@ async function readState(file: string): Promise<{ state: PersistedState; needsWr
       return {
         state: StateSchema.parse({
           ...previous,
-          version: 6,
+          version: 7,
           agents: previous.agents.map(migrateMasterAccessMode),
           knowledge: [],
           assignments: [],
@@ -1755,7 +1788,7 @@ async function readState(file: string): Promise<{ state: PersistedState; needsWr
     });
     return {
       state: StateSchema.parse({
-        version: 6,
+        version: 7,
         workspaces: [workspace],
         agents: legacy.agents.map((agent) =>
           migrateMasterAccessMode({ ...agent, workspaceId: workspace.id }),

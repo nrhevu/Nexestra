@@ -705,6 +705,98 @@ describe("mention dispatch", () => {
     );
   });
 
+  it("runs a task verification command in the manual Worker worktree", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-dispatch-verify-"));
+    const store = await FileStore.open({ root, workspacePath: root });
+    const runner = new FakeRunner();
+    const dispatcher = new AgentDispatcher(
+      store,
+      runner,
+      new FakeAssignmentRepositories(store.root),
+    );
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const worker = await store.createAgent({
+      kind: "worker",
+      name: "Builder",
+      handle: "builder",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    const repository = await store.createKnowledgeRepository({
+      name: "Product repository",
+      handle: "product-repo",
+      source: "https://github.com/example/product.git",
+    });
+    await store.updateKnowledgeRepository(repository.id, {
+      status: "ready",
+      defaultBranch: "main",
+    });
+    const task = await store.createTask({
+      title: "Implement feature",
+      description: "Build it.",
+      assigneeId: worker.id,
+      threadId: thread.id,
+      verificationCommand: "printf verification-passed",
+    });
+
+    const assignment = await dispatcher.delegateFromTask(task.id, worker.handle, repository.handle);
+
+    expect(assignment).toMatchObject({
+      status: "completed",
+      verificationExitCode: 0,
+      verificationOutput: "verification-passed",
+    });
+    expect(store.getTask(task.id)).toMatchObject({ status: "done" });
+  });
+
+  it("blocks a task when its verification command fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-dispatch-verify-fail-"));
+    const store = await FileStore.open({ root, workspacePath: root });
+    const runner = new FakeRunner();
+    const dispatcher = new AgentDispatcher(
+      store,
+      runner,
+      new FakeAssignmentRepositories(store.root),
+    );
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const worker = await store.createAgent({
+      kind: "worker",
+      name: "Builder",
+      handle: "builder",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    const repository = await store.createKnowledgeRepository({
+      name: "Product repository",
+      handle: "product-repo",
+      source: "https://github.com/example/product.git",
+    });
+    await store.updateKnowledgeRepository(repository.id, {
+      status: "ready",
+      defaultBranch: "main",
+    });
+    const task = await store.createTask({
+      title: "Implement feature",
+      description: "Build it.",
+      assigneeId: worker.id,
+      threadId: thread.id,
+      verificationCommand: "printf verification-failed >&2; exit 42",
+    });
+
+    const assignment = await dispatcher.delegateFromTask(task.id, worker.handle, repository.handle);
+
+    expect(assignment).toMatchObject({
+      status: "completed",
+      verificationExitCode: 42,
+      verificationOutput: "verification-failed",
+    });
+    expect(store.getTask(task.id)).toMatchObject({ status: "blocked" });
+  });
+
   it("stops an active Worker process and preserves interrupted run and tool history", async () => {
     const root = await mkdtemp(join(tmpdir(), "nexestra-dispatch-stop-"));
     const store = await FileStore.open({ root, workspacePath: root });

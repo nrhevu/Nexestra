@@ -847,6 +847,7 @@ describe("parseProviderReply", () => {
                 status: "todo" as const,
                 assigneeId: null,
                 threadId: invocation.thread.id,
+                verificationCommand: "",
                 createdAt,
                 updatedAt: createdAt,
               })),

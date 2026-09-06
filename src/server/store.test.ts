@@ -42,7 +42,7 @@ describe("FileStore", () => {
       workspaceId: workspace?.id,
     });
     const persisted = JSON.parse(await readFile(store.stateFile, "utf8"));
-    expect(persisted).toMatchObject({ version: 6, knowledge: [], assignments: [] });
+    expect(persisted).toMatchObject({ version: 7, knowledge: [], assignments: [] });
   });
 
   it("creates isolated workspaces with their own general thread and agent handles", async () => {
@@ -328,7 +328,7 @@ describe("FileStore", () => {
     const reopened = await FileStore.open({ root: store.root, workspacePath: store.workspacePath });
 
     expect(reopened.getAgent(agent.id)).toMatchObject({ accessMode: "ask" });
-    await expect(readFile(store.stateFile, "utf8")).resolves.toContain('"version": 6');
+    await expect(readFile(store.stateFile, "utf8")).resolves.toContain('"version": 7');
   });
 
   it("migrates version 3 Master permissions to ask mode", async () => {
@@ -404,6 +404,27 @@ describe("FileStore", () => {
     expect(migratedFull).toMatchObject({ accessMode: "full" });
     expect(migratedAuto).not.toHaveProperty("permissions");
     expect(migratedFull).not.toHaveProperty("permissions");
+  });
+
+  it("migrates version 6 tasks to the verification contract", async () => {
+    const store = await openStore();
+    const task = await store.createTask({
+      title: "Existing task",
+      description: "Existing description",
+      status: "todo",
+      assigneeId: null,
+      threadId: null,
+      verificationCommand: "pnpm test",
+    });
+    const state = JSON.parse(await readFile(store.stateFile, "utf8"));
+    state.version = 6;
+    delete state.tasks[0].verificationCommand;
+    await writeFile(store.stateFile, `${JSON.stringify(state)}\n`);
+
+    const reopened = await FileStore.open({ root: store.root, workspacePath: store.workspacePath });
+
+    expect(reopened.getTask(task.id)).toMatchObject({ verificationCommand: "" });
+    await expect(readFile(store.stateFile, "utf8")).resolves.toContain('"version": 7');
   });
 
   it("never writes a custom provider key to public state or transcripts", async () => {

@@ -298,6 +298,7 @@ describe("HTTP app", () => {
         status: "todo",
         assigneeId: null,
         threadId: null,
+        verificationCommand: "pnpm test",
       }),
     });
     expect(created.status).toBe(201);
@@ -315,14 +316,16 @@ describe("HTTP app", () => {
       body: JSON.stringify({
         title: "Publish documentation",
         description: "Review and publish the draft.",
-        status: "in_progress",
+        status: "blocked",
+        verificationCommand: "pnpm check",
       }),
     });
     expect(updated.status).toBe(200);
     await expect(updated.json()).resolves.toMatchObject({
       title: "Publish documentation",
       description: "Review and publish the draft.",
-      status: "in_progress",
+      status: "blocked",
+      verificationCommand: "pnpm check",
     });
 
     const deleted = await app.request(`/api/tasks/${task.id}`, { method: "DELETE" });

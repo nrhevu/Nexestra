@@ -67,7 +67,8 @@ Version 1 state is migrated in place to version 2 by assigning every existing re
 version 3 by adding the first Master tool permissions; version 3 migrates to version 4 by adding the
 complete tool matrix. Version 4 migrates to version 5 by replacing that matrix with one `ask`,
 `auto`, or `full` access mode. Version 5 migrates to version 6 by adding empty knowledge and
-assignment collections. State writes use a temporary file followed by an atomic rename. The
+assignment collections. Version 6 migrates to version 7 by adding the task verification contract.
+State writes use a temporary file followed by an atomic rename. The
 separate `credentials.json` file has mode `0600` and stores only custom API keys by agent ID.
 
 Permanent agent deletion removes the profile and its custom credential, clears matching task
@@ -136,7 +137,10 @@ Each repository is cloned once under the owning workspace. Every assignment crea
 dispatcher reuses the normal per-agent queue, so one Worker remains serial while different Workers
 can execute concurrently. A delegated Worker receives task mode, the worktree as its process cwd,
 the shared transcript snapshot, and the selected repository as knowledge. Success marks the
-assignment and task complete; failure records a redacted error and returns the task to To do.
+assignment complete, then the dispatcher runs the task's user-owned verification command in the
+assignment worktree. Exit code zero marks the task done; any other exit code marks it blocked and
+stores the redacted, bounded output and exit code. Worker failure records a redacted error and
+returns the task to To do.
 Branches and worktrees are retained for inspection. Nexestra never merges or pushes.
 
 Each delegated assignment owns an in-memory abort controller from before it is queued until its
@@ -181,7 +185,9 @@ is written to the thread and pauses its run until the user decides; a question p
 input state until the local user responds. Multiple calls from one model step execute concurrently,
 and a run stays paused until all outstanding approvals or questions are resolved. File tools accept
 relative paths and absolute paths inside the repository, reject traversal and escaping symlinks,
-and protect Nexestra data and credentials. `read` also accepts exact absolute paths allowlisted from
+and protect Nexestra data and credentials. Workspace, data-root, and absolute-path comparisons use
+canonical physical paths so symlink aliases such as macOS `/var` versus `/private/var` cannot bypass
+or break containment checks. `read` also accepts exact absolute paths allowlisted from
 the triggering message, loaded skill, or saved large tool output; that allowlist does not extend to
 search or mutation tools. Tool loops stop after twelve rounds or three consecutive identical calls.
 

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -238,6 +238,7 @@ describe("Master harness tools", () => {
           status: "todo" as const,
           assigneeId: null,
           threadId: "thread",
+          verificationCommand: "",
           createdAt: "2026-09-03T00:00:00.000Z",
           updatedAt: "2026-09-03T00:00:00.000Z",
         })),
@@ -350,7 +351,8 @@ describe("Master harness tools", () => {
       const skill = await callSession(session, "skill", { name: "review-code" });
       expect(skill).toContain("Check the diff");
       expect(skill).not.toContain("description: Review changes carefully.");
-      expect(skill).toContain(`<file>${join(skillDirectory, "checklist.md")}</file>`);
+      const canonicalChecklist = await realpath(join(skillDirectory, "checklist.md"));
+      expect(skill).toContain(`<file>${canonicalChecklist}</file>`);
       await expect(
         callSession(session, "read", { filePath: join(skillDirectory, "checklist.md") }),
       ).resolves.toContain("Inspect tests");
