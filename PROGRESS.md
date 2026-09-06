@@ -79,20 +79,21 @@ Original checkout is clean and remains on `master`.
   document tasks, captured-byte inspection, human review continuation, pause/restart retention and
   final acceptance while paused. No new run on final acceptance; 2/3 attempts used. No browser errors.
 
-## Current WIP: bounded conversation context and retrieval
+## Completed checkpoint: bounded conversation context and retrieval
 
-Reduce repeated unbounded transcript injection while preserving the canonical history, pinned
-intent and fresh-session access to earlier evidence. Add scoped paginated history tools and a
-clear provider text-input guard. Then inspect execution traces, final UI and remaining reliability gaps.
+- Recent context is bounded to 48,000 characters with explicit omissions, retaining pinned intent
+  separately. Canonical JSONL and full Markdown exports remain complete.
+- Thread-scoped read_history and HTTP search/pagination return stable IDs, bounded pages and complete
+  Unicode-safe message chunks. Custom HTTP requests stop before 240,000 text characters including
+  schemas and accumulated tool output; no claim of token or currency accounting.
+- Full gate passed at 21:47 UTC: 214 tests, lint, types and production build. ADR 0022 and
+  docs/CONVERSATION-CONTEXT.md document CLI bridge, indexing and exact-context-ledger limits.
 
-## Subsequent work, after current WIP passes
+## Next WIP: revision continuity and final acceptance
 
-1. General-purpose execution contracts and independent evidence/acceptance; stop treating a Worker
-   final answer as proof of success. Preserve legacy data and explicit mention/dispatch rules.
-2. Extend surfaces through shared domain commands; evaluate a small declarative surface/plugin slice
-   with revision control and permissions, rather than arbitrary scripts in the app origin.
-3. Durable continuity, scoped context and stopping conditions. Keep generator/evaluator authority
-   separate and surface meaningful decisions to the user.
+Pass the exact captured prior outputs to a document/design Worker after changes are requested,
+alongside the review observations. Verify provenance and prevent unrelated/corrupt input reuse.
+Then audit the end-to-end UI, durable recovery, architecture gaps and the final clean checkpoint.
 
 ## Environment and verification
 

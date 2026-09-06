@@ -21,3 +21,6 @@
 | [0017](0017-thread-work-briefs.md) | Accepted | Revisioned shared work briefs with separate scope confirmation |
 | [0018](0018-versioned-task-acceptance.md) | Accepted | Freeze task requirements and separate Worker completion from human acceptance |
 | [0019](0019-general-work-execution.md) | Accepted | Unify delegation, execute non-Git work and capture immutable deliverables |
+| [0020](0020-declarative-shared-surfaces.md) | Accepted | Shared declarative surface commands with trusted host renderers |
+| [0021](0021-durable-review-driven-goals.md) | Accepted | Durable goals with bounded execution and human review gates |
+| [0022](0022-bounded-conversation-context.md) | Accepted | Bounded recent context with explicit scoped history retrieval |

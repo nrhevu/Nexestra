@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MasterAccessMode } from "../shared/contracts.js";
+import { PROVIDER_TEXT_CONTEXT_CHARACTERS } from "../shared/conversation-context.js";
 import type { AgentInvocation, RuntimeToolUpdate } from "./runtime.js";
 import {
   LocalAgentRunner,
@@ -449,6 +450,22 @@ describe("ChatGPT Master harness arguments", () => {
 });
 
 describe("parseProviderReply", () => {
+  it.each(["openai-chat", "openai-responses"] as const)(
+    "stops oversized %s context before sending or retrying a provider request",
+    async (protocol) => {
+      const { agent, invocation, store } = await customMasterFixture(protocol);
+      const fetchMock = vi.fn();
+      const runner = new LocalAgentRunner({ store, fetch: fetchMock as typeof fetch });
+      await expect(
+        runner.invoke(agent, {
+          ...invocation,
+          transcriptSnapshot: "x".repeat(PROVIDER_TEXT_CONTEXT_CHARACTERS),
+        }),
+      ).rejects.toThrow("before another request");
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
   it("supports chat completions and responses payloads", () => {
     expect(parseProviderReply({ choices: [{ message: { content: "hello" } }] })).toBe("hello");
     expect(parseProviderReply({ output_text: "world" })).toBe("world");
@@ -780,6 +797,7 @@ describe("parseProviderReply", () => {
       "update_surface",
       "save_surface_record",
       "archive_surface_record",
+      "read_history",
       "read_goals",
       "draft_goal",
     ]);

@@ -188,6 +188,14 @@ same thread SSE stream as chat, with an active-only polling fallback when EventS
 
 ## Agent runtimes
 
+Invocations receive a bounded 48,000-character recent transcript with marked omissions, plus
+separate trigger/brief/task context. Canonical JSONL and full exports remain unchanged. The
+host-scoped `read_history` tool retrieves older messages through bounded search, pages and complete
+chunks; CLI harnesses also receive the transcript path. Before every custom HTTP request, a
+240,000-character guard counts text, tool schemas and accumulated results. This stops oversized
+requests with recovery instructions; it does not estimate tokens. See
+[conversation context](CONVERSATION-CONTEXT.md) for exact bounds and known gaps.
+
 Worker profiles select either `codex` or `opencode`, with optional model and reasoning-effort
 overrides. Worker chat turns require read-only discussion mode. Delegated task turns use
 workspace-write for Codex and OpenCode's build agent, scoped to the assignment worktree or general working directory. Codex maps the overrides to
@@ -203,7 +211,7 @@ following:
 
 Codex receives safe raster images through `--image`; OpenCode receives each local artifact through
 `--file`. Custom providers receive safe raster images as data URLs in the selected OpenAI protocol
-shape and up to 512 KB of attached text context. Image provider payloads are capped at 10 MB; larger
+shape and up to 512 KB of attached text context before the combined request guard. Image provider payloads are capped at 10 MB; larger
 artifacts remain indexed but are represented only by metadata.
 
 The Master tool registry provides repository list, glob, grep, read, exact edit, file write,

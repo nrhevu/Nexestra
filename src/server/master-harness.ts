@@ -48,6 +48,7 @@ import type {
   ProviderToolDefinition,
   ToolDefinition,
 } from "./harness-tool-types.js";
+import { historyTools } from "./history-tools.js";
 import { callRemoteMcpTool, loadMcpTools } from "./mcp-tools.js";
 import { findExecutable, runCommand, safeProcessEnv } from "./process.js";
 import { discoverSkills, type HarnessSkill, readSkill, skillDescription } from "./skills.js";
@@ -103,6 +104,7 @@ export async function createMasterToolSession(
   const definitions = new Map<string, ToolDefinition>();
   for (const tool of builtInTools(config, skills, planState)) definitions.set(tool.name, tool);
   for (const tool of surfaceTools()) definitions.set(tool.name, tool);
+  for (const tool of historyTools()) definitions.set(tool.name, tool);
   for (const tool of goalTools((goal) => {
     for (const step of goal.steps) planState.plannedTaskIds.delete(step.taskId);
   }))

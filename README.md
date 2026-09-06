@@ -67,6 +67,14 @@ The [product vision](docs/PRODUCT-VISION.vi.md), [target harness design](docs/HA
 [roadmap](docs/ROADMAP.md) describe the next steps toward a general-purpose execution workspace.
 Worker delegation supports repository worktrees and isolated directories for non-code work.
 
+Long conversations retain their complete canonical history and exports. Each invocation receives
+up to 48,000 characters of recent conversation, with explicit omission markers; pinned work briefs
+and assignment contracts remain separate. Custom Masters can use `read_history` to search, page
+backward or read a complete message in chunks. Codex/OpenCode also receive the canonical transcript
+path. Custom HTTP requests stop before exceeding 240,000 text characters including tool schemas
+and accumulated outputs. This is a size guard, not token or spend accounting. See
+[conversation context](docs/CONVERSATION-CONTEXT.md) for recovery and limits.
+
 ## Goals and shared surfaces
 
 Use **Surfaces → Goals** to create a draft from tasks in one conversation. Review the scope and
@@ -90,7 +98,7 @@ canonical thread history.
 Messages render as safe GitHub Flavored Markdown with headings, emphasis, lists, task lists, tables,
 quotes, links, inline code, fenced code blocks, and KaTeX math. Raw HTML is shown as text instead of
 executed, unsafe link schemes are disabled, and external HTTP(S) links open in a new tab. The exact
-Markdown source remains unchanged in the shared transcript and agent context.
+Markdown source remains unchanged in the shared transcript; bounded context copies mark omissions.
 
 While an agent is active, the thread receives a live event stream with its current phase, tool
 activity, runtime-emitted reasoning, and in-progress answer. Reasoning is collapsed behind a

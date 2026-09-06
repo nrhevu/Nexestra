@@ -188,7 +188,7 @@ is a resource: cap unresolved review work and prioritize by importance, uncertai
 | --- | --- | --- | --- |
 | 1–2 | Five explicit subsystems, verifier authority | A confident unsupported answer cannot pass the work unit | Task completion requires a separate human review; executable verifiers planned |
 | 3 | Workspace as record, provenance | A fresh session explains work using persisted files only | Canonical threads, knowledge, Work Briefs and persisted goal checkpoints |
-| 4 | Router instructions, scoped context | A role loads only relevant references and preserves critical constraints | `AGENTS.md`, skill discovery; context packer planned |
+| 4 | Router instructions, scoped context | A role loads only relevant references and preserves critical constraints | `AGENTS.md`, skill discovery, bounded recent context and scoped history retrieval implemented |
 | 5 | Checkpoints and recovery | Restart preserves accepted work and marks ambiguous side effects for reconciliation | Interrupted assignment recovery and explicit goal resumption implemented |
 | 6 | Initialization phase | Missing capability prevents dispatch with a repairable readiness report | Runtime availability exists; environment recipes planned |
 | 7 | Ownership and WIP | Two conflicting tasks cannot acquire the same output slot | Per-agent queues/worktrees exist; resource scheduler planned |

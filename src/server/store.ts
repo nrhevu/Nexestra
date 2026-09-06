@@ -59,6 +59,12 @@ import {
   workBriefReadiness,
 } from "../shared/contracts.js";
 import {
+  HISTORY_MESSAGE_CHARACTERS,
+  packRecentContext,
+  ReadHistorySchema,
+  shortenContext,
+} from "../shared/conversation-context.js";
+import {
   ControlWorkGoalSchema,
   CreateWorkGoalSchema,
   goalHoldsTasks,
@@ -1415,19 +1421,91 @@ export class FileStore {
       artifacts.push(artifact);
       artifactsByMessage.set(artifact.messageId, artifacts);
     }
-    return data.messages
-      .map((message) => {
-        const handle = message.author.kind === "agent" ? ` @${message.author.handle}` : "";
-        const artifacts = artifactsByMessage.get(message.id) ?? [];
-        const artifactText = artifacts.length
-          ? `\nArtifacts:\n${artifacts.map(formatArtifactForTranscript).join("\n")}`
-          : "";
-        const knowledgeText = message.knowledgeReferences.length
-          ? `\nKnowledge: ${message.knowledgeReferences.map((reference) => `#${reference.handle}`).join(", ")}`
-          : "";
-        return `[${message.createdAt}] ${message.author.name}${handle}:\n${message.content}${artifactText}${knowledgeText}`;
-      })
-      .join("\n\n");
+    return packRecentContext(data.messages, (message) => {
+      const handle = message.author.kind === "agent" ? ` @${message.author.handle}` : "";
+      const artifacts = artifactsByMessage.get(message.id) ?? [];
+      const artifactText = artifacts.length
+        ? `\nArtifacts:\n${artifacts.map(formatArtifactForTranscript).join("\n")}`
+        : "";
+      const knowledgeText = message.knowledgeReferences.length
+        ? `\nKnowledge: ${message.knowledgeReferences.map((reference) => `#${reference.handle}`).join(", ")}`
+        : "";
+      return `[${message.createdAt}] ${message.author.name}${handle}:\n${message.content}${artifactText}${knowledgeText}`;
+    });
+  }
+
+  async readHistory(threadId: string, rawInput: unknown) {
+    const input = ReadHistorySchema.parse(rawInput);
+    const data = await this.threadData(threadId);
+    const metadata = (message: Message) => ({
+      id: message.id,
+      sequence: message.sequence,
+      author: message.author,
+      createdAt: message.createdAt,
+      artifactIds: message.artifactIds.slice(0, 10),
+      knowledgeReferences: message.knowledgeReferences.slice(0, 20),
+      referencesTruncated:
+        message.artifactIds.length > 10 || message.knowledgeReferences.length > 20,
+    });
+    if (input.messageId) {
+      const message = data.messages.find((entry) => entry.id === input.messageId);
+      if (!message) throw new StoreError("not_found", "Message not found in this conversation.");
+      if (input.offset > message.content.length)
+        throw new StoreError("invalid", "The offset is past the end of this message.");
+      // Keep a surrogate pair together so each retrieved chunk can be rendered independently.
+      if (/^[\uDC00-\uDFFF]/.test(message.content.slice(input.offset)))
+        throw new StoreError("invalid", "Use the nextOffset returned by the previous chunk.");
+      let end = Math.min(message.content.length, input.offset + HISTORY_MESSAGE_CHARACTERS);
+      if (/[\uD800-\uDBFF]/.test(message.content.charAt(end - 1))) end -= 1;
+      return {
+        threadId,
+        messages: [
+          {
+            ...metadata(message),
+            content: message.content.slice(input.offset, end),
+            contentOffset: input.offset,
+            truncated: end < message.content.length || input.offset > 0,
+            nextOffset: end < message.content.length ? end : null,
+          },
+        ],
+        nextBeforeSequence: null,
+        hasMore: false,
+      };
+    }
+    const query = input.query?.toLocaleLowerCase();
+    const eligible = data.messages.filter(
+      (message) =>
+        (!input.beforeSequence || message.sequence < input.beforeSequence) &&
+        (!query || message.content.toLocaleLowerCase().includes(query)),
+    );
+    const candidates = eligible.slice(-input.limit).reverse();
+    const messages = [];
+    let characters = 0;
+    for (const message of candidates) {
+      const match = query ? message.content.toLocaleLowerCase().indexOf(query) : 0;
+      const offset = Math.max(0, match - 180);
+      const text = query
+        ? message.content.slice(offset, offset + 1500)
+        : shortenContext(message.content, 1500);
+      const entry = {
+        ...metadata(message),
+        content: text,
+        contentOffset: query ? offset : 0,
+        truncated: text.length < message.content.length,
+        nextOffset: null,
+      };
+      const size = JSON.stringify(entry).length;
+      if (characters + size > 30_000) break;
+      messages.unshift(entry);
+      characters += size;
+    }
+    return {
+      threadId,
+      messages,
+      nextBeforeSequence:
+        eligible.length > messages.length ? (messages[0]?.sequence ?? null) : null,
+      hasMore: eligible.length > messages.length,
+    };
   }
 
   async exportThreadMarkdown(threadId: string): Promise<string> {

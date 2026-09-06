@@ -8,7 +8,8 @@
   task acceptance and binds review to frozen task requirements.
 - Implemented: [ADR 0019](docs/adr/0019-general-work-execution.md) unifies execution and captures
   non-Git deliverables for review.
-- Planned: executable verifiers, durable goals and declarative extensions. The
+- Implemented: declarative surfaces, durable goals and bounded conversation context. Planned:
+  executable verifiers, graph coordination and isolated renderer plugins. The
   [roadmap](docs/ROADMAP.md) records actual implementation status.
 - Existing decisions and supersessions remain in the [ADR index](docs/adr/0000-index.md).
 # 2026-09-06: Declarative shared surfaces
@@ -24,3 +25,10 @@ continuation; models may propose/read goals but cannot start them or enlarge lim
 work without replaying ambiguous effects. Pause retains usage/deadline and still permits reviewing
 submitted outputs. See ADR 0021 and docs/GOALS.md; graphs, executable verifiers and token accounting
 remain future work.
+
+# 2026-09-06: Bounded conversation context
+
+Preserve the complete canonical transcript, pack recent messages with explicit omissions, and
+retrieve older evidence through a thread-bound read tool. Pinned intent remains separate. Stop
+oversized custom HTTP requests before sending; character limits do not claim token accounting.
+See ADR 0022 and docs/CONVERSATION-CONTEXT.md.

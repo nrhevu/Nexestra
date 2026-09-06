@@ -55,6 +55,19 @@ export function createApp(options: CreateAppOptions) {
   });
 
   app.get("/api/health", (context) => context.json({ ok: true, version: "0.1.0" }));
+  app.get("/api/threads/:id/history", async (context) =>
+    context.json(
+      await options.store.readHistory(context.req.param("id"), {
+        ...(context.req.query("beforeSequence")
+          ? { beforeSequence: Number(context.req.query("beforeSequence")) }
+          : {}),
+        ...(context.req.query("limit") ? { limit: Number(context.req.query("limit")) } : {}),
+        ...(context.req.query("query") ? { query: context.req.query("query") } : {}),
+        ...(context.req.query("messageId") ? { messageId: context.req.query("messageId") } : {}),
+        ...(context.req.query("offset") ? { offset: Number(context.req.query("offset")) } : {}),
+      }),
+    ),
+  );
 
   app.get("/api/bootstrap", async (context) => {
     const runtime = await runner.runtimeStatus();

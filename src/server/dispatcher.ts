@@ -398,6 +398,7 @@ export class AgentDispatcher {
             return tasks;
           },
           readWorkBrief: () => this.store.getWorkBrief(thread.id),
+          readHistory: (input) => this.store.readHistory(thread.id, input),
           readWorkGoals: async () =>
             this.store.listGoals(thread.workspaceId).filter((goal) => goal.threadId === thread.id),
           createWorkGoal: async (input) => {

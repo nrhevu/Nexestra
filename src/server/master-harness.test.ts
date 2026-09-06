@@ -18,6 +18,41 @@ import {
 import { FileStore } from "./store.js";
 
 describe("Master harness tools", () => {
+  it("retrieves history through its thread-bound read hook without edit approval", async () => {
+    const context = await toolContext("ask");
+    const store = await FileStore.open({
+      root: context.dataPath,
+      workspacePath: context.workspacePath,
+    });
+    const thread = store.listThreads()[0];
+    if (!thread) throw new Error("Expected thread");
+    const message = await store.createUserMessage(
+      thread.id,
+      "Decision: support research and design",
+      [],
+    );
+    let approvals = 0;
+    context.hooks = {
+      update: async () => undefined,
+      requestApproval: async () => {
+        approvals += 1;
+        return false;
+      },
+      readHistory: (input) => store.readHistory(thread.id, input),
+    };
+    const session = await createMasterToolSession(context);
+    try {
+      const result = JSON.parse(await callSession(session, "read_history", { query: "design" }));
+      expect(result.messages[0]).toMatchObject({ id: message.id, content: message.content });
+      expect(approvals).toBe(0);
+      await expect(
+        callSession(session, "read_history", { threadId: "foreign" }),
+      ).resolves.toContain("Unrecognized key");
+    } finally {
+      await session.close();
+    }
+  });
+
   it("hands planned tasks to a draft goal without forcing immediate delegation", async () => {
     const context = await toolContext("full");
     const store = await FileStore.open({
