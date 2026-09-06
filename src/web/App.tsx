@@ -3086,7 +3086,15 @@ function TaskProcessDialog({
             </div>
             <div>
               <span>Worker</span>
-              <strong>{worker ? `@${worker.handle}` : "Unassigned"}</strong>
+              <strong>
+                {assignment?.executionProfile
+                  ? `@${assignment.executionProfile.handle}`
+                  : worker
+                    ? `@${worker.handle}`
+                    : assignment
+                      ? "Profile unavailable"
+                      : "Unassigned"}
+              </strong>
             </div>
             <div>
               <span>Environment</span>
@@ -3123,6 +3131,35 @@ function TaskProcessDialog({
           </div>
 
           {process.task.sourceBrief && <SourceBrief brief={process.task.sourceBrief} />}
+
+          {assignment?.executionProfile && (
+            <section
+              className="task-process-result execution-profile"
+              aria-label="Execution profile"
+            >
+              <h3>
+                {assignment.executionProfile.harness === "codex" ? "Codex" : "OpenCode"} ·{" "}
+                {assignment.executionProfile.model ?? "Runtime default model"}
+              </h3>
+              <p>
+                Reasoning: {assignment.executionProfile.reasoningEffort ?? "runtime default"} ·
+                Profile saved when this attempt was queued.
+              </p>
+              <details>
+                <summary>Profile provenance</summary>
+                <p>
+                  {assignment.executionProfile.name} ·{" "}
+                  {formatDateTime(assignment.executionProfile.capturedAt)}
+                </p>
+                <p>Instruction fingerprint</p>
+                <code>{assignment.executionProfile.instructionsSha256}</code>
+                <p>
+                  These are the configured overrides. The runtime may resolve its own default model;
+                  this record does not verify which model a provider actually served.
+                </p>
+              </details>
+            </section>
+          )}
 
           {!assignment ? (
             <div className="task-process-empty">

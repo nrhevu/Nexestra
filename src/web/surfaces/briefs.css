@@ -33,6 +33,18 @@
 .source-brief-note {
   color: var(--muted);
 }
+.execution-profile {
+  margin: 16px 0;
+}
+.execution-profile summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+}
+.execution-profile code {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
 .brief-subtitle {
   color: var(--muted);
   font-size: 13px;

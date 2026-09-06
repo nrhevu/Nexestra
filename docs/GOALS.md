@@ -24,6 +24,11 @@ the frozen task revision, with observations for every criterion, can count as ac
 output hashes are checked by the task review gate. Goal completion records the accepted assignment
 and review IDs for every scoped task. Manual task completion is not enough.
 
+Tasks drafted from a saved Work Brief retain their own source snapshot; it supplies their brief
+context while the goal's overall objective remains explicit. Other tasks use the goal's pinned
+brief. New assignments also retain their configured Worker profile for later inspection, including
+after profile deletion; runtime-resolved model identity is not inferred from that record.
+
 ## Limits and control
 
 - At most one active/review-waiting goal per workspace; WIP=1 inside a goal. Different unrelated

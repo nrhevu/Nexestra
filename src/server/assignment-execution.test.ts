@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { link, mkdtemp, readFile, rm, symlink, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -334,6 +335,49 @@ describe("General-purpose assignment execution", () => {
       release();
       await app.dispatcher.waitForIdle();
     }
+  });
+
+  it("retains the invoked Worker profile after deletion, handle reuse and restart", async () => {
+    worker = await store.createAgent({
+      kind: "worker",
+      name: "Original writer",
+      handle: "writer",
+      harness: "opencode",
+      model: "fixture/glm",
+      reasoningEffort: "high",
+      instructions: "Use offline evidence only.",
+    });
+    const invoke = vi.fn(async (agent: Agent) => {
+      expect(agent).toMatchObject({
+        harness: "opencode",
+        model: "fixture/glm",
+        reasoningEffort: "high",
+      });
+      return "Offline submission";
+    });
+    const app = createApp({ store, runner: { runtimeStatus: async () => ready, invoke } });
+    await launch(app);
+    await app.dispatcher.waitForIdle();
+    const profile = store.listAssignments()[0]?.executionProfile;
+    expect(profile).toMatchObject({
+      name: "Original writer",
+      handle: "writer",
+      harness: "opencode",
+      model: "fixture/glm",
+      reasoningEffort: "high",
+      instructionsSha256: createHash("sha256").update(worker.instructions).digest("hex"),
+    });
+    await store.deleteAgent(worker.id);
+    await store.createAgent({
+      kind: "worker",
+      name: "Replacement writer",
+      handle: "writer",
+      harness: "codex",
+    });
+    const reopened = await FileStore.open({ root, workspacePath: root });
+    expect(reopened.listAssignments()[0]?.executionProfile).toEqual(profile);
+    expect(reopened.listAssignments()[0]?.workerAgentId).toBe(worker.id);
+    expect(invoke).toHaveBeenCalledOnce();
   });
 
   it("records failed manual runs and preserves their feedback for a later attempt", async () => {

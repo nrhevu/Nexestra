@@ -78,6 +78,10 @@ its captured files in `inputs/`. Save the revision in `outputs/`; later edits to
 directory do not replace the reviewed source. Failed retries and restarts retain that source.
 Changing the task requirements creates a new scope without automatically reusing the old inputs.
 
+The task process view records the configured Worker harness, model and reasoning overrides at
+queue time. That attribution survives deleting a Worker or reusing its handle. A runtime-default
+model is labeled as such; the app does not infer which remote model was actually served.
+
 Long conversations retain their complete canonical history and exports. Each invocation receives
 up to 48,000 characters of recent conversation, with explicit omission markers; pinned work briefs
 and assignment contracts remain separate. Custom Masters can use `read_history` to search, page

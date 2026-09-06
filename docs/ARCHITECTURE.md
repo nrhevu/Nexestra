@@ -287,6 +287,13 @@ file counts, sizes and traversal. The assignment and human review record a diges
 rejects changed snapshot bytes. Task detail and chat both expose the captured files; no executable
 HTML from a Worker is hosted in the trusted app origin. Working directories are retained.
 
+## Execution provenance
+
+New assignment records retain the invoked Worker's configured name/handle/harness/model/reasoning
+settings, an instruction fingerprint and admission timestamp. The process UI uses this snapshot
+after profile deletion or handle reuse. Null overrides mean runtime default; the app does not claim
+to know the actual provider-served model. See [ADR 0025](adr/0025-assignment-execution-profiles.md).
+
 ## Security model
 
 The application trusts the current OS user and user-supplied custom endpoints. The server binds only

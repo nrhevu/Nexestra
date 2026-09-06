@@ -529,6 +529,17 @@ export const WorkAssignmentSchema = z.object({
   masterRunId: z.string(),
   goalId: z.string().uuid().optional(),
   workerAgentId: z.string(),
+  executionProfile: z
+    .object({
+      name: z.string().max(60),
+      handle: HandleSchema,
+      harness: z.enum(["codex", "opencode"]),
+      model: WorkerModelSchema.nullable(),
+      reasoningEffort: WorkerReasoningEffortSchema.nullable(),
+      instructionsSha256: z.string().regex(/^[a-f0-9]{64}$/),
+      capturedAt: z.string(),
+    })
+    .optional(),
   repositoryId: z.string().nullable(),
   environment: z.enum(["worktree", "directory"]).optional(),
   status: z.enum(["queued", "running", "completed", "failed", "interrupted"]),

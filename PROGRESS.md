@@ -113,11 +113,18 @@ Original checkout is clean and remains on `master`.
   source brief, editing the task title, saving and inspecting its source revision in Taskboard;
   status remained not delegated. No browser errors. ADR 0024 records current limits.
 
-## Next WIP: final observability and acceptance
+## Completed checkpoint: execution profiles
 
-Preserve useful execution-profile attribution after Worker changes/deletion. Audit end-to-end UI,
-durable recovery and remaining gaps. Move the clean worktree to a durable ignored directory in the
-project before final handoff; preserve the original checkout and rerun the required checks there.
+Assignment snapshots retain configured Worker identity/harness/model/reasoning and an instruction
+fingerprint. Process UI preserves attribution after profile deletion or handle reuse, labels runtime
+defaults and separates configuration from actual execution/model identity. Targeted deletion/restart
+and historical UI tests passed. Full gate passed with 224 tests, lint, types and build. ADR 0025 records limits.
+
+## Next WIP: attempt inspection and final acceptance
+
+Make earlier task attempts inspectable from the process view, including their outputs/reviews.
+Then move the clean worktree to a durable ignored directory in the project; preserve the original
+checkout and rerun the required checks there. Audit final UI, recovery and remaining gaps.
 
 ## Environment and verification
 

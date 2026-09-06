@@ -32,7 +32,8 @@ not fully autonomous verification. Time includes pauses and review; budgets are 
 not tokens/currency. Existing provider/run limits remain separate. Cross-thread goals, graphs,
 resource lock scheduling, automatic external-effect reconciliation and a durable cost ledger are
 future work. Agent profiles/repository readiness are resolved at dispatch; the selected profile IDs
-are fixed, but a separate immutable execution-profile ledger is not yet provided.
+are fixed. Update: [ADR 0025](0025-assignment-execution-profiles.md) adds per-assignment configured
+profile snapshots; resolved runtime/model identity and an exact execution ledger remain unimplemented.
 
 The single-user file store and serialized writes protect app-level invariants, not arbitrary
 full-access processes or multiple server owners. Checkpoint history retains the latest 200 entries;

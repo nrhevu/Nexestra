@@ -46,3 +46,10 @@ Draft task opens a prefilled editable form from a saved Work Brief. The store va
 revision and retains the complete source in the task contract. Later brief changes do not replace
 that source; current task requirements govern execution. Creating a task never invokes a Worker.
 See ADR 0024 for context precedence, divergence and the separate Master-plan limitation.
+
+# 2026-09-06: Configured execution provenance
+
+New assignments retain the exact Worker configuration selected by the dispatcher, including an
+instruction fingerprint. Profile deletion and handle reuse do not change attribution. Null model
+overrides remain runtime defaults, and are not evidence of effective provider model identity.
+See ADR 0025 for replay and accounting limits.

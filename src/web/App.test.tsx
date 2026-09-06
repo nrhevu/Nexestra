@@ -803,6 +803,15 @@ describe("Taskboard Worker process", () => {
       worktreePath: "preview",
       contract: task,
       result: "A memo",
+      executionProfile: {
+        name: "Former writer",
+        handle: "former-writer",
+        harness: "opencode",
+        model: "fixture/glm",
+        reasoningEffort: "high",
+        instructionsSha256: "a".repeat(64),
+        capturedAt: now,
+      },
       inputSource: {
         assignmentId: "previous-assignment",
         reviewId: "previous-review",
@@ -844,6 +853,10 @@ describe("Taskboard Worker process", () => {
       await screen.findByRole("button", { name: "Open process for Review the memo" }),
     );
     expect(await screen.findByRole("region", { name: "Revision inputs" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Execution profile" })).toHaveTextContent(
+      "OpenCode · fixture/glm",
+    );
+    expect(screen.getByText("@former-writer")).toBeVisible();
     expect(screen.getByRole("link", { name: "Original memo.md" })).toHaveAttribute(
       "href",
       "/api/threads/thread/artifacts/previous-memo/content",

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import {
@@ -682,6 +683,15 @@ export class AgentDispatcher {
       masterRunId: masterRun?.id ?? "",
       ...(input.goalId ? { goalId: input.goalId } : {}),
       workerAgentId: worker.id,
+      executionProfile: {
+        name: worker.name,
+        handle: worker.handle,
+        harness: worker.harness,
+        model: worker.model ?? null,
+        reasoningEffort: worker.reasoningEffort ?? null,
+        instructionsSha256: createHash("sha256").update(worker.instructions).digest("hex"),
+        capturedAt: now,
+      },
       repositoryId: knowledge?.id ?? null,
       environment,
       status: "queued",
