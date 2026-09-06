@@ -68,11 +68,13 @@ import type {
   ThreadData,
   ThreadStreamEvent,
   ToolCall,
+  WorkBrief,
   Workspace,
 } from "../shared/contracts.js";
 import { extractMentionHandles, handleFromName } from "../shared/contracts.js";
 import { api } from "./api.js";
 import { Modal } from "./components/Modal.js";
+import { SourceBrief } from "./components/SourceBrief.js";
 import { Goals } from "./surfaces/Goals.js";
 import { findSurface, type Surface, surfaces } from "./surfaces/registry.js";
 import { SurfaceStudio } from "./surfaces/SurfaceStudio.js";
@@ -108,6 +110,7 @@ export function App() {
   const [notice, setNotice] = useState<string>();
   const [error, setError] = useState<string>();
   const [taskStatus, setTaskStatus] = useState<Task["status"]>("todo");
+  const [taskBrief, setTaskBrief] = useState<WorkBrief>();
   const [taskToInspect, setTaskToInspect] = useState<Task>();
   const [taskToEdit, setTaskToEdit] = useState<Task>();
   const [taskToDelete, setTaskToDelete] = useState<Task>();
@@ -141,6 +144,7 @@ export function App() {
   useEffect(() => {
     const handleNewThread = () => setModal("thread");
     const handleNewTask = () => {
+      setTaskBrief(undefined);
       setTaskStatus("todo");
       setModal("task");
     };
@@ -412,6 +416,7 @@ export function App() {
           else if (route.surface === "goals") setGoalCreateSequence((value) => value + 1);
           else if (route.surface === "agents") setModal("agent");
           else if (route.surface === "taskboard") {
+            setTaskBrief(undefined);
             setTaskStatus("todo");
             setModal("task");
           } else setModal("knowledge");
@@ -472,6 +477,11 @@ export function App() {
             initialThreadId={route.threadId}
             onChanged={() => refresh(true)}
             onThread={openThread}
+            onDraftTask={(brief) => {
+              setTaskBrief(brief);
+              setTaskStatus("todo");
+              setModal("task");
+            }}
           />
         ) : route.surface === "goals" ? (
           <Goals
@@ -527,6 +537,7 @@ export function App() {
           <Taskboard
             data={data}
             onCreate={(status = "todo") => {
+              setTaskBrief(undefined);
               setTaskStatus(status);
               setModal("task");
             }}
@@ -608,10 +619,16 @@ export function App() {
         <TaskDialog
           data={data}
           initialStatus={taskStatus}
-          onClose={() => setModal(null)}
+          brief={taskBrief}
+          onClose={() => {
+            setModal(null);
+            setTaskBrief(undefined);
+          }}
           onCreated={async () => {
             await refresh();
             setModal(null);
+            setTaskBrief(undefined);
+            if (taskBrief) openSurface("taskboard");
             flash("Task added to the board.");
           }}
         />
@@ -3105,6 +3122,8 @@ function TaskProcessDialog({
             <small>Updated {formatDateTime(process.task.updatedAt)}</small>
           </div>
 
+          {process.task.sourceBrief && <SourceBrief brief={process.task.sourceBrief} />}
+
           {!assignment ? (
             <div className="task-process-empty">
               <Bot size={22} />
@@ -3235,8 +3254,8 @@ function TaskProcessDialog({
                   <h3>Revision inputs</h3>
                   <p>
                     Continues a changes-requested submission under task revision{" "}
-                    {assignment.inputSource.taskRevision}. Captured input files are linked below
-                    and verified before the Worker starts.
+                    {assignment.inputSource.taskRevision}. Captured input files are linked below and
+                    verified before the Worker starts.
                   </p>
                   {assignment.inputSource.outputs.map((output) => (
                     <p key={output.artifactId}>
@@ -4266,20 +4285,26 @@ function KnowledgeDialog({
 function TaskDialog({
   data,
   task,
+  brief,
   initialStatus,
   onClose,
   onCreated,
 }: {
   data: BootstrapData;
   task?: Task;
+  brief?: WorkBrief;
   initialStatus: Task["status"];
   onClose: () => void;
   onCreated: () => Promise<void>;
 }) {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string>();
+  const sourceBrief = task?.sourceBrief ?? brief;
   const [criteria, setCriteria] = useState(() =>
-    (task?.acceptanceCriteria ?? []).map((item) => ({ ...item, key: crypto.randomUUID() })),
+    (task?.acceptanceCriteria ?? brief?.acceptanceCriteria ?? []).map((item) => ({
+      ...item,
+      key: crypto.randomUUID(),
+    })),
   );
   return (
     <Modal
@@ -4300,6 +4325,7 @@ function TaskDialog({
                 ...(task
                   ? { expectedRevision: task.revision }
                   : { workspaceId: data.workspace.id }),
+                ...(!task && brief ? { sourceBriefRevision: brief.revision } : {}),
                 title: String(fields.get("title") ?? ""),
                 description: String(fields.get("description") ?? ""),
                 kind: String(fields.get("kind") ?? "mixed"),
@@ -4309,7 +4335,7 @@ function TaskDialog({
                 })),
                 status: String(fields.get("status") ?? initialStatus),
                 assigneeId: String(fields.get("assigneeId") ?? "") || null,
-                threadId: String(fields.get("threadId") ?? "") || null,
+                threadId: brief?.threadId ?? (String(fields.get("threadId") ?? "") || null),
               }),
             });
             await onCreated();
@@ -4320,11 +4346,12 @@ function TaskDialog({
           }
         }}
       >
+        {sourceBrief && <SourceBrief brief={sourceBrief} />}
         <Field label="Title">
           <input
             name="title"
             aria-label="Title"
-            defaultValue={task?.title}
+            defaultValue={task?.title ?? brief?.title}
             placeholder="Work item to complete"
             required
             maxLength={160}
@@ -4335,7 +4362,7 @@ function TaskDialog({
             name="description"
             aria-label="Description"
             rows={3}
-            defaultValue={task?.description}
+            defaultValue={task?.description ?? brief?.outcome}
             placeholder="Desired outcome…"
             maxLength={2000}
           />
@@ -4363,7 +4390,11 @@ function TaskDialog({
           </Field>
         </div>
         <Field label="Work type">
-          <select name="kind" aria-label="Work type" defaultValue={task?.kind ?? "mixed"}>
+          <select
+            name="kind"
+            aria-label="Work type"
+            defaultValue={task?.kind ?? brief?.kind ?? "mixed"}
+          >
             <option value="mixed">Mixed work</option>
             <option value="research">Research</option>
             <option value="document">Document</option>
@@ -4430,7 +4461,12 @@ function TaskDialog({
           </button>
         </section>
         <Field label="Linked thread" optional>
-          <select name="threadId" aria-label="Linked thread" defaultValue={task?.threadId ?? ""}>
+          <select
+            name="threadId"
+            aria-label="Linked thread"
+            defaultValue={task?.threadId ?? brief?.threadId ?? ""}
+            disabled={Boolean(brief)}
+          >
             <option value="">No linked thread</option>
             {data.threads.map((thread) => (
               <option key={thread.id} value={thread.id}>

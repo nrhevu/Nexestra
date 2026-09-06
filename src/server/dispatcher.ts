@@ -15,6 +15,7 @@ import {
   type WorkAssignment,
 } from "../shared/contracts.js";
 import { formatTaskCriteria } from "../shared/task-contract.js";
+import { formatWorkBrief } from "../shared/work-brief.js";
 import { collectAssignmentOutputs } from "./assignment-outputs.js";
 import { type AssignmentRepositoryManager, RepositoryManager } from "./repository-manager.js";
 import {
@@ -651,9 +652,11 @@ export class AgentDispatcher {
         "The task changed before dispatch. Reload its requirements.",
       );
     const environment = knowledge ? "worktree" : "directory";
-    const workBrief = input.goalId
-      ? this.store.getGoal(input.goalId)?.workBrief
-      : await this.store.getWorkBrief(thread.id);
+    const workBrief =
+      task.sourceBrief ??
+      (input.goalId
+        ? this.store.getGoal(input.goalId)?.workBrief
+        : await this.store.getWorkBrief(thread.id));
     const release = this.reserveAgent(worker.id);
     if (!release) throw new StoreError("conflict", `@${worker.handle} is being deleted.`);
     const id = crypto.randomUUID();
@@ -750,6 +753,7 @@ export class AgentDispatcher {
                 `# ${task.title}`,
                 task.description,
                 formatTaskCriteria(task),
+                formatWorkBrief(workBrief),
                 previousReview
                   ? `Previous review: ${previousReview.notes}\n${previousReview.evidence.map((item) => item.observation).join("\n")}`
                   : "",
@@ -780,6 +784,9 @@ export class AgentDispatcher {
                   ? `Assigned under authorized goal ${input.goalId}: ${this.store.getGoal(input.goalId)?.objective ?? "Goal unavailable"}`
                   : "Assigned by the user from Taskboard.",
               `Task: ${task.title}`,
+              task.sourceBrief
+                ? `This task retains source Work Brief revision ${task.sourceBrief.revision}. Use the saved source context; the current task's explicit requirements take precedence. Report unresolved scope conflicts.`
+                : "",
               task.description,
               formatTaskCriteria(task),
               knowledge

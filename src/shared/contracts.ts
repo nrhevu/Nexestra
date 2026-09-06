@@ -472,6 +472,7 @@ export const TaskSchema = z.object({
   kind: TaskKindSchema,
   revision: z.number().int().positive().default(1),
   acceptanceCriteria: TaskCriteriaSchema,
+  sourceBrief: WorkBriefSchema.optional(),
   assigneeId: z.string().nullable(),
   threadId: z.string().nullable(),
   createdAt: z.string(),
@@ -485,6 +486,7 @@ export const TaskContractSchema = TaskSchema.pick({
   kind: true,
   revision: true,
   acceptanceCriteria: true,
+  sourceBrief: true,
   threadId: true,
 });
 
@@ -568,6 +570,7 @@ export const DelegateTaskSchema = z
 
 export const CreateTaskSchema = z.object({
   workspaceId: z.string().optional(),
+  sourceBriefRevision: z.number().int().positive().optional(),
   title: z.string().trim().min(1).max(160),
   description: z.string().trim().max(2_000).default(""),
   status: z.enum(["todo", "in_progress", "done"]).default("todo"),

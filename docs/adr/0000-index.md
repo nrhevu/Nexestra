@@ -25,3 +25,4 @@
 | [0021](0021-durable-review-driven-goals.md) | Accepted | Durable goals with bounded execution and human review gates |
 | [0022](0022-bounded-conversation-context.md) | Accepted | Bounded recent context with explicit scoped history retrieval |
 | [0023](0023-reviewed-revision-inputs.md) | Accepted | Carry verified captured inputs into revisions without losing review provenance |
+| [0024](0024-tasks-from-saved-briefs.md) | Accepted | Draft editable tasks from saved briefs and retain the source scope |

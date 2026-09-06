@@ -39,3 +39,10 @@ The store pins the last changes-requested submission for the same contract revis
 captured bytes and supplies copies to the next Worker. Failure/restart retains that source; changed
 scope does not inherit it automatically. Bounded verification also protects acceptance from altered,
 linked or enlarged evidence. See ADR 0023. Git branch replay remains a separate planned mechanism.
+
+# 2026-09-06: Reviewable brief-to-task handoff
+
+Draft task opens a prefilled editable form from a saved Work Brief. The store validates its source
+revision and retains the complete source in the task contract. Later brief changes do not replace
+that source; current task requirements govern execution. Creating a task never invokes a Worker.
+See ADR 0024 for context precedence, divergence and the separate Master-plan limitation.

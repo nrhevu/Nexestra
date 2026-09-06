@@ -4,7 +4,7 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgentView, BootstrapData, ThreadData } from "../shared/contracts.js";
+import type { AgentView, BootstrapData, ThreadData, WorkBrief } from "../shared/contracts.js";
 import { App } from "./App.js";
 
 const now = "2026-09-02T12:00:00.000Z";
@@ -708,6 +708,72 @@ describe("Worker creation", () => {
 });
 
 describe("Taskboard Worker process", () => {
+  it("opens an editable task from a saved brief and saves its source revision without starting work", async () => {
+    window.history.replaceState({}, "", "/surfaces/briefs");
+    const thread = {
+      id: "source-thread",
+      workspaceId: workspace.id,
+      name: "Audience research",
+      slug: "audience",
+      createdAt: now,
+      updatedAt: now,
+      messageCount: 0,
+      lastMessageAt: null,
+    };
+    const brief: WorkBrief = {
+      threadId: thread.id,
+      workspaceId: workspace.id,
+      revision: 3,
+      status: "draft",
+      title: "Choose an audience",
+      kind: "research",
+      outcome: "Make a recommendation",
+      deliverables: ["A sourced memo"],
+      constraints: "Public evidence only",
+      nonGoals: "No outreach",
+      openQuestions: "",
+      acceptanceCriteria: [
+        { behavior: "Claims have sources", verification: "Open the cited pages" },
+      ],
+      updatedAt: now,
+      updatedBy: { kind: "user", id: "local-user" },
+      confirmedAt: null,
+    };
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) =>
+      String(url).startsWith("/api/bootstrap")
+        ? jsonResponse({ ...bootstrapData, threads: [thread], workBriefs: [brief] })
+        : jsonResponse({}),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Draft task" }));
+    const dialog = await screen.findByRole("dialog", { name: "Create task" });
+    expect(within(dialog).getByLabelText("Title")).toHaveValue(brief.title);
+    expect(within(dialog).getByLabelText("Description")).toHaveValue(brief.outcome);
+    expect(within(dialog).getByLabelText("Criterion 1")).toHaveValue("Claims have sources");
+    expect(within(dialog).getByLabelText("Linked thread")).toBeDisabled();
+    await user.click(within(dialog).getByRole("button", { name: "Create task" }));
+    expect(await screen.findByText("Task added to the board.")).toBeVisible();
+    const calls = fetchMock.mock.calls as unknown as Array<[string, RequestInit | undefined]>;
+    const saved = calls.find(([url, init]) => url === "/api/tasks" && init?.method === "POST");
+    expect(JSON.parse(String(saved?.[1]?.body))).toMatchObject({
+      title: brief.title,
+      description: brief.outcome,
+      kind: "research",
+      threadId: thread.id,
+      sourceBriefRevision: 3,
+      status: "todo",
+      acceptanceCriteria: brief.acceptanceCriteria,
+    });
+    expect(calls.some(([url]) => url.includes("/delegate") || url.includes("/messages"))).toBe(
+      false,
+    );
+    await user.click(screen.getByRole("button", { name: "Create task" }));
+    expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue("");
+    expect(screen.queryByText(/Source brief · revision/)).not.toBeInTheDocument();
+  });
+
   it("records a review without reporting that a Worker was stopped", async () => {
     window.history.replaceState({}, "", "/surfaces/taskboard");
     const task = {

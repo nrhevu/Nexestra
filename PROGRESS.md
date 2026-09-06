@@ -102,10 +102,22 @@ Original checkout is clean and remains on `master`.
   artifacts, record criterion evidence and accept. Original bytes remained unchanged; no browser errors.
 - ADR 0023 records repository replay and OS isolation limits.
 
-## Next WIP: connected user workflow and final acceptance
+## Completed checkpoint: brief-to-task handoff
 
-Improve the handoff from a shared brief into a reviewable task without manually retyping scope.
-Then audit the end-to-end UI, durable recovery, architecture gaps and the final clean checkpoint.
+- Draft task from a saved brief opens an editable prefilled form and retains the complete source
+  snapshot in the task/assignment contract. Source revisions are validated under the store lock.
+- Unsaved/stale UI scope cannot be handed off; later brief edits do not replace the saved task source.
+  Worker context and TASK.md retain source constraints. Creating a task does not start a Worker.
+- Full source details are visible in task/edit views. Task review action styles now use theme tokens.
+- Full gate passed with 223 tests, lint, types and build. Browser QA passed opening the complete
+  source brief, editing the task title, saving and inspecting its source revision in Taskboard;
+  status remained not delegated. No browser errors. ADR 0024 records current limits.
+
+## Next WIP: final observability and acceptance
+
+Preserve useful execution-profile attribution after Worker changes/deletion. Audit end-to-end UI,
+durable recovery and remaining gaps. Move the clean worktree to a durable ignored directory in the
+project before final handoff; preserve the original checkout and rerun the required checks there.
 
 ## Environment and verification
 
@@ -129,7 +141,7 @@ as established facts. Validate important mechanisms against primary engineering 
 
 ## Active preview and tooling
 
-- Preview process session: 56461; loopback port 4387. Script: `/private/tmp/nexestra-ui-preview.mts`.
+- Preview process session: 51058; loopback port 4387. Script: `/private/tmp/nexestra-ui-preview.mts`.
 - Preview data: `/private/tmp/nexestra-preview-data-octqCw`, disposable and independent of user data.
 - Restart preserving preview data with NEXESTRA_PREVIEW_ROOT set to that path. No live providers.
 - CUA binding `tab` (id "1", browser id "1"); session reset during QA, browser handle not currently bound. Browser is hidden.

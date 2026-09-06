@@ -63,6 +63,12 @@ to draft. The brief is included when an agent is next mentioned in that conversa
 Masters can use `read_brief` and `draft_brief`; Codex/OpenCode receive the context but do not yet
 have that native tool bridge. Use **Work brief** in the conversation tabs to jump to its scope.
 
+Use **Draft task** on a saved brief to review an editable task with the outcome, work type and
+checks already filled in. Saving retains the complete source brief, including constraints and
+deliverables, and opens Taskboard. This does not run an agent. A stale source revision fails safely;
+later brief edits do not change the task's source snapshot. Open **Source brief** in the task to
+inspect it before assigning a Worker.
+
 The [product vision](docs/PRODUCT-VISION.vi.md), [target harness design](docs/HARNESS-DESIGN.md) and
 [roadmap](docs/ROADMAP.md) describe the next steps toward a general-purpose execution workspace.
 Worker delegation supports repository worktrees and isolated directories for non-code work.

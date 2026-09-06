@@ -18,6 +18,7 @@ export function WorkBriefs(props: {
   initialThreadId?: string;
   onChanged: () => Promise<unknown>;
   onThread: (threadId: string) => void;
+  onDraftTask?: (brief: WorkBrief) => void;
 }) {
   const [selectedId, setSelectedId] = useState(props.initialThreadId ?? props.data.threads[0]?.id);
   const [creating, setCreating] = useState(false);
@@ -116,6 +117,7 @@ export function WorkBriefs(props: {
             latest={briefs.get(selected.id)}
             onChanged={props.onChanged}
             onThread={props.onThread}
+            onDraftTask={props.onDraftTask}
           />
         )}
       </div>
@@ -128,6 +130,7 @@ function BriefEditor(props: {
   latest?: WorkBrief;
   onChanged: () => Promise<unknown>;
   onThread: (threadId: string) => void;
+  onDraftTask?: (brief: WorkBrief) => void;
 }) {
   const [saved, setSaved] = useState(props.latest);
   const [draft, setDraft] = useState<WorkBriefContent>(() =>
@@ -452,6 +455,15 @@ function BriefEditor(props: {
             <button type="button" onClick={() => void reload()}>
               <RefreshCw size={14} /> Reload latest
             </button>
+            {props.onDraftTask && (
+              <button
+                type="button"
+                disabled={!saved || dirty || changedElsewhere}
+                onClick={() => saved && props.onDraftTask?.(saved)}
+              >
+                <Plus size={14} /> Draft task
+              </button>
+            )}
           </div>
         </fieldset>
       </form>

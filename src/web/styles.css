@@ -2666,6 +2666,15 @@ kbd {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  min-height: 34px;
+  padding: 0 12px;
+  background: var(--panel-raised);
+  color: var(--text);
+}
+.task-process .modal-actions button.danger-button {
+  color: var(--red, #d35f68);
 }
 .task-process .modal-actions .stop-button {
   height: 34px;

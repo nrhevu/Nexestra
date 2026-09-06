@@ -1672,6 +1672,18 @@ export class FileStore {
       const nextState = structuredClone(this.state);
       const workspaceId = this.requireWorkspace(input.workspaceId).id;
       this.validateReferences(workspaceId, input.assigneeId, input.threadId);
+      const sourceBrief =
+        input.sourceBriefRevision && input.threadId
+          ? await this.getWorkBrief(input.threadId)
+          : undefined;
+      if (
+        input.sourceBriefRevision &&
+        (!sourceBrief || sourceBrief.revision !== input.sourceBriefRevision)
+      )
+        throw new StoreError(
+          "conflict",
+          "The source brief changed or is unavailable. Reload its latest version before drafting this task.",
+        );
       const now = new Date().toISOString();
       const task = TaskSchema.parse({
         id: crypto.randomUUID(),
@@ -1680,6 +1692,7 @@ export class FileStore {
         description: input.description,
         kind: input.kind,
         acceptanceCriteria: input.acceptanceCriteria,
+        ...(sourceBrief ? { sourceBrief } : {}),
         status: input.status,
         assigneeId: input.assigneeId,
         threadId: input.threadId,

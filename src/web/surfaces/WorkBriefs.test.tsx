@@ -76,6 +76,26 @@ afterEach(() => {
 });
 
 describe("Work briefs surface", () => {
+  it("drafts a task from the saved brief and blocks handoff of unsaved edits", async () => {
+    const onDraftTask = vi.fn();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <WorkBriefs
+        data={{ ...data, workBriefs: [brief] }}
+        onChanged={async () => undefined}
+        onThread={() => undefined}
+        onDraftTask={onDraftTask}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Draft task" }));
+    expect(onDraftTask).toHaveBeenCalledWith(brief);
+    expect(fetchMock).not.toHaveBeenCalled();
+    await user.type(screen.getByLabelText("Brief title"), " revised");
+    expect(screen.getByRole("button", { name: "Draft task" })).toBeDisabled();
+  });
+
   it("creates a research brief with paired checks and confirms only the saved revision", async () => {
     const user = userEvent.setup();
     let current = brief;
