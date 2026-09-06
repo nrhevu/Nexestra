@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import {
   type Agent,
   type AgentRun,
@@ -23,7 +23,12 @@ import {
   agentView,
   type RuntimeToolUpdate,
 } from "./runtime.js";
-import { type FileStore, StoreError, type UploadArtifactInput } from "./store.js";
+import {
+  type AgentArtifact,
+  type FileStore,
+  StoreError,
+  type UploadArtifactInput,
+} from "./store.js";
 
 export class AgentDispatcher {
   private readonly queues = new Map<string, Promise<void>>();
@@ -646,9 +651,6 @@ export class AgentDispatcher {
         "The task changed before dispatch. Reload its requirements.",
       );
     const environment = knowledge ? "worktree" : "directory";
-    const previousReview = this.store
-      .listAssignments(thread.workspaceId)
-      .find((entry) => entry.taskId === task.id)?.review;
     const workBrief = input.goalId
       ? this.store.getGoal(input.goalId)?.workBrief
       : await this.store.getWorkBrief(thread.id);
@@ -690,6 +692,12 @@ export class AgentDispatcher {
     try {
       assignment = await this.store.createAssignment(assignment, task.revision);
       assignmentPersisted = true;
+      const source = assignment.inputSource
+        ? this.store
+            .listAssignments(thread.workspaceId)
+            .find((entry) => entry.id === assignment.inputSource?.assignmentId)
+        : undefined;
+      const previousReview = source?.review;
       controller.signal.throwIfAborted();
       await this.store.updateTask(task.id, { status: "in_progress", assigneeId: worker.id });
       controller.signal.throwIfAborted();
@@ -717,6 +725,23 @@ export class AgentDispatcher {
           if (readiness.readiness !== "ready")
             throw new StoreError("invalid", readiness.readinessLabel);
           await this.repositories.prepareAssignment(knowledge, location, controller.signal);
+          const revisionArtifacts: AgentArtifact[] = [];
+          if (source && (source.outputs?.length ?? 0) > 0) {
+            const verified = await this.store.verifiedAssignmentOutputs(source.id);
+            const inputsDirectory = join(location.absolutePath, "inputs");
+            await mkdir(inputsDirectory, { mode: 0o700 });
+            for (const [index, { artifact, bytes }] of verified.entries()) {
+              controller.signal.throwIfAborted();
+              const name = `${String(index + 1).padStart(2, "0")}-${
+                basename(artifact.name.replaceAll("\\", "/"))
+                  .replace(/[^\p{L}\p{N}._-]/gu, "_")
+                  .slice(-120) || "deliverable"
+              }`;
+              const localPath = join(inputsDirectory, name);
+              await writeFile(localPath, bytes, { mode: 0o600, flag: "wx" });
+              revisionArtifacts.push({ artifact, localPath });
+            }
+          }
           if (environment === "directory") {
             await mkdir(join(location.absolutePath, "outputs"), { mode: 0o700 });
             await writeFile(
@@ -725,6 +750,12 @@ export class AgentDispatcher {
                 `# ${task.title}`,
                 task.description,
                 formatTaskCriteria(task),
+                previousReview
+                  ? `Previous review: ${previousReview.notes}\n${previousReview.evidence.map((item) => item.observation).join("\n")}`
+                  : "",
+                revisionArtifacts.length
+                  ? "Prior reviewed deliverables are in inputs/. Read those copies, then save the revised deliverables in outputs/."
+                  : "",
                 "Save deliverable files in outputs/. Report checks and limitations. This run does not accept its own result.",
               ].join("\n\n"),
               { mode: 0o600, flag: "wx" },
@@ -758,6 +789,9 @@ export class AgentDispatcher {
               previousReview
                 ? `Previous review (${previousReview.outcome}): ${previousReview.notes}\n${previousReview.evidence.map((item) => item.observation).join("\n")}`
                 : "",
+              revisionArtifacts.length
+                ? "Revision inputs are verified copies of the previously reviewed submission. Read inputs/ and save new deliverables in outputs/. Preserve the captured source artifacts."
+                : "",
               knowledge
                 ? "Complete the task, verify the result, and commit changes on the assigned branch. Do not merge or push."
                 : "Create the requested deliverables in outputs/. Use TASK.md as the frozen assignment contract. Report your checks and limitations; a reviewer decides acceptance.",
@@ -768,7 +802,7 @@ export class AgentDispatcher {
             knowledgeReferences: knowledge
               ? [{ knowledgeId: knowledge.id, handle: knowledge.handle }]
               : [],
-            artifactIds: [],
+            artifactIds: revisionArtifacts.map((entry) => entry.artifact.id),
           };
           const runtimeToolCalls = new Map<string, ToolCall>();
           const rawResponse = (
@@ -779,6 +813,7 @@ export class AgentDispatcher {
               transcriptPath: this.store.transcriptPath(thread.id),
               transcriptSnapshot,
               workBrief,
+              artifacts: revisionArtifacts,
               knowledge: knowledge
                 ? [{ item: knowledge, localPath: location.absolutePath }]
                 : await this.store.agentKnowledge(trigger),

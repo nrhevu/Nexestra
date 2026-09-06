@@ -1,11 +1,11 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { link, mkdtemp, readFile, rm, symlink, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Agent, Task } from "../shared/contracts.js";
 import { createApp } from "./app.js";
 import type { AgentInvocation, AgentRunner } from "./runtime.js";
-import { FileStore } from "./store.js";
+import { FileStore, MAX_UPLOAD_BYTES } from "./store.js";
 
 const ready = {
   chatgpt: { installed: false, connected: false, message: "Offline tests" },
@@ -149,6 +149,130 @@ describe("General-purpose assignment execution", () => {
     ).rejects.toThrow("captured output changed");
     expect(store.getTask(task.id)?.status).toBe("in_review");
   });
+
+  it("restores reviewed document inputs across a failed retry and restart without carrying them into changed scope", async () => {
+    let calls = 0;
+    let firstDirectory = "";
+    const runner: AgentRunner = {
+      runtimeStatus: async () => ready,
+      invoke: async (_agent, input) => {
+        calls += 1;
+        if (calls === 1 || calls === 4) {
+          expect(input.artifacts).toEqual([]);
+          expect(input.trigger.content).not.toContain("Previous review");
+          firstDirectory = input.workingDirectory ?? "";
+        } else {
+          expect(input.artifacts).toHaveLength(1);
+          const path = input.artifacts?.[0]?.localPath;
+          expect(path).toContain(`${input.workingDirectory}/inputs/`);
+          expect(await readFile(path ?? "", "utf8")).toBe("Original reviewed memo");
+          expect(input.trigger.content).toContain("Add primary sources.");
+          expect(await readFile(join(input.workingDirectory ?? "", "TASK.md"), "utf8")).toContain(
+            "Add primary sources.",
+          );
+          if (calls === 2) {
+            await writeFile(path ?? "", "An abandoned edit to the input copy");
+            throw new Error("Interrupted fixture revision");
+          }
+        }
+        await writeFile(
+          join(input.workingDirectory ?? "", "outputs", "memo.md"),
+          calls === 1 ? "Original reviewed memo" : "Revised memo with sources",
+        );
+        return "Submitted for review";
+      },
+    };
+    let app = createApp({ store, runner });
+    await launch(app);
+    await app.dispatcher.waitForIdle();
+    const first = store.listAssignments()[0];
+    if (!first?.outputs?.[0]) throw new Error("Expected first output");
+    await store.reviewTask(task.id, {
+      assignmentId: first.id,
+      expectedRevision: 1,
+      outcome: "changes_requested",
+      notes: "Add primary sources.",
+      evidence: [],
+    });
+    const review = store.listAssignments()[0]?.review;
+    await writeFile(join(firstDirectory, "outputs", "memo.md"), "Changed after capture");
+    await launch(app);
+    await app.dispatcher.waitForIdle();
+    expect(store.listAssignments()[0]?.status).toBe("failed");
+    store = await FileStore.open({ root, workspacePath: root });
+    app = createApp({ store, runner });
+    await launch(app);
+    await app.dispatcher.waitForIdle();
+    const third = store.listAssignments()[0];
+    expect(third?.inputSource).toEqual({
+      assignmentId: first.id,
+      reviewId: review?.id,
+      taskRevision: 1,
+      outputs: first.outputs,
+    });
+    const original = await store.artifactContent(task.threadId ?? "", first.outputs[0].artifactId);
+    expect(await readFile(original.file, "utf8")).toBe("Original reviewed memo");
+    if (!third) throw new Error("Expected revised assignment");
+    await store.reviewTask(task.id, {
+      assignmentId: third.id,
+      expectedRevision: 1,
+      outcome: "accepted",
+      notes: "Read the revised sources.",
+      evidence: [{ criterionIndex: 0, observation: "Sources checked." }],
+    });
+    task = await store.updateTask(task.id, {
+      status: "todo",
+      description: "Changed scope: a new audience",
+    });
+    expect(task.revision).toBe(2);
+    await launch(app);
+    await app.dispatcher.waitForIdle();
+    expect(calls).toBe(4);
+    expect(store.listAssignments()[0]?.inputSource).toBeUndefined();
+  });
+
+  it.each(["modified", "oversized", "symbolic-link", "hard-link"] as const)(
+    "blocks a revision before invoking the Worker when its captured source is %s",
+    async (damage) => {
+      const invoke = vi.fn(async (_agent: Agent, input: AgentInvocation) => {
+        await writeFile(join(input.workingDirectory ?? "", "outputs", "memo.md"), "Original memo");
+        return "Submitted";
+      });
+      const app = createApp({ store, runner: { runtimeStatus: async () => ready, invoke } });
+      await launch(app);
+      await app.dispatcher.waitForIdle();
+      const first = store.listAssignments()[0];
+      if (!first?.outputs?.[0]) throw new Error("Expected output");
+      await store.reviewTask(task.id, {
+        assignmentId: first.id,
+        expectedRevision: 1,
+        outcome: "changes_requested",
+        notes: "Add sources",
+        evidence: [],
+      });
+      const { file } = await store.artifactContent(
+        task.threadId ?? "",
+        first.outputs[0].artifactId,
+      );
+      if (damage === "modified") await writeFile(file, "Changed bytes");
+      else if (damage === "oversized") await truncate(file, MAX_UPLOAD_BYTES + 1);
+      else {
+        const outside = join(root, "unrelated-file");
+        await writeFile(outside, "Original memo");
+        await rm(file);
+        if (damage === "symbolic-link") await symlink(outside, file);
+        else await link(outside, file);
+      }
+      expect((await launch(app)).status).toBe(202);
+      await app.dispatcher.waitForIdle();
+      expect(invoke).toHaveBeenCalledTimes(1);
+      expect(store.listAssignments()[0]).toMatchObject({
+        status: "failed",
+        error: expect.stringContaining("captured output"),
+      });
+      expect(store.getTask(task.id)?.status).toBe("todo");
+    },
+  );
 
   it("serializes manual assignments on one Worker and can stop a queued attempt without invoking it", async () => {
     let release: () => void = () => {};

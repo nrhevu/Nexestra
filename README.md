@@ -67,6 +67,11 @@ The [product vision](docs/PRODUCT-VISION.vi.md), [target harness design](docs/HA
 [roadmap](docs/ROADMAP.md) describe the next steps toward a general-purpose execution workspace.
 Worker delegation supports repository worktrees and isolated directories for non-code work.
 
+After **Request changes**, the next assignment receives the prior review and verified copies of
+its captured files in `inputs/`. Save the revision in `outputs/`; later edits to the old working
+directory do not replace the reviewed source. Failed retries and restarts retain that source.
+Changing the task requirements creates a new scope without automatically reusing the old inputs.
+
 Long conversations retain their complete canonical history and exports. Each invocation receives
 up to 48,000 characters of recent conversation, with explicit omission markers; pinned work briefs
 and assignment contracts remain separate. Custom Masters can use `read_history` to search, page

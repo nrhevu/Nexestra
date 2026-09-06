@@ -32,3 +32,10 @@ Preserve the complete canonical transcript, pack recent messages with explicit o
 retrieve older evidence through a thread-bound read tool. Pinned intent remains separate. Stop
 oversized custom HTTP requests before sending; character limits do not claim token accounting.
 See ADR 0022 and docs/CONVERSATION-CONTEXT.md.
+
+# 2026-09-06: Reviewed revision inputs
+
+The store pins the last changes-requested submission for the same contract revision, verifies its
+captured bytes and supplies copies to the next Worker. Failure/restart retains that source; changed
+scope does not inherit it automatically. Bounded verification also protects acceptance from altered,
+linked or enlarged evidence. See ADR 0023. Git branch replay remains a separate planned mechanism.

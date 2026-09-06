@@ -188,6 +188,13 @@ same thread SSE stream as chat, with an active-only polling fallback when EventS
 
 ## Agent runtimes
 
+Revision assignments pin a host-selected `inputSource` (assignment/review/contract revision and
+output manifest). Source files are verified with bounded descriptor reads before invocation and
+copied into the new assignment's `inputs/` directory. Both CLI adapters receive these files plus
+review observations; new deliverables belong in `outputs/`. A failed retry does not hide the last
+changes-requested source. The same bounded manifest verification is used for human acceptance.
+See [ADR 0023](adr/0023-reviewed-revision-inputs.md) for changed-scope and repository limits.
+
 Invocations receive a bounded 48,000-character recent transcript with marked omissions, plus
 separate trigger/brief/task context. Canonical JSONL and full exports remain unchanged. The
 host-scoped `read_history` tool retrieves older messages through bounded search, pages and complete

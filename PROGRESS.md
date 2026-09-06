@@ -89,10 +89,22 @@ Original checkout is clean and remains on `master`.
 - Full gate passed at 21:47 UTC: 214 tests, lint, types and production build. ADR 0022 and
   docs/CONVERSATION-CONTEXT.md document CLI bridge, indexing and exact-context-ledger limits.
 
-## Next WIP: revision continuity and final acceptance
+## Completed checkpoint: reviewed revision inputs
 
-Pass the exact captured prior outputs to a document/design Worker after changes are requested,
-alongside the review observations. Verify provenance and prevent unrelated/corrupt input reuse.
+- Host-selected prior submission/review/contract provenance; bounded hash verification and input
+  copies for revised documents/designs. Failed retries and restart preserve the reviewed source;
+  changed requirements do not silently reuse it. Process UI links the exact prior captured files.
+- Acceptance uses the same bounded file-descriptor checks. Targeted tests cover linked, changed and
+  oversized evidence, failed revision/restart, changed scope, and visible provenance.
+- Removed OpenCode's automatic full-transcript attachment so bounded context applies consistently.
+- Full gate passed with 219 tests, lint, types and build. Browser flow passed: first offline submission,
+  changes requested, second run with source inputs, inspect original 80-byte and revised 146-byte
+  artifacts, record criterion evidence and accept. Original bytes remained unchanged; no browser errors.
+- ADR 0023 records repository replay and OS isolation limits.
+
+## Next WIP: connected user workflow and final acceptance
+
+Improve the handoff from a shared brief into a reviewable task without manually retyping scope.
 Then audit the end-to-end UI, durable recovery, architecture gaps and the final clean checkpoint.
 
 ## Environment and verification
@@ -117,7 +129,7 @@ as established facts. Validate important mechanisms against primary engineering 
 
 ## Active preview and tooling
 
-- Preview process session: 99667; loopback port 4387. Script: `/private/tmp/nexestra-ui-preview.mts`.
+- Preview process session: 56461; loopback port 4387. Script: `/private/tmp/nexestra-ui-preview.mts`.
 - Preview data: `/private/tmp/nexestra-preview-data-octqCw`, disposable and independent of user data.
 - Restart preserving preview data with NEXESTRA_PREVIEW_ROOT set to that path. No live providers.
 - CUA binding `tab` (id "1", browser id "1"); session reset during QA, browser handle not currently bound. Browser is hidden.

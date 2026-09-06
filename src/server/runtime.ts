@@ -211,7 +211,6 @@ export class LocalAgentRunner implements AgentRunner {
     if (agent.model) args.push("-m", agent.model);
     if (agent.reasoningEffort) args.push("--variant", agent.reasoningEffort);
     args.push("--thinking");
-    args.push("--file", invocation.transcriptPath);
     for (const entry of invocation.artifacts ?? []) {
       if (entry.localPath) args.push("--file", entry.localPath);
     }

@@ -884,6 +884,69 @@ export class FileStore {
     );
   }
 
+  /** Read only the stored manifest's captured bytes, bounded before allocation and verified by hash. */
+  async verifiedAssignmentOutputs(
+    assignmentId: string,
+  ): Promise<Array<{ artifact: Artifact; bytes: Buffer }>> {
+    const assignment = this.state.assignments.find((entry) => entry.id === assignmentId);
+    if (!assignment) throw new StoreError("not_found", "Assignment not found.");
+    const verified: Array<{ artifact: Artifact; bytes: Buffer }> = [];
+    let total = 0;
+    for (const output of assignment.outputs ?? []) {
+      const { artifact, file } = await this.artifactContent(assignment.threadId, output.artifactId);
+      if (
+        artifact.source !== "generated" ||
+        artifact.messageId !== assignment.resultMessageId ||
+        artifact.sha256 !== output.sha256 ||
+        artifact.size !== output.size ||
+        output.size > MAX_UPLOAD_BYTES ||
+        total + output.size > MAX_UPLOAD_TOTAL_BYTES
+      )
+        throw new StoreError(
+          "conflict",
+          "A captured output changed after submission. Restore its original bytes before using this evidence.",
+        );
+      const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW).catch(() => {
+        throw new StoreError(
+          "conflict",
+          "A captured output cannot be read safely. Restore its original file before using this evidence.",
+        );
+      });
+      try {
+        const before = await handle.stat();
+        if (!before.isFile() || before.nlink !== 1 || before.size !== output.size)
+          throw new StoreError(
+            "conflict",
+            "A captured output changed after submission. Restore its original bytes before using this evidence.",
+          );
+        const buffer = Buffer.alloc(output.size + 1);
+        let count = 0;
+        while (count < buffer.length) {
+          const result = await handle.read(buffer, count, buffer.length - count, count);
+          if (!result.bytesRead) break;
+          count += result.bytesRead;
+        }
+        const after = await handle.stat();
+        const bytes = buffer.subarray(0, count);
+        if (
+          count !== output.size ||
+          after.size !== before.size ||
+          after.mtimeMs !== before.mtimeMs ||
+          createHash("sha256").update(bytes).digest("hex") !== output.sha256
+        )
+          throw new StoreError(
+            "conflict",
+            "A captured output changed after submission. Restore its original bytes before using this evidence.",
+          );
+        verified.push({ artifact, bytes });
+        total += count;
+      } finally {
+        await handle.close();
+      }
+    }
+    return verified;
+  }
+
   async createWorkspace(rawInput: unknown): Promise<Workspace> {
     const input = CreateWorkspaceSchema.parse(rawInput);
     return this.withWrite(async () => {
@@ -1791,6 +1854,26 @@ export class FileStore {
         );
       }
       assignment.contract = TaskContractSchema.parse(task);
+      // The host selects revision provenance under the same lock as assignment admission.
+      const source = [...nextState.assignments]
+        .reverse()
+        .find(
+          (entry) =>
+            entry.taskId === task.id &&
+            entry.threadId === task.threadId &&
+            entry.workspaceId === task.workspaceId &&
+            entry.status === "completed" &&
+            entry.contract?.revision === task.revision &&
+            entry.review?.outcome === "changes_requested",
+        );
+      if (source?.review)
+        assignment.inputSource = {
+          assignmentId: source.id,
+          reviewId: source.review.id,
+          taskRevision: task.revision,
+          outputs: structuredClone(source.outputs ?? []),
+        };
+      else delete assignment.inputSource;
       const owner = nextState.goals.find(
         (goal) => goalHoldsTasks(goal) && goal.steps.some((step) => step.taskId === task.id),
       );
@@ -1953,25 +2036,7 @@ export class FileStore {
         );
       }
       if (input.outcome === "accepted") {
-        for (const output of assignment.outputs ?? []) {
-          const { artifact, file } = await this.artifactContent(
-            assignment.threadId,
-            output.artifactId,
-          );
-          const actual = createHash("sha256")
-            .update(await readFile(file))
-            .digest("hex");
-          if (
-            artifact.messageId !== assignment.resultMessageId ||
-            artifact.sha256 !== output.sha256 ||
-            actual !== output.sha256
-          ) {
-            throw new StoreError(
-              "conflict",
-              "A captured output changed after submission. Restore its original bytes or start a new assignment before acceptance.",
-            );
-          }
-        }
+        await this.verifiedAssignmentOutputs(assignment.id);
       }
       const now = new Date().toISOString();
       assignment.review = TaskReviewSchema.parse({

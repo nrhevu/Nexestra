@@ -533,6 +533,14 @@ export const WorkAssignmentSchema = z.object({
   branch: z.string(),
   worktreePath: z.string(),
   contract: TaskContractSchema.optional(),
+  inputSource: z
+    .object({
+      assignmentId: z.string(),
+      reviewId: z.string(),
+      taskRevision: z.number().int().positive(),
+      outputs: z.array(AssignmentOutputSchema).max(10),
+    })
+    .optional(),
   review: TaskReviewSchema.optional(),
   resultMessageId: z.string().optional(),
   outputs: z.array(AssignmentOutputSchema).max(10).optional(),

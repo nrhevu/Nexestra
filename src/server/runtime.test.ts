@@ -198,11 +198,12 @@ describe("Worker harness arguments", () => {
       "--variant",
       "high",
       "--thinking",
-      "--file",
-      invocation.transcriptPath,
       "--",
       expect.stringContaining("@opencode"),
     ]);
+    expect(args).not.toContain(invocation.transcriptPath);
+    expect(args.at(-1)).toContain(invocation.transcriptPath);
+    expect(args.at(-1)).toContain(invocation.transcriptSnapshot);
   });
 
   it.each(["codex", "opencode"] as const)(

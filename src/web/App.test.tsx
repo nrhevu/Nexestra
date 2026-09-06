@@ -737,6 +737,19 @@ describe("Taskboard Worker process", () => {
       worktreePath: "preview",
       contract: task,
       result: "A memo",
+      inputSource: {
+        assignmentId: "previous-assignment",
+        reviewId: "previous-review",
+        taskRevision: 1,
+        outputs: [
+          {
+            artifactId: "previous-memo",
+            name: "Original memo.md",
+            sha256: "a".repeat(64),
+            size: 42,
+          },
+        ],
+      },
       createdAt: now,
       updatedAt: now,
     };
@@ -763,6 +776,11 @@ describe("Taskboard Worker process", () => {
     render(<App />);
     await user.click(
       await screen.findByRole("button", { name: "Open process for Review the memo" }),
+    );
+    expect(await screen.findByRole("region", { name: "Revision inputs" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Original memo.md" })).toHaveAttribute(
+      "href",
+      "/api/threads/thread/artifacts/previous-memo/content",
     );
     await user.type(await screen.findByLabelText("Review notes"), "Add primary sources.");
     await user.click(screen.getByRole("button", { name: "Request changes" }));

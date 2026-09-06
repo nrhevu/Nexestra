@@ -3230,6 +3230,26 @@ function TaskProcessDialog({
                 </section>
               )}
 
+              {assignment.inputSource && (
+                <section className="task-process-result" aria-label="Revision inputs">
+                  <h3>Revision inputs</h3>
+                  <p>
+                    Continues a changes-requested submission under task revision{" "}
+                    {assignment.inputSource.taskRevision}. Captured input files are linked below
+                    and verified before the Worker starts.
+                  </p>
+                  {assignment.inputSource.outputs.map((output) => (
+                    <p key={output.artifactId}>
+                      <a
+                        href={`/api/threads/${assignment.threadId}/artifacts/${output.artifactId}/content`}
+                      >
+                        {output.name}
+                      </a>
+                    </p>
+                  ))}
+                </section>
+              )}
+
               {(process.artifacts?.length ?? 0) > 0 && (
                 <section className="task-process-result" aria-label="Submitted files">
                   <h3>Submitted files</h3>
