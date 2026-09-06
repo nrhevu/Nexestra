@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { WorkspaceSurface } from "./surfaces.js";
 
 export const HandleSchema = z
   .string()
@@ -592,6 +593,7 @@ export interface BootstrapData {
   agents: AgentView[];
   threads: Thread[];
   workBriefs: WorkBrief[];
+  surfaces: WorkspaceSurface[];
   tasks: Task[];
   knowledge: KnowledgeItem[];
   assignments: WorkAssignment[];

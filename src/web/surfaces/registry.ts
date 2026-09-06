@@ -1,7 +1,7 @@
-import { BookOpen, Columns3, Target, UsersRound } from "lucide-react";
+import { BookOpen, Columns3, LayoutGrid, Target, UsersRound } from "lucide-react";
 import type { BootstrapData } from "../../shared/contracts.js";
 
-// Trusted built-ins only. External extension loading has a separate, proposed boundary.
+// Host renderers only. Custom surfaces use validated declarative definitions.
 export const surfaces = [
   {
     id: "briefs",
@@ -16,6 +16,13 @@ export const surfaces = [
     description: "Plan and inspect work",
     icon: Columns3,
     count: (data: BootstrapData) => data.tasks.length,
+  },
+  {
+    id: "custom",
+    label: "Custom surfaces",
+    description: "Shared tables, boards, canvases and documents",
+    icon: LayoutGrid,
+    count: (data: BootstrapData) => data.surfaces.length,
   },
   {
     id: "knowledge",

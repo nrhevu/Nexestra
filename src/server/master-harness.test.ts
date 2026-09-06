@@ -9,13 +9,89 @@ import {
   type ToolCall,
   WorkAssignmentSchema,
 } from "../shared/contracts.js";
+import { surfaceTemplate } from "../shared/surfaces.js";
 import {
   createMasterToolSession,
   executeMasterTool,
   type MasterToolContext,
 } from "./master-harness.js";
+import { FileStore } from "./store.js";
 
 describe("Master harness tools", () => {
+  it("uses scoped surface commands, preserves complete records, and respects write approval", async () => {
+    const context = await toolContext("ask");
+    const store = await FileStore.open({
+      root: context.dataPath,
+      workspacePath: context.workspacePath,
+    });
+    const agent = await store.createAgent({
+      kind: "master",
+      name: "Master",
+      handle: "master",
+      instructions: "",
+      description: "",
+      provider: {
+        type: "custom",
+        name: "Test",
+        baseUrl: "http://localhost:9876/v1",
+        model: "test",
+        protocol: "openai-chat",
+      },
+    });
+    if (agent.kind !== "master") throw new Error("Expected master");
+    context.agent = agent;
+    let approved = false;
+    context.hooks = {
+      update: async () => undefined,
+      requestApproval: async () => approved,
+      readSurfaces: async () => store.listSurfaces(agent.workspaceId),
+      readSurface: async (id) => {
+        store.readSurfaceContext(id, [], agent.id);
+        const surface = store.getSurface(id);
+        if (!surface) throw new Error("Expected surface");
+        return surface;
+      },
+      createSurface: (input) =>
+        store.createSurface({ ...input, workspaceId: agent.workspaceId }, agent.id),
+      saveSurfaceRecord: (id, input) => store.saveSurfaceRecord(id, input, agent.id),
+    };
+    const input = {
+      manifest: surfaceTemplate("table", "Evidence"),
+      records: [{ data: { title: "Claim", notes: "x".repeat(2000) } }],
+    };
+    await expect(call(context, "create_surface", input)).resolves.toContain("denied");
+    expect(store.listSurfaces(agent.workspaceId)).toHaveLength(0);
+    approved = true;
+    const created = JSON.parse(await call(context, "create_surface", input));
+    expect(created.truncated).toBe(true);
+    await expect(call(context, "read_surfaces", {})).resolves.toContain("Evidence");
+    const complete = JSON.parse(
+      await call(context, "read_surface", {
+        surfaceId: created.surfaceId,
+        recordId: created.records[0].id,
+      }),
+    );
+    expect(complete.record.data.notes).toHaveLength(2000);
+    const saved = JSON.parse(
+      await call(context, "save_surface_record", {
+        surfaceId: created.surfaceId,
+        expectedRevision: complete.revision,
+        id: complete.record.id,
+        data: { ...complete.record.data, title: "Verified claim" },
+      }),
+    );
+    expect(saved.revision).toBe(2);
+    await expect(
+      call(context, "save_surface_record", {
+        surfaceId: created.surfaceId,
+        expectedRevision: 1,
+        id: complete.record.id,
+        data: { title: "Stale" },
+      }),
+    ).resolves.toContain("changed");
+    expect(store.getSurface(created.surfaceId)?.records[0]?.data.title).toBe("Verified claim");
+  });
+
   it("uses canonical boundaries while accepting a workspace's declared symlink path", async () => {
     const context = await toolContext("full");
     const actual = await realpath(context.workspacePath);

@@ -6,6 +6,7 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { ZodError } from "zod";
 import { type BootstrapData, DelegateTaskSchema, ToolAnswersSchema } from "../shared/contracts.js";
+import { SurfaceContextQuerySchema } from "../shared/surfaces.js";
 import { ChatGptAuthManager } from "./auth.js";
 import { AgentDispatcher, ChatService } from "./dispatcher.js";
 import { RepositoryManager } from "./repository-manager.js";
@@ -68,6 +69,7 @@ export function createApp(options: CreateAppOptions) {
         .map((agent) => agentView(agent, runtime, dispatcher.busyAgentIds())),
       threads: options.store.listThreads(workspace.id),
       workBriefs: await options.store.listWorkBriefs(workspace.id),
+      surfaces: options.store.listSurfaces(workspace.id),
       tasks: options.store.listTasks(workspace.id),
       knowledge: options.store.listKnowledge(workspace.id),
       assignments: options.store.listAssignments(workspace.id),
@@ -313,6 +315,45 @@ export function createApp(options: CreateAppOptions) {
 
   app.post("/api/tasks", async (context) => {
     return context.json(await options.store.createTask(await context.req.json()), 201);
+  });
+
+  app.post("/api/surfaces", async (context) =>
+    context.json(await options.store.createSurface(await context.req.json()), 201),
+  );
+  app.get("/api/surfaces/:id", (context) => {
+    const surface = options.store.getSurface(context.req.param("id"));
+    if (!surface) throw new StoreError("not_found", "Surface not found.");
+    return context.json(surface);
+  });
+  app.put("/api/surfaces/:id", async (context) =>
+    context.json(
+      await options.store.updateSurface(context.req.param("id"), await context.req.json()),
+    ),
+  );
+  app.patch("/api/surfaces/:id/enabled", async (context) =>
+    context.json(
+      await options.store.setSurfaceEnabled(context.req.param("id"), await context.req.json()),
+    ),
+  );
+  app.post("/api/surfaces/:id/records", async (context) =>
+    context.json(
+      await options.store.saveSurfaceRecord(context.req.param("id"), await context.req.json()),
+    ),
+  );
+  app.patch("/api/surfaces/:id/records/:recordId/archive", async (context) =>
+    context.json(
+      await options.store.archiveSurfaceRecord(
+        context.req.param("id"),
+        context.req.param("recordId"),
+        await context.req.json(),
+      ),
+    ),
+  );
+  app.get("/api/surfaces/:id/context", (context) => {
+    const query = SurfaceContextQuerySchema.parse({
+      recordIds: context.req.query("ids")?.split(",").filter(Boolean) ?? [],
+    });
+    return context.json(options.store.readSurfaceContext(context.req.param("id"), query.recordIds));
   });
 
   app.get("/api/tasks/:id", (context) => {

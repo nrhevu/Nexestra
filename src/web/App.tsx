@@ -72,7 +72,9 @@ import type {
 } from "../shared/contracts.js";
 import { extractMentionHandles, handleFromName } from "../shared/contracts.js";
 import { api } from "./api.js";
+import { Modal } from "./components/Modal.js";
 import { findSurface, type Surface, surfaces } from "./surfaces/registry.js";
+import { SurfaceStudio } from "./surfaces/SurfaceStudio.js";
 import { TaskLaunch } from "./surfaces/TaskLaunch.js";
 import { TaskReview } from "./surfaces/TaskReview.js";
 import { WorkBriefs } from "./surfaces/WorkBriefs.js";
@@ -112,6 +114,7 @@ export function App() {
   const [knowledgeToEdit, setKnowledgeToEdit] = useState<KnowledgeItem>();
   const [knowledgeToDelete, setKnowledgeToDelete] = useState<KnowledgeItem>();
   const [agentToDelete, setAgentToDelete] = useState<AgentView>();
+  const [surfaceCreateSequence, setSurfaceCreateSequence] = useState(0);
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     const stored = window.localStorage.getItem("nexestra.theme") as "dark" | "light" | null;
     return stored ?? "dark";
@@ -403,6 +406,7 @@ export function App() {
         onSettings={() => setModal("settings")}
         onCreate={() => {
           if (route.view === "threads" || route.surface === "briefs") setModal("thread");
+          else if (route.surface === "custom") setSurfaceCreateSequence((value) => value + 1);
           else if (route.surface === "agents") setModal("agent");
           else if (route.surface === "taskboard") {
             setTaskStatus("todo");
@@ -465,6 +469,15 @@ export function App() {
             initialThreadId={route.threadId}
             onChanged={() => refresh(true)}
             onThread={openThread}
+          />
+        ) : route.surface === "custom" ? (
+          <SurfaceStudio
+            key={data.workspace.id}
+            data={data}
+            createSequence={surfaceCreateSequence}
+            onChanged={async () => {
+              await refresh(true);
+            }}
           />
         ) : route.surface === "agents" ? (
           <AgentsView
@@ -4506,91 +4519,6 @@ function SettingsDialog({ data, onClose }: { data: BootstrapData; onClose: () =>
         </button>
       </div>
     </Modal>
-  );
-}
-
-function Modal({
-  title,
-  eyebrow,
-  onClose,
-  closeDisabled = false,
-  wide = false,
-  children,
-}: {
-  title: string;
-  eyebrow: string;
-  onClose: () => void;
-  closeDisabled?: boolean;
-  wide?: boolean;
-  children: ReactNode;
-}) {
-  const modalRef = useRef<HTMLElement>(null);
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
-  const closeDisabledRef = useRef(closeDisabled);
-  closeDisabledRef.current = closeDisabled;
-  useEffect(() => {
-    const previousActive =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const focusable = () =>
-      Array.from(
-        modalRef.current?.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        ) ?? [],
-      );
-    focusable()[0]?.focus();
-    const onKey = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") {
-        if (!closeDisabledRef.current) onCloseRef.current();
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const items = focusable();
-      if (items.length === 0) {
-        event.preventDefault();
-        modalRef.current?.focus();
-        return;
-      }
-      const first = items[0];
-      const last = items.at(-1);
-      if (!first || !last) return;
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      previousActive?.focus();
-    };
-  }, []);
-  return (
-    <div className="modal-backdrop">
-      <section
-        ref={modalRef}
-        className={wide ? "modal modal-wide" : "modal"}
-        role="dialog"
-        aria-modal="true"
-        aria-busy={closeDisabled || undefined}
-        aria-labelledby="modal-title"
-        tabIndex={-1}
-      >
-        <header>
-          <div>
-            <p className="eyebrow">{eyebrow}</p>
-            <h2 id="modal-title">{title}</h2>
-          </div>
-          <button type="button" onClick={onClose} aria-label="Close" disabled={closeDisabled}>
-            <X size={18} />
-          </button>
-        </header>
-        <div className="modal-body">{children}</div>
-      </section>
-    </div>
   );
 }
 

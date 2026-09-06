@@ -40,6 +40,7 @@ const bootstrapData: BootstrapData = {
   threads: [],
   tasks: [],
   workBriefs: [],
+  surfaces: [],
   knowledge: [],
   assignments: [],
   activeRuns: [],

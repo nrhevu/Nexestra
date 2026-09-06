@@ -52,11 +52,23 @@ Original checkout is clean and remains on `master`.
   20:04 UTC passed Taskboard start → generated document → inspect captured bytes → human acceptance.
   All runs used explicit offline fixtures; no live provider calls. ADR 0019 records remaining gaps.
 
-## Current WIP: declarative extensible surfaces
+## Completed checkpoint: declarative extensible surfaces
 
-Implement useful board/table/canvas/document surfaces from validated definitions, with shared
-human/agent commands, revision conflicts, scoped semantic context and data export. No generated
-JavaScript in the app origin. Then address durable bounded goals/continuity as time permits.
+- Table, board, canvas and document host renderers, typed bounded manifests, import/export, record
+  editing/position/color, archive/restore, enable/disable, selection context and preserved conflict drafts.
+- Shared store/API/Master commands, workspace/author enforcement, edit permission, CAS revision writes,
+  redaction including escaped credentials, invalid-schema protection, restart persistence and examples.
+- `pnpm check` passed with 186 tests, lint, types and production build. Browser QA passed creating a
+  Vietnamese whiteboard note, save/reload, selected context copy, archive/restore, enable/disable and
+  dark/light themes. No browser errors. Visual QA caught and fixed native button borders and padding.
+- ADR 0020 records limits: no executable plugin runtime, canvas edges/freehand/zoom, history/undo,
+  automatic schema migrations or Worker CLI surface-tool bridge.
+
+## Current WIP: durable bounded goals and continuity
+
+Implement explicit goal scope, execution limits and human review stopping conditions. Preserve
+mention authorization, task revision contracts and separate acceptance. Do not claim autonomous
+verification where the release still depends on human evidence review.
 
 ## Subsequent work, after current WIP passes
 
@@ -89,8 +101,8 @@ as established facts. Validate important mechanisms against primary engineering 
 
 ## Active preview and tooling
 
-- Preview process session: 95309; loopback port 4387. Script: `/private/tmp/nexestra-ui-preview.mts`.
-- Preview data: `/private/tmp/nexestra-preview-data-hPKAxf`, disposable and independent of user data.
+- Preview process session: 82173; loopback port 4387. Script: `/private/tmp/nexestra-ui-preview.mts`.
+- Preview data: `/private/tmp/nexestra-preview-data-LhfSVD`, disposable and independent of user data.
 - CUA binding `tab` (id "1", browser id "1"); session reset during QA, browser handle not currently bound. Browser is hidden.
 - Source schema tooling: `PYTHONPATH=/private/tmp/nexestra-schema-validator python3` (jsonschema 4.25.1).
 - Anthropic primary source read: `/private/tmp/nexestra-primary-long-running.html`. Its guidance is

@@ -52,6 +52,7 @@ const data: BootstrapData = {
   workspaces: [workspace],
   threads: [thread],
   workBriefs: [],
+  surfaces: [],
   agents: [],
   knowledge: [],
   tasks: [],

@@ -774,6 +774,12 @@ describe("parseProviderReply", () => {
       "webfetch",
       "websearch",
       "question",
+      "read_surfaces",
+      "read_surface",
+      "create_surface",
+      "update_surface",
+      "save_surface_record",
+      "archive_surface_record",
     ]);
     expect(firstBody.messages[0]?.content).toContain("@builder: codex");
     const readDefinition = firstBody.tools.find(

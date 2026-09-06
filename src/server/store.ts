@@ -58,6 +58,18 @@ import {
   WorkspaceSchema,
   workBriefReadiness,
 } from "../shared/contracts.js";
+import {
+  ArchiveSurfaceRecordSchema,
+  CreateSurfaceSchema,
+  SaveSurfaceRecordSchema,
+  SetSurfaceEnabledSchema,
+  SurfaceManifestSchema,
+  surfaceContext,
+  surfaceDataError,
+  UpdateSurfaceSchema,
+  type WorkspaceSurface,
+  WorkspaceSurfaceSchema,
+} from "../shared/surfaces.js";
 
 const StateSchema = z.object({
   version: z.literal(6),
@@ -67,6 +79,7 @@ const StateSchema = z.object({
   tasks: z.array(TaskSchema),
   knowledge: z.array(KnowledgeItemSchema),
   assignments: z.array(WorkAssignmentSchema),
+  surfaces: z.array(WorkspaceSurfaceSchema).default([]),
 });
 
 const VersionFiveStateSchema = z.object({
@@ -319,6 +332,216 @@ export class FileStore {
 
   getCredential(agentId: string): string | undefined {
     return this.credentials[agentId];
+  }
+
+  listSurfaces(workspaceId: string): WorkspaceSurface[] {
+    return structuredClone(
+      this.state.surfaces
+        .filter((surface) => surface.workspaceId === workspaceId)
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    );
+  }
+
+  getSurface(id: string): WorkspaceSurface | undefined {
+    const surface = this.state.surfaces.find((entry) => entry.id === id);
+    return surface ? structuredClone(surface) : undefined;
+  }
+
+  readSurfaceContext(id: string, recordIds: string[] = [], agentId?: string) {
+    const surface = this.getSurface(id);
+    if (!surface) throw new StoreError("not_found", "Surface not found.");
+    this.surfaceActor(surface.workspaceId, agentId);
+    if (agentId && !surface.enabled)
+      throw new StoreError(
+        "invalid",
+        "This surface is disabled. The user can enable it in the surface settings.",
+      );
+    if (
+      recordIds.some(
+        (recordId) => !surface.records.some((record) => record.id === recordId && !record.archived),
+      )
+    )
+      throw new StoreError(
+        "invalid",
+        "The selection contains an unavailable record. Read the current surface before selecting records.",
+      );
+    return surfaceContext(surface, recordIds);
+  }
+
+  async createSurface(rawInput: unknown, agentId?: string): Promise<WorkspaceSurface> {
+    const input = CreateSurfaceSchema.parse(rawInput);
+    return this.withWrite(async () => {
+      const workspaceId = this.requireWorkspace(input.workspaceId).id;
+      const actor = this.surfaceActor(workspaceId, agentId);
+      if (this.state.surfaces.filter((surface) => surface.workspaceId === workspaceId).length >= 30)
+        throw new StoreError("invalid", "A workspace supports up to 30 custom surfaces.");
+      const now = new Date().toISOString();
+      const surface = this.validateSurface({
+        id: crypto.randomUUID(),
+        workspaceId,
+        manifest: input.manifest,
+        revision: 1,
+        enabled: true,
+        records: input.records.map((record) => ({
+          ...record,
+          id: crypto.randomUUID(),
+          revision: 1,
+          archived: false,
+          updatedAt: now,
+          updatedBy: actor,
+        })),
+        createdAt: now,
+        updatedAt: now,
+        updatedBy: actor,
+      });
+      const nextState = structuredClone(this.state);
+      nextState.surfaces.push(surface);
+      await this.writeState(nextState);
+      this.state = nextState;
+      return structuredClone(surface);
+    });
+  }
+
+  async updateSurface(id: string, rawInput: unknown, agentId?: string): Promise<WorkspaceSurface> {
+    const input = UpdateSurfaceSchema.parse(rawInput);
+    return this.mutateSurface(id, input.expectedRevision, agentId, (surface) => {
+      surface.manifest = SurfaceManifestSchema.parse(input.manifest);
+    });
+  }
+
+  async setSurfaceEnabled(id: string, rawInput: unknown): Promise<WorkspaceSurface> {
+    const input = SetSurfaceEnabledSchema.parse(rawInput);
+    return this.mutateSurface(
+      id,
+      input.expectedRevision,
+      undefined,
+      (surface) => {
+        surface.enabled = input.enabled;
+      },
+      true,
+    );
+  }
+
+  async saveSurfaceRecord(
+    id: string,
+    rawInput: unknown,
+    agentId?: string,
+  ): Promise<WorkspaceSurface> {
+    const input = SaveSurfaceRecordSchema.parse(rawInput);
+    return this.mutateSurface(id, input.expectedRevision, agentId, (surface) => {
+      const index = input.id ? surface.records.findIndex((record) => record.id === input.id) : -1;
+      if (input.id && index === -1)
+        throw new StoreError("not_found", "Surface record not found. Read the surface again.");
+      const current = surface.records[index];
+      if (current?.archived)
+        throw new StoreError("invalid", "Restore this archived record before editing it.");
+      if (!current && surface.records.length >= 100)
+        throw new StoreError(
+          "invalid",
+          "This surface supports up to 100 records, including archived records.",
+        );
+      const record = {
+        id: current?.id ?? crypto.randomUUID(),
+        revision: (current?.revision ?? 0) + 1,
+        data: input.data,
+        position: input.position ?? current?.position ?? { x: 40, y: 40 },
+        color: input.color ?? current?.color ?? "lilac",
+        archived: false,
+        updatedAt: new Date().toISOString(),
+        updatedBy: this.surfaceActor(surface.workspaceId, agentId),
+      };
+      if (index === -1) surface.records.push(record);
+      else surface.records[index] = record;
+    });
+  }
+
+  async archiveSurfaceRecord(
+    id: string,
+    recordId: string,
+    rawInput: unknown,
+    agentId?: string,
+  ): Promise<WorkspaceSurface> {
+    const input = ArchiveSurfaceRecordSchema.parse(rawInput);
+    return this.mutateSurface(id, input.expectedRevision, agentId, (surface) => {
+      const record = surface.records.find((entry) => entry.id === recordId);
+      if (!record) throw new StoreError("not_found", "Surface record not found.");
+      record.archived = input.archived;
+      record.revision += 1;
+      record.updatedAt = new Date().toISOString();
+      record.updatedBy = this.surfaceActor(surface.workspaceId, agentId);
+    });
+  }
+
+  private surfaceActor(workspaceId: string, agentId?: string): WorkspaceSurface["updatedBy"] {
+    if (!agentId) return { kind: "user", id: "local-user" };
+    const agent = this.state.agents.find(
+      (entry) =>
+        entry.id === agentId &&
+        entry.workspaceId === workspaceId &&
+        entry.enabled &&
+        !entry.archived,
+    );
+    if (!agent)
+      throw new StoreError(
+        "invalid",
+        "A surface author must be an enabled agent in its workspace.",
+      );
+    return { kind: "agent", id: agentId };
+  }
+
+  private validateSurface(input: unknown): WorkspaceSurface {
+    const redact = (value: unknown): unknown => {
+      if (typeof value === "string") return this.redactSecrets(value);
+      if (Array.isArray(value)) return value.map(redact);
+      if (value && typeof value === "object")
+        return Object.fromEntries(
+          Object.entries(value).map(([key, entry]) => [this.redactSecrets(key), redact(entry)]),
+        );
+      return value;
+    };
+    const surface = WorkspaceSurfaceSchema.parse(redact(input));
+    for (const record of surface.records) {
+      const error = surfaceDataError(surface.manifest, record.data);
+      if (error) throw new StoreError("invalid", error);
+    }
+    if (JSON.stringify(surface).length > 400_000)
+      throw new StoreError(
+        "invalid",
+        "Surface data must fit within 400,000 characters. Shorten records or split the work across surfaces.",
+      );
+    return surface;
+  }
+
+  private async mutateSurface(
+    id: string,
+    expectedRevision: number,
+    agentId: string | undefined,
+    change: (surface: WorkspaceSurface) => void,
+    allowDisabled = false,
+  ): Promise<WorkspaceSurface> {
+    return this.withWrite(async () => {
+      const nextState = structuredClone(this.state);
+      const index = nextState.surfaces.findIndex((entry) => entry.id === id);
+      const surface = nextState.surfaces[index];
+      if (!surface) throw new StoreError("not_found", "Surface not found.");
+      const actor = this.surfaceActor(surface.workspaceId, agentId);
+      if (surface.revision !== expectedRevision)
+        throw new StoreError(
+          "conflict",
+          "This surface changed. Reload the latest version and reconcile your edit.",
+        );
+      if (!surface.enabled && !allowDisabled)
+        throw new StoreError("invalid", "This surface is disabled. Enable it before editing.");
+      change(surface);
+      surface.revision += 1;
+      surface.updatedAt = new Date().toISOString();
+      surface.updatedBy = actor;
+      const updated = this.validateSurface(surface);
+      nextState.surfaces[index] = updated;
+      await this.writeState(nextState);
+      this.state = nextState;
+      return structuredClone(updated);
+    });
   }
 
   redactSecrets(value: string): string {
@@ -1736,6 +1959,7 @@ function createInitialState(): PersistedState {
     tasks: [],
     knowledge: [],
     assignments: [],
+    surfaces: [],
   };
 }
 

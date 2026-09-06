@@ -392,6 +392,36 @@ export class AgentDispatcher {
             return tasks;
           },
           readWorkBrief: () => this.store.getWorkBrief(thread.id),
+          readSurfaces: async () => this.store.listSurfaces(thread.workspaceId),
+          readSurface: async (id) => {
+            this.store.readSurfaceContext(id, [], agent.id);
+            const surface = this.store.getSurface(id);
+            if (!surface) throw new StoreError("not_found", "Surface not found.");
+            return surface;
+          },
+          createSurface: async (input) => {
+            const surface = await this.store.createSurface(
+              { ...input, workspaceId: thread.workspaceId },
+              agent.id,
+            );
+            this.notifyThread(thread.id, true);
+            return surface;
+          },
+          updateSurface: async (id, input) => {
+            const surface = await this.store.updateSurface(id, input, agent.id);
+            this.notifyThread(thread.id, true);
+            return surface;
+          },
+          saveSurfaceRecord: async (id, input) => {
+            const surface = await this.store.saveSurfaceRecord(id, input, agent.id);
+            this.notifyThread(thread.id, true);
+            return surface;
+          },
+          archiveSurfaceRecord: async (id, recordId, input) => {
+            const surface = await this.store.archiveSurfaceRecord(id, recordId, input, agent.id);
+            this.notifyThread(thread.id, true);
+            return surface;
+          },
           readTasks: async () =>
             this.store
               .listTasks(thread.workspaceId)

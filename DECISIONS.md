@@ -11,3 +11,9 @@
 - Planned: executable verifiers, durable goals and declarative extensions. The
   [roadmap](docs/ROADMAP.md) records actual implementation status.
 - Existing decisions and supersessions remain in the [ADR index](docs/adr/0000-index.md).
+# 2026-09-06: Declarative shared surfaces
+
+Validated manifests describe table/board/canvas/document views with typed records. Host-owned
+commands serve humans and the Master; writes use revisions and existing edit permissions. Custom
+field values never certify task acceptance. Import/export is usable today; executable renderer
+plugins remain a separate future boundary. See ADR 0020 and docs/SURFACE-EXTENSIONS.md.

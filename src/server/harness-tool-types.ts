@@ -6,6 +6,12 @@ import type {
   WorkAssignment,
   WorkBrief,
 } from "../shared/contracts.js";
+import type {
+  CreateSurfaceInput,
+  SaveSurfaceRecordInput,
+  SurfaceManifest,
+  WorkspaceSurface,
+} from "../shared/surfaces.js";
 
 export interface MasterToolHooks {
   update(toolCall: ToolCall): Promise<void>;
@@ -14,6 +20,19 @@ export interface MasterToolHooks {
   readWorkBrief?(): Promise<WorkBrief | undefined>;
   saveWorkBrief?(input: SaveWorkBriefInput): Promise<WorkBrief>;
   readTasks?(): Promise<{ task: Task; assignment?: WorkAssignment }[]>;
+  readSurfaces?(): Promise<WorkspaceSurface[]>;
+  readSurface?(id: string): Promise<WorkspaceSurface>;
+  createSurface?(input: Omit<CreateSurfaceInput, "workspaceId">): Promise<WorkspaceSurface>;
+  updateSurface?(
+    id: string,
+    input: { expectedRevision: number; manifest: SurfaceManifest },
+  ): Promise<WorkspaceSurface>;
+  saveSurfaceRecord?(id: string, input: SaveSurfaceRecordInput): Promise<WorkspaceSurface>;
+  archiveSurfaceRecord?(
+    id: string,
+    recordId: string,
+    input: { expectedRevision: number; archived: boolean },
+  ): Promise<WorkspaceSurface>;
   createPlan?(
     title: string,
     steps: {

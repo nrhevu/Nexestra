@@ -50,6 +50,7 @@ import type {
 import { callRemoteMcpTool, loadMcpTools } from "./mcp-tools.js";
 import { findExecutable, runCommand, safeProcessEnv } from "./process.js";
 import { discoverSkills, type HarnessSkill, readSkill, skillDescription } from "./skills.js";
+import { surfaceTools } from "./surface-tools.js";
 
 export type {
   HarnessToolRequest,
@@ -100,6 +101,7 @@ export async function createMasterToolSession(
   };
   const definitions = new Map<string, ToolDefinition>();
   for (const tool of builtInTools(config, skills, planState)) definitions.set(tool.name, tool);
+  for (const tool of surfaceTools()) definitions.set(tool.name, tool);
   for (const tool of custom.tools) definitions.set(tool.name, tool);
   for (const tool of mcp.tools) definitions.set(tool.name, tool);
   return {
