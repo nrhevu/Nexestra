@@ -136,7 +136,14 @@ class DelegatingMasterRunner implements AgentRunner {
       throw new Error("expected planning and delegation hooks");
     }
     const [task] = await invocation.toolHooks.createPlan("Implementation plan", [
-      { title: "Implement feature", description: "Make the requested repository change." },
+      {
+        title: "Implement feature",
+        description: "Make the requested repository change.",
+        kind: "code",
+        acceptanceCriteria: [
+          { behavior: "The requested feature works", verification: "Run its acceptance test" },
+        ],
+      },
     ]);
     if (!task) throw new Error("expected planned task");
     const delegated = await invocation.toolHooks.delegate({
@@ -181,7 +188,14 @@ class StoppableDelegatingMasterRunner implements AgentRunner {
       throw new Error("expected planning and delegation hooks");
     }
     const [task] = await invocation.toolHooks.createPlan("Implementation plan", [
-      { title: "Implement feature", description: "Make the requested repository change." },
+      {
+        title: "Implement feature",
+        description: "Make the requested repository change.",
+        kind: "code",
+        acceptanceCriteria: [
+          { behavior: "The requested feature works", verification: "Run its acceptance test" },
+        ],
+      },
     ]);
     if (!task) throw new Error("expected planned task");
     try {

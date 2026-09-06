@@ -62,7 +62,7 @@ have that native tool bridge. Use **Work brief** in the conversation tabs to jum
 
 The [product vision](docs/PRODUCT-VISION.vi.md), [target harness design](docs/HARNESS-DESIGN.md) and
 [roadmap](docs/ROADMAP.md) describe the next steps toward a general-purpose execution workspace.
-Worker delegation currently still uses repository worktrees.
+Worker delegation supports repository worktrees and isolated directories for non-code work.
 
 ## Invoking agents
 
@@ -103,8 +103,12 @@ Git paths are also accepted. URLs containing embedded credentials are rejected. 
 card to inspect its details, edit its name, `#handle`, and description, download a stored document,
 or permanently delete it. Replacing document bytes or a repository source uses delete-and-create.
 
-Workers run in read-only discussion mode. For an implementation request, a custom-provider Master
-must call `plan` to create durable Taskboard tasks and then call `delegate` for each task it assigns.
+Workers run in read-only discussion mode in chat. From a task detail, choose **Start Worker** to
+record an explicit request in its linked conversation. Non-code work can use a new directory
+without Git; deliverables placed in outputs/ are captured into the conversation and task detail.
+For an implementation request, a custom-provider Master
+uses `read_tasks` to resume existing work, or `plan` to create new tasks with behavioral criteria,
+then calls `delegate` for each task it assigns. Omit the repository for non-Git work.
 If the provider tries to return a final answer while planned tasks are still undelegated, the
 harness sends it back to the tool loop instead of leaving silent, unassigned work on the board.
 Delegation creates `nexestra/<assignment-id>` from the selected `#repository` and checks it out into
@@ -124,7 +128,8 @@ tools as interrupted, and returns the task to To do so it can be delegated again
 
 Custom-provider Master agents have a provider-neutral
 harness with `list`, `glob`, `grep`, `read`, `edit`, `write`, `bash`, `apply_patch`, `skill`,
-`plan`, `delegate`, `todowrite`, `webfetch`, `websearch`, and `question`. LSP is intentionally not
+`read_brief`, `draft_brief`, `read_tasks`, `plan`, `delegate`, `todowrite`, `webfetch`,
+`websearch`, and `question`. LSP is intentionally not
 included. Questions
 pause in the thread until the user answers; approval-gated tools pause until the user allows or
 denies the call.

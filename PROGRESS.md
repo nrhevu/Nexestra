@@ -40,10 +40,23 @@ Original checkout is clean and remains on `master`.
 - ADR 0018 documents limits: human observations are not executable checks; artifact snapshots and
   full-access-agent isolation are still outstanding.
 
-## Current WIP: general execution environments and durable delegation
+## Completed checkpoint: general work execution and captured outputs
 
-Unify manual and Master assignment paths, persist explicit manual mentions, support non-Git
-work directories and inspectable outputs, and let new sessions discover existing tasks.
+- Unified manual/Master dispatch, persisted explicit Taskboard user mentions, asynchronous start,
+  shared serial Worker queue, cancellation, terminal-state protection, atomic task/assignment writes.
+- General non-Git directories with TASK.md and outputs/, Codex/OpenCode task instructions,
+  human Start Worker UI, structured criteria required, and read_tasks for new-session resumption.
+- Generated output artifacts in the canonical reply, SHA-256 manifests, bounded capture excluding
+  symbolic/hard links and known stored credentials, immutable copies, review hash validation.
+- `pnpm check` passed at 20:01 UTC: 174 tests, lint, types and production build. Browser QA at
+  20:04 UTC passed Taskboard start → generated document → inspect captured bytes → human acceptance.
+  All runs used explicit offline fixtures; no live provider calls. ADR 0019 records remaining gaps.
+
+## Current WIP: declarative extensible surfaces
+
+Implement useful board/table/canvas/document surfaces from validated definitions, with shared
+human/agent commands, revision conflicts, scoped semantic context and data export. No generated
+JavaScript in the app origin. Then address durable bounded goals/continuity as time permits.
 
 ## Subsequent work, after current WIP passes
 
@@ -76,8 +89,8 @@ as established facts. Validate important mechanisms against primary engineering 
 
 ## Active preview and tooling
 
-- Preview process session: 41338; loopback port 4387. Script: `/private/tmp/nexestra-ui-preview.mts`.
-- Preview data: `/private/tmp/nexestra-preview-data-lnmmKX`, disposable and independent of user data.
+- Preview process session: 95309; loopback port 4387. Script: `/private/tmp/nexestra-ui-preview.mts`.
+- Preview data: `/private/tmp/nexestra-preview-data-hPKAxf`, disposable and independent of user data.
 - CUA binding `tab` (id "1", browser id "1"); session reset during QA, browser handle not currently bound. Browser is hidden.
 - Source schema tooling: `PYTHONPATH=/private/tmp/nexestra-schema-validator python3` (jsonschema 4.25.1).
 - Anthropic primary source read: `/private/tmp/nexestra-primary-long-running.html`. Its guidance is

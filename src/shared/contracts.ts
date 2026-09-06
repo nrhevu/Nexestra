@@ -320,7 +320,11 @@ export const ArtifactSchema = z.object({
   messageId: z.string(),
   sequence: z.number().int().positive(),
   kind: z.enum(["file", "image", "link"]),
-  source: z.enum(["upload", "reference"]),
+  source: z.enum(["upload", "generated", "reference"]),
+  sha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
   name: z.string().trim().min(1).max(255),
   mediaType: z.string().trim().max(160).optional(),
   size: z.number().int().nonnegative().optional(),
@@ -500,10 +504,17 @@ export const ReviewTaskSchema = z
     notes: z.string().trim().min(1).max(4_000),
   })
   .strict();
+export const AssignmentOutputSchema = z.object({
+  artifactId: z.string(),
+  name: z.string(),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  size: z.number().int().nonnegative(),
+});
 export const TaskReviewSchema = ReviewTaskSchema.extend({
   id: z.string(),
   reviewedBy: z.literal("local-user"),
   createdAt: z.string(),
+  outputs: z.array(AssignmentOutputSchema).max(10).default([]),
 });
 
 export const WorkAssignmentSchema = z.object({
@@ -513,18 +524,36 @@ export const WorkAssignmentSchema = z.object({
   threadId: z.string(),
   masterRunId: z.string(),
   workerAgentId: z.string(),
-  repositoryId: z.string(),
+  repositoryId: z.string().nullable(),
+  environment: z.enum(["worktree", "directory"]).optional(),
   status: z.enum(["queued", "running", "completed", "failed", "interrupted"]),
   branch: z.string(),
   worktreePath: z.string(),
   contract: TaskContractSchema.optional(),
   review: TaskReviewSchema.optional(),
+  resultMessageId: z.string().optional(),
+  outputs: z.array(AssignmentOutputSchema).max(10).optional(),
   result: z.string().max(20_000).optional(),
   error: z.string().max(2_000).optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
 export type WorkAssignment = z.infer<typeof WorkAssignmentSchema>;
+
+export const DelegateTaskSchema = z
+  .object({
+    workerHandle: z
+      .string()
+      .trim()
+      .regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{1,30}$/),
+    repositoryHandle: z
+      .string()
+      .trim()
+      .regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{1,47}$/)
+      .optional(),
+    expectedRevision: z.number().int().positive(),
+  })
+  .strict();
 
 export const CreateTaskSchema = z.object({
   workspaceId: z.string().optional(),
@@ -587,6 +616,7 @@ export interface TaskProcessData {
   run?: AgentRun;
   activity?: RunActivity;
   toolCalls: ToolCall[];
+  artifacts?: Artifact[];
 }
 
 export function extractMentionHandles(content: string): string[] {

@@ -35,7 +35,8 @@ notes on a stale review. Existing dispatcher tests assert `in_review` on Worker 
 ## Limits
 
 Human observations are supplied by the user, not executable or independently measured checks.
-Evidence is pinned to an assignment and contract, but output bytes are not yet snapshotted.
+Evidence is pinned to an assignment and contract. ADR 0019 adds captured non-Git outputs and
+hash validation; repository diff/commit manifests remain future work.
 Full OS shell access can reach local files and APIs; absence of an accept tool is a routing rule,
 not a security boundary against a malicious full-access agent. Strong verifier isolation and
 artifact-bound executable checks remain separate work. State assumes one local server process.

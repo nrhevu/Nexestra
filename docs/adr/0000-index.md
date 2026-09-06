@@ -20,3 +20,4 @@
 | [0016](0016-bounded-agent-auto-retries.md) | Accepted | Bound automatic retries without resetting the budget for each new run ID |
 | [0017](0017-thread-work-briefs.md) | Accepted | Revisioned shared work briefs with separate scope confirmation |
 | [0018](0018-versioned-task-acceptance.md) | Accepted | Freeze task requirements and separate Worker completion from human acceptance |
+| [0019](0019-general-work-execution.md) | Accepted | Unify delegation, execute non-Git work and capture immutable deliverables |

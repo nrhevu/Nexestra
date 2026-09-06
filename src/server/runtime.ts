@@ -51,6 +51,7 @@ export interface AgentInvocation {
   artifacts?: AgentArtifact[];
   knowledge?: AgentKnowledgeItem[];
   workingDirectory?: string;
+  executionEnvironment?: "worktree" | "directory";
   mode?: "discussion" | "task";
   toolHooks?: MasterToolHooks;
   activityHooks?: AgentActivityHooks;
@@ -278,13 +279,13 @@ export class LocalAgentRunner implements AgentRunner {
           item.kind === "repository" && item.status === "ready",
       )
       .map((item) => `- #${item.handle}: ${item.name}`);
-    const delegationAvailable = workers.length > 0 && repositories.length > 0;
+    const delegationAvailable = workers.length > 0;
     const system = [
       `You are ${agent.name} (@${agent.handle}), Nexestra's internal Master agent.`,
       "You are responding in a shared thread with the user and other agents.",
       "This is a general-purpose workspace for research, documents, design and code. For substantial or ambiguous work, use read_brief and draft_brief to keep a durable shared understanding of the outcome, scope, deliverables and verification. Ask only questions whose answers materially change the work. Do not invent resolved answers, user agreement or evidence. Simple questions do not need a brief. A brief is context, not an execution or completion gate.",
       "Answer the exact message that just @mentioned you. Use tools when repository evidence or a code change is needed.",
-      "For repository implementation requests, call plan first to break the work into concrete tasks, delegate each independent planned task to an available Worker and a ready #repository, then synthesize the Worker results. Never invent task IDs, Worker handles, or repository handles — use only the ones listed below.",
+      "For substantial work, read_tasks before planning so you can resume existing tasks. Use plan for new tasks with explicit acceptance criteria. Delegate each selected task to an available Worker, then synthesize the submitted results and remaining review needs. Non-code work uses an isolated directory when repository is omitted. Code tasks require a ready #repository. Never invent task IDs, Worker handles or repository handles.",
       workers.length > 0
         ? `Workers available for delegation:\n${workers.join("\n")}`
         : "No Workers are currently available for delegation. Explain this blocker instead of inventing a handle.",
@@ -292,7 +293,7 @@ export class LocalAgentRunner implements AgentRunner {
         ? `Repositories available for delegation:\n${repositories.join("\n")}`
         : "No repositories are currently ready for delegation. Explain this blocker if the user asks for code changes.",
       delegationAvailable
-        ? "When the user asks for implementation work, use plan to create tasks, then delegate each task to a Worker with the appropriate #repository handle. The delegate tool requires a task ID from plan, a Worker handle from the list above, and a repository handle from the list above."
+        ? "The delegate tool accepts a task ID from plan or read_tasks and an available Worker handle. Omit repository for general-purpose work. A Worker response is a submission for independent review, not proof that the task passed."
         : "",
       "Keep working through tool results until the request is resolved, then return a concise final answer in the user's language.",
       tools.warnings.length > 0
@@ -584,7 +585,9 @@ function localHarnessPrompt(agent: Agent, invocation: AgentInvocation): string {
     formatWorkBrief(invocation.workBrief),
     agent.kind === "worker"
       ? taskWorker
-        ? "This is an implementation assignment. Work only in the assigned worktree, verify the result, and commit the completed change on the current branch. Do not merge or push."
+        ? invocation.executionEnvironment === "directory"
+          ? "This is a general-purpose assignment. Work only in the assigned directory. Put deliverable files in outputs/. Research must cite sources and distinguish facts from assumptions; documents and designs must address their acceptance criteria. Record checks and limitations in your final response. No Git repository or commit is required. The result will be reviewed independently."
+          : "This is a repository assignment. Work only in the assigned worktree, verify the result against the task criteria, and commit the completed change on the current branch. Do not merge or push. Report evidence and limitations; a reviewer decides whether the task passes."
         : "This is a discussion turn: do not modify files or run commands that change state."
       : masterCodexAccessPrompt(agent),
     "Return only the response content so Nexestra can write it to the thread.",

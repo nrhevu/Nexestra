@@ -90,6 +90,32 @@
   font-size: 12px;
   font-weight: 600;
 }
+.task-launch-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 14px 0;
+}
+.task-launch-options label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.task-launch-options select {
+  width: 100%;
+  padding: 9px;
+  border: 1px solid var(--input-border);
+  border-radius: 7px;
+  background: var(--input-bg);
+  color: var(--text);
+  font: inherit;
+}
+@media (max-width: 600px) {
+  .task-launch-options {
+    grid-template-columns: 1fr;
+  }
+}
 .task-criteria-editor > div {
   display: grid;
   gap: 6px;

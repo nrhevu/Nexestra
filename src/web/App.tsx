@@ -73,6 +73,7 @@ import type {
 import { extractMentionHandles, handleFromName } from "../shared/contracts.js";
 import { api } from "./api.js";
 import { findSurface, type Surface, surfaces } from "./surfaces/registry.js";
+import { TaskLaunch } from "./surfaces/TaskLaunch.js";
 import { TaskReview } from "./surfaces/TaskReview.js";
 import { WorkBriefs } from "./surfaces/WorkBriefs.js";
 import "./surfaces/briefs.css";
@@ -617,6 +618,10 @@ export function App() {
           onReviewed={async () => {
             await refresh(true);
             flash("Review recorded.");
+          }}
+          onStarted={async () => {
+            await refresh(true);
+            flash("Worker queued.");
           }}
         />
       )}
@@ -2123,8 +2128,12 @@ function ThreadArtifacts({
                         {artifact.name}
                       </a>
                       <small>
-                        {artifact.source === "upload" ? "Shared" : "Referenced"} by{" "}
-                        {message?.author.name ?? "Unknown"}
+                        {artifact.source === "generated"
+                          ? "Generated"
+                          : artifact.source === "upload"
+                            ? "Shared"
+                            : "Referenced"}{" "}
+                        by {message?.author.name ?? "Unknown"}
                         {artifact.size !== undefined ? ` · ${formatBytes(artifact.size)}` : ""}
                         {artifact.kind === "link" ? ` · ${safeHostname(artifact.url)}` : ""}
                       </small>
@@ -2759,7 +2768,7 @@ function Taskboard(props: {
         <div>
           <p className="eyebrow">SURFACE</p>
           <h1>Taskboard</h1>
-          <p className="subtitle">Organize work here; only an @mention in chat invokes an agent.</p>
+          <p className="subtitle">Define the work, assign a Worker, and review its evidence.</p>
         </div>
         <button className="primary-button" type="button" onClick={() => props.onCreate("todo")}>
           <Plus size={17} />
@@ -2846,7 +2855,7 @@ function TaskCard({
         {assignment && (
           <span className="task-assignment">
             <GitBranch size={12} />
-            <code>{assignment.branch}</code>
+            <code>{assignment.branch || "Isolated directory"}</code>
             <span role={assignmentActive ? "status" : undefined}>
               {assignmentActive && <LoaderCircle className="spin" size={11} />}
               {assignment.status}
@@ -2916,6 +2925,7 @@ function TaskProcessDialog({
   onDelete,
   onStopped,
   onReviewed,
+  onStarted,
 }: {
   task: Task;
   data: BootstrapData;
@@ -2925,6 +2935,7 @@ function TaskProcessDialog({
   onDelete: (task: Task) => void;
   onStopped: () => Promise<void>;
   onReviewed: () => Promise<void>;
+  onStarted: () => Promise<void>;
 }) {
   const [process, setProcess] = useState<TaskProcessData>();
   const [loadError, setLoadError] = useState<string>();
@@ -3033,8 +3044,14 @@ function TaskProcessDialog({
               <strong>{worker ? `@${worker.handle}` : "Unassigned"}</strong>
             </div>
             <div>
-              <span>Repository</span>
-              <strong>{repository ? `#${repository.handle}` : "—"}</strong>
+              <span>Environment</span>
+              <strong>
+                {repository
+                  ? `#${repository.handle}`
+                  : assignment?.environment === "directory"
+                    ? "Isolated directory"
+                    : "—"}
+              </strong>
             </div>
           </div>
 
@@ -3057,8 +3074,8 @@ function TaskProcessDialog({
               <div>
                 <strong>This task has not been delegated</strong>
                 <p>
-                  A Master created the task but did not start a Worker assignment. Mention the
-                  Master again with an available Worker and a #repository reference.
+                  Choose a Worker below, or mention a Master in the linked conversation to plan the
+                  work together.
                 </p>
               </div>
             </div>
@@ -3067,11 +3084,15 @@ function TaskProcessDialog({
               <div className="task-process-location">
                 <GitBranch size={14} />
                 <div>
-                  <span>Isolated branch</span>
-                  <code>{assignment.branch}</code>
+                  <span>
+                    {assignment.environment === "directory" ? "Environment" : "Isolated branch"}
+                  </span>
+                  <code>{assignment.branch || "General workspace"}</code>
                 </div>
                 <div>
-                  <span>Worktree</span>
+                  <span>
+                    {assignment.environment === "directory" ? "Working directory" : "Worktree"}
+                  </span>
                   <code>{assignment.worktreePath}</code>
                 </div>
                 <div className="worktree-actions">
@@ -3172,6 +3193,17 @@ function TaskProcessDialog({
                 </section>
               )}
 
+              {(process.artifacts?.length ?? 0) > 0 && (
+                <section className="task-process-result" aria-label="Submitted files">
+                  <h3>Submitted files</h3>
+                  <p>
+                    Captured with this result. Later edits in the working directory do not change
+                    these copies.
+                  </p>
+                  <MessageArtifacts artifacts={process.artifacts ?? []} />
+                </section>
+              )}
+
               <TaskReview
                 key={`${assignment.id}-${process.task.revision}`}
                 task={process.task}
@@ -3203,6 +3235,17 @@ function TaskProcessDialog({
               )}
             </>
           )}
+
+          <TaskLaunch
+            key={`${process.task.id}-${process.task.revision}-${assignment?.id ?? "new"}`}
+            task={process.task}
+            data={data}
+            assignment={assignment}
+            onStarted={async () => {
+              await loadProcess();
+              await onStarted();
+            }}
+          />
 
           {stopError && (
             <p className="form-error">

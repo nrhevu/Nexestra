@@ -2,7 +2,13 @@ import { mkdir, mkdtemp, readFile, realpath, symlink, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { MasterAccessMode, MasterAgent, ToolCall } from "../shared/contracts.js";
+import {
+  type MasterAccessMode,
+  type MasterAgent,
+  TaskSchema,
+  type ToolCall,
+  WorkAssignmentSchema,
+} from "../shared/contracts.js";
 import {
   createMasterToolSession,
   executeMasterTool,
@@ -253,10 +259,74 @@ describe("Master harness tools", () => {
     expect(statuses).toEqual(["running", "completed", "waiting_approval", "running", "completed"]);
   });
 
+  it("resumes an existing task discovered in a fresh session without creating a duplicate plan", async () => {
+    const context = await toolContext("full");
+    const task = TaskSchema.parse({
+      id: crypto.randomUUID(),
+      workspaceId: "workspace",
+      title: "Revise memo",
+      description: "Add sources",
+      kind: "document",
+      status: "todo",
+      assigneeId: null,
+      threadId: "thread",
+      acceptanceCriteria: [{ behavior: "Claims are sourced", verification: "Read sources" }],
+      createdAt: "2026-09-07",
+      updatedAt: "2026-09-07",
+    });
+    let delegated = false;
+    context.hooks = {
+      update: async () => undefined,
+      requestApproval: async () => true,
+      readTasks: async () => [{ task }],
+      createPlan: async () => {
+        throw new Error("Do not create a duplicate plan");
+      },
+      delegate: async (input) => {
+        expect(input).toEqual({
+          taskId: task.id,
+          workerHandle: "writer",
+          repositoryHandle: undefined,
+        });
+        delegated = true;
+        return {
+          result: "A revised memo",
+          assignment: WorkAssignmentSchema.parse({
+            id: "assignment",
+            workspaceId: "workspace",
+            taskId: task.id,
+            threadId: "thread",
+            masterRunId: "run",
+            workerAgentId: "worker",
+            repositoryId: null,
+            environment: "directory",
+            status: "completed",
+            branch: "",
+            worktreePath: "assignments/test",
+            createdAt: "2026-09-07",
+            updatedAt: "2026-09-07",
+          }),
+        };
+      },
+    };
+    const session = await createMasterToolSession(context);
+    try {
+      await expect(callSession(session, "read_tasks", {})).resolves.toContain(task.id);
+      expect(session.pendingTaskIds()).toEqual([]);
+      expect(delegated).toBe(false);
+      await expect(
+        callSession(session, "delegate", { taskId: task.id, worker: "writer" }),
+      ).resolves.toContain('"taskStatus": "in_review"');
+      expect(delegated).toBe(true);
+    } finally {
+      await session.close();
+    }
+  });
+
   it("requires a durable plan before delegating its tasks to Workers", async () => {
     const context = await toolContext("full");
     const taskId = "f5a80f87-456d-4c35-9081-356cbe665510";
-    const delegated: { workerHandle: string; repositoryHandle: string }[] = [];
+    const delegated: { workerHandle: string; repositoryHandle?: string }[] = [];
     context.hooks = {
       update: async () => undefined,
       requestApproval: async () => true,

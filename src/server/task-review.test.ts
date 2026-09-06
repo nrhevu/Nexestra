@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -18,9 +18,18 @@ describe("Independent task acceptance", () => {
   let root: string;
   let store: FileStore;
   let task: Task;
+  let workerId: string;
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), "nexestra-review-"));
     store = await FileStore.open({ root, workspacePath: root });
+    workerId = (
+      await store.createAgent({
+        kind: "worker",
+        name: "Researcher",
+        handle: "researcher",
+        harness: "codex",
+      })
+    ).id;
     task = await store.createTask({
       title: "Research launch audience",
       kind: "research",
@@ -38,7 +47,7 @@ describe("Independent task acceptance", () => {
       taskId: task.id,
       threadId: task.threadId ?? "",
       masterRunId: "master-run",
-      workerAgentId: "worker",
+      workerAgentId: workerId,
       repositoryId: "repository",
       status: "queued",
       branch: `nexestra/${id}`,
@@ -116,6 +125,14 @@ describe("Independent task acceptance", () => {
       "Stop the active assignment",
     );
     expect(store.listAssignments()[0]?.contract?.title).toBe(task.title);
+  });
+
+  it("does not publish a queued assignment in memory when state persistence fails", async () => {
+    await rm(store.stateFile);
+    await mkdir(store.stateFile);
+    await expect(start()).rejects.toThrow();
+    expect(store.listAssignments()).toHaveLength(0);
+    expect(store.getTask(task.id)?.status).toBe("todo");
   });
 
   it("rejects stale evidence when requirements change and permits a new attempt", async () => {

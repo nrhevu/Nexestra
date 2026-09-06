@@ -150,19 +150,19 @@ agent. Historical failed runs for a deleted profile cannot be retried.
 ## Planning and Worker delegation
 
 The provider-neutral Master tool session owns a per-run set of planned task IDs. `plan` creates
-durable Taskboard tasks linked to the triggering thread. `delegate` accepts only a task returned by
-that same session, an enabled Worker, and a ready repository in the thread's workspace. The runtime
+durable Taskboard tasks linked to the triggering thread. `read_tasks` discovers existing eligible tasks. `delegate` accepts a task returned by either
+tool in that session and an enabled Worker; repository-backed work also needs a ready repository. The runtime
 lists those repositories in the Master context, so the triggering message does not need to include
-the repository handle. When both a Worker and ready repository are available, a custom-provider
+the repository handle. When a Worker is available, a custom-provider
 Master cannot return its final answer while that set still contains undelegated tasks; the runtime
 adds a corrective turn and keeps the tool loop active.
 
-Each repository is cloned once under the owning workspace. Every assignment creates a unique
+Each repository is cloned once under the owning workspace. Every repository assignment creates a unique
 `nexestra/<assignment-id>` branch and a Git worktree under the same managed workspace tree. The
 dispatcher reuses the normal per-agent queue, so one Worker remains serial while different Workers
 can execute concurrently. A delegated Worker receives task mode, the worktree as its process cwd,
-the shared transcript snapshot, and the selected repository as knowledge. Success marks the
-assignment and task complete; failure records a redacted error and returns the task to To do.
+the shared transcript snapshot, and the selected repository as knowledge. Success completes the
+assignment and submits the task for review; failure records a redacted error and returns it to To do.
 Branches and worktrees are retained for inspection. Nexestra never merges or pushes.
 
 Each delegated assignment owns an in-memory abort controller from before it is queued until its
@@ -182,7 +182,7 @@ same thread SSE stream as chat, with an active-only polling fallback when EventS
 
 Worker profiles select either `codex` or `opencode`, with optional model and reasoning-effort
 overrides. Worker chat turns require read-only discussion mode. Delegated task turns use
-workspace-write for Codex and OpenCode's build agent, scoped to the assignment worktree. Codex maps the overrides to
+workspace-write for Codex and OpenCode's build agent, scoped to the assignment worktree or general working directory. Codex maps the overrides to
 `--model` and `model_reasoning_effort`; OpenCode maps them to `--model` and its provider-specific
 `--variant`. Missing overrides preserve the harness defaults. Master profiles select one of the
 following:
@@ -246,6 +246,18 @@ sends TERM, then KILL after a grace period, and reports an error only after the 
 Local MCP is the deliberate exception: its stdio transport owns stdin for JSON-RPC and is closed
 with the per-run tool session.
 
+## General work assignments and captured outputs
+
+ADR 0019 extends repository delegation with managed directories for research, document, design
+and mixed tasks. Manual Taskboard starts persist user mentions and return a queued run immediately;
+Master and manual work share queues, cancellation and durable activity. Code tasks still require
+repositories. `read_tasks` supplies durable task and review state across fresh Master sessions.
+
+Non-Git outputs are captured into the canonical Worker reply as generated artifacts, with bounded
+file counts, sizes and traversal. The assignment and human review record a digest manifest. Review
+rejects changed snapshot bytes. Task detail and chat both expose the captured files; no executable
+HTML from a Worker is hosted in the trusted app origin. Working directories are retained.
+
 ## Security model
 
 The application trusts the current OS user and user-supplied custom endpoints. The server binds only
@@ -269,8 +281,9 @@ credentials.
 ## Known gaps
 
 - Worker success moves a task to In review. Human acceptance requires evidence against its frozen
-  task contract (ADR 0018). Executable checks and immutable output snapshots are not yet implemented.
-- Work Briefs are thread-scoped; cross-thread goals, execution contracts, durable loops, budgets,
+  task contract (ADR 0018). Non-Git outputs are captured with hashes (ADR 0019); executable checks
+  and repository diff/commit manifests are not yet implemented.
+- Work Briefs are thread-scoped; cross-thread goals, durable loops, budgets,
   graph scheduling and generated surface plugins remain roadmap items.
 - Codex/OpenCode receive brief context but do not yet expose app-native brief mutation tools.
 - Brief index consistency assumes one server process per data directory, like the existing store.

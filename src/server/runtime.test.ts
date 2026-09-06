@@ -109,6 +109,30 @@ describe("Worker harness arguments", () => {
     },
   );
 
+  it.each(["codex", "opencode"] as const)(
+    "runs a non-Git document assignment with %s",
+    async (harness) => {
+      const { agent, invocation, root, runner } = await workerFixture(harness);
+      invocation.mode = "task";
+      invocation.executionEnvironment = "directory";
+      invocation.workingDirectory = root;
+      processMocks.findExecutable.mockResolvedValue(`/fake/${harness}`);
+      processMocks.runCommand.mockResolvedValue({
+        stdout: JSON.stringify(
+          harness === "codex"
+            ? { type: "item.completed", item: { type: "agent_message", text: "Memo ready." } }
+            : { type: "text", part: { type: "text", text: "Memo ready." } },
+        ),
+        stderr: "",
+        exitCode: 0,
+      });
+      await expect(runner.invoke(agent, invocation)).resolves.toBe("Memo ready.");
+      const args = processMocks.runCommand.mock.calls[0]?.[1] as string[];
+      expect(args.at(-1)).toContain("Put deliverable files in outputs/");
+      expect(args.at(-1)).toContain("No Git repository or commit is required");
+    },
+  );
+
   it("passes model and reasoning effort to Codex", async () => {
     const { agent, invocation, root, runner } = await workerFixture("codex", "gpt-5.4", "high");
     processMocks.findExecutable.mockResolvedValue("/fake/codex");
@@ -732,6 +756,7 @@ describe("parseProviderReply", () => {
     expect(
       firstBody.tools.map((tool: { function: { name: string } }) => tool.function.name),
     ).toEqual([
+      "read_tasks",
       "read_brief",
       "draft_brief",
       "list",

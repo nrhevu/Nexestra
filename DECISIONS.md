@@ -6,6 +6,8 @@
   thread artifact. Confirmation is scope agreement, not execution permission or task acceptance.
 - Implemented: [ADR 0018](docs/adr/0018-versioned-task-acceptance.md) separates run completion from
   task acceptance and binds review to frozen task requirements.
-- Planned: executable verifiers, generic targets, durable goals and declarative extensions. The
+- Implemented: [ADR 0019](docs/adr/0019-general-work-execution.md) unifies execution and captures
+  non-Git deliverables for review.
+- Planned: executable verifiers, durable goals and declarative extensions. The
   [roadmap](docs/ROADMAP.md) records actual implementation status.
 - Existing decisions and supersessions remain in the [ADR index](docs/adr/0000-index.md).

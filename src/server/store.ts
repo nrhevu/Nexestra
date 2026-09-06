@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import {
   access,
@@ -722,23 +723,28 @@ export class FileStore {
     agent: Agent,
     content: string,
     triggerMessageId: string,
+    uploads: UploadArtifactInput[] = [],
   ): Promise<Message> {
-    return this.appendMessage(threadId, {
-      id: crypto.randomUUID(),
+    return this.appendMessage(
       threadId,
-      author: {
-        kind: "agent",
-        id: agent.id,
-        name: agent.name,
-        handle: agent.handle,
+      {
+        id: crypto.randomUUID(),
+        threadId,
+        author: {
+          kind: "agent",
+          id: agent.id,
+          name: agent.name,
+          handle: agent.handle,
+        },
+        content,
+        mentions: [],
+        knowledgeReferences: [],
+        artifactIds: [],
+        triggerMessageId,
+        createdAt: new Date().toISOString(),
       },
-      content,
-      mentions: [],
-      knowledgeReferences: [],
-      artifactIds: [],
-      triggerMessageId,
-      createdAt: new Date().toISOString(),
-    });
+      uploads,
+    );
   }
 
   async updateRun(run: AgentRun): Promise<AgentRun> {
@@ -1004,7 +1010,14 @@ export class FileStore {
 
   async createTask(rawInput: unknown): Promise<Task> {
     const input = CreateTaskSchema.parse(rawInput);
+    input.title = this.redactSecrets(input.title);
+    input.description = this.redactSecrets(input.description);
+    input.acceptanceCriteria = input.acceptanceCriteria.map((item) => ({
+      behavior: this.redactSecrets(item.behavior),
+      verification: this.redactSecrets(item.verification),
+    }));
     return this.withWrite(async () => {
+      const nextState = structuredClone(this.state);
       const workspaceId = this.requireWorkspace(input.workspaceId).id;
       this.validateReferences(workspaceId, input.assigneeId, input.threadId);
       const now = new Date().toISOString();
@@ -1021,17 +1034,26 @@ export class FileStore {
         createdAt: now,
         updatedAt: now,
       });
-      this.state.tasks.push(task);
-      await this.writeState();
+      nextState.tasks.push(task);
+      await this.writeState(nextState);
+      this.state = nextState;
       return structuredClone(task);
     });
   }
 
   async updateTask(id: string, rawInput: unknown): Promise<Task> {
     const input = UpdateTaskSchema.parse(rawInput);
+    if (input.title !== undefined) input.title = this.redactSecrets(input.title);
+    if (input.description !== undefined) input.description = this.redactSecrets(input.description);
+    if (input.acceptanceCriteria !== undefined)
+      input.acceptanceCriteria = input.acceptanceCriteria.map((item) => ({
+        behavior: this.redactSecrets(item.behavior),
+        verification: this.redactSecrets(item.verification),
+      }));
     return this.withWrite(async () => {
-      const index = this.state.tasks.findIndex((task) => task.id === id);
-      const current = this.state.tasks[index];
+      const nextState = structuredClone(this.state);
+      const index = nextState.tasks.findIndex((task) => task.id === id);
+      const current = nextState.tasks[index];
       if (!current) throw new StoreError("not_found", "Task not found.");
       if (input.expectedRevision !== undefined && input.expectedRevision !== current.revision) {
         throw new StoreError(
@@ -1039,7 +1061,7 @@ export class FileStore {
           "The task requirements changed. Reload the task before editing.",
         );
       }
-      const assignments = this.state.assignments.filter((entry) => entry.taskId === id);
+      const assignments = nextState.assignments.filter((entry) => entry.taskId === id);
       const active = assignments.some(
         (entry) => entry.status === "queued" || entry.status === "running",
       );
@@ -1085,8 +1107,9 @@ export class FileStore {
           contractChanged && assignments.length > 0 ? "todo" : (input.status ?? current.status),
         updatedAt: new Date().toISOString(),
       });
-      this.state.tasks[index] = updated;
-      await this.writeState();
+      nextState.tasks[index] = updated;
+      await this.writeState(nextState);
+      this.state = nextState;
       return structuredClone(updated);
     });
   }
@@ -1120,10 +1143,11 @@ export class FileStore {
   ): Promise<WorkAssignment> {
     const assignment = WorkAssignmentSchema.parse(input);
     return this.withWrite(async () => {
-      if (this.state.assignments.some((entry) => entry.id === assignment.id)) {
+      const nextState = structuredClone(this.state);
+      if (nextState.assignments.some((entry) => entry.id === assignment.id)) {
         throw new StoreError("conflict", "Assignment already exists.");
       }
-      const task = this.state.tasks.find((entry) => entry.id === assignment.taskId);
+      const task = nextState.tasks.find((entry) => entry.id === assignment.taskId);
       if (
         !task ||
         task.workspaceId !== assignment.workspaceId ||
@@ -1143,7 +1167,7 @@ export class FileStore {
         );
       }
       if (
-        this.state.assignments.some(
+        nextState.assignments.some(
           (entry) =>
             entry.taskId === task.id &&
             (entry.status === "queued" ||
@@ -1160,37 +1184,73 @@ export class FileStore {
       }
       assignment.contract = TaskContractSchema.parse(task);
       delete assignment.review;
-      this.state.assignments.push(assignment);
-      await this.writeState();
+      task.status =
+        assignment.status === "completed"
+          ? "in_review"
+          : assignment.status === "failed" || assignment.status === "interrupted"
+            ? "todo"
+            : "in_progress";
+      task.assigneeId = assignment.workerAgentId;
+      task.updatedAt = assignment.updatedAt;
+      nextState.assignments.push(assignment);
+      await this.writeState(nextState);
+      this.state = nextState;
       return structuredClone(assignment);
     });
   }
 
   async updateAssignment(
     id: string,
-    update: Partial<Pick<WorkAssignment, "status" | "result" | "error">>,
+    update: Partial<
+      Pick<WorkAssignment, "status" | "result" | "error" | "resultMessageId" | "outputs">
+    >,
   ): Promise<WorkAssignment> {
     return this.withWrite(async () => {
-      const index = this.state.assignments.findIndex((assignment) => assignment.id === id);
-      const current = this.state.assignments[index];
+      const nextState = structuredClone(this.state);
+      const index = nextState.assignments.findIndex((assignment) => assignment.id === id);
+      const current = nextState.assignments[index];
       if (!current) throw new StoreError("not_found", "Assignment not found.");
       if (current.review)
         throw new StoreError(
           "conflict",
           "A reviewed assignment is immutable. Start a new assignment for revisions.",
         );
+      if (["completed", "failed", "interrupted"].includes(current.status)) {
+        if (
+          Object.entries(update).some(
+            ([key, value]) =>
+              JSON.stringify(current[key as keyof WorkAssignment]) !== JSON.stringify(value),
+          )
+        ) {
+          throw new StoreError(
+            "conflict",
+            "This assignment already ended. Start a new attempt instead of changing its submitted result or final status.",
+          );
+        }
+        return structuredClone(current);
+      }
       const next = WorkAssignmentSchema.parse({
         ...current,
         ...update,
         updatedAt: new Date().toISOString(),
       });
-      this.state.assignments[index] = next;
-      const task = this.state.tasks.find((entry) => entry.id === next.taskId);
+      nextState.assignments[index] = next;
+      const task = nextState.tasks.find((entry) => entry.id === next.taskId);
       if (task && next.status === "completed" && task.revision === next.contract?.revision) {
         task.status = "in_review";
         task.updatedAt = next.updatedAt;
       }
-      await this.writeState();
+      if (
+        task &&
+        (next.status === "failed" || next.status === "interrupted") &&
+        task.revision === next.contract?.revision
+      ) {
+        task.status = "todo";
+        task.assigneeId = null;
+        task.updatedAt = next.updatedAt;
+      }
+      await this.writeState(nextState);
+      this.state = nextState;
       return structuredClone(next);
     });
   }
@@ -1247,6 +1307,27 @@ export class FileStore {
           "Record an observation for every acceptance criterion before accepting this result.",
         );
       }
+      if (input.outcome === "accepted") {
+        for (const output of assignment.outputs ?? []) {
+          const { artifact, file } = await this.artifactContent(
+            assignment.threadId,
+            output.artifactId,
+          );
+          const actual = createHash("sha256")
+            .update(await readFile(file))
+            .digest("hex");
+          if (
+            artifact.messageId !== assignment.resultMessageId ||
+            artifact.sha256 !== output.sha256 ||
+            actual !== output.sha256
+          ) {
+            throw new StoreError(
+              "conflict",
+              "A captured output changed after submission. Restore its original bytes or start a new assignment before acceptance.",
+            );
+          }
+        }
+      }
       const now = new Date().toISOString();
       assignment.review = TaskReviewSchema.parse({
         ...input,
@@ -1258,6 +1339,7 @@ export class FileStore {
           observation: this.redactSecrets(item.observation),
         })),
         createdAt: now,
+        outputs: assignment.outputs ?? [],
       });
       assignment.updatedAt = now;
       task.status = input.outcome === "accepted" ? "done" : "todo";
@@ -1328,7 +1410,8 @@ export class FileStore {
         threadId: message.threadId,
         messageId: message.id,
         kind: isSafeImageType(mediaType) ? "image" : "file",
-        source: "upload",
+        source: message.author.kind === "agent" ? "generated" : "upload",
+        sha256: createHash("sha256").update(upload.bytes).digest("hex"),
         name: normaliseArtifactName(upload.name),
         ...(mediaType ? { mediaType } : {}),
         size: upload.bytes.byteLength,
@@ -1418,7 +1501,7 @@ export class FileStore {
 
   private async resolveArtifactFile(artifact: Artifact): Promise<string | undefined> {
     if (artifact.kind === "link") return undefined;
-    if (artifact.source === "upload") {
+    if (artifact.source === "upload" || artifact.source === "generated") {
       const file = this.uploadArtifactPath(artifact.threadId, artifact.id);
       const details = await stat(file).catch(() => undefined);
       if (!details?.isFile()) throw new StoreError("not_found", "Artifact content not found.");

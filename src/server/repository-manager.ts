@@ -11,9 +11,13 @@ export interface AssignmentLocation {
 }
 
 export interface AssignmentRepositoryManager {
-  assignmentLocation(workspaceId: string, assignmentId: string): AssignmentLocation;
+  assignmentLocation(
+    workspaceId: string,
+    assignmentId: string,
+    environment?: "worktree" | "directory",
+  ): AssignmentLocation;
   prepareAssignment(
-    repository: KnowledgeRepository,
+    repository: KnowledgeRepository | undefined,
     location: AssignmentLocation,
     signal?: AbortSignal,
   ): Promise<void>;
@@ -68,12 +72,19 @@ export class RepositoryManager implements AssignmentRepositoryManager {
     }
   }
 
-  assignmentLocation(workspaceId: string, assignmentId: string): AssignmentLocation {
-    const branch = `nexestra/${assignmentId}`;
+  assignmentLocation(
+    workspaceId: string,
+    assignmentId: string,
+    environment: "worktree" | "directory" = "worktree",
+  ): AssignmentLocation {
+    if (![workspaceId, assignmentId].every((id) => /^[a-zA-Z0-9_-]+$/.test(id))) {
+      throw new StoreError("invalid", "Invalid assignment location identifier.");
+    }
+    const branch = environment === "worktree" ? `nexestra/${assignmentId}` : "";
     const absolutePath = resolve(
       this.store.managedWorkspaceDirectory,
       workspaceId,
-      "worktrees",
+      environment === "worktree" ? "worktrees" : "assignments",
       assignmentId,
     );
     return {
@@ -84,10 +95,16 @@ export class RepositoryManager implements AssignmentRepositoryManager {
   }
 
   async prepareAssignment(
-    repository: KnowledgeRepository,
+    repository: KnowledgeRepository | undefined,
     location: AssignmentLocation,
     signal?: AbortSignal,
   ): Promise<void> {
+    signal?.throwIfAborted();
+    if (!repository) {
+      await mkdir(dirname(location.absolutePath), { recursive: true, mode: 0o700 });
+      await mkdir(location.absolutePath, { mode: 0o700 });
+      return;
+    }
     if (repository.status !== "ready") {
       throw new StoreError("conflict", `#${repository.handle} is not ready.`);
     }

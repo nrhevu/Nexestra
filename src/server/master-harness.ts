@@ -76,6 +76,7 @@ export interface MasterToolSession {
 }
 
 interface PlanState {
+  knownTaskIds: Set<string>;
   plannedTaskIds: Set<string>;
   delegatingTaskIds: Set<string>;
 }
@@ -93,6 +94,7 @@ export async function createMasterToolSession(
     ? await loadMcpTools(config, context)
     : { tools: [], warnings: [], close: async () => undefined };
   const planState: PlanState = {
+    knownTaskIds: new Set(),
     plannedTaskIds: new Set(),
     delegatingTaskIds: new Set(),
   };
@@ -132,8 +134,34 @@ function builtInTools(
   planState: PlanState,
 ): ToolDefinition[] {
   let todos: Record<string, unknown>[] = [];
-  const { plannedTaskIds, delegatingTaskIds } = planState;
+  const { plannedTaskIds, delegatingTaskIds, knownTaskIds } = planState;
   return [
+    zodTool(
+      "read_tasks",
+      "Read durable tasks and the latest assignment/review in this thread before planning or resuming work. Reuse eligible existing task IDs instead of creating duplicate tasks. Reading tasks does not start them.",
+      "read",
+      objectSchema({}, []),
+      z.object({}).strict(),
+      async (_input, context) => {
+        if (!context.hooks?.readTasks)
+          throw new Error("Task discovery is unavailable in this runtime.");
+        const entries = await context.hooks.readTasks();
+        for (const { task } of entries) if (task.status === "todo") knownTaskIds.add(task.id);
+        return JSON.stringify({
+          tasks: entries.map(({ task, assignment }) => ({
+            ...task,
+            assignment: assignment
+              ? {
+                  id: assignment.id,
+                  status: assignment.status,
+                  environment: assignment.environment ?? "worktree",
+                  review: assignment.review,
+                }
+              : null,
+          })),
+        });
+      },
+    ),
     zodTool(
       "read_brief",
       "Read this thread's current work brief and revision. A brief records desired outcomes, deliverables, constraints, open questions and success checks for research, documents, design or code.",
@@ -396,7 +424,10 @@ function builtInTools(
           throw new Error("Planning is unavailable in this runtime.");
         }
         const tasks = await context.hooks.createPlan(input.title, input.steps);
-        for (const task of tasks) plannedTaskIds.add(task.id);
+        for (const task of tasks) {
+          plannedTaskIds.add(task.id);
+          knownTaskIds.add(task.id);
+        }
         return JSON.stringify(
           {
             title: input.title,
@@ -409,24 +440,28 @@ function builtInTools(
     ),
     zodTool(
       "delegate",
-      "Assign one planned task to a Worker in an isolated worktree of a ready #repository. Use any Worker handle and repository handle listed in the conversation context.",
+      "Assign one task from plan or read_tasks to an available Worker. For code, provide a ready repository handle. Omit repository for research, document or design work in an isolated directory. The result goes to review, never directly to Done.",
       "edit",
       objectSchema(
         {
-          taskId: stringProperty("Task ID returned by the plan tool."),
+          taskId: stringProperty("Task ID returned by plan or read_tasks."),
           worker: stringProperty("Worker handle without @."),
-          repository: stringProperty("Knowledge repository handle without #."),
+          repository: stringProperty(
+            "Optional repository handle without #. Omit for non-Git work.",
+          ),
         },
-        ["taskId", "worker", "repository"],
+        ["taskId", "worker"],
       ),
       z.object({
         taskId: z.string().uuid(),
         worker: z.string().trim().min(2).max(31),
-        repository: z.string().trim().min(2).max(48),
+        repository: z.string().trim().min(2).max(48).optional(),
       }),
       async (input, context) => {
-        if (!plannedTaskIds.has(input.taskId)) {
-          throw new Error("Call plan first, then delegate only task IDs returned by that plan.");
+        if (!knownTaskIds.has(input.taskId)) {
+          throw new Error(
+            "Call plan first or read_tasks, then delegate only an eligible task ID returned by those tools.",
+          );
         }
         if (delegatingTaskIds.has(input.taskId)) {
           throw new Error("This planned task is already being delegated.");
@@ -439,13 +474,16 @@ function builtInTools(
           const { assignment, result } = await context.hooks.delegate({
             taskId: input.taskId,
             workerHandle: input.worker.toLowerCase(),
-            repositoryHandle: input.repository.toLowerCase(),
+            repositoryHandle: input.repository?.toLowerCase(),
           });
           plannedTaskIds.delete(input.taskId);
+          knownTaskIds.delete(input.taskId);
           return JSON.stringify(
             {
               assignmentId: assignment.id,
               status: assignment.status,
+              taskStatus: "in_review",
+              environment: assignment.environment ?? "worktree",
               branch: assignment.branch,
               worktreePath: assignment.worktreePath,
               workerResult: result,

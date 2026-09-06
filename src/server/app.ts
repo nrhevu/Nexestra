@@ -5,7 +5,7 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { ZodError } from "zod";
-import { type BootstrapData, ToolAnswersSchema } from "../shared/contracts.js";
+import { type BootstrapData, DelegateTaskSchema, ToolAnswersSchema } from "../shared/contracts.js";
 import { ChatGptAuthManager } from "./auth.js";
 import { AgentDispatcher, ChatService } from "./dispatcher.js";
 import { RepositoryManager } from "./repository-manager.js";
@@ -360,9 +360,16 @@ export function createApp(options: CreateAppOptions) {
 
   app.post("/api/tasks/:taskId/delegate", async (context) => {
     const taskId = context.req.param("taskId");
-    const body = await context.req.json();
-    const { workerHandle, repositoryHandle } = body;
-    return context.json(await dispatcher.delegateFromTask(taskId, workerHandle, repositoryHandle));
+    const input = DelegateTaskSchema.parse(await context.req.json());
+    return context.json(
+      await dispatcher.delegateFromTask(
+        taskId,
+        input.workerHandle,
+        input.repositoryHandle,
+        input.expectedRevision,
+      ),
+      202,
+    );
   });
 
   app.post("/api/auth/chatgpt/start", async (context) => {
