@@ -33,6 +33,7 @@ import type {
   ToolPermission,
   ToolQuestion,
 } from "../shared/contracts.js";
+import { SaveWorkBriefSchema } from "../shared/contracts.js";
 import { loadCustomTools } from "./custom-tools.js";
 import {
   configuredPermission,
@@ -133,6 +134,30 @@ function builtInTools(
   let todos: Record<string, unknown>[] = [];
   const { plannedTaskIds, delegatingTaskIds } = planState;
   return [
+    zodTool(
+      "read_brief",
+      "Read this thread's current work brief and revision. A brief records desired outcomes, deliverables, constraints, open questions and success checks for research, documents, design or code.",
+      "read",
+      objectSchema({}, []),
+      z.object({}).strict(),
+      async (_input, context) => {
+        if (!context.hooks?.readWorkBrief)
+          throw new Error("Work briefs are unavailable in this runtime.");
+        return JSON.stringify({ workBrief: (await context.hooks.readWorkBrief()) ?? null });
+      },
+    ),
+    zodTool(
+      "draft_brief",
+      "Save a full draft of this thread's work brief. Read it first and pass expectedRevision (0 for a new brief). Preserve the user's constraints, record uncertainty in openQuestions, and give every criterion a concrete check. A conflict requires re-reading and reconciling changes. Editing returns the brief to draft; this tool cannot confirm scope, execute work or mark it complete.",
+      "todowrite",
+      z.toJSONSchema(SaveWorkBriefSchema),
+      SaveWorkBriefSchema,
+      async (input, context) => {
+        if (!context.hooks?.saveWorkBrief)
+          throw new Error("Work briefs are unavailable in this runtime.");
+        return JSON.stringify(await context.hooks.saveWorkBrief(input));
+      },
+    ),
     zodTool(
       "list",
       "List files and directories inside the repository.",
@@ -768,12 +793,13 @@ async function repositoryFiles(
   pattern: string,
 ): Promise<string[]> {
   const target = await securePath(context, requestedPath, "read");
+  const workspace = await realpath(context.workspacePath);
   if (!(await stat(target)).isDirectory()) throw new Error(`${requestedPath} is not a directory.`);
   const binary = await findExecutable("rg", context.env);
   if (!binary) throw new Error("File discovery requires ripgrep (rg) in PATH.");
   const args = ["--files", "--hidden", "--no-require-git", "--color", "never"];
   addIgnoreGlobs(args, config.ignore);
-  args.push("--", relative(context.workspacePath, target) || ".");
+  args.push("--", relative(workspace, target) || ".");
   const result = await runCommand(binary, args, {
     cwd: context.workspacePath,
     timeoutMs: 10_000,
@@ -790,7 +816,7 @@ async function repositoryFiles(
     .sort();
   if (pattern === "**/*") return files;
   return files.filter((file) => {
-    const fromTarget = relative(target, resolve(context.workspacePath, file));
+    const fromTarget = relative(target, resolve(workspace, file));
     return !fromTarget.startsWith("..") && matchesGlob(fromTarget, pattern);
   });
 }
@@ -801,6 +827,7 @@ async function grepTool(
   config: HarnessConfig,
 ): Promise<string> {
   const target = await securePath(context, input.path as string, "read");
+  const workspace = await realpath(context.workspacePath);
   const binary = await findExecutable("rg", context.env);
   if (!binary) throw new Error("The grep tool requires ripgrep (rg) in PATH.");
   const args = [
@@ -817,7 +844,7 @@ async function grepTool(
   addIgnoreGlobs(args, config.ignore);
   const include = validateGlob(input.pattern as string);
   if (include !== "**/*") args.push("--glob", include);
-  args.push("--", input.query as string, relative(context.workspacePath, target) || ".");
+  args.push("--", input.query as string, relative(workspace, target) || ".");
   const result = await runCommand(binary, args, {
     cwd: context.workspacePath,
     timeoutMs: 10_000,
@@ -1017,7 +1044,9 @@ async function secureReadPath(context: MasterToolContext, requestedPath: string)
     return resolved;
   }
   const workspace = await realpath(context.workspacePath);
-  if (isWithin(workspace, requested)) return securePath(context, requested, "read");
+  if (isWithin(workspace, requested) || isWithin(resolve(context.workspacePath), requested)) {
+    return securePath(context, requested, "read");
+  }
   throw new Error("Paths must stay inside the repository root or reference an attached artifact.");
 }
 
@@ -1500,17 +1529,26 @@ async function securePath(
   allowMissing = false,
 ): Promise<string> {
   const workspace = await realpath(context.workspacePath);
-  const target = isAbsolute(requestedPath)
+  const declaredWorkspace = resolve(context.workspacePath);
+  let target = isAbsolute(requestedPath)
     ? resolve(requestedPath)
     : resolve(workspace, requestedPath);
+  if (isAbsolute(requestedPath) && isWithin(declaredWorkspace, target)) {
+    target = resolve(workspace, relative(declaredWorkspace, target));
+  }
   if (!isWithin(workspace, target)) throw new Error("Path escapes the repository root.");
-  if (isSensitivePath(context, target))
+  const canonicalContext = {
+    ...context,
+    workspacePath: workspace,
+    dataPath: await canonicalPath(context.dataPath),
+  };
+  if (isSensitivePath(canonicalContext, target))
     throw new Error("Nexestra credentials and auth files are protected.");
   try {
     const resolved = await realpath(target);
     if (!isWithin(workspace, resolved))
       throw new Error("Path resolves outside the repository root.");
-    if (isSensitivePath(context, resolved))
+    if (isSensitivePath(canonicalContext, resolved))
       throw new Error("Nexestra credentials and auth files are protected.");
     return resolved;
   } catch (error) {
@@ -1532,6 +1570,17 @@ async function securePath(
   }
   if (operation === "read") throw new Error(`${requestedPath} does not exist.`);
   return target;
+}
+
+async function canonicalPath(path: string): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch (error) {
+    if (!isNodeError(error, "ENOENT")) throw error;
+    const parent = dirname(resolve(path));
+    if (parent === resolve(path)) throw error;
+    return join(await canonicalPath(parent), basename(path));
+  }
 }
 
 function isSensitivePath(context: MasterToolContext, target: string): boolean {
@@ -1593,6 +1642,9 @@ function toolInputSummary(
   permission: HarnessPermissionKey,
 ): string {
   if (permission === "external") return compactSummary({ argument_keys: Object.keys(input) });
+  if (name === "draft_brief") {
+    return compactSummary({ expectedRevision: input.expectedRevision, kind: input.kind });
+  }
   if (name === "write") {
     return compactSummary({
       path: input.path,

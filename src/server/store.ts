@@ -20,6 +20,7 @@ import {
   AgentSchema,
   type Artifact,
   ArtifactSchema,
+  ConfirmWorkBriefSchema,
   CreateAgentSchema,
   CreateKnowledgeDocumentSchema,
   CreateKnowledgeRepositorySchema,
@@ -33,6 +34,7 @@ import {
   type Message,
   MessageSchema,
   RunSchema,
+  SaveWorkBriefSchema,
   type Task,
   TaskSchema,
   type Thread,
@@ -46,8 +48,11 @@ import {
   UpdateTaskSchema,
   type WorkAssignment,
   WorkAssignmentSchema,
+  type WorkBrief,
+  WorkBriefSchema,
   type Workspace,
   WorkspaceSchema,
+  workBriefReadiness,
 } from "../shared/contracts.js";
 
 const StateSchema = z.object({
@@ -110,7 +115,8 @@ type TranscriptEvent =
   | { type: "message.created"; sequence: number; message: Message }
   | { type: "artifact.created"; sequence: number; artifact: Artifact }
   | { type: "run.updated"; sequence: number; run: AgentRun }
-  | { type: "tool.updated"; sequence: number; toolCall: ToolCall };
+  | { type: "tool.updated"; sequence: number; toolCall: ToolCall }
+  | { type: "brief.updated"; sequence: number; workBrief: WorkBrief };
 
 export const MAX_UPLOAD_FILES = 10;
 export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
@@ -164,6 +170,7 @@ export class FileStore {
   private credentials: Record<string, string>;
   private writeQueue: Promise<void> = Promise.resolve();
   private readonly sequenceByThread = new Map<string, number>();
+  private readonly workBriefByThread = new Map<string, WorkBrief>();
 
   private constructor(
     paths: {
@@ -768,14 +775,17 @@ export class FileStore {
     const artifacts: Artifact[] = [];
     const runs = new Map<string, AgentRun>();
     const toolCalls = new Map<string, ToolCall>();
+    let workBrief: WorkBrief | undefined;
     for (const event of events) {
       if (event.type === "message.created") messages.push(event.message);
       else if (event.type === "artifact.created") artifacts.push(event.artifact);
       else if (event.type === "run.updated") runs.set(event.run.id, event.run);
       else if (event.type === "tool.updated") toolCalls.set(event.toolCall.id, event.toolCall);
+      else if (event.type === "brief.updated") workBrief = event.workBrief;
     }
     return {
       thread: structuredClone(thread),
+      ...(workBrief ? { workBrief } : {}),
       messages: messages.sort((left, right) => left.sequence - right.sequence),
       artifacts: artifacts.sort((left, right) => left.sequence - right.sequence),
       runs: [...runs.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
@@ -783,6 +793,98 @@ export class FileStore {
         left.createdAt.localeCompare(right.createdAt),
       ),
     };
+  }
+
+  async getWorkBrief(threadId: string): Promise<WorkBrief | undefined> {
+    this.requireThread(threadId);
+    const brief = this.workBriefByThread.get(threadId);
+    return brief ? structuredClone(brief) : undefined;
+  }
+
+  async listWorkBriefs(workspaceId: string): Promise<WorkBrief[]> {
+    return structuredClone(
+      [...this.workBriefByThread.values()].filter((brief) => brief.workspaceId === workspaceId),
+    );
+  }
+
+  async saveWorkBrief(threadId: string, rawInput: unknown, agentId?: string): Promise<WorkBrief> {
+    const input = SaveWorkBriefSchema.parse(rawInput);
+    return this.withWrite(async () => {
+      const thread = this.requireThread(threadId);
+      if (agentId) {
+        const agent = this.getAgent(agentId);
+        if (!agent || agent.workspaceId !== thread.workspaceId) {
+          throw new StoreError("invalid", "The brief's author must belong to this workspace.");
+        }
+      }
+      const current = await this.getWorkBrief(threadId);
+      if ((current?.revision ?? 0) !== input.expectedRevision) {
+        throw new StoreError(
+          "conflict",
+          "This brief changed. Reload it and reconcile your edits before saving.",
+        );
+      }
+      const clean = (value: string) => this.redactSecrets(value);
+      const workBrief = WorkBriefSchema.parse({
+        title: clean(input.title),
+        kind: input.kind,
+        outcome: clean(input.outcome),
+        deliverables: input.deliverables.map(clean),
+        constraints: clean(input.constraints),
+        nonGoals: clean(input.nonGoals),
+        acceptanceCriteria: input.acceptanceCriteria.map((criterion) => ({
+          behavior: clean(criterion.behavior),
+          verification: clean(criterion.verification),
+        })),
+        openQuestions: clean(input.openQuestions),
+        threadId,
+        workspaceId: thread.workspaceId,
+        revision: input.expectedRevision + 1,
+        status: "draft",
+        updatedBy: agentId ? { kind: "agent", id: agentId } : { kind: "user", id: "local-user" },
+        updatedAt: new Date().toISOString(),
+        confirmedAt: null,
+      });
+      return this.appendWorkBrief(workBrief);
+    });
+  }
+
+  async confirmWorkBrief(threadId: string, rawInput: unknown): Promise<WorkBrief> {
+    const input = ConfirmWorkBriefSchema.parse(rawInput);
+    return this.withWrite(async () => {
+      const current = await this.getWorkBrief(threadId);
+      if (!current) throw new StoreError("not_found", "Save a brief before confirming it.");
+      if (current.revision !== input.expectedRevision) {
+        throw new StoreError(
+          "conflict",
+          "This brief changed. Reload and review the current revision before confirming.",
+        );
+      }
+      const gaps = workBriefReadiness(current);
+      if (gaps.length) throw new StoreError("invalid", gaps.join(" "));
+      if (current.status === "confirmed") return current;
+      const now = new Date().toISOString();
+      return this.appendWorkBrief({
+        ...current,
+        revision: current.revision + 1,
+        status: "confirmed",
+        updatedBy: { kind: "user", id: "local-user" },
+        updatedAt: now,
+        confirmedAt: now,
+      });
+    });
+  }
+
+  private async appendWorkBrief(workBrief: WorkBrief): Promise<WorkBrief> {
+    const sequence = await this.nextSequence(workBrief.threadId);
+    await appendSynced(this.transcriptPath(workBrief.threadId), {
+      type: "brief.updated",
+      sequence,
+      workBrief,
+    } satisfies TranscriptEvent);
+    this.sequenceByThread.set(workBrief.threadId, sequence);
+    this.workBriefByThread.set(workBrief.threadId, structuredClone(workBrief));
+    return structuredClone(workBrief);
   }
 
   async transcriptSnapshot(threadId: string): Promise<string> {
@@ -1209,6 +1311,16 @@ export class FileStore {
     let changed = false;
     for (const thread of this.state.threads) {
       const events = await this.readEvents(thread.id);
+      for (const event of events) {
+        if (event.type !== "brief.updated") continue;
+        if (
+          event.workBrief.threadId !== thread.id ||
+          event.workBrief.workspaceId !== thread.workspaceId
+        ) {
+          throw new Error(`Work brief in transcript ${thread.id} has invalid workspace ownership.`);
+        }
+        this.workBriefByThread.set(thread.id, event.workBrief);
+      }
       const messages = events.filter((event) => event.type === "message.created");
       const last = messages.at(-1)?.message;
       this.sequenceByThread.set(thread.id, events.at(-1)?.sequence ?? 0);
@@ -1607,6 +1719,9 @@ function parseTranscriptEvent(line: string): TranscriptEvent | undefined {
       sequence,
       toolCall: ToolCallSchema.parse(parsed.toolCall),
     };
+  }
+  if (parsed.type === "brief.updated") {
+    return { type: "brief.updated", sequence, workBrief: WorkBriefSchema.parse(parsed.workBrief) };
   }
   return undefined;
 }

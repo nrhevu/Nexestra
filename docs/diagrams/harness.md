@@ -1,0 +1,78 @@
+# Nexestra architecture and acceptance
+
+The first diagram describes implemented Work Briefs. Other diagrams describe the target control plane and are not implementation claims.
+
+## Implemented: shared work brief
+
+<!-- mermaid:id=current-brief -->
+```mermaid
+flowchart LR
+  human["User&#58; chat or Work Briefs"]
+  api["Scoped HTTP commands"]
+  store["FileStore&#58; revision checks and fsync"]
+  journal["Canonical thread JSONL"]
+  dispatcher["Mention dispatcher"]
+  runtime["Codex / OpenCode / custom HTTP"]
+  tools["Master read_brief and draft_brief"]
+  human -->|Read, save, confirm scope| api
+  api -->|Validated commands| store
+  store -->|Append revisions| journal
+  human -->|Explicit mention| dispatcher
+  store -->|Current brief| dispatcher
+  dispatcher -->|Pinned invocation context| runtime
+  runtime -->|Custom Master only| tools
+  tools -->|Same scoped commands| store
+%% portable-canonical-v2:eyJhY2Nlc3NpYmlsaXR5IjpudWxsLCJkYXRhIjp7ImRpcmVjdGlvbiI6IkxSIiwiZWRnZXMiOlt7ImZyb20iOiJodW1hbiIsImxhYmVsIjoiUmVhZCwgc2F2ZSwgY29uZmlybSBzY29wZSIsInRvIjoiYXBpIn0seyJmcm9tIjoiYXBpIiwibGFiZWwiOiJWYWxpZGF0ZWQgY29tbWFuZHMiLCJ0byI6InN0b3JlIn0seyJmcm9tIjoic3RvcmUiLCJsYWJlbCI6IkFwcGVuZCByZXZpc2lvbnMiLCJ0byI6ImpvdXJuYWwifSx7ImZyb20iOiJodW1hbiIsImxhYmVsIjoiRXhwbGljaXQgbWVudGlvbiIsInRvIjoiZGlzcGF0Y2hlciJ9LHsiZnJvbSI6InN0b3JlIiwibGFiZWwiOiJDdXJyZW50IGJyaWVmIiwidG8iOiJkaXNwYXRjaGVyIn0seyJmcm9tIjoiZGlzcGF0Y2hlciIsImxhYmVsIjoiUGlubmVkIGludm9jYXRpb24gY29udGV4dCIsInRvIjoicnVudGltZSJ9LHsiZnJvbSI6InJ1bnRpbWUiLCJsYWJlbCI6IkN1c3RvbSBNYXN0ZXIgb25seSIsInRvIjoidG9vbHMifSx7ImZyb20iOiJ0b29scyIsImxhYmVsIjoiU2FtZSBzY29wZWQgY29tbWFuZHMiLCJ0byI6InN0b3JlIn1dLCJub2RlcyI6W3siaWQiOiJodW1hbiIsImxhYmVsIjoiVXNlcjogY2hhdCBvciBXb3JrIEJyaWVmcyJ9LHsiaWQiOiJhcGkiLCJsYWJlbCI6IlNjb3BlZCBIVFRQIGNvbW1hbmRzIn0seyJpZCI6InN0b3JlIiwibGFiZWwiOiJGaWxlU3RvcmU6IHJldmlzaW9uIGNoZWNrcyBhbmQgZnN5bmMifSx7ImlkIjoiam91cm5hbCIsImxhYmVsIjoiQ2Fub25pY2FsIHRocmVhZCBKU09OTCJ9LHsiaWQiOiJkaXNwYXRjaGVyIiwibGFiZWwiOiJNZW50aW9uIGRpc3BhdGNoZXIifSx7ImlkIjoicnVudGltZSIsImxhYmVsIjoiQ29kZXggLyBPcGVuQ29kZSAvIGN1c3RvbSBIVFRQIn0seyJpZCI6InRvb2xzIiwibGFiZWwiOiJNYXN0ZXIgcmVhZF9icmllZiBhbmQgZHJhZnRfYnJpZWYifV19LCJkZXNjcmlwdGlvbiI6bnVsbCwiaWQiOiJjdXJyZW50LWJyaWVmIiwia2luZCI6ImZsb3djaGFydCIsInNvdXJjZVNoYTI1NiI6IjMxNzBjMmNiYzcyYzgzN2ViN2VmOWIzNTQ3ZDNkNjM4NzJmYjQxMzkzOTkwMzNjOTVhOTZhZjdmZjdhMjYyYWQiLCJzdHlsZXMiOltdLCJ0aXRsZSI6IkltcGxlbWVudGVkOiBzaGFyZWQgd29yayBicmllZiIsInZlcnNpb24iOjF9
+```
+
+## Target: control plane and independent acceptance
+
+<!-- mermaid:id=target-control-plane -->
+```mermaid
+flowchart LR
+  user["User"]
+  surfaces["Chat and extensible surfaces"]
+  coordinator["Intent and planning assistant"]
+  commands["Domain commands and policy"]
+  scheduler["Durable scheduler&#58; budget, WIP, stop policy"]
+  adapters["Configured agent runtimes"]
+  artifacts["Versioned candidate artifacts"]
+  verifier["Independent verification"]
+  state["Canonical state, evidence and checkpoints"]
+  user -->|Intent and decisions| surfaces
+  surfaces -->|Revisioned actions| commands
+  coordinator -->|Proposals| commands
+  commands -->|Authorized work| scheduler
+  scheduler -->|Scoped invocation| adapters
+  adapters -->|Candidate output| artifacts
+  artifacts -->|Frozen versions| verifier
+  verifier -->|Evidence and repair result| commands
+  commands -->|Durable transitions| state
+  state -->|Projections| surfaces
+  state -->|Bounded relevant context| coordinator
+%% portable-canonical-v2:eyJhY2Nlc3NpYmlsaXR5IjpudWxsLCJkYXRhIjp7ImRpcmVjdGlvbiI6IkxSIiwiZWRnZXMiOlt7ImZyb20iOiJ1c2VyIiwibGFiZWwiOiJJbnRlbnQgYW5kIGRlY2lzaW9ucyIsInRvIjoic3VyZmFjZXMifSx7ImZyb20iOiJzdXJmYWNlcyIsImxhYmVsIjoiUmV2aXNpb25lZCBhY3Rpb25zIiwidG8iOiJjb21tYW5kcyJ9LHsiZnJvbSI6ImNvb3JkaW5hdG9yIiwibGFiZWwiOiJQcm9wb3NhbHMiLCJ0byI6ImNvbW1hbmRzIn0seyJmcm9tIjoiY29tbWFuZHMiLCJsYWJlbCI6IkF1dGhvcml6ZWQgd29yayIsInRvIjoic2NoZWR1bGVyIn0seyJmcm9tIjoic2NoZWR1bGVyIiwibGFiZWwiOiJTY29wZWQgaW52b2NhdGlvbiIsInRvIjoiYWRhcHRlcnMifSx7ImZyb20iOiJhZGFwdGVycyIsImxhYmVsIjoiQ2FuZGlkYXRlIG91dHB1dCIsInRvIjoiYXJ0aWZhY3RzIn0seyJmcm9tIjoiYXJ0aWZhY3RzIiwibGFiZWwiOiJGcm96ZW4gdmVyc2lvbnMiLCJ0byI6InZlcmlmaWVyIn0seyJmcm9tIjoidmVyaWZpZXIiLCJsYWJlbCI6IkV2aWRlbmNlIGFuZCByZXBhaXIgcmVzdWx0IiwidG8iOiJjb21tYW5kcyJ9LHsiZnJvbSI6ImNvbW1hbmRzIiwibGFiZWwiOiJEdXJhYmxlIHRyYW5zaXRpb25zIiwidG8iOiJzdGF0ZSJ9LHsiZnJvbSI6InN0YXRlIiwibGFiZWwiOiJQcm9qZWN0aW9ucyIsInRvIjoic3VyZmFjZXMifSx7ImZyb20iOiJzdGF0ZSIsImxhYmVsIjoiQm91bmRlZCByZWxldmFudCBjb250ZXh0IiwidG8iOiJjb29yZGluYXRvciJ9XSwibm9kZXMiOlt7ImlkIjoidXNlciIsImxhYmVsIjoiVXNlciJ9LHsiaWQiOiJzdXJmYWNlcyIsImxhYmVsIjoiQ2hhdCBhbmQgZXh0ZW5zaWJsZSBzdXJmYWNlcyJ9LHsiaWQiOiJjb29yZGluYXRvciIsImxhYmVsIjoiSW50ZW50IGFuZCBwbGFubmluZyBhc3Npc3RhbnQifSx7ImlkIjoiY29tbWFuZHMiLCJsYWJlbCI6IkRvbWFpbiBjb21tYW5kcyBhbmQgcG9saWN5In0seyJpZCI6InNjaGVkdWxlciIsImxhYmVsIjoiRHVyYWJsZSBzY2hlZHVsZXI6IGJ1ZGdldCwgV0lQLCBzdG9wIHBvbGljeSJ9LHsiaWQiOiJhZGFwdGVycyIsImxhYmVsIjoiQ29uZmlndXJlZCBhZ2VudCBydW50aW1lcyJ9LHsiaWQiOiJhcnRpZmFjdHMiLCJsYWJlbCI6IlZlcnNpb25lZCBjYW5kaWRhdGUgYXJ0aWZhY3RzIn0seyJpZCI6InZlcmlmaWVyIiwibGFiZWwiOiJJbmRlcGVuZGVudCB2ZXJpZmljYXRpb24ifSx7ImlkIjoic3RhdGUiLCJsYWJlbCI6IkNhbm9uaWNhbCBzdGF0ZSwgZXZpZGVuY2UgYW5kIGNoZWNrcG9pbnRzIn1dfSwiZGVzY3JpcHRpb24iOm51bGwsImlkIjoidGFyZ2V0LWNvbnRyb2wtcGxhbmUiLCJraW5kIjoiZmxvd2NoYXJ0Iiwic291cmNlU2hhMjU2IjoiOWIzZGRjZjExMTU4ZmEzNTVkODk3ZjEwOGQwMTQ3ZTYwYjgwMTMyZWVmMTgyZTgyNTgwNjg0ZmJiZGZhZDYzOCIsInN0eWxlcyI6W10sInRpdGxlIjoiVGFyZ2V0OiBjb250cm9sIHBsYW5lIGFuZCBpbmRlcGVuZGVudCBhY2NlcHRhbmNlIiwidmVyc2lvbiI6MX0
+```
+
+## Target: acceptance lifecycle, separate from run status
+
+<!-- mermaid:id=target-lifecycle -->
+```mermaid
+stateDiagram-v2
+  state "Not started" as not_started
+  state "Active" as active
+  state "In review" as in_review
+  state "Blocked" as blocked
+  state "Passing" as passing
+  state "Cancelled" as cancelled
+  [*] --> not_started
+  not_started --> active: Ready, authorized, budget and slot available
+  active --> in_review: Candidate artifact captured
+  in_review --> passing: All required checks pass for frozen versions
+  in_review --> active: Bounded actionable repair
+  active --> blocked: Required decision or unavailable capability
+  blocked --> active: Blocker resolved and authority retained
+  active --> cancelled: Cancellation
+  in_review --> cancelled: Cancellation
+  passing --> not_started: Contract or accepted output changes
+%% portable-canonical-v2:eyJhY2Nlc3NpYmlsaXR5IjpudWxsLCJkYXRhIjp7ImluaXRpYWwiOiJub3Rfc3RhcnRlZCIsInN0YXRlcyI6W3siaWQiOiJub3Rfc3RhcnRlZCIsImxhYmVsIjoiTm90IHN0YXJ0ZWQifSx7ImlkIjoiYWN0aXZlIiwibGFiZWwiOiJBY3RpdmUifSx7ImlkIjoiaW5fcmV2aWV3IiwibGFiZWwiOiJJbiByZXZpZXcifSx7ImlkIjoiYmxvY2tlZCIsImxhYmVsIjoiQmxvY2tlZCJ9LHsiaWQiOiJwYXNzaW5nIiwibGFiZWwiOiJQYXNzaW5nIn0seyJpZCI6ImNhbmNlbGxlZCIsImxhYmVsIjoiQ2FuY2VsbGVkIn1dLCJ0cmFuc2l0aW9ucyI6W3siZnJvbSI6Im5vdF9zdGFydGVkIiwibGFiZWwiOiJSZWFkeSwgYXV0aG9yaXplZCwgYnVkZ2V0IGFuZCBzbG90IGF2YWlsYWJsZSIsInRvIjoiYWN0aXZlIn0seyJmcm9tIjoiYWN0aXZlIiwibGFiZWwiOiJDYW5kaWRhdGUgYXJ0aWZhY3QgY2FwdHVyZWQiLCJ0byI6ImluX3JldmlldyJ9LHsiZnJvbSI6ImluX3JldmlldyIsImxhYmVsIjoiQWxsIHJlcXVpcmVkIGNoZWNrcyBwYXNzIGZvciBmcm96ZW4gdmVyc2lvbnMiLCJ0byI6InBhc3NpbmcifSx7ImZyb20iOiJpbl9yZXZpZXciLCJsYWJlbCI6IkJvdW5kZWQgYWN0aW9uYWJsZSByZXBhaXIiLCJ0byI6ImFjdGl2ZSJ9LHsiZnJvbSI6ImFjdGl2ZSIsImxhYmVsIjoiUmVxdWlyZWQgZGVjaXNpb24gb3IgdW5hdmFpbGFibGUgY2FwYWJpbGl0eSIsInRvIjoiYmxvY2tlZCJ9LHsiZnJvbSI6ImJsb2NrZWQiLCJsYWJlbCI6IkJsb2NrZXIgcmVzb2x2ZWQgYW5kIGF1dGhvcml0eSByZXRhaW5lZCIsInRvIjoiYWN0aXZlIn0seyJmcm9tIjoiYWN0aXZlIiwibGFiZWwiOiJDYW5jZWxsYXRpb24iLCJ0byI6ImNhbmNlbGxlZCJ9LHsiZnJvbSI6ImluX3JldmlldyIsImxhYmVsIjoiQ2FuY2VsbGF0aW9uIiwidG8iOiJjYW5jZWxsZWQifSx7ImZyb20iOiJwYXNzaW5nIiwibGFiZWwiOiJDb250cmFjdCBvciBhY2NlcHRlZCBvdXRwdXQgY2hhbmdlcyIsInRvIjoibm90X3N0YXJ0ZWQifV19LCJkZXNjcmlwdGlvbiI6bnVsbCwiaWQiOiJ0YXJnZXQtbGlmZWN5Y2xlIiwia2luZCI6InN0YXRlIiwic291cmNlU2hhMjU2IjoiYjc0MTlkODUxNGIzODEwNDJlYzUzMDgwNGZmOTFhZmQ5YmY1MDE3ZmFiZTRlYzczMTAwMmEwMzA1NzkyYjhlYiIsInN0eWxlcyI6W10sInRpdGxlIjoiVGFyZ2V0OiBhY2NlcHRhbmNlIGxpZmVjeWNsZSwgc2VwYXJhdGUgZnJvbSBydW4gc3RhdHVzIiwidmVyc2lvbiI6MX0
+```

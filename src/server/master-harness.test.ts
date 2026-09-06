@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -10,6 +10,37 @@ import {
 } from "./master-harness.js";
 
 describe("Master harness tools", () => {
+  it("uses canonical boundaries while accepting a workspace's declared symlink path", async () => {
+    const context = await toolContext("full");
+    const actual = await realpath(context.workspacePath);
+    const aliasParent = await mkdtemp(join(tmpdir(), "nexestra-workspace-alias-"));
+    const alias = join(aliasParent, "workspace");
+    await symlink(actual, alias, "dir");
+    context.workspacePath = alias;
+    context.dataPath = join(alias, ".nexestra");
+    await mkdir(join(actual, "src"));
+    await mkdir(join(actual, ".nexestra"));
+    await writeFile(join(actual, "src", "source.ts"), "const source = 1;\n");
+    await writeFile(join(actual, ".nexestra", "state.json"), "private metadata");
+    await expect(call(context, "glob", { pattern: "**/*.ts" })).resolves.toContain("src/source.ts");
+    await expect(call(context, "grep", { pattern: "source", path: "src" })).resolves.toContain(
+      "Line 1",
+    );
+    await expect(
+      call(context, "read", { filePath: join(alias, "src", "source.ts") }),
+    ).resolves.toContain("const source = 1");
+    await expect(
+      call(context, "write", { filePath: join(alias, "new", "memo.md"), content: "A memo" }),
+    ).resolves.toContain("Wrote");
+    expect(await readFile(join(actual, "new", "memo.md"), "utf8")).toBe("A memo");
+    await expect(
+      call(context, "read", { filePath: join(alias, ".nexestra", "state.json") }),
+    ).resolves.toContain("protected");
+    await expect(
+      call(context, "read", { filePath: join(actual, ".nexestra", "state.json") }),
+    ).resolves.toContain("protected");
+  });
+
   it("lists, searches, reads, edits, writes, and runs bounded shell commands", async () => {
     const context = await toolContext("full");
     await mkdir(join(context.workspacePath, "src"));
@@ -350,7 +381,9 @@ describe("Master harness tools", () => {
       const skill = await callSession(session, "skill", { name: "review-code" });
       expect(skill).toContain("Check the diff");
       expect(skill).not.toContain("description: Review changes carefully.");
-      expect(skill).toContain(`<file>${join(skillDirectory, "checklist.md")}</file>`);
+      expect(skill).toContain(
+        `<file>${await realpath(join(skillDirectory, "checklist.md"))}</file>`,
+      );
       await expect(
         callSession(session, "read", { filePath: join(skillDirectory, "checklist.md") }),
       ).resolves.toContain("Inspect tests");

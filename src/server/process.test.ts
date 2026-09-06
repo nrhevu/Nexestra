@@ -23,18 +23,19 @@ describe("runCommand", () => {
     const cwd = await mkdtemp(join(tmpdir(), "nexestra-process-"));
     const startedAt = Date.now();
 
+    let receivedTerm = false;
     await expect(
-      runCommand(
-        process.execPath,
-        ["-e", "process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"],
-        {
-          cwd,
-          timeoutMs: 40,
-          terminationGraceMs: 60,
+      runCommand("/bin/sh", ["-c", "trap 'printf TERM' TERM; printf READY; while :; do :; done"], {
+        cwd,
+        timeoutMs: 200,
+        terminationGraceMs: 60,
+        onStdout: (chunk) => {
+          if (chunk.includes("TERM")) receivedTerm = true;
         },
-      ),
+      }),
     ).rejects.toThrow("timed out");
-    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(80);
+    expect(receivedTerm).toBe(true);
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(250);
     expect(Date.now() - startedAt).toBeLessThan(2_000);
   });
 

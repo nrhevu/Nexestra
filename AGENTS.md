@@ -26,6 +26,10 @@ Do not call live providers in default tests.
 - `src/server/auth.ts`: ChatGPT device login owned by Codex CLI.
 - `src/server/app.ts`: HTTP API and loopback-origin guard.
 - `src/web/`: SPA and visual system.
+- `src/shared/work-brief.ts`: bounded work brief context shared by every runtime.
+- `src/web/surfaces/`: built-in surface catalog and Work Briefs.
+- `docs/HARNESS-DESIGN.md`: target design; `docs/ARCHITECTURE.md`: implemented behavior.
+- `PROGRESS.md` and `DECISIONS.md`: current work and pointers for fresh sessions.
 
 ## Rules
 

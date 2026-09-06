@@ -1,0 +1,271 @@
+{
+  "version": 2,
+  "title": "Nexestra architecture and acceptance",
+  "description": "The first diagram describes implemented Work Briefs. Other diagrams describe the target control plane and are not implementation claims.",
+  "diagrams": [
+    {
+      "id": "current-brief",
+      "title": "Implemented: shared work brief",
+      "kind": "flowchart",
+      "data": {
+        "direction": "LR",
+        "nodes": [
+          {
+            "id": "human",
+            "label": "User: chat or Work Briefs"
+          },
+          {
+            "id": "api",
+            "label": "Scoped HTTP commands"
+          },
+          {
+            "id": "store",
+            "label": "FileStore: revision checks and fsync"
+          },
+          {
+            "id": "journal",
+            "label": "Canonical thread JSONL"
+          },
+          {
+            "id": "dispatcher",
+            "label": "Mention dispatcher"
+          },
+          {
+            "id": "runtime",
+            "label": "Codex / OpenCode / custom HTTP"
+          },
+          {
+            "id": "tools",
+            "label": "Master read_brief and draft_brief"
+          }
+        ],
+        "edges": [
+          {
+            "from": "human",
+            "to": "api",
+            "label": "Read, save, confirm scope"
+          },
+          {
+            "from": "api",
+            "to": "store",
+            "label": "Validated commands"
+          },
+          {
+            "from": "store",
+            "to": "journal",
+            "label": "Append revisions"
+          },
+          {
+            "from": "human",
+            "to": "dispatcher",
+            "label": "Explicit mention"
+          },
+          {
+            "from": "store",
+            "to": "dispatcher",
+            "label": "Current brief"
+          },
+          {
+            "from": "dispatcher",
+            "to": "runtime",
+            "label": "Pinned invocation context"
+          },
+          {
+            "from": "runtime",
+            "to": "tools",
+            "label": "Custom Master only"
+          },
+          {
+            "from": "tools",
+            "to": "store",
+            "label": "Same scoped commands"
+          }
+        ]
+      }
+    },
+    {
+      "id": "target-control-plane",
+      "title": "Target: control plane and independent acceptance",
+      "kind": "flowchart",
+      "data": {
+        "direction": "LR",
+        "nodes": [
+          {
+            "id": "user",
+            "label": "User"
+          },
+          {
+            "id": "surfaces",
+            "label": "Chat and extensible surfaces"
+          },
+          {
+            "id": "coordinator",
+            "label": "Intent and planning assistant"
+          },
+          {
+            "id": "commands",
+            "label": "Domain commands and policy"
+          },
+          {
+            "id": "scheduler",
+            "label": "Durable scheduler: budget, WIP, stop policy"
+          },
+          {
+            "id": "adapters",
+            "label": "Configured agent runtimes"
+          },
+          {
+            "id": "artifacts",
+            "label": "Versioned candidate artifacts"
+          },
+          {
+            "id": "verifier",
+            "label": "Independent verification"
+          },
+          {
+            "id": "state",
+            "label": "Canonical state, evidence and checkpoints"
+          }
+        ],
+        "edges": [
+          {
+            "from": "user",
+            "to": "surfaces",
+            "label": "Intent and decisions"
+          },
+          {
+            "from": "surfaces",
+            "to": "commands",
+            "label": "Revisioned actions"
+          },
+          {
+            "from": "coordinator",
+            "to": "commands",
+            "label": "Proposals"
+          },
+          {
+            "from": "commands",
+            "to": "scheduler",
+            "label": "Authorized work"
+          },
+          {
+            "from": "scheduler",
+            "to": "adapters",
+            "label": "Scoped invocation"
+          },
+          {
+            "from": "adapters",
+            "to": "artifacts",
+            "label": "Candidate output"
+          },
+          {
+            "from": "artifacts",
+            "to": "verifier",
+            "label": "Frozen versions"
+          },
+          {
+            "from": "verifier",
+            "to": "commands",
+            "label": "Evidence and repair result"
+          },
+          {
+            "from": "commands",
+            "to": "state",
+            "label": "Durable transitions"
+          },
+          {
+            "from": "state",
+            "to": "surfaces",
+            "label": "Projections"
+          },
+          {
+            "from": "state",
+            "to": "coordinator",
+            "label": "Bounded relevant context"
+          }
+        ]
+      }
+    },
+    {
+      "id": "target-lifecycle",
+      "title": "Target: acceptance lifecycle, separate from run status",
+      "kind": "state",
+      "data": {
+        "initial": "not_started",
+        "states": [
+          {
+            "id": "not_started",
+            "label": "Not started"
+          },
+          {
+            "id": "active",
+            "label": "Active"
+          },
+          {
+            "id": "in_review",
+            "label": "In review"
+          },
+          {
+            "id": "blocked",
+            "label": "Blocked"
+          },
+          {
+            "id": "passing",
+            "label": "Passing"
+          },
+          {
+            "id": "cancelled",
+            "label": "Cancelled"
+          }
+        ],
+        "transitions": [
+          {
+            "from": "not_started",
+            "to": "active",
+            "label": "Ready, authorized, budget and slot available"
+          },
+          {
+            "from": "active",
+            "to": "in_review",
+            "label": "Candidate artifact captured"
+          },
+          {
+            "from": "in_review",
+            "to": "passing",
+            "label": "All required checks pass for frozen versions"
+          },
+          {
+            "from": "in_review",
+            "to": "active",
+            "label": "Bounded actionable repair"
+          },
+          {
+            "from": "active",
+            "to": "blocked",
+            "label": "Required decision or unavailable capability"
+          },
+          {
+            "from": "blocked",
+            "to": "active",
+            "label": "Blocker resolved and authority retained"
+          },
+          {
+            "from": "active",
+            "to": "cancelled",
+            "label": "Cancellation"
+          },
+          {
+            "from": "in_review",
+            "to": "cancelled",
+            "label": "Cancellation"
+          },
+          {
+            "from": "passing",
+            "to": "not_started",
+            "label": "Contract or accepted output changes"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -9,6 +9,7 @@ Milestone M9 is a fresh rebuild focused on two primary workflows:
 - save shared documents and Git repositories, then reference them with a `#handle`;
 - attach files and images, and browse each thread's indexed files and links;
 - manage planned work, repository knowledge, and agents in Taskboard, Knowledge, and Agents.
+- maintain shared **Work Briefs** for research, documents, design, code, or mixed work.
 
 Workspaces are selected from the far-left rail. Each workspace has its own threads, agents, and
 tasks; Threads, Surfaces, and Settings live in the navigation panel beside that rail. Creating a
@@ -44,6 +45,24 @@ By default, data is stored in `.nexestra/` in the running repository:
 ```
 
 Set `NEXESTRA_HOME=/another/path` to keep data outside the repository.
+
+## Shared work briefs
+
+Open **Surfaces → Work briefs**, choose a conversation, or create a new one. Record the outcome,
+deliverables, constraints, out-of-scope work, open questions and success criteria with a concrete
+check for each. Drafts can be incomplete. Optional **Confirm scope** records agreement after the
+outcome, outputs and checks are specified and open questions are resolved. Confirmation does not
+start work or grant tool permissions.
+
+Briefs work without a Git repository. Every save creates a revision in the conversation's canonical
+JSONL; stale updates fail instead of overwriting newer edits. Editing a confirmed brief returns it
+to draft. The brief is included when an agent is next mentioned in that conversation. Custom-provider
+Masters can use `read_brief` and `draft_brief`; Codex/OpenCode receive the context but do not yet
+have that native tool bridge. Use **Work brief** in the conversation tabs to jump to its scope.
+
+The [product vision](docs/PRODUCT-VISION.vi.md), [target harness design](docs/HARNESS-DESIGN.md) and
+[roadmap](docs/ROADMAP.md) describe the next steps toward a general-purpose execution workspace.
+Worker delegation currently still uses repository worktrees.
 
 ## Invoking agents
 

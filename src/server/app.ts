@@ -67,6 +67,7 @@ export function createApp(options: CreateAppOptions) {
         .listAgents(workspace.id)
         .map((agent) => agentView(agent, runtime, dispatcher.busyAgentIds())),
       threads: options.store.listThreads(workspace.id),
+      workBriefs: await options.store.listWorkBriefs(workspace.id),
       tasks: options.store.listTasks(workspace.id),
       knowledge: options.store.listKnowledge(workspace.id),
       assignments: options.store.listAssignments(workspace.id),
@@ -89,6 +90,24 @@ export function createApp(options: CreateAppOptions) {
 
   app.post("/api/workspaces", async (context) => {
     return context.json(await options.store.createWorkspace(await context.req.json()), 201);
+  });
+
+  app.get("/api/threads/:id/brief", async (context) => {
+    return context.json({
+      workBrief: (await options.store.getWorkBrief(context.req.param("id"))) ?? null,
+    });
+  });
+
+  app.put("/api/threads/:id/brief", async (context) => {
+    return context.json(
+      await options.store.saveWorkBrief(context.req.param("id"), await context.req.json()),
+    );
+  });
+
+  app.post("/api/threads/:id/brief/confirm", async (context) => {
+    return context.json(
+      await options.store.confirmWorkBrief(context.req.param("id"), await context.req.json()),
+    );
   });
 
   app.post("/api/agents", async (context) => {

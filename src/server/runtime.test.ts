@@ -77,6 +77,38 @@ describe("Worker harness arguments", () => {
     processMocks.runCommand.mockReset();
   });
 
+  it.each(["codex", "opencode"] as const)(
+    "pins the current work brief in the %s prompt",
+    async (harness) => {
+      const { agent, invocation, root, runner } = await workerFixture(harness);
+      const store = await FileStore.open({ root, workspacePath: root });
+      invocation.workBrief = await store.saveWorkBrief(invocation.thread.id, {
+        title: "Research contract",
+        kind: "research",
+        outcome: "Compare two audiences",
+        expectedRevision: 0,
+        deliverables: ["Recommendation memo"],
+        acceptanceCriteria: [
+          { behavior: "Sources support claims", verification: "Reviewer checks primary sources" },
+        ],
+      });
+      processMocks.findExecutable.mockResolvedValue(`/fake/${harness}`);
+      processMocks.runCommand.mockResolvedValue({
+        stdout: JSON.stringify(
+          harness === "codex"
+            ? { type: "item.completed", item: { type: "agent_message", text: "Done." } }
+            : { type: "text", part: { type: "text", text: "Done." } },
+        ),
+        stderr: "",
+        exitCode: 0,
+      });
+      await expect(runner.invoke(agent, invocation)).resolves.toBe("Done.");
+      const args = processMocks.runCommand.mock.calls[0]?.[1] as string[];
+      expect(args.at(-1)).toContain("Current work brief (revision 1, draft; work type: research)");
+      expect(args.at(-1)).toContain("Reviewer checks primary sources");
+    },
+  );
+
   it("passes model and reasoning effort to Codex", async () => {
     const { agent, invocation, root, runner } = await workerFixture("codex", "gpt-5.4", "high");
     processMocks.findExecutable.mockResolvedValue("/fake/codex");
@@ -398,6 +430,44 @@ describe("parseProviderReply", () => {
     expect(parseProviderReply({ output_text: "world" })).toBe("world");
   });
 
+  it.each(["openai-chat", "openai-responses"] as const)(
+    "pins the brief in a %s request without changing tool authority",
+    async (protocol) => {
+      const { agent, invocation, store } = await customMasterFixture(protocol);
+      const workBrief = await store.saveWorkBrief(invocation.thread.id, {
+        title: "Design a diagram",
+        kind: "design",
+        outcome: "Explain the architecture",
+        expectedRevision: 0,
+      });
+      const fetchMock = vi.fn(
+        async (_input: RequestInfo | URL, _init?: RequestInit) =>
+          new Response(
+            JSON.stringify(
+              protocol === "openai-chat"
+                ? { choices: [{ message: { content: "Ready." } }] }
+                : {
+                    output: [
+                      { type: "message", content: [{ type: "output_text", text: "Ready." }] },
+                    ],
+                  },
+            ),
+            { headers: { "content-type": "application/json" } },
+          ),
+      );
+      const runner = new LocalAgentRunner({
+        store,
+        fetch: fetchMock as typeof fetch,
+        env: { HOME: store.workspacePath, XDG_CONFIG_HOME: store.workspacePath },
+      });
+      await expect(runner.invoke(agent, { ...invocation, workBrief })).resolves.toBe("Ready.");
+      const body = String(fetchMock.mock.calls[0]?.[1]?.body);
+      expect(body).toContain("Current work brief (revision 1, draft; work type: design)");
+      expect(body).toContain("draft_brief");
+      expect(body).not.toContain("confirm_brief");
+    },
+  );
+
   it("streams Chat Completions text deltas while preserving the final reply", async () => {
     const { agent, invocation, store } = await customMasterFixture("openai-chat");
     const thinking = vi.fn();
@@ -662,6 +732,8 @@ describe("parseProviderReply", () => {
     expect(
       firstBody.tools.map((tool: { function: { name: string } }) => tool.function.name),
     ).toEqual([
+      "read_brief",
+      "draft_brief",
       "list",
       "glob",
       "grep",

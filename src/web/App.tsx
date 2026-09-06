@@ -8,7 +8,6 @@ import {
   Check,
   CircleAlert,
   CodeXml,
-  Columns3,
   Copy,
   Download,
   ExternalLink,
@@ -73,11 +72,13 @@ import type {
 } from "../shared/contracts.js";
 import { extractMentionHandles, handleFromName } from "../shared/contracts.js";
 import { api } from "./api.js";
+import { findSurface, type Surface, surfaces } from "./surfaces/registry.js";
+import { WorkBriefs } from "./surfaces/WorkBriefs.js";
+import "./surfaces/briefs.css";
 
 const RichMessage = lazy(() => import("./RichMessage.js"));
 
 type PrimaryView = "threads" | "surfaces";
-type Surface = "taskboard" | "agents" | "knowledge";
 type ModalName = "workspace" | "thread" | "agent" | "task" | "knowledge" | "settings" | null;
 
 interface RouteState {
@@ -399,7 +400,7 @@ export function App() {
         }}
         onSettings={() => setModal("settings")}
         onCreate={() => {
-          if (route.view === "threads") setModal("thread");
+          if (route.view === "threads" || route.surface === "briefs") setModal("thread");
           else if (route.surface === "agents") setModal("agent");
           else if (route.surface === "taskboard") {
             setTaskStatus("todo");
@@ -412,6 +413,13 @@ export function App() {
           <ThreadView
             key={route.threadId}
             data={data}
+            onBrief={(threadId) =>
+              navigate(`/surfaces/briefs?threadId=${encodeURIComponent(threadId)}`, {
+                view: "surfaces",
+                surface: "briefs",
+                threadId,
+              })
+            }
             threadData={visibleThreadData}
             runActivities={deferredRunActivities}
             onSend={async (content, files) => {
@@ -447,6 +455,14 @@ export function App() {
               });
               if (route.threadId) await loadThread(route.threadId, true);
             }}
+          />
+        ) : route.surface === "briefs" ? (
+          <WorkBriefs
+            key={`${data.workspace.id}:${route.threadId ?? "all"}`}
+            data={data}
+            initialThreadId={route.threadId}
+            onChanged={() => refresh(true)}
+            onThread={openThread}
           />
         ) : route.surface === "agents" ? (
           <AgentsView
@@ -765,33 +781,15 @@ function TopBar(props: {
             document.dispatchEvent(new CustomEvent("nexestra:new-task"));
           },
         },
-        {
-          id: "taskboard",
-          label: "Go to Taskboard",
-          description: "Open the task management surface",
+        ...surfaces.map((surface) => ({
+          id: surface.id,
+          label: `Go to ${surface.label}`,
+          description: surface.description,
           action: () => {
-            props.onSurface("taskboard");
+            props.onSurface(surface.id);
             setQueryText("");
           },
-        },
-        {
-          id: "agents",
-          label: "Go to Agents",
-          description: "Manage your agents",
-          action: () => {
-            props.onSurface("agents");
-            setQueryText("");
-          },
-        },
-        {
-          id: "knowledge",
-          label: "Go to Knowledge",
-          description: "Manage your documents and repositories",
-          action: () => {
-            props.onSurface("knowledge");
-            setQueryText("");
-          },
-        },
+        })),
         {
           id: "settings",
           label: "Open Settings",
@@ -1053,39 +1051,20 @@ function Sidebar(props: {
           <>
             <p className="sidebar-kicker">Workspace</p>
             <div className="sidebar-list surface-list">
-              <button
-                className={
-                  props.route.surface === "taskboard" ? "sidebar-row selected" : "sidebar-row"
-                }
-                type="button"
-                onClick={() => props.onSurface("taskboard")}
-              >
-                <Columns3 size={17} />
-                <span className="row-label">Taskboard</span>
-                <span className="count">{props.data.tasks.length}</span>
-              </button>
-              <button
-                className={
-                  props.route.surface === "knowledge" ? "sidebar-row selected" : "sidebar-row"
-                }
-                type="button"
-                onClick={() => props.onSurface("knowledge")}
-              >
-                <BookOpen size={17} />
-                <span className="row-label">Knowledge</span>
-                <span className="count">{props.data.knowledge.length}</span>
-              </button>
-              <button
-                className={
-                  props.route.surface === "agents" ? "sidebar-row selected" : "sidebar-row"
-                }
-                type="button"
-                onClick={() => props.onSurface("agents")}
-              >
-                <UsersRound size={17} />
-                <span className="row-label">Agent management</span>
-                <span className="count">{visibleAgents.length}</span>
-              </button>
+              {surfaces.map((surface) => (
+                <button
+                  key={surface.id}
+                  className={
+                    props.route.surface === surface.id ? "sidebar-row selected" : "sidebar-row"
+                  }
+                  type="button"
+                  onClick={() => props.onSurface(surface.id)}
+                >
+                  <surface.icon size={17} />
+                  <span className="row-label">{surface.label}</span>
+                  <span className="count">{surface.count(props.data)}</span>
+                </button>
+              ))}
             </div>
           </>
         )}
@@ -1114,6 +1093,7 @@ function ComposerFormatButton(props: { label: string; onClick: () => void; child
 
 function ThreadView(props: {
   data: BootstrapData;
+  onBrief: (threadId: string) => void;
   threadData?: ThreadData;
   runActivities: RunActivity[];
   onSend: (content: string, files: File[]) => Promise<void>;
@@ -1435,6 +1415,10 @@ function ThreadView(props: {
         </div>
       </header>
       <div className="thread-tabs">
+        <button type="button" onClick={() => props.onBrief(thread.id)}>
+          <FileText size={15} /> Work brief
+          {props.threadData.workBrief?.status === "confirmed" && <Check size={13} />}
+        </button>
         <button
           type="button"
           className={activeTab === "messages" ? "active" : ""}
@@ -4602,8 +4586,12 @@ function messageFrom(error: unknown): string {
 function routeFromLocation(): RouteState {
   const parts = window.location.pathname.split("/").filter(Boolean);
   if (parts[0] === "surfaces") {
-    const surface = parts[1] === "taskboard" || parts[1] === "knowledge" ? parts[1] : "agents";
-    return { view: "surfaces", surface };
+    const surface = findSurface(parts[1])?.id ?? "agents";
+    const threadId =
+      surface === "briefs"
+        ? (new URLSearchParams(window.location.search).get("threadId") ?? undefined)
+        : undefined;
+    return { view: "surfaces", surface, ...(threadId ? { threadId } : {}) };
   }
   return { view: "threads", surface: "agents", ...(parts[1] ? { threadId: parts[1] } : {}) };
 }

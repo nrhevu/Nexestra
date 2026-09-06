@@ -39,6 +39,7 @@ const bootstrapData: BootstrapData = {
   agents: [],
   threads: [],
   tasks: [],
+  workBriefs: [],
   knowledge: [],
   assignments: [],
   activeRuns: [],

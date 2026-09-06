@@ -283,10 +283,11 @@ export class AgentDispatcher {
       this.notifyThread(running.threadId, true);
       const thread = this.store.getThread(run.threadId);
       if (!thread) throw new StoreError("not_found", "Thread not found.");
-      const [transcriptSnapshot, artifacts, knowledge] = await Promise.all([
+      const [transcriptSnapshot, artifacts, knowledge, workBrief] = await Promise.all([
         this.store.transcriptSnapshot(run.threadId),
         this.store.agentArtifacts(run.threadId, trigger.id),
         this.store.agentKnowledge(trigger),
+        this.store.getWorkBrief(run.threadId),
       ]);
       const pendingInteractions = new Map<string, "waiting_approval" | "waiting_input">();
       let runStatusQueue: Promise<void> = Promise.resolve();
@@ -318,6 +319,7 @@ export class AgentDispatcher {
         trigger,
         transcriptPath: this.store.transcriptPath(run.threadId),
         transcriptSnapshot,
+        workBrief,
         artifacts,
         knowledge,
         toolHooks: {
@@ -378,6 +380,12 @@ export class AgentDispatcher {
             }
             this.notifyThread(run.threadId, true);
             return tasks;
+          },
+          readWorkBrief: () => this.store.getWorkBrief(thread.id),
+          saveWorkBrief: async (input) => {
+            const brief = await this.store.saveWorkBrief(thread.id, input, agent.id);
+            this.notifyThread(thread.id, true);
+            return brief;
           },
           delegate: (input) =>
             this.delegateWork(currentRun, agent, trigger, transcriptSnapshot, input),
@@ -736,6 +744,7 @@ export class AgentDispatcher {
               trigger: delegatedTrigger,
               transcriptPath: this.store.transcriptPath(thread.id),
               transcriptSnapshot,
+              workBrief: await this.store.getWorkBrief(thread.id),
               knowledge: [{ item: knowledge, localPath: location.absolutePath }],
               workingDirectory: location.absolutePath,
               mode: "task",

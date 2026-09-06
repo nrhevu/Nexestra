@@ -6,6 +6,7 @@ M9 is a single-user, local-first control center. The server binds to `127.0.0.1`
 communicates over HTTP, and the server invokes configured coding harnesses or providers. The two
 primary navigation areas are Threads and Surfaces; the initial surfaces are Taskboard, Knowledge,
 and Agents.
+Work Briefs adds shared scope for research, documents, design and code without requiring a repository.
 The far-left rail switches between workspaces, while the adjacent panel owns the Threads, Surfaces,
 and Settings navigation.
 
@@ -31,6 +32,31 @@ ChatService ── AgentDispatcher ── LocalAgentRunner
 ```
 
 The shared Zod contracts in `src/shared/contracts.ts` define the boundary between browser and server.
+
+The [target harness design](HARNESS-DESIGN.md) and [surface extension contract](SURFACE-EXTENSIONS.md)
+describe planned layers; they are not claims about the current implementation.
+
+## Shared scope and surface catalog
+
+Each thread may have a Work Brief with outcome, deliverables, constraints, non-goals, open questions
+and paired behavior/check descriptions. Its revisions are `brief.updated` events in that thread's
+canonical JSONL. The latest event is replayed into an in-memory index during startup, avoiding full
+transcript scans on each bootstrap. No second canonical brief exists in `state.json`.
+
+Store writes require an expected revision and use the existing serialized write queue. Content is
+bounded and redacted before append/fsync. User and dispatcher-bound agent drafts are attributed by
+the server; input cannot supply status or authorship. Every edit returns to draft. Optional user
+confirmation requires an outcome, output and check, with no open questions; it records scope
+agreement only. Neither operation invokes an agent or changes its permissions.
+
+The HTTP API and Master `read_brief`/`draft_brief` tools share the same store operations. The
+dispatcher pins the current brief in each invocation, and both CLI adapters and HTTP protocols
+include it in their prompts. Agent tool edits notify the existing thread event stream. Brief events
+are not rendered as duplicate chat messages and do not change message counts.
+
+Built-in surface metadata lives in `src/web/surfaces/registry.ts` and feeds routes, sidebar entries
+and command search. Work Briefs has its own component and stylesheet; existing renderers remain
+explicitly composed in App. There is no external UI plugin loader yet.
 
 ## Refresh and rendering model
 
@@ -241,6 +267,13 @@ access may use the current OS user's existing SSH and Git configuration; Nexestr
 credentials.
 
 ## Known gaps
+
+- Worker success still marks legacy assignments/tasks complete without an independent evidence
+  gate. Work Brief checks describe acceptance but are not yet executable verifiers.
+- Work Briefs are thread-scoped; cross-thread goals, execution contracts, durable loops, budgets,
+  graph scheduling and generated surface plugins remain roadmap items.
+- Codex/OpenCode receive brief context but do not yet expose app-native brief mutation tools.
+- Brief index consistency assumes one server process per data directory, like the existing store.
 
 - App-native `plan` and `delegate` are currently available to custom OpenAI-compatible Masters.
   ChatGPT OAuth Masters run through Codex CLI and do not yet receive this bridge.

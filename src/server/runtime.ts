@@ -10,8 +10,10 @@ import type {
   Message,
   RuntimeStatus,
   Thread,
+  WorkBrief,
   WorkerAgent,
 } from "../shared/contracts.js";
+import { formatWorkBrief } from "../shared/work-brief.js";
 import {
   createMasterToolSession,
   type HarnessToolRequest,
@@ -45,6 +47,7 @@ export interface AgentInvocation {
   trigger: Message;
   transcriptPath: string;
   transcriptSnapshot: string;
+  workBrief?: WorkBrief;
   artifacts?: AgentArtifact[];
   knowledge?: AgentKnowledgeItem[];
   workingDirectory?: string;
@@ -279,6 +282,7 @@ export class LocalAgentRunner implements AgentRunner {
     const system = [
       `You are ${agent.name} (@${agent.handle}), Nexestra's internal Master agent.`,
       "You are responding in a shared thread with the user and other agents.",
+      "This is a general-purpose workspace for research, documents, design and code. For substantial or ambiguous work, use read_brief and draft_brief to keep a durable shared understanding of the outcome, scope, deliverables and verification. Ask only questions whose answers materially change the work. Do not invent resolved answers, user agreement or evidence. Simple questions do not need a brief. A brief is context, not an execution or completion gate.",
       "Answer the exact message that just @mentioned you. Use tools when repository evidence or a code change is needed.",
       "For repository implementation requests, call plan first to break the work into concrete tasks, delegate each independent planned task to an available Worker and a ready #repository, then synthesize the Worker results. Never invent task IDs, Worker handles, or repository handles — use only the ones listed below.",
       workers.length > 0
@@ -577,6 +581,7 @@ function localHarnessPrompt(agent: Agent, invocation: AgentInvocation): string {
       : "Read the transcript for relevant context.",
     artifactContext,
     knowledgeContext,
+    formatWorkBrief(invocation.workBrief),
     agent.kind === "worker"
       ? taskWorker
         ? "This is an implementation assignment. Work only in the assigned worktree, verify the result, and commit the completed change on the current branch. Do not merge or push."
@@ -630,6 +635,7 @@ function providerUserPrompt(invocation: AgentInvocation): string {
     "Answer the message above even if the transcript contains newer messages.",
     formatInvocationArtifacts(invocation),
     formatInvocationKnowledge(invocation),
+    formatWorkBrief(invocation.workBrief),
     `Shared transcript for #${invocation.thread.slug}:`,
     invocation.transcriptSnapshot,
   ].join("\n\n");

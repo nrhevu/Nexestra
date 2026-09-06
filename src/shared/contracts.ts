@@ -207,6 +207,65 @@ export const CreateThreadSchema = z.object({
   name: z.string().trim().min(1).max(80),
 });
 
+export const WorkBriefContentSchema = z.object({
+  title: z.string().trim().min(1).max(160),
+  kind: z.enum(["mixed", "research", "document", "design", "code"]).default("mixed"),
+  outcome: z.string().trim().max(2_000).default(""),
+  deliverables: z.array(z.string().trim().min(1).max(240)).max(10).default([]),
+  constraints: z.string().trim().max(2_000).default(""),
+  nonGoals: z.string().trim().max(1_000).default(""),
+  acceptanceCriteria: z
+    .array(
+      z
+        .object({
+          behavior: z.string().trim().min(1).max(400),
+          verification: z.string().trim().min(1).max(400),
+        })
+        .strict(),
+    )
+    .max(10)
+    .default([]),
+  openQuestions: z.string().trim().max(2_000).default(""),
+});
+export type WorkBriefContent = z.infer<typeof WorkBriefContentSchema>;
+
+export const SaveWorkBriefSchema = WorkBriefContentSchema.extend({
+  expectedRevision: z.number().int().nonnegative(),
+}).strict();
+export type SaveWorkBriefInput = z.infer<typeof SaveWorkBriefSchema>;
+
+export const ConfirmWorkBriefSchema = z
+  .object({ expectedRevision: z.number().int().positive() })
+  .strict();
+
+export const WorkBriefSchema = WorkBriefContentSchema.extend({
+  threadId: z.string(),
+  workspaceId: z.string(),
+  revision: z.number().int().positive(),
+  status: z.enum(["draft", "confirmed"]),
+  updatedBy: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("user"), id: z.literal("local-user") }),
+    z.object({ kind: z.literal("agent"), id: z.string() }),
+  ]),
+  updatedAt: z.string(),
+  confirmedAt: z.string().nullable(),
+});
+export type WorkBrief = z.infer<typeof WorkBriefSchema>;
+
+export function workBriefReadiness(brief: WorkBriefContent): string[] {
+  const gaps: string[] = [];
+  if (!brief.outcome.trim()) gaps.push("Describe the outcome you want.");
+  if (!brief.deliverables.some((item) => item.trim())) gaps.push("Add at least one deliverable.");
+  if (
+    brief.acceptanceCriteria.length === 0 ||
+    brief.acceptanceCriteria.some((item) => !item.behavior.trim() || !item.verification.trim())
+  ) {
+    gaps.push("Add a success criterion and how it will be checked.");
+  }
+  if (brief.openQuestions.trim()) gaps.push("Resolve the open questions before confirming.");
+  return gaps;
+}
+
 export const MentionSchema = z.object({
   agentId: z.string(),
   handle: HandleSchema,
@@ -456,6 +515,7 @@ export interface BootstrapData {
   workspace: Workspace;
   agents: AgentView[];
   threads: Thread[];
+  workBriefs: WorkBrief[];
   tasks: Task[];
   knowledge: KnowledgeItem[];
   assignments: WorkAssignment[];
@@ -467,6 +527,7 @@ export interface BootstrapData {
 
 export interface ThreadData {
   thread: Thread;
+  workBrief?: WorkBrief;
   messages: Message[];
   artifacts: Artifact[];
   runs: AgentRun[];
