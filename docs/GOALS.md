@@ -69,7 +69,7 @@ recurring scheduler or automatic restart/resumption service.
 
 Custom-provider Masters use `read_goals` for compact checkpoints and `draft_goal` to propose a goal
 from tasks already discovered/planned in the current thread. Draft authors and scope are host-bound.
-Drafting removes those tasks from the tool session's immediate-delegation obligation, so the model
+Drafting removes those tasks from any execute-mode plan's immediate-delegation obligation, so the model
 can finish explaining the draft without being forced into execution. No model tool can start, resume,
 cancel, extend a budget or certify a goal. User HTTP controls share the loopback Origin guard.
 

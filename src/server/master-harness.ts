@@ -390,11 +390,18 @@ function builtInTools(
     ),
     zodTool(
       "plan",
-      "Create durable tasks before delegating. Every task needs observable behavior and a verification method. Worker completion submits a result for independent review; it never accepts the task.",
+      "Create durable tasks. The default draft mode is for analysis, design proposals or planning without an execution commitment. Choose execute only when the user has requested implementation: every task must then be delegated or handed to a draft goal. Mode is not a new permission grant. Every task needs observable behavior and a verification method. Worker completion submits for independent review; it never accepts the task.",
       "todowrite",
       objectSchema(
         {
           title: stringProperty("Short name for the overall plan."),
+          mode: {
+            type: "string",
+            enum: ["draft", "execute"],
+            default: "draft",
+            description:
+              "Draft records a plan without requiring execution. Execute commits to completing authorized delegation.",
+          },
           steps: {
             type: "array",
             minItems: 1,
@@ -416,6 +423,7 @@ function builtInTools(
       ),
       z.object({
         title: z.string().trim().min(1).max(160),
+        mode: z.enum(["draft", "execute"]).default("draft"),
         steps: z
           .array(
             z.object({
@@ -434,12 +442,13 @@ function builtInTools(
         }
         const tasks = await context.hooks.createPlan(input.title, input.steps);
         for (const task of tasks) {
-          plannedTaskIds.add(task.id);
+          if (input.mode === "execute") plannedTaskIds.add(task.id);
           knownTaskIds.add(task.id);
         }
         return JSON.stringify(
           {
             title: input.title,
+            mode: input.mode,
             tasks: tasks.map((task) => ({ id: task.id, title: task.title, status: task.status })),
           },
           null,

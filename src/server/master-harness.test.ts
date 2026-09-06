@@ -80,6 +80,7 @@ describe("Master harness tools", () => {
     try {
       await callSession(session, "plan", {
         title: "Draft a document",
+        mode: "execute",
         steps: [
           {
             title: "Write a memo",
@@ -555,6 +556,7 @@ describe("Master harness tools", () => {
       await expect(
         callSession(session, "plan", {
           title: "Implementation plan",
+          mode: "execute",
           steps: [
             {
               title: "Build feature",

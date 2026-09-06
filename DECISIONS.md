@@ -59,3 +59,10 @@ See ADR 0025 for replay and accounting limits.
 The process view can read earlier task-scoped assignments with their own files, profiles and
 reviews. Historical scope comes from the frozen contract and is read-only in the UI; current
 execution/review stays on the latest admitted attempt. See ADR 0026 for ordering and legacy limits.
+
+# 2026-09-06: Planning intent and closed review chains
+
+Plans default to draft without a must-delegate obligation; execute mode preserves completion
+discipline for work the user requested. Existing permissions and goal Start gates are unchanged.
+Accepted reviews also close their prior revision chain so reopening does not revive obsolete change
+requests. See ADR 0027 and the ADR 0023 clarification; both HTTP protocols and restart flows are tested.

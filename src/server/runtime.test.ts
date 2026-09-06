@@ -857,14 +857,20 @@ describe("parseProviderReply", () => {
     });
   });
 
-  it.each(["openai-chat", "openai-responses"] as const)(
-    "requires %s Masters to delegate every planned task before finalizing",
-    async (protocol) => {
+  it.each([
+    ["openai-chat", "execute"],
+    ["openai-responses", "execute"],
+    ["openai-chat", "draft"],
+    ["openai-responses", "draft"],
+  ] as const)(
+    "honors %s planning in %s mode without turning a draft into execution",
+    async (protocol, mode) => {
       const { agent, invocation, root, store } = await customMasterFixture(protocol, "full");
       const taskId = "f5a80f87-456d-4c35-9081-356cbe665510";
       const createdAt = "2026-09-03T00:00:00.000Z";
       const planArguments = JSON.stringify({
         title: "Implementation plan",
+        ...(mode === "execute" ? { mode } : {}),
         steps: [
           {
             title: "Build feature",
@@ -989,18 +995,22 @@ describe("parseProviderReply", () => {
             delegate,
           },
         }),
-      ).resolves.toBe("The Worker completed the task.");
-
-      expect(fetchMock).toHaveBeenCalledTimes(4);
-      expect(delegate).toHaveBeenCalledWith({
-        taskId,
-        workerHandle: "builder",
-        repositoryHandle: "product-repo",
-      });
-      const correctiveRequest = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body));
-      expect(JSON.stringify(correctiveRequest)).toContain(
-        "Call delegate for every remaining task before returning a final answer",
+      ).resolves.toBe(
+        mode === "execute" ? "The Worker completed the task." : "I created the task.",
       );
+
+      expect(fetchMock).toHaveBeenCalledTimes(mode === "execute" ? 4 : 2);
+      if (mode === "execute") {
+        expect(delegate).toHaveBeenCalledWith({
+          taskId,
+          workerHandle: "builder",
+          repositoryHandle: "product-repo",
+        });
+        const correctiveRequest = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body));
+        expect(JSON.stringify(correctiveRequest)).toContain(
+          "Call delegate for every remaining task before returning a final answer",
+        );
+      } else expect(delegate).not.toHaveBeenCalled();
     },
   );
 

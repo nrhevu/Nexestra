@@ -1885,9 +1885,9 @@ export class FileStore {
             entry.workspaceId === task.workspaceId &&
             entry.status === "completed" &&
             entry.contract?.revision === task.revision &&
-            entry.review?.outcome === "changes_requested",
+            Boolean(entry.review),
         );
-      if (source?.review)
+      if (source?.review?.outcome === "changes_requested")
         assignment.inputSource = {
           assignmentId: source.id,
           reviewId: source.review.id,

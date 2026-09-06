@@ -27,6 +27,7 @@ Do not call live providers in default tests.
 - `src/server/app.ts`: HTTP API and loopback-origin guard.
 - `src/web/`: SPA and visual system.
 - `src/shared/work-brief.ts`: bounded work brief context shared by every runtime.
+- `src/shared/conversation-context.ts`: recent context packing, history retrieval and request size bounds.
 - `src/shared/goals.ts` and `src/server/goal-controller.ts`: goal policy, budgets and review-driven continuation.
 - `src/shared/surfaces.ts`: declarative extension and semantic context contracts.
 - `src/web/surfaces/`: Work Briefs, Goals, task review, and declarative table/board/canvas/document views.

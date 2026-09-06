@@ -149,10 +149,13 @@ Workers run in read-only discussion mode in chat. From a task detail, choose **S
 record an explicit request in its linked conversation. Non-code work can use a new directory
 without Git; deliverables placed in outputs/ are captured into the conversation and task detail.
 For an implementation request, a custom-provider Master
-uses `read_tasks` to resume existing work, or `plan` to create new tasks with behavioral criteria,
+uses `read_tasks` to resume existing work, or `plan` with `mode: "execute"` to create new tasks with behavioral criteria,
 then calls `delegate` for each task it assigns. Omit the repository for non-Git work.
-If the provider tries to return a final answer while planned tasks are still undelegated, the
+The default `plan` mode is `draft`: proposals create tasks without requiring execution. If the
+provider tries to return a final answer while execute-mode tasks are still undelegated, the
 harness sends it back to the tool loop instead of leaving silent, unassigned work on the board.
+Handing those tasks to a draft goal clears that obligation and retains the separate user Start gate.
+Plan mode does not grant tool permissions or replace the user's execution intent.
 Delegation creates `nexestra/<assignment-id>` from the selected `#repository` and checks it out into
 an isolated managed worktree. The Worker runs there with write access, verifies its work, and
 commits on that branch. Nexestra does not merge or push the branch automatically.

@@ -131,7 +131,11 @@ Historical controls were read-only and no browser errors appeared. ADR 0026 reco
 
 ## Final acceptance work
 
-Audit planning-vs-execution intent, move the clean worktree to a durable ignored directory in the
+Draft plans now impose no execution obligation; explicit execute plans retain must-delegate behavior
+or can hand off to a user-started goal. Accepted reviews close prior change-request chains. Full gate
+passed at 22:35 UTC with 227 tests, lint, types and build; both custom protocols are covered.
+
+Move the clean worktree to a durable ignored directory in the
 project, preserve the original checkout, and rerun required checks there. Record final UI evidence,
 remaining gaps and a practical user-facing handoff. Minimum work deadline still applies.
 

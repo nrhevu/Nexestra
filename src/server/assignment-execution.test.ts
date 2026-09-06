@@ -158,7 +158,7 @@ describe("General-purpose assignment execution", () => {
       runtimeStatus: async () => ready,
       invoke: async (_agent, input) => {
         calls += 1;
-        if (calls === 1 || calls === 4) {
+        if (calls === 1 || calls >= 4) {
           expect(input.artifacts).toEqual([]);
           expect(input.trigger.content).not.toContain("Previous review");
           firstDirectory = input.workingDirectory ?? "";
@@ -233,6 +233,10 @@ describe("General-purpose assignment execution", () => {
       notes: "Read the revised sources.",
       evidence: [{ criterionIndex: 0, observation: "Sources checked." }],
     });
+    task = await store.updateTask(task.id, { status: "todo" });
+    await launch(app);
+    await app.dispatcher.waitForIdle();
+    expect(store.listAssignments()[0]?.inputSource).toBeUndefined();
     task = await store.updateTask(task.id, {
       status: "todo",
       description: "Changed scope: a new audience",
@@ -240,7 +244,7 @@ describe("General-purpose assignment execution", () => {
     expect(task.revision).toBe(2);
     await launch(app);
     await app.dispatcher.waitForIdle();
-    expect(calls).toBe(4);
+    expect(calls).toBe(5);
     expect(store.listAssignments()[0]?.inputSource).toBeUndefined();
   });
 

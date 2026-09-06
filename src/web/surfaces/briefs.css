@@ -48,6 +48,11 @@
 .execution-profile h3 {
   overflow-wrap: anywhere;
 }
+.task-process-result > p {
+  font-size: 12px;
+  line-height: 1.65;
+  margin: 8px 0;
+}
 .attempt-history {
   margin: 0 0 18px;
 }

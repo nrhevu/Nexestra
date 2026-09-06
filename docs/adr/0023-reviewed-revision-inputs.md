@@ -15,6 +15,10 @@ submission for the same task, thread and contract revision. It records the sourc
 review ID, task revision and captured output hashes. Supplied provenance cannot override this
 host selection. A later failed attempt does not erase that reviewed source.
 
+An accepted review closes that revision chain: reopening an accepted task must not recover an
+older, already-resolved changes-requested review. Selection considers the latest completed review
+first and reuses inputs only if that review requests changes.
+
 Before invoking the Worker, validate the source's generated artifact metadata, file type, byte
 limit and SHA-256 hash using bounded file-descriptor reads. Copy verified bytes into the new
 assignment's inputs directory. Pass those files and review observations to both runtime adapters;

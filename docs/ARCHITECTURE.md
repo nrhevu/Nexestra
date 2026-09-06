@@ -157,13 +157,16 @@ agent. Historical failed runs for a deleted profile cannot be retried.
 
 ## Planning and Worker delegation
 
-The provider-neutral Master tool session owns a per-run set of planned task IDs. `plan` creates
-durable Taskboard tasks linked to the triggering thread. `read_tasks` discovers existing eligible tasks. `delegate` accepts a task returned by either
+The provider-neutral Master tool session owns known task IDs and a separate per-run set of
+execute-mode commitments. `plan` defaults to draft and creates durable Taskboard tasks without
+requiring delegation; explicit mode execute registers a completion obligation. `read_tasks` discovers existing eligible tasks. `delegate` accepts a task returned by either
 tool in that session and an enabled Worker; repository-backed work also needs a ready repository. The runtime
 lists those repositories in the Master context, so the triggering message does not need to include
 the repository handle. When a Worker is available, a custom-provider
-Master cannot return its final answer while that set still contains undelegated tasks; the runtime
+Master cannot return its final answer while the execute-mode set still contains undelegated tasks; the runtime
 adds a corrective turn and keeps the tool loop active.
+Draft-goal handoff clears that obligation and preserves the user-owned activation gate. Modes do
+not create new permissions. See [ADR 0027](adr/0027-draft-and-execution-plans.md).
 
 Each repository is cloned once under the owning workspace. Every repository assignment creates a unique
 `nexestra/<assignment-id>` branch and a Git worktree under the same managed workspace tree. The
