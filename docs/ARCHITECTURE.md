@@ -65,6 +65,13 @@ Thread-scoped Goals freeze task contracts and the available Work Brief, then use
 admission and human review events to continue. The original deadline survives pause/restart;
 active work is paused on recovery, without replay. Goal controls are user-owned. See [Goals](GOALS.md).
 
+## Workspace creation consistency
+
+Workspace creation stages both the workspace and its initial general thread in a cloned metadata
+snapshot. It publishes that snapshot only after persistence succeeds; a failed write must not leave
+an in-memory workspace that disappears on restart. This uses the same write/publish ordering as
+the task, goal and surface mutations introduced in the harness work.
+
 ## Refresh and rendering model
 
 The SPA performs no periodic requests while the selected workspace is idle. The Goals surface polls

@@ -3247,7 +3247,11 @@ function TaskProcessDialog({
                 <div className="worktree-actions">
                   <button
                     type="button"
-                    title="Open worktree"
+                    title={
+                      assignment.environment === "directory"
+                        ? "Open working directory"
+                        : "Open worktree"
+                    }
                     onClick={async () => {
                       try {
                         await api(`/api/assignments/${encodeURIComponent(assignment.id)}/open`, {

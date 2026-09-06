@@ -10,6 +10,31 @@ async function openStore() {
 }
 
 describe("FileStore", () => {
+  it("does not publish a workspace or its general thread when persistence fails", async () => {
+    const store = await openStore();
+    const workspaces = store.listWorkspaces();
+    const threads = store.listThreads();
+    const before = await readFile(store.stateFile, "utf8");
+    const internal = store as unknown as { writeState(): Promise<void> };
+    const writeState = internal.writeState;
+    internal.writeState = async () => {
+      throw new Error("simulated workspace write failure");
+    };
+    try {
+      await expect(store.createWorkspace({ name: "Uncommitted workspace" })).rejects.toThrow(
+        "simulated workspace write failure",
+      );
+      expect(store.listWorkspaces()).toEqual(workspaces);
+      expect(store.listThreads()).toEqual(threads);
+      expect(await readFile(store.stateFile, "utf8")).toBe(before);
+    } finally {
+      internal.writeState = writeState;
+    }
+    await store.createWorkspace({ name: "Saved workspace" });
+    expect(store.listWorkspaces()).toHaveLength(workspaces.length + 1);
+    expect(store.listThreads()).toHaveLength(threads.length + 1);
+  });
+
   it("migrates version 1 metadata into a default workspace without changing record IDs", async () => {
     const root = await mkdtemp(join(tmpdir(), "nexestra-store-legacy-"));
     const createdAt = "2026-09-01T10:00:00.000Z";

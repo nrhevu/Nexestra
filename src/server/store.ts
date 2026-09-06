@@ -958,6 +958,7 @@ export class FileStore {
   async createWorkspace(rawInput: unknown): Promise<Workspace> {
     const input = CreateWorkspaceSchema.parse(rawInput);
     return this.withWrite(async () => {
+      const nextState = structuredClone(this.state);
       const now = new Date().toISOString();
       const workspace = WorkspaceSchema.parse({
         id: crypto.randomUUID(),
@@ -967,9 +968,10 @@ export class FileStore {
         updatedAt: now,
       });
       const thread = createThreadRecord(workspace.id, "general", now, []);
-      this.state.workspaces.push(workspace);
-      this.state.threads.push(thread);
-      await this.writeState();
+      nextState.workspaces.push(workspace);
+      nextState.threads.push(thread);
+      await this.writeState(nextState);
+      this.state = nextState;
       return structuredClone(workspace);
     });
   }

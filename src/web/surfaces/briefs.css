@@ -45,6 +45,11 @@
   font-size: 11px;
   overflow-wrap: anywhere;
 }
+.execution-profile details p {
+  font-size: 12px;
+  line-height: 1.65;
+  margin: 8px 0;
+}
 .execution-profile h3 {
   overflow-wrap: anywhere;
 }
