@@ -991,7 +991,12 @@ export class FileStore {
     update: Partial<
       Pick<
         WorkAssignment,
-        "status" | "result" | "error" | "verificationOutput" | "verificationExitCode"
+        | "status"
+        | "result"
+        | "error"
+        | "verificationOutput"
+        | "verificationExitCode"
+        | "worktreeCleanedAt"
       >
     >,
   ): Promise<WorkAssignment> {

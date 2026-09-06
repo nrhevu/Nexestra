@@ -8,7 +8,7 @@ import { ZodError } from "zod";
 import { type BootstrapData, ToolAnswersSchema } from "../shared/contracts.js";
 import { ChatGptAuthManager } from "./auth.js";
 import { AgentDispatcher, ChatService } from "./dispatcher.js";
-import { RepositoryManager } from "./repository-manager.js";
+import { type AssignmentRepositoryManager, RepositoryManager } from "./repository-manager.js";
 import { type AgentRunner, agentView, LocalAgentRunner } from "./runtime.js";
 import {
   type FileStore,
@@ -25,11 +25,13 @@ interface CreateAppOptions {
   auth?: ChatGptAuthManager;
   productionAssets?: boolean;
   launchPath?: (path: string, reveal: boolean) => Promise<void>;
+  repositories?: AssignmentRepositoryManager;
 }
 
 export function createApp(options: CreateAppOptions) {
   const runner = options.runner ?? new LocalAgentRunner({ store: options.store });
-  const repositories = new RepositoryManager(options.store);
+  const defaultRepositories = new RepositoryManager(options.store);
+  const repositories = options.repositories ?? defaultRepositories;
   const dispatcher = new AgentDispatcher(options.store, runner, repositories);
   const chat = new ChatService(options.store, dispatcher);
   const launchPath = options.launchPath ?? launchDesktopPath;
@@ -125,7 +127,7 @@ export function createApp(options: CreateAppOptions) {
   });
 
   app.post("/api/knowledge/repositories", async (context) => {
-    return context.json(await repositories.addRepository(await context.req.json()), 201);
+    return context.json(await defaultRepositories.addRepository(await context.req.json()), 201);
   });
 
   app.get("/api/knowledge/:id", (context) => {
@@ -320,6 +322,33 @@ export function createApp(options: CreateAppOptions) {
     const worktreePath = assignmentWorktreePath(options.store, context.req.param("id"));
     await launchPath(worktreePath, true);
     return context.body(null, 204);
+  });
+
+  app.post("/api/assignments/:id/cleanup", async (context) => {
+    const assignmentId = context.req.param("id");
+    const assignment = options.store.listAssignments().find((entry) => entry.id === assignmentId);
+    if (!assignment) throw new StoreError("not_found", "Assignment not found.");
+    if (assignment.status === "queued" || assignment.status === "running") {
+      throw new StoreError("conflict", "Wait for the Worker assignment to finish before cleanup.");
+    }
+    if (assignment.worktreeCleanedAt) {
+      throw new StoreError("conflict", "This Worker worktree has already been cleaned up.");
+    }
+    const knowledge = options.store.getKnowledge(assignment.repositoryId);
+    if (knowledge?.kind !== "repository") {
+      throw new StoreError("invalid", "The assignment repository is unavailable.");
+    }
+    const absolutePath = assignmentWorktreePath(options.store, assignment.id);
+    await repositories.cleanupAssignment(knowledge, {
+      branch: assignment.branch,
+      worktreePath: assignment.worktreePath,
+      absolutePath,
+    });
+    return context.json(
+      await options.store.updateAssignment(assignment.id, {
+        worktreeCleanedAt: new Date().toISOString(),
+      }),
+    );
   });
 
   app.patch("/api/tasks/:id", async (context) => {

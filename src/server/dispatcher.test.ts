@@ -214,6 +214,8 @@ class FakeAssignmentRepositories implements AssignmentRepositoryManager {
   ) {
     await mkdir(location.absolutePath, { recursive: true });
   }
+
+  async cleanupAssignment() {}
 }
 
 async function setup() {

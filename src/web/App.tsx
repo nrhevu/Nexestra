@@ -69,6 +69,7 @@ import type {
   ThreadData,
   ThreadStreamEvent,
   ToolCall,
+  WorkAssignment,
   Workspace,
 } from "../shared/contracts.js";
 import { extractMentionHandles, handleFromName } from "../shared/contracts.js";
@@ -2928,6 +2929,8 @@ function TaskProcessDialog({
   const [loadError, setLoadError] = useState<string>();
   const [stopping, setStopping] = useState(false);
   const [stopError, setStopError] = useState<string>();
+  const [cleaning, setCleaning] = useState(false);
+  const [cleanupError, setCleanupError] = useState<string>();
   const loadProcess = useCallback(
     async (quiet = false) => {
       try {
@@ -3107,11 +3110,15 @@ function TaskProcessDialog({
                 <div>
                   <span>Worktree</span>
                   <code>{assignment.worktreePath}</code>
+                  {assignment.worktreeCleanedAt && (
+                    <small>Removed {formatDateTime(assignment.worktreeCleanedAt)}</small>
+                  )}
                 </div>
                 <div className="worktree-actions">
                   <button
                     type="button"
                     title="Open worktree"
+                    disabled={Boolean(assignment.worktreeCleanedAt)}
                     onClick={async () => {
                       try {
                         await api(`/api/assignments/${encodeURIComponent(assignment.id)}/open`, {
@@ -3132,6 +3139,34 @@ function TaskProcessDialog({
                     }}
                   >
                     <Copy size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    title={
+                      assignment.worktreeCleanedAt
+                        ? "Worktree already removed"
+                        : "Remove this finished worktree"
+                    }
+                    disabled={isActive || cleaning || Boolean(assignment.worktreeCleanedAt)}
+                    onClick={async () => {
+                      setCleaning(true);
+                      setCleanupError(undefined);
+                      try {
+                        const next = await api<WorkAssignment>(
+                          `/api/assignments/${encodeURIComponent(assignment.id)}/cleanup`,
+                          { method: "POST" },
+                        );
+                        setProcess((current) =>
+                          current ? { ...current, assignment: next } : current,
+                        );
+                      } catch (caught) {
+                        setCleanupError(messageFrom(caught));
+                      } finally {
+                        setCleaning(false);
+                      }
+                    }}
+                  >
+                    {cleaning ? <LoaderCircle className="spin" size={13} /> : <Trash2 size={13} />}
                   </button>
                 </div>
               </div>
@@ -3232,6 +3267,12 @@ function TaskProcessDialog({
             <p className="form-error">
               <CircleAlert size={14} />
               {stopError}
+            </p>
+          )}
+          {cleanupError && (
+            <p className="form-error">
+              <CircleAlert size={14} />
+              {cleanupError}
             </p>
           )}
           <div className="modal-actions">

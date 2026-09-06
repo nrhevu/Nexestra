@@ -20,3 +20,4 @@
 | [0016](0016-bounded-agent-auto-retries.md) | Accepted | Bound automatic retries without resetting the budget for each new run ID |
 | [0017](0017-external-task-verification.md) | Accepted | Verify delegated tasks externally and block them when verification fails |
 | [0018](0018-canonical-path-containment.md) | Accepted | Compare Master tool paths against canonical workspace and data roots |
+| [0019](0019-explicit-worktree-cleanup.md) | Accepted | Remove finished Worker worktrees explicitly without force or branch deletion |

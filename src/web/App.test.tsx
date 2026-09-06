@@ -8,6 +8,14 @@ import type { AgentView, BootstrapData, ThreadData } from "../shared/contracts.j
 import { App } from "./App.js";
 
 const now = "2026-09-02T12:00:00.000Z";
+
+function formatDateTimeForTest(value: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
 const workspace = {
   id: "workspace-nexestra",
   name: "Nexestra",
@@ -832,6 +840,13 @@ describe("Taskboard Worker process", () => {
           toolCalls: [],
         });
       }
+      if (path === `/api/assignments/${assignment.id}/cleanup` && init?.method === "POST") {
+        return jsonResponse({
+          ...assignment,
+          status: "interrupted" as const,
+          worktreeCleanedAt: now,
+        });
+      }
       return jsonResponse({ error: { message: "Not found" } }, 404);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -851,8 +866,14 @@ describe("Taskboard Worker process", () => {
     expect(within(dialog).getByText("Implementing the change…")).toBeVisible();
     await user.click(within(dialog).getByText("Thinking"));
     expect(await within(dialog).findByText("Inspecting")).toBeVisible();
+    const cleanupButton = within(dialog).getByTitle("Remove this finished worktree");
+    expect(cleanupButton).toBeDisabled();
     await user.click(within(dialog).getByRole("button", { name: "Stop process" }));
     expect(await within(dialog).findByText("Worker process stopped")).toBeVisible();
+    expect(cleanupButton).toBeEnabled();
+    await user.click(cleanupButton);
+    expect(await within(dialog).findByText(`Removed ${formatDateTimeForTest(now)}`)).toBeVisible();
+    expect(within(dialog).getByTitle("Open worktree")).toBeDisabled();
     expect(
       fetchMock.mock.calls.some(
         ([input, init]) =>

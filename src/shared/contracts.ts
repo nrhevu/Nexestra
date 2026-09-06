@@ -423,6 +423,7 @@ export const WorkAssignmentSchema = z.object({
   error: z.string().max(2_000).optional(),
   verificationOutput: z.string().max(4_000).optional(),
   verificationExitCode: z.number().int().optional(),
+  worktreeCleanedAt: z.string().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

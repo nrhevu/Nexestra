@@ -100,7 +100,8 @@ Master `plan` tool cannot invent or change it.
 Every assignment is also a durable Worker run. Click any Taskboard card to inspect its assignee,
 repository, verification result, isolated branch and worktree, current phase, live reasoning,
 streamed response, and tool calls. Completed cards retain the Worker result and verification output
-in this process view; a task
+in this process view. A finished worktree can be removed explicitly; Git refuses dirty or untracked
+work, while the branch and run history remain. A task
 that was never delegated says so explicitly. The same detail view can edit every task field or
 permanently delete the task when no Worker assignment is active. While an assignment is queued or
 running, **Stop process** terminates its Codex/OpenCode process group, records the run and unfinished

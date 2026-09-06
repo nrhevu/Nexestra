@@ -52,6 +52,12 @@ describe("RepositoryManager", () => {
       "--show-current",
     ]);
     expect(branch.stdout.trim()).toBe(location.branch);
+
+    await manager.cleanupAssignment(repository, location);
+    await expect(readFile(join(location.absolutePath, "README.md"), "utf8")).rejects.toThrow();
+    await expect(manager.cleanupAssignment(repository, location)).rejects.toThrow(
+      /not a working tree|does not exist/i,
+    );
   });
 
   it("rejects repository URLs containing credentials without persisting the secret in errors", async () => {

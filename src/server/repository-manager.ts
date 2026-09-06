@@ -17,6 +17,11 @@ export interface AssignmentRepositoryManager {
     location: AssignmentLocation,
     signal?: AbortSignal,
   ): Promise<void>;
+  cleanupAssignment(
+    repository: KnowledgeRepository,
+    location: AssignmentLocation,
+    signal?: AbortSignal,
+  ): Promise<void>;
 }
 
 export class RepositoryManager implements AssignmentRepositoryManager {
@@ -118,6 +123,37 @@ export class RepositoryManager implements AssignmentRepositoryManager {
       throw new StoreError(
         "invalid",
         result.stderr.trim() || result.stdout.trim() || "Could not create the worker worktree.",
+      );
+    }
+  }
+
+  async cleanupAssignment(
+    repository: KnowledgeRepository,
+    location: AssignmentLocation,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (repository.status !== "ready") {
+      throw new StoreError("conflict", `#${repository.handle} is not ready.`);
+    }
+    const repositoryPath = this.store.knowledgePath(repository);
+    const git = await this.git();
+    const result = await runCommand(
+      git,
+      ["-C", repositoryPath, "worktree", "remove", location.absolutePath],
+      {
+        cwd: repositoryPath,
+        timeoutMs: 60_000,
+        maxOutputBytes: 1024 * 1024,
+        env: safeProcessEnv(this.env),
+        signal,
+      },
+    );
+    if (result.exitCode !== 0) {
+      throw new StoreError(
+        "conflict",
+        result.stderr.trim() ||
+          result.stdout.trim() ||
+          "Could not remove the Worker worktree. Commit or discard its changes first.",
       );
     }
   }

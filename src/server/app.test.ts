@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Agent, RuntimeStatus } from "../shared/contracts.js";
 import { createApp } from "./app.js";
+import type { AssignmentRepositoryManager } from "./repository-manager.js";
 import type { AgentInvocation, AgentRunner } from "./runtime.js";
 import { FileStore } from "./store.js";
 
@@ -748,5 +749,89 @@ describe("HTTP app", () => {
     });
     expect(blocked.status).toBe(400);
     expect(launchPath).toHaveBeenCalledTimes(2);
+  });
+
+  it("cleans up only finished assignment worktrees", async () => {
+    const [workspace] = store.listWorkspaces();
+    const [thread] = store.listThreads();
+    if (!workspace || !thread) throw new Error("expected seeded workspace and thread");
+    const repository = await store.createKnowledgeRepository({
+      workspaceId: workspace.id,
+      name: "Product repository",
+      handle: "product-repo",
+      description: "",
+      source: "/tmp/product-repo",
+    });
+    await store.updateKnowledgeRepository(repository.id, {
+      status: "ready",
+      defaultBranch: "main",
+    });
+    const now = new Date().toISOString();
+    const assignmentId = "assignment-cleanup";
+    const relativeWorktree = `workspaces/${workspace.id}/worktrees/${assignmentId}`;
+    await store.createAssignment({
+      id: assignmentId,
+      workspaceId: workspace.id,
+      taskId: "task-cleanup",
+      threadId: thread.id,
+      masterRunId: "run-master",
+      workerAgentId: "agent-worker",
+      repositoryId: repository.id,
+      status: "completed",
+      branch: `nexestra/${assignmentId}`,
+      worktreePath: relativeWorktree,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const cleanupAssignment = vi.fn(async () => undefined);
+    const repositories: AssignmentRepositoryManager = {
+      assignmentLocation: (workspaceId, id) => ({
+        branch: `nexestra/${id}`,
+        worktreePath: `workspaces/${workspaceId}/worktrees/${id}`,
+        absolutePath: join(store.root, "workspaces", workspaceId, "worktrees", id),
+      }),
+      prepareAssignment: async () => undefined,
+      cleanupAssignment,
+    };
+    app = createApp({ store, runner, repositories });
+
+    const cleaned = await app.request(`/api/assignments/${assignmentId}/cleanup`, {
+      method: "POST",
+    });
+    expect(cleaned.status).toBe(200);
+    const updated = (await cleaned.json()) as { worktreeCleanedAt?: string };
+    expect(updated.worktreeCleanedAt).toEqual(expect.any(String));
+    expect(cleanupAssignment).toHaveBeenCalledWith(
+      expect.objectContaining({ id: repository.id }),
+      expect.objectContaining({
+        branch: `nexestra/${assignmentId}`,
+        worktreePath: relativeWorktree,
+        absolutePath: join(store.root, relativeWorktree),
+      }),
+    );
+
+    const repeat = await app.request(`/api/assignments/${assignmentId}/cleanup`, {
+      method: "POST",
+    });
+    expect(repeat.status).toBe(409);
+    await store.createAssignment({
+      id: "assignment-cleanup-active",
+      workspaceId: workspace.id,
+      taskId: "task-cleanup-active",
+      threadId: thread.id,
+      masterRunId: "run-master",
+      workerAgentId: "agent-worker",
+      repositoryId: repository.id,
+      status: "running",
+      branch: "nexestra/assignment-cleanup-active",
+      worktreePath: `workspaces/${workspace.id}/worktrees/assignment-cleanup-active`,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const active = await app.request("/api/assignments/assignment-cleanup-active/cleanup", {
+      method: "POST",
+    });
+    expect(active.status).toBe(409);
+    expect(cleanupAssignment).toHaveBeenCalledTimes(1);
   });
 });

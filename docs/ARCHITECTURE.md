@@ -142,6 +142,9 @@ assignment worktree. Exit code zero marks the task done; any other exit code mar
 stores the redacted, bounded output and exit code. Worker failure records a redacted error and
 returns the task to To do.
 Branches and worktrees are retained for inspection. Nexestra never merges or pushes.
+A finished assignment can be cleaned up explicitly from its process dialog. Cleanup uses Git's
+non-forced worktree removal, so dirty or untracked work is refused, records `worktreeCleanedAt`,
+and leaves the branch and durable run history intact.
 
 Each delegated assignment owns an in-memory abort controller from before it is queued until its
 final cleanup. Stopping a task aborts both Git worktree preparation and the Worker harness process;
@@ -250,8 +253,9 @@ credentials.
 
 - App-native `plan` and `delegate` are currently available to custom OpenAI-compatible Masters.
   ChatGPT OAuth Masters run through Codex CLI and do not yet receive this bridge.
-- Assignment worktrees and branches are retained and cannot yet be cleaned up, merged, or pushed
-  from the UI. Repository fetch/pull and retry are not yet exposed.
+- Assignment branches are retained and cannot yet be deleted, merged, or pushed from the UI.
+  Finished worktrees can be removed explicitly, but dirty or untracked work is refused. Repository
+  fetch/pull and retry are not yet exposed.
 - Knowledge metadata can be edited, but replacing stored document bytes or a repository source
   requires deleting and creating the item again.
 - Tasks created before the delegation-completion guard may remain unassigned; their process dialog

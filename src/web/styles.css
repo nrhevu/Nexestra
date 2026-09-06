@@ -2659,6 +2659,12 @@ kbd {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.task-process-location small {
+  display: block;
+  margin-top: 3px;
+  color: var(--quiet);
+  font-size: 10px;
+}
 .task-process-thinking,
 .task-process-error {
   margin: 0;
