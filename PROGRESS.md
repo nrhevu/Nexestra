@@ -1,16 +1,18 @@
 # Nexestra workspace and harness development
 
-## Active objective
+## Development objective
 
 Build a general-purpose local workspace for research, documents, design and code. The user asked
 for at least four hours of continued implementation and verification starting **2026-09-06
-18:49:52 UTC** (2026-09-07 01:49:52 Asia/Ho_Chi_Minh). **Do not finish the session before
-2026-09-06 22:49:52 UTC** unless the user redirects or an unavoidable blocker prevents progress.
-Use the time for substantive work, not waiting out the clock.
+18:49:52 UTC** (2026-09-07 01:49:52 Asia/Ho_Chi_Minh). Development and acceptance work continued
+beyond **2026-09-06 22:49:52 UTC**, satisfying that minimum window. This is a tested foundation;
+the remaining product scope is recorded in the roadmap and architecture gaps.
 
 Working branch: `codex/workspace-harness-foundation`.
-Working tree: `/private/tmp/nexestra-workspace-harness`.
-Original checkout is clean and remains on `master`.
+Working tree: `/Users/vunguyen13/Works/Nexestra/.worktrees/workspace-harness`.
+Moved from `/private/tmp/nexestra-workspace-harness` after the tested 40da323 checkpoint.
+Original tracked files remain unchanged on `master`. An untracked `.pnpm-store/` cache was observed
+in the original checkout at move time and left intact; do not delete unrelated files or worktrees.
 
 ## Completed checkpoint: shared Work Briefs
 
@@ -135,9 +137,14 @@ Draft plans now impose no execution obligation; explicit execute plans retain mu
 or can hand off to a user-started goal. Accepted reviews close prior change-request chains. Full gate
 passed at 22:35 UTC with 227 tests, lint, types and build; both custom protocols are covered.
 
-Move the clean worktree to a durable ignored directory in the
-project, preserve the original checkout, and rerun required checks there. Record final UI evidence,
-remaining gaps and a practical user-facing handoff. Minimum work deadline still applies.
+The worktree is now in its durable ignored project directory. The final full gate passed there at
+22:49 UTC with **228 tests across 25 files**, lint, types and build. The final regression fixes
+workspace creation so a failed write leaves neither a workspace nor a general thread in memory.
+A fresh offline Worker run displayed its saved configured profile;
+its 80-byte captured file was read and its criterion accepted through the UI. Original tracked
+files remain unchanged; all local Markdown links resolve.
+`docs/START-HERE.vi.md` explains the complete product flow and material gaps; `docs/VERIFICATION.md`
+records offline acceptance evidence. The four-hour minimum work window is complete.
 
 ## Environment and verification
 
@@ -161,7 +168,7 @@ as established facts. Validate important mechanisms against primary engineering 
 
 ## Active preview and tooling
 
-- Preview process session: 84039; loopback port 4387. Script: `/private/tmp/nexestra-ui-preview.mts`.
+- Preview loopback port: 4387. Script: `/private/tmp/nexestra-ui-preview.mts`.
 - Preview data: `/private/tmp/nexestra-preview-data-octqCw`, disposable and independent of user data.
 - Restart preserving preview data with NEXESTRA_PREVIEW_ROOT set to that path. No live providers.
 - CUA binding `tab` (id "1", browser id "1"); session reset during QA, browser handle not currently bound. Browser is hidden.

@@ -51,6 +51,8 @@ Set `NEXESTRA_HOME=/another/path` to keep data outside the repository.
 
 ## Shared work briefs
 
+For a complete tour in Vietnamese, see [Start here](docs/START-HERE.vi.md).
+
 Open **Surfaces → Work briefs**, choose a conversation, or create a new one. Record the outcome,
 deliverables, constraints, out-of-scope work, open questions and success criteria with a concrete
 check for each. Drafts can be incomplete. Optional **Confirm scope** records agreement after the
