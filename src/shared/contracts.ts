@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { WorkGoal } from "./goals.js";
 import type { WorkspaceSurface } from "./surfaces.js";
 
 export const HandleSchema = z
@@ -524,6 +525,7 @@ export const WorkAssignmentSchema = z.object({
   taskId: z.string(),
   threadId: z.string(),
   masterRunId: z.string(),
+  goalId: z.string().uuid().optional(),
   workerAgentId: z.string(),
   repositoryId: z.string().nullable(),
   environment: z.enum(["worktree", "directory"]).optional(),
@@ -594,6 +596,7 @@ export interface BootstrapData {
   threads: Thread[];
   workBriefs: WorkBrief[];
   surfaces: WorkspaceSurface[];
+  goals: WorkGoal[];
   tasks: Task[];
   knowledge: KnowledgeItem[];
   assignments: WorkAssignment[];

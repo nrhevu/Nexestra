@@ -59,6 +59,16 @@ import {
   workBriefReadiness,
 } from "../shared/contracts.js";
 import {
+  ControlWorkGoalSchema,
+  CreateWorkGoalSchema,
+  goalHoldsTasks,
+  inspectGoal,
+  recordGoalEvent,
+  terminalGoalStatuses,
+  type WorkGoal,
+  WorkGoalSchema,
+} from "../shared/goals.js";
+import {
   ArchiveSurfaceRecordSchema,
   CreateSurfaceSchema,
   SaveSurfaceRecordSchema,
@@ -80,6 +90,7 @@ const StateSchema = z.object({
   knowledge: z.array(KnowledgeItemSchema),
   assignments: z.array(WorkAssignmentSchema),
   surfaces: z.array(WorkspaceSurfaceSchema).default([]),
+  goals: z.array(WorkGoalSchema).default([]),
 });
 
 const VersionFiveStateSchema = z.object({
@@ -242,6 +253,7 @@ export class FileStore {
     await store.repairTranscriptTails();
     await store.repairThreadSummaries();
     await store.recoverInterruptedRuns();
+    await store.recoverGoalsAndAssignments();
     return store;
   }
 
@@ -330,6 +342,285 @@ export class FileStore {
     );
   }
 
+  listGoals(workspaceId?: string): WorkGoal[] {
+    return structuredClone(
+      this.state.goals
+        .filter((goal) => workspaceId === undefined || goal.workspaceId === workspaceId)
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    );
+  }
+
+  getGoal(id: string): WorkGoal | undefined {
+    const goal = this.state.goals.find((entry) => entry.id === id);
+    return goal ? structuredClone(goal) : undefined;
+  }
+
+  inspectGoal(id: string) {
+    const goal = this.getGoal(id);
+    if (!goal) throw new StoreError("not_found", "Goal not found.");
+    return inspectGoal(goal, this.state.tasks, this.state.assignments);
+  }
+
+  async createGoal(rawInput: unknown, agentId?: string): Promise<WorkGoal> {
+    const input = CreateWorkGoalSchema.parse(rawInput);
+    return this.withWrite(async () => {
+      const thread = this.requireThread(input.threadId);
+      const createdBy = this.workspaceAuthor(thread.workspaceId, agentId);
+      if (this.state.goals.filter((goal) => goal.workspaceId === thread.workspaceId).length >= 50)
+        throw new StoreError("invalid", "A workspace supports up to 50 goals.");
+      const steps = input.steps.map((step) => {
+        const task = this.state.tasks.find(
+          (entry) =>
+            entry.id === step.taskId &&
+            entry.threadId === thread.id &&
+            entry.workspaceId === thread.workspaceId,
+        );
+        if (!task)
+          throw new StoreError("invalid", "Every goal task must belong to the selected thread.");
+        if (task.revision !== step.expectedRevision)
+          throw new StoreError(
+            "conflict",
+            "A selected task changed. Reload it before creating this goal.",
+          );
+        if (!task.acceptanceCriteria.length)
+          throw new StoreError("invalid", `Add acceptance criteria to ${task.title} first.`);
+        const worker = this.state.agents.find(
+          (entry) =>
+            entry.workspaceId === thread.workspaceId &&
+            entry.handle === step.workerHandle &&
+            entry.kind === "worker" &&
+            entry.enabled &&
+            !entry.archived,
+        );
+        if (!worker)
+          throw new StoreError("invalid", `@${step.workerHandle} is not an available Worker.`);
+        const repository = step.repositoryHandle
+          ? this.state.knowledge.find(
+              (entry) =>
+                entry.workspaceId === thread.workspaceId &&
+                entry.kind === "repository" &&
+                entry.handle === step.repositoryHandle &&
+                entry.status === "ready",
+            )
+          : undefined;
+        if ((step.repositoryHandle || task.kind === "code") && !repository)
+          throw new StoreError(
+            "invalid",
+            "Code tasks and explicit repositories require a ready repository.",
+          );
+        return {
+          taskId: task.id,
+          contract: TaskContractSchema.parse(task),
+          workerAgentId: worker.id,
+          repositoryId: repository?.id ?? null,
+        };
+      });
+      const now = new Date().toISOString();
+      const goal = WorkGoalSchema.parse({
+        id: crypto.randomUUID(),
+        workspaceId: thread.workspaceId,
+        threadId: thread.id,
+        objective: this.redactSecrets(input.objective),
+        createdBy,
+        workBrief: await this.getWorkBrief(thread.id),
+        revision: 1,
+        status: "draft",
+        steps,
+        attemptLimit: input.attemptLimit,
+        attemptsUsed: 0,
+        timeLimitMinutes: input.timeLimitMinutes,
+        startedAt: null,
+        deadlineAt: null,
+        activeAssignmentId: null,
+        stopReason: "Review the task scope and limits, then start explicitly.",
+        accepted: [],
+        events: [
+          {
+            id: crypto.randomUUID(),
+            at: now,
+            detail: "Goal drafted. No execution authorized yet.",
+          },
+        ],
+        createdAt: now,
+        updatedAt: now,
+      });
+      const nextState = structuredClone(this.state);
+      nextState.goals.push(goal);
+      await this.writeState(nextState);
+      this.state = nextState;
+      return structuredClone(goal);
+    });
+  }
+
+  async controlGoal(id: string, rawInput: unknown): Promise<WorkGoal> {
+    const input = ControlWorkGoalSchema.parse(rawInput);
+    return this.withWrite(async () => {
+      const nextState = structuredClone(this.state);
+      const goal = nextState.goals.find((entry) => entry.id === id);
+      if (!goal) throw new StoreError("not_found", "Goal not found.");
+      if (goal.revision !== input.expectedRevision)
+        throw new StoreError(
+          "conflict",
+          "This goal changed. Reload its current checkpoint before continuing.",
+        );
+      if (terminalGoalStatuses.has(goal.status))
+        throw new StoreError(
+          "conflict",
+          "This goal already ended. Create a new goal to authorize new work.",
+        );
+      if (input.action === "start") {
+        if (["active", "waiting_review"].includes(goal.status))
+          throw new StoreError("conflict", "This goal is already active.");
+        if (
+          nextState.goals.some(
+            (entry) =>
+              entry.id !== id &&
+              entry.workspaceId === goal.workspaceId &&
+              ["active", "waiting_review"].includes(entry.status),
+          )
+        )
+          throw new StoreError(
+            "conflict",
+            "Pause the active goal in this workspace before starting another.",
+          );
+        if (
+          nextState.goals.some(
+            (entry) =>
+              entry.id !== id &&
+              goalHoldsTasks(entry) &&
+              entry.steps.some((step) =>
+                goal.steps.some((current) => current.taskId === step.taskId),
+              ),
+          )
+        )
+          throw new StoreError(
+            "conflict",
+            "Another authorized goal owns a selected task. Cancel it before assigning that task to this goal.",
+          );
+        if (
+          goal.steps.some((step) =>
+            nextState.assignments.some(
+              (assignment) =>
+                assignment.taskId === step.taskId &&
+                ["queued", "running"].includes(assignment.status),
+            ),
+          )
+        )
+          throw new StoreError(
+            "conflict",
+            "Wait for the selected tasks' existing processes to stop before starting this goal.",
+          );
+        for (const step of goal.steps) {
+          const task = nextState.tasks.find((entry) => entry.id === step.taskId);
+          if (!task || task.threadId !== goal.threadId || task.revision !== step.contract.revision)
+            throw new StoreError(
+              "conflict",
+              "Goal requirements changed. Create a new goal for the current task revisions.",
+            );
+        }
+        const now = new Date().toISOString();
+        goal.startedAt ??= now;
+        goal.deadlineAt ??= new Date(
+          Date.parse(goal.startedAt) + goal.timeLimitMinutes * 60_000,
+        ).toISOString();
+        goal.status = "active";
+        goal.activeAssignmentId = null;
+        goal.stopReason =
+          "Execution authorized for this frozen task scope, within the original attempt and elapsed-time limits.";
+      } else {
+        goal.status = input.action === "pause" ? "paused" : "cancelled";
+        goal.stopReason =
+          input.action === "pause"
+            ? "Paused by the user. Attempts and the original deadline are retained."
+            : "Cancelled by the user. Existing tasks, outputs and reviews are retained.";
+      }
+      recordGoalEvent(goal, goal.stopReason);
+      await this.writeState(nextState);
+      this.state = nextState;
+      return structuredClone(goal);
+    });
+  }
+
+  async reconcileGoal(id: string): Promise<WorkGoal> {
+    return this.withWrite(async () => {
+      const nextState = structuredClone(this.state);
+      const goal = nextState.goals.find((entry) => entry.id === id);
+      if (!goal) throw new StoreError("not_found", "Goal not found.");
+      if (!["active", "waiting_review", "paused"].includes(goal.status) || !goal.startedAt)
+        return structuredClone(goal);
+      const check = inspectGoal(goal, nextState.tasks, nextState.assignments);
+      if (goal.status === "paused" && check.status !== "completed") {
+        if (JSON.stringify(goal.accepted) === JSON.stringify(check.accepted))
+          return structuredClone(goal);
+        goal.accepted = check.accepted;
+        recordGoalEvent(
+          goal,
+          "Human review checkpoint updated while paused. No new work was started.",
+        );
+        await this.writeState(nextState);
+        this.state = nextState;
+        return structuredClone(goal);
+      }
+      const assignmentId = check.assignmentId ?? goal.activeAssignmentId;
+      if (
+        goal.status === check.status &&
+        goal.stopReason === check.reason &&
+        JSON.stringify(goal.accepted) === JSON.stringify(check.accepted) &&
+        assignmentId === goal.activeAssignmentId
+      )
+        return structuredClone(goal);
+      goal.status = check.status;
+      goal.stopReason = this.redactSecrets(check.reason).slice(0, 1000);
+      goal.accepted = check.accepted;
+      goal.activeAssignmentId = assignmentId;
+      recordGoalEvent(goal, goal.stopReason);
+      await this.writeState(nextState);
+      this.state = nextState;
+      return structuredClone(goal);
+    });
+  }
+
+  async stopGoal(id: string, status: "blocked" | "exhausted", reason: string): Promise<WorkGoal> {
+    return this.withWrite(async () => {
+      const nextState = structuredClone(this.state);
+      const goal = nextState.goals.find((entry) => entry.id === id);
+      if (!goal) throw new StoreError("not_found", "Goal not found.");
+      if (!["active", "waiting_review"].includes(goal.status)) return structuredClone(goal);
+      goal.status = status;
+      goal.stopReason = this.redactSecrets(reason).slice(0, 1000);
+      recordGoalEvent(goal, goal.stopReason);
+      await this.writeState(nextState);
+      this.state = nextState;
+      return structuredClone(goal);
+    });
+  }
+
+  private async recoverGoalsAndAssignments(): Promise<void> {
+    for (const assignment of this.state.assignments.filter((entry) =>
+      ["queued", "running"].includes(entry.status),
+    )) {
+      await this.updateAssignment(assignment.id, {
+        status: "interrupted",
+        error:
+          "The server restarted before this assignment completed. Inspect its workspace before retrying.",
+      });
+    }
+    const nextState = structuredClone(this.state);
+    let changed = false;
+    for (const goal of nextState.goals)
+      if (["active", "waiting_review"].includes(goal.status)) {
+        goal.status = "paused";
+        goal.stopReason =
+          "Server restarted. Inspect the last assignment and checkpoint, then resume explicitly. No work was replayed.";
+        recordGoalEvent(goal, goal.stopReason);
+        changed = true;
+      }
+    if (changed) {
+      await this.writeState(nextState);
+      this.state = nextState;
+    }
+  }
+
   getCredential(agentId: string): string | undefined {
     return this.credentials[agentId];
   }
@@ -350,7 +641,7 @@ export class FileStore {
   readSurfaceContext(id: string, recordIds: string[] = [], agentId?: string) {
     const surface = this.getSurface(id);
     if (!surface) throw new StoreError("not_found", "Surface not found.");
-    this.surfaceActor(surface.workspaceId, agentId);
+    this.workspaceAuthor(surface.workspaceId, agentId);
     if (agentId && !surface.enabled)
       throw new StoreError(
         "invalid",
@@ -372,7 +663,7 @@ export class FileStore {
     const input = CreateSurfaceSchema.parse(rawInput);
     return this.withWrite(async () => {
       const workspaceId = this.requireWorkspace(input.workspaceId).id;
-      const actor = this.surfaceActor(workspaceId, agentId);
+      const actor = this.workspaceAuthor(workspaceId, agentId);
       if (this.state.surfaces.filter((surface) => surface.workspaceId === workspaceId).length >= 30)
         throw new StoreError("invalid", "A workspace supports up to 30 custom surfaces.");
       const now = new Date().toISOString();
@@ -448,7 +739,7 @@ export class FileStore {
         color: input.color ?? current?.color ?? "lilac",
         archived: false,
         updatedAt: new Date().toISOString(),
-        updatedBy: this.surfaceActor(surface.workspaceId, agentId),
+        updatedBy: this.workspaceAuthor(surface.workspaceId, agentId),
       };
       if (index === -1) surface.records.push(record);
       else surface.records[index] = record;
@@ -468,11 +759,11 @@ export class FileStore {
       record.archived = input.archived;
       record.revision += 1;
       record.updatedAt = new Date().toISOString();
-      record.updatedBy = this.surfaceActor(surface.workspaceId, agentId);
+      record.updatedBy = this.workspaceAuthor(surface.workspaceId, agentId);
     });
   }
 
-  private surfaceActor(workspaceId: string, agentId?: string): WorkspaceSurface["updatedBy"] {
+  private workspaceAuthor(workspaceId: string, agentId?: string): WorkspaceSurface["updatedBy"] {
     if (!agentId) return { kind: "user", id: "local-user" };
     const agent = this.state.agents.find(
       (entry) =>
@@ -482,10 +773,7 @@ export class FileStore {
         !entry.archived,
     );
     if (!agent)
-      throw new StoreError(
-        "invalid",
-        "A surface author must be an enabled agent in its workspace.",
-      );
+      throw new StoreError("invalid", "An author must be an enabled agent in its workspace.");
     return { kind: "agent", id: agentId };
   }
 
@@ -524,7 +812,7 @@ export class FileStore {
       const index = nextState.surfaces.findIndex((entry) => entry.id === id);
       const surface = nextState.surfaces[index];
       if (!surface) throw new StoreError("not_found", "Surface not found.");
-      const actor = this.surfaceActor(surface.workspaceId, agentId);
+      const actor = this.workspaceAuthor(surface.workspaceId, agentId);
       if (surface.revision !== expectedRevision)
         throw new StoreError(
           "conflict",
@@ -1301,6 +1589,16 @@ export class FileStore {
           JSON.stringify(input[field]) !== JSON.stringify(current[field])
         );
       });
+      if (
+        contractChanged &&
+        nextState.goals.some(
+          (goal) => goalHoldsTasks(goal) && goal.steps.some((step) => step.taskId === id),
+        )
+      )
+        throw new StoreError(
+          "conflict",
+          "Cancel the authorized goal before changing this task's frozen requirements.",
+        );
       if (active && (contractChanged || (input.status && input.status !== "in_progress"))) {
         throw new StoreError(
           "conflict",
@@ -1342,6 +1640,15 @@ export class FileStore {
       const nextState = structuredClone(this.state);
       const index = nextState.tasks.findIndex((task) => task.id === id);
       if (index === -1) throw new StoreError("not_found", "Task not found.");
+      if (
+        nextState.goals.some(
+          (goal) => goalHoldsTasks(goal) && goal.steps.some((step) => step.taskId === id),
+        )
+      )
+        throw new StoreError(
+          "conflict",
+          "Cancel the authorized goal before deleting one of its tasks.",
+        );
       if (
         nextState.assignments.some(
           (assignment) =>
@@ -1406,6 +1713,43 @@ export class FileStore {
         );
       }
       assignment.contract = TaskContractSchema.parse(task);
+      const owner = nextState.goals.find(
+        (goal) => goalHoldsTasks(goal) && goal.steps.some((step) => step.taskId === task.id),
+      );
+      if (owner && assignment.goalId !== owner.id)
+        throw new StoreError(
+          "conflict",
+          "This task belongs to an authorized goal. Use the goal controls or cancel the goal before a manual assignment.",
+        );
+      if (
+        assignment.masterRunId &&
+        !assignment.goalId &&
+        nextState.goals.some(
+          (goal) => goal.status === "draft" && goal.steps.some((step) => step.taskId === task.id),
+        )
+      )
+        throw new StoreError(
+          "conflict",
+          "This task is part of a draft goal. The user must start that goal or explicitly start the task from Taskboard.",
+        );
+      if (assignment.goalId) {
+        const goal = nextState.goals.find((entry) => entry.id === assignment.goalId);
+        if (goal?.status !== "active" || goal.workspaceId !== assignment.workspaceId)
+          throw new StoreError("conflict", "The goal is no longer active. Reload its checkpoint.");
+        const check = inspectGoal(goal, nextState.tasks, nextState.assignments);
+        if (
+          !check.next ||
+          check.next.taskId !== task.id ||
+          check.next.workerAgentId !== assignment.workerAgentId ||
+          check.next.repositoryId !== assignment.repositoryId ||
+          assignment.status !== "queued"
+        )
+          throw new StoreError("conflict", check.reason);
+        goal.attemptsUsed += 1;
+        goal.activeAssignmentId = assignment.id;
+        goal.stopReason = `Attempt ${goal.attemptsUsed}/${goal.attemptLimit}: ${task.title}.`;
+        recordGoalEvent(goal, goal.stopReason);
+      }
       delete assignment.review;
       task.status =
         assignment.status === "completed"
@@ -1960,6 +2304,7 @@ function createInitialState(): PersistedState {
     knowledge: [],
     assignments: [],
     surfaces: [],
+    goals: [],
   };
 }
 

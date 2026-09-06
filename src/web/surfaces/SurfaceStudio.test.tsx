@@ -22,6 +22,7 @@ const data: BootstrapData = {
   threads: [],
   workBriefs: [],
   surfaces: [],
+  goals: [],
   agents: [],
   knowledge: [],
   tasks: [],

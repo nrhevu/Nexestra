@@ -27,7 +27,9 @@ Do not call live providers in default tests.
 - `src/server/app.ts`: HTTP API and loopback-origin guard.
 - `src/web/`: SPA and visual system.
 - `src/shared/work-brief.ts`: bounded work brief context shared by every runtime.
-- `src/web/surfaces/`: built-in surface catalog and Work Briefs.
+- `src/shared/goals.ts` and `src/server/goal-controller.ts`: goal policy, budgets and review-driven continuation.
+- `src/shared/surfaces.ts`: declarative extension and semantic context contracts.
+- `src/web/surfaces/`: Work Briefs, Goals, task review, and declarative table/board/canvas/document views.
 - `docs/HARNESS-DESIGN.md`: target design; `docs/ARCHITECTURE.md`: implemented behavior.
 - `PROGRESS.md` and `DECISIONS.md`: current work and pointers for fresh sessions.
 

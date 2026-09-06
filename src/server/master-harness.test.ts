@@ -18,6 +18,68 @@ import {
 import { FileStore } from "./store.js";
 
 describe("Master harness tools", () => {
+  it("hands planned tasks to a draft goal without forcing immediate delegation", async () => {
+    const context = await toolContext("full");
+    const store = await FileStore.open({
+      root: context.dataPath,
+      workspacePath: context.workspacePath,
+    });
+    const thread = store.listThreads()[0];
+    if (!thread) throw new Error("Expected thread");
+    const worker = await store.createAgent({
+      kind: "worker",
+      name: "Writer",
+      handle: "writer",
+      harness: "codex",
+    });
+    context.threadId = thread.id;
+    context.hooks = {
+      update: async () => undefined,
+      requestApproval: async () => true,
+      createPlan: async (_title, steps) =>
+        Promise.all(steps.map((step) => store.createTask({ ...step, threadId: thread.id }))),
+      createWorkGoal: (input) => store.createGoal({ ...input, threadId: thread.id }),
+      readWorkGoals: async () => store.listGoals(),
+    };
+    const session = await createMasterToolSession(context);
+    try {
+      await callSession(session, "plan", {
+        title: "Draft a document",
+        steps: [
+          {
+            title: "Write a memo",
+            description: "Explain the decision",
+            kind: "document",
+            acceptanceCriteria: [
+              { behavior: "The reasoning is explicit", verification: "Read the memo" },
+            ],
+          },
+        ],
+      });
+      expect(session.pendingTaskIds()).toHaveLength(1);
+      const task = store.listTasks()[0];
+      if (!task) throw new Error("Expected task");
+      const drafted = JSON.parse(
+        await callSession(session, "draft_goal", {
+          objective: "Explain the decision",
+          steps: [
+            { taskId: task.id, expectedRevision: task.revision, workerHandle: worker.handle },
+          ],
+          attemptLimit: 2,
+          timeLimitMinutes: 30,
+        }),
+      );
+      expect(drafted.status).toBe("draft");
+      expect(session.pendingTaskIds()).toEqual([]);
+      expect(store.listAssignments()).toEqual([]);
+      await expect(callSession(session, "read_goals", {})).resolves.toContain(
+        "Explain the decision",
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
   it("uses scoped surface commands, preserves complete records, and respects write approval", async () => {
     const context = await toolContext("ask");
     const store = await FileStore.open({

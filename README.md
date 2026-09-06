@@ -1,7 +1,7 @@
 # Nexestra
 
-Nexestra is a local-first workspace where people can chat and work with coding agents.
-Milestone M9 is a fresh rebuild focused on two primary workflows:
+Nexestra is a local-first workspace where people and configurable AI agents plan, execute and
+review research, documents, design and code. Built on the M9 single-server foundation, it supports:
 
 - create **Worker agents** powered by Codex or OpenCode;
 - create **Master agents** using ChatGPT OAuth through Codex CLI or an OpenAI-compatible endpoint;
@@ -10,6 +10,8 @@ Milestone M9 is a fresh rebuild focused on two primary workflows:
 - attach files and images, and browse each thread's indexed files and links;
 - manage planned work, repository knowledge, and agents in Taskboard, Knowledge, and Agents.
 - maintain shared **Work Briefs** for research, documents, design, code, or mixed work.
+- run bounded **Goals**, with pinned scope, durable budgets and independent human review;
+- create **Custom surfaces** from reusable table, board, whiteboard and document definitions.
 
 Workspaces are selected from the far-left rail. Each workspace has its own threads, agents, and
 tasks; Threads, Surfaces, and Settings live in the navigation panel beside that rail. Creating a
@@ -31,7 +33,7 @@ By default, data is stored in `.nexestra/` in the running repository:
 
 ```text
 .nexestra/
-├── state.json          # workspace, agent, thread, task, knowledge, and assignment metadata
+├── state.json          # workspace, agent, task, knowledge, assignment, surface and goal metadata
 ├── credentials.json    # custom API keys, mode 0600
 ├── artifacts/
 │   └── <thread-id>/<artifact-id> # uploaded bytes, mode 0600
@@ -39,7 +41,8 @@ By default, data is stored in `.nexestra/` in the running repository:
 │   └── <workspace-id>/
 │       ├── knowledge/<knowledge-id>/document
 │       ├── repositories/<knowledge-id>/source
-│       └── worktrees/<assignment-id>
+│       ├── worktrees/<assignment-id>
+│       └── assignments/<assignment-id>/outputs/ # general non-Git deliverables
 └── threads/
     └── <thread-id>.jsonl  # the thread's shared append-only transcript
 ```
@@ -63,6 +66,18 @@ have that native tool bridge. Use **Work brief** in the conversation tabs to jum
 The [product vision](docs/PRODUCT-VISION.vi.md), [target harness design](docs/HARNESS-DESIGN.md) and
 [roadmap](docs/ROADMAP.md) describe the next steps toward a general-purpose execution workspace.
 Worker delegation supports repository worktrees and isolated directories for non-code work.
+
+## Goals and shared surfaces
+
+Use **Surfaces → Goals** to create a draft from tasks in one conversation. Review the scope and
+limits, then Start. Results wait for your review before the next task or revision runs. Pause and
+restart retain usage and the original deadline; a Worker cannot accept its own result. See the
+[goal workflow](docs/GOALS.md) for bounds, recovery and current limitations.
+
+Use **Surfaces → Custom surfaces** for a table, board, whiteboard or living document. Import a
+definition written by your harness, edit records, select semantic context, or export a reusable
+definition. Edits use version checks. These extensions describe data and trusted host views;
+they do not execute arbitrary scripts. See the [extension contract and examples](docs/SURFACE-EXTENSIONS.md).
 
 ## Invoking agents
 

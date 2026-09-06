@@ -780,6 +780,8 @@ describe("parseProviderReply", () => {
       "update_surface",
       "save_surface_record",
       "archive_surface_record",
+      "read_goals",
+      "draft_goal",
     ]);
     expect(firstBody.messages[0]?.content).toContain("@builder: codex");
     const readDefinition = firstBody.tools.find(

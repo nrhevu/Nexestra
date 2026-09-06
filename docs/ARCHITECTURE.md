@@ -7,6 +7,8 @@ communicates over HTTP, and the server invokes configured coding harnesses or pr
 primary navigation areas are Threads and Surfaces; the initial surfaces are Taskboard, Knowledge,
 and Agents.
 Work Briefs adds shared scope for research, documents, design and code without requiring a repository.
+Goals adds bounded, review-driven continuation (ADR 0021). Custom surfaces adds four declarative host
+renderers and shared human/Master commands (ADR 0020).
 The far-left rail switches between workspaces, while the adjacent panel owns the Threads, Surfaces,
 and Settings navigation.
 
@@ -56,11 +58,17 @@ are not rendered as duplicate chat messages and do not change message counts.
 
 Built-in surface metadata lives in `src/web/surfaces/registry.ts` and feeds routes, sidebar entries
 and command search. Work Briefs has its own component and stylesheet; existing renderers remain
-explicitly composed in App. There is no external UI plugin loader yet.
+explicitly composed in App. Declarative definitions can be imported or written by the Master;
+there is no executable external UI plugin loader. See [extensions](SURFACE-EXTENSIONS.md).
+
+Thread-scoped Goals freeze task contracts and the available Work Brief, then use atomic attempt
+admission and human review events to continue. The original deadline survives pause/restart;
+active work is paused on recovery, without replay. Goal controls are user-owned. See [Goals](GOALS.md).
 
 ## Refresh and rendering model
 
-The SPA performs no periodic requests while the selected workspace is idle. While the visible
+The SPA performs no periodic requests while the selected workspace is idle. The Goals surface polls
+checkpoints while a goal is active or awaiting review. While the visible
 thread has queued, running, approval-waiting, or input-waiting work, it opens one Server-Sent Events
 connection. The dispatcher publishes phase changes, runtime-emitted reasoning, and accumulated
 response text directly, and marks events that require the browser to reload durable messages, runs,
@@ -283,8 +291,9 @@ credentials.
 - Worker success moves a task to In review. Human acceptance requires evidence against its frozen
   task contract (ADR 0018). Non-Git outputs are captured with hashes (ADR 0019); executable checks
   and repository diff/commit manifests are not yet implemented.
-- Work Briefs are thread-scoped; cross-thread goals, durable loops, budgets,
-  graph scheduling and generated surface plugins remain roadmap items.
+- Work Briefs and Goals are thread-scoped. Durable goals, attempt/time limits and declarative generated
+  surfaces are implemented. Cross-thread goals, executable verifiers/plugins, token budgets and graph
+  scheduling remain roadmap items.
 - Codex/OpenCode receive brief context but do not yet expose app-native brief mutation tools.
 - Brief index consistency assumes one server process per data directory, like the existing store.
 

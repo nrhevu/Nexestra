@@ -73,6 +73,7 @@ import type {
 import { extractMentionHandles, handleFromName } from "../shared/contracts.js";
 import { api } from "./api.js";
 import { Modal } from "./components/Modal.js";
+import { Goals } from "./surfaces/Goals.js";
 import { findSurface, type Surface, surfaces } from "./surfaces/registry.js";
 import { SurfaceStudio } from "./surfaces/SurfaceStudio.js";
 import { TaskLaunch } from "./surfaces/TaskLaunch.js";
@@ -115,6 +116,7 @@ export function App() {
   const [knowledgeToDelete, setKnowledgeToDelete] = useState<KnowledgeItem>();
   const [agentToDelete, setAgentToDelete] = useState<AgentView>();
   const [surfaceCreateSequence, setSurfaceCreateSequence] = useState(0);
+  const [goalCreateSequence, setGoalCreateSequence] = useState(0);
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     const stored = window.localStorage.getItem("nexestra.theme") as "dark" | "light" | null;
     return stored ?? "dark";
@@ -407,6 +409,7 @@ export function App() {
         onCreate={() => {
           if (route.view === "threads" || route.surface === "briefs") setModal("thread");
           else if (route.surface === "custom") setSurfaceCreateSequence((value) => value + 1);
+          else if (route.surface === "goals") setGoalCreateSequence((value) => value + 1);
           else if (route.surface === "agents") setModal("agent");
           else if (route.surface === "taskboard") {
             setTaskStatus("todo");
@@ -468,6 +471,15 @@ export function App() {
             data={data}
             initialThreadId={route.threadId}
             onChanged={() => refresh(true)}
+            onThread={openThread}
+          />
+        ) : route.surface === "goals" ? (
+          <Goals
+            key={data.workspace.id}
+            data={data}
+            createSequence={goalCreateSequence}
+            onChanged={() => refresh(true)}
+            onTask={setTaskToInspect}
             onThread={openThread}
           />
         ) : route.surface === "custom" ? (
@@ -3016,6 +3028,9 @@ function TaskProcessDialog({
     : undefined;
   const knownHandles = new Set(data.agents.map((agent) => agent.handle));
   const status = assignment?.status ?? "not delegated";
+  const linkedGoal = assignment?.goalId
+    ? data.goals.find((goal) => goal.id === assignment.goalId)
+    : undefined;
 
   return (
     <Modal
@@ -3069,6 +3084,15 @@ function TaskProcessDialog({
           </div>
 
           <div className="task-detail-copy">
+            {linkedGoal && (
+              <div className="task-goal-context">
+                <strong>Goal this work supports</strong>
+                <p>{linkedGoal.objective}</p>
+                <small>
+                  Review this result against both its success criteria and the intended outcome.
+                </small>
+              </div>
+            )}
             {process.task.description ? (
               <Suspense
                 fallback={<p className="message-markdown-fallback">{process.task.description}</p>}

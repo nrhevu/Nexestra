@@ -35,6 +35,7 @@ import type {
 } from "../shared/contracts.js";
 import { SaveWorkBriefSchema, TaskCriteriaSchema, TaskKindSchema } from "../shared/contracts.js";
 import { loadCustomTools } from "./custom-tools.js";
+import { goalTools } from "./goal-tools.js";
 import {
   configuredPermission,
   type HarnessConfig,
@@ -102,6 +103,10 @@ export async function createMasterToolSession(
   const definitions = new Map<string, ToolDefinition>();
   for (const tool of builtInTools(config, skills, planState)) definitions.set(tool.name, tool);
   for (const tool of surfaceTools()) definitions.set(tool.name, tool);
+  for (const tool of goalTools((goal) => {
+    for (const step of goal.steps) planState.plannedTaskIds.delete(step.taskId);
+  }))
+    definitions.set(tool.name, tool);
   for (const tool of custom.tools) definitions.set(tool.name, tool);
   for (const tool of mcp.tools) definitions.set(tool.name, tool);
   return {

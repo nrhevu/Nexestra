@@ -41,6 +41,7 @@ const bootstrapData: BootstrapData = {
   tasks: [],
   workBriefs: [],
   surfaces: [],
+  goals: [],
   knowledge: [],
   assignments: [],
   activeRuns: [],

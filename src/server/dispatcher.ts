@@ -29,6 +29,7 @@ export class AgentDispatcher {
   private readonly queues = new Map<string, Promise<void>>();
   private readonly busy = new Set<string>();
   private readonly assignmentExecutions = new Set<Promise<void>>();
+  private readonly assignmentListeners = new Set<(assignmentId: string) => void>();
   private readonly pendingEnqueues = new Map<string, number>();
   private readonly deletingAgentIds = new Set<string>();
   private readonly retryingRunIds = new Set<string>();
@@ -56,6 +57,11 @@ export class AgentDispatcher {
 
   busyAgentIds(): ReadonlySet<string> {
     return new Set(this.busy);
+  }
+
+  subscribeAssignmentEnd(listener: (assignmentId: string) => void): () => void {
+    this.assignmentListeners.add(listener);
+    return () => this.assignmentListeners.delete(listener);
   }
 
   activeRuns(workspaceId?: string): AgentRun[] {
@@ -392,6 +398,13 @@ export class AgentDispatcher {
             return tasks;
           },
           readWorkBrief: () => this.store.getWorkBrief(thread.id),
+          readWorkGoals: async () =>
+            this.store.listGoals(thread.workspaceId).filter((goal) => goal.threadId === thread.id),
+          createWorkGoal: async (input) => {
+            const goal = await this.store.createGoal({ ...input, threadId: thread.id }, agent.id);
+            this.notifyThread(thread.id, true);
+            return goal;
+          },
           readSurfaces: async () => this.store.listSurfaces(thread.workspaceId),
           readSurface: async (id) => {
             this.store.readSurfaceContext(id, [], agent.id);
@@ -527,6 +540,7 @@ export class AgentDispatcher {
     workerHandle: string,
     repositoryHandle?: string,
     expectedRevision?: number,
+    goalId?: string,
   ): Promise<WorkAssignment> {
     const task = this.store.getTask(taskId);
     if (!task) throw new StoreError("not_found", "Task not found.");
@@ -542,7 +556,7 @@ export class AgentDispatcher {
       throw new StoreError("invalid", `@${workerHandle} is not an available Worker.`);
     const trigger = await this.store.createUserMessage(
       task.threadId,
-      `@${worker.handle} Work on task: ${task.title} (revision ${task.revision}).${repositoryHandle ? ` Use #${repositoryHandle}.` : " Use an isolated workspace directory."}`,
+      `@${worker.handle} Work on task: ${task.title} (revision ${task.revision}).${repositoryHandle ? ` Use #${repositoryHandle}.` : " Use an isolated workspace directory."}${goalId ? `\nAuthorized goal ${goalId}: ${this.store.getGoal(goalId)?.objective ?? "Goal unavailable"}. Submit this task for independent review; the host controls continuation.` : ""}`,
       [{ agentId: worker.id, handle: worker.handle }],
     );
     const snapshot = await this.store.transcriptSnapshot(task.threadId);
@@ -552,7 +566,7 @@ export class AgentDispatcher {
         undefined,
         trigger,
         snapshot,
-        { taskId, workerHandle, repositoryHandle, expectedRevision: task.revision },
+        { taskId, workerHandle, repositoryHandle, expectedRevision: task.revision, goalId },
         resolve,
       );
       const tracked = execution
@@ -572,6 +586,7 @@ export class AgentDispatcher {
       workerHandle: string;
       repositoryHandle?: string;
       expectedRevision?: number;
+      goalId?: string;
     },
     onQueued?: (assignment: WorkAssignment) => void,
   ): Promise<{ assignment: WorkAssignment; result: string }> {
@@ -633,7 +648,9 @@ export class AgentDispatcher {
     const previousReview = this.store
       .listAssignments(thread.workspaceId)
       .find((entry) => entry.taskId === task.id)?.review;
-    const workBrief = await this.store.getWorkBrief(thread.id);
+    const workBrief = input.goalId
+      ? this.store.getGoal(input.goalId)?.workBrief
+      : await this.store.getWorkBrief(thread.id);
     const release = this.reserveAgent(worker.id);
     if (!release) throw new StoreError("conflict", `@${worker.handle} is being deleted.`);
     const id = crypto.randomUUID();
@@ -657,6 +674,7 @@ export class AgentDispatcher {
       taskId: task.id,
       threadId: thread.id,
       masterRunId: masterRun?.id ?? "",
+      ...(input.goalId ? { goalId: input.goalId } : {}),
       workerAgentId: worker.id,
       repositoryId: knowledge?.id ?? null,
       environment,
@@ -724,7 +742,11 @@ export class AgentDispatcher {
           const delegatedTrigger: Message = {
             ...trigger,
             content: [
-              master ? `Assigned by @${master.handle}.` : "Assigned by the user from Taskboard.",
+              master
+                ? `Assigned by @${master.handle}.`
+                : input.goalId
+                  ? `Assigned under authorized goal ${input.goalId}: ${this.store.getGoal(input.goalId)?.objective ?? "Goal unavailable"}`
+                  : "Assigned by the user from Taskboard.",
               `Task: ${task.title}`,
               task.description,
               formatTaskCriteria(task),
@@ -890,6 +912,7 @@ export class AgentDispatcher {
       this.liveActivities.delete(id);
       this.notifyThread(thread.id, true);
       release();
+      if (assignmentPersisted) for (const listener of this.assignmentListeners) listener(id);
     }
   }
 

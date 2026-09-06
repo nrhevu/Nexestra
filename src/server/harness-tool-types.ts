@@ -6,6 +6,7 @@ import type {
   WorkAssignment,
   WorkBrief,
 } from "../shared/contracts.js";
+import type { CreateWorkGoalInput, WorkGoal } from "../shared/goals.js";
 import type {
   CreateSurfaceInput,
   SaveSurfaceRecordInput,
@@ -18,6 +19,8 @@ export interface MasterToolHooks {
   requestApproval(toolCall: ToolCall): Promise<boolean>;
   requestInput?(toolCall: ToolCall): Promise<string[][]>;
   readWorkBrief?(): Promise<WorkBrief | undefined>;
+  readWorkGoals?(): Promise<WorkGoal[]>;
+  createWorkGoal?(input: Omit<CreateWorkGoalInput, "threadId">): Promise<WorkGoal>;
   saveWorkBrief?(input: SaveWorkBriefInput): Promise<WorkBrief>;
   readTasks?(): Promise<{ task: Task; assignment?: WorkAssignment }[]>;
   readSurfaces?(): Promise<WorkspaceSurface[]>;

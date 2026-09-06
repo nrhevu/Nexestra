@@ -1,4 +1,4 @@
-import { BookOpen, Columns3, LayoutGrid, Target, UsersRound } from "lucide-react";
+import { BookOpen, Columns3, Flag, LayoutGrid, Target, UsersRound } from "lucide-react";
 import type { BootstrapData } from "../../shared/contracts.js";
 
 // Host renderers only. Custom surfaces use validated declarative definitions.
@@ -16,6 +16,15 @@ export const surfaces = [
     description: "Plan and inspect work",
     icon: Columns3,
     count: (data: BootstrapData) => data.tasks.length,
+  },
+  {
+    id: "goals",
+    label: "Goals",
+    description: "Scope, budgets and durable checkpoints",
+    icon: Flag,
+    count: (data: BootstrapData) =>
+      data.goals.filter((goal) => !["completed", "cancelled", "exhausted"].includes(goal.status))
+        .length,
   },
   {
     id: "custom",

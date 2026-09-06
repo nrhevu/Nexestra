@@ -17,3 +17,10 @@ Validated manifests describe table/board/canvas/document views with typed record
 commands serve humans and the Master; writes use revisions and existing edit permissions. Custom
 field values never certify task acceptance. Import/export is usable today; executable renderer
 plugins remain a separate future boundary. See ADR 0020 and docs/SURFACE-EXTENSIONS.md.
+# 2026-09-06: Durable review-driven goals
+
+Goal scope/brief and budgets survive sessions. Human task acceptance supplies independent loop
+continuation; models may propose/read goals but cannot start them or enlarge limits. Restart pauses
+work without replaying ambiguous effects. Pause retains usage/deadline and still permits reviewing
+submitted outputs. See ADR 0021 and docs/GOALS.md; graphs, executable verifiers and token accounting
+remain future work.

@@ -64,11 +64,26 @@ Original checkout is clean and remains on `master`.
 - ADR 0020 records limits: no executable plugin runtime, canvas edges/freehand/zoom, history/undo,
   automatic schema migrations or Worker CLI surface-tool bridge.
 
-## Current WIP: durable bounded goals and continuity
+## Completed checkpoint: durable review-driven goals
 
-Implement explicit goal scope, execution limits and human review stopping conditions. Preserve
-mention authorization, task revision contracts and separate acceptance. Do not claim autonomous
-verification where the release still depends on human evidence review.
+- Frozen ordered task scope and Work Brief snapshot, explicit user Start/Pause/Resume/Cancel,
+  atomic attempt admission, original elapsed-time deadline, one active goal/workspace and WIP=1.
+- Successful execution waits for human evidence review; acceptance advances, changes requested
+  retries within budget, failure blocks. Paused reviews update checkpoints without new execution;
+  final matching acceptance can complete the goal. Deadline stops active work.
+- Startup marks interrupted assignments and pauses goals without replay. Task ownership prevents
+  bypassing active/paused goals. Draft goal handoff removes the old forced-delegation obligation.
+- Scoped Master read_goals/draft_goal, host author attribution, Goals UI, budget/checkpoint history,
+  and overall goal context in task review. ADR 0021 and docs/GOALS.md document limits.
+- Full gate passed with 204 tests, lint, types and build. Browser QA passed two sequential offline
+  document tasks, captured-byte inspection, human review continuation, pause/restart retention and
+  final acceptance while paused. No new run on final acceptance; 2/3 attempts used. No browser errors.
+
+## Current WIP: bounded conversation context and retrieval
+
+Reduce repeated unbounded transcript injection while preserving the canonical history, pinned
+intent and fresh-session access to earlier evidence. Add scoped paginated history tools and a
+clear provider text-input guard. Then inspect execution traces, final UI and remaining reliability gaps.
 
 ## Subsequent work, after current WIP passes
 
@@ -101,8 +116,9 @@ as established facts. Validate important mechanisms against primary engineering 
 
 ## Active preview and tooling
 
-- Preview process session: 82173; loopback port 4387. Script: `/private/tmp/nexestra-ui-preview.mts`.
-- Preview data: `/private/tmp/nexestra-preview-data-LhfSVD`, disposable and independent of user data.
+- Preview process session: 99667; loopback port 4387. Script: `/private/tmp/nexestra-ui-preview.mts`.
+- Preview data: `/private/tmp/nexestra-preview-data-octqCw`, disposable and independent of user data.
+- Restart preserving preview data with NEXESTRA_PREVIEW_ROOT set to that path. No live providers.
 - CUA binding `tab` (id "1", browser id "1"); session reset during QA, browser handle not currently bound. Browser is hidden.
 - Source schema tooling: `PYTHONPATH=/private/tmp/nexestra-schema-validator python3` (jsonschema 4.25.1).
 - Anthropic primary source read: `/private/tmp/nexestra-primary-long-running.html`. Its guidance is
