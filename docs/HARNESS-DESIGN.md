@@ -186,16 +186,16 @@ is a resource: cap unresolved review work and prioritize by importance, uncertai
 
 | Lecture | Mechanism | Acceptance scenario | Current location / planned work |
 | --- | --- | --- | --- |
-| 1–2 | Five explicit subsystems, verifier authority | A confident unsupported answer cannot pass the work unit | Runtime/dispatcher exist; independent acceptance is next |
+| 1–2 | Five explicit subsystems, verifier authority | A confident unsupported answer cannot pass the work unit | Task completion requires a separate human review; executable verifiers planned |
 | 3 | Workspace as record, provenance | A fresh session explains work using persisted files only | Canonical threads, knowledge, Work Briefs; checkpoint service planned |
 | 4 | Router instructions, scoped context | A role loads only relevant references and preserves critical constraints | `AGENTS.md`, skill discovery; context packer planned |
 | 5 | Checkpoints and recovery | Restart preserves accepted work and marks ambiguous side effects for reconciliation | JSONL recovery exists; durable loop continuation planned |
 | 6 | Initialization phase | Missing capability prevents dispatch with a repairable readiness report | Runtime availability exists; environment recipes planned |
 | 7 | Ownership and WIP | Two conflicting tasks cannot acquire the same output slot | Per-agent queues/worktrees exist; resource scheduler planned |
-| 8 | Behavioral acceptance units | Model cannot edit passing state or loosen the active contract | Work Brief criteria exist; enforced work-unit state next |
+| 8 | Behavioral acceptance units | Model cannot edit passing state or loosen the active contract | Task criteria, frozen revisions and review transitions enforced |
 | 9 | Generator/verifier separation | Producer-supplied evidence is labeled and cannot self-approve | Not yet enforced on legacy assignments |
 | 10 | Three-layer checks | An artifact passing syntax but failing a user flow remains unaccepted | Repo has integration/UI tests; product verifier service planned |
-| 11 | Events plus acceptance records | User can trace a decision to its attempt, artifact and evidence | Runs/tools/artifacts exist; acceptance provenance next |
+| 11 | Events plus acceptance records | User can trace a decision to its attempt, artifact and evidence | Runs/tools plus immutable human review observations; output snapshots planned |
 | 12 | Clean handoffs and simplification | Resume smoke test works after every checkpoint | Repo development rules; product cleanup/checkpoint service planned |
 | 13 | Persisted loop goal/budget/stop policy | Exhausted or cancelled loops never silently restart | Bounded rounds/retries exist; durable goals planned |
 | 14 | Typed graph with explicit joins and routes | Failed branch does not unlock a join; local repair preserves passing siblings | Planned after loop acceptance is proven |

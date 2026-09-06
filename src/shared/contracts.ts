@@ -453,18 +453,58 @@ export const ToolCallSchema = z.object({
 });
 export type ToolCall = z.infer<typeof ToolCallSchema>;
 
+export const TaskKindSchema = WorkBriefContentSchema.shape.kind;
+export const TaskCriteriaSchema = WorkBriefContentSchema.shape.acceptanceCriteria;
+export const TaskStatusSchema = z.enum(["todo", "in_progress", "in_review", "done"]);
+
 export const TaskSchema = z.object({
   id: z.string(),
   workspaceId: z.string(),
   title: z.string(),
   description: z.string(),
-  status: z.enum(["todo", "in_progress", "done"]),
+  status: TaskStatusSchema,
+  kind: TaskKindSchema,
+  revision: z.number().int().positive().default(1),
+  acceptanceCriteria: TaskCriteriaSchema,
   assigneeId: z.string().nullable(),
   threadId: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
 export type Task = z.infer<typeof TaskSchema>;
+
+export const TaskContractSchema = TaskSchema.pick({
+  title: true,
+  description: true,
+  kind: true,
+  revision: true,
+  acceptanceCriteria: true,
+  threadId: true,
+});
+
+export const ReviewTaskSchema = z
+  .object({
+    assignmentId: z.string().min(1),
+    expectedRevision: z.number().int().positive(),
+    outcome: z.enum(["accepted", "changes_requested"]),
+    evidence: z
+      .array(
+        z
+          .object({
+            criterionIndex: z.number().int().min(0).max(9),
+            observation: z.string().trim().min(1).max(2_000),
+          })
+          .strict(),
+      )
+      .max(10),
+    notes: z.string().trim().min(1).max(4_000),
+  })
+  .strict();
+export const TaskReviewSchema = ReviewTaskSchema.extend({
+  id: z.string(),
+  reviewedBy: z.literal("local-user"),
+  createdAt: z.string(),
+});
 
 export const WorkAssignmentSchema = z.object({
   id: z.string(),
@@ -477,6 +517,8 @@ export const WorkAssignmentSchema = z.object({
   status: z.enum(["queued", "running", "completed", "failed", "interrupted"]),
   branch: z.string(),
   worktreePath: z.string(),
+  contract: TaskContractSchema.optional(),
+  review: TaskReviewSchema.optional(),
   result: z.string().max(20_000).optional(),
   error: z.string().max(2_000).optional(),
   createdAt: z.string(),
@@ -489,14 +531,19 @@ export const CreateTaskSchema = z.object({
   title: z.string().trim().min(1).max(160),
   description: z.string().trim().max(2_000).default(""),
   status: z.enum(["todo", "in_progress", "done"]).default("todo"),
+  kind: TaskKindSchema,
+  acceptanceCriteria: TaskCriteriaSchema,
   assigneeId: z.string().nullable().default(null),
   threadId: z.string().nullable().default(null),
 });
 
 export const UpdateTaskSchema = z.object({
+  expectedRevision: z.number().int().positive().optional(),
   title: z.string().trim().min(1).max(160).optional(),
   description: z.string().trim().max(2_000).optional(),
-  status: z.enum(["todo", "in_progress", "done"]).optional(),
+  status: TaskStatusSchema.optional(),
+  kind: TaskKindSchema.unwrap().optional(),
+  acceptanceCriteria: TaskCriteriaSchema.unwrap().optional(),
   assigneeId: z.string().nullable().optional(),
   threadId: z.string().nullable().optional(),
 });

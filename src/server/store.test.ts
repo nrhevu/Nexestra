@@ -574,7 +574,7 @@ describe("FileStore", () => {
     await expect(
       store.createAgent({
         ...input,
-        provider: { ...input.provider, baseUrl: "https://user:pass@example.com/v1?token=x" },
+        provider: { ...input.provider, baseUrl: "https://user@example.com/v1?query=x" },
       }),
     ).rejects.toBeInstanceOf(StoreError);
   });
@@ -664,11 +664,7 @@ describe("FileStore", () => {
         description: "Updated description",
         status: "in_progress",
       }),
-    ).resolves.toMatchObject({
-      title: "Updated task",
-      description: "Updated description",
-      status: "in_progress",
-    });
+    ).rejects.toMatchObject({ code: "conflict" });
     await expect(store.deleteTask(task.id)).rejects.toMatchObject({ code: "conflict" });
     await expect(store.deleteKnowledge(repository.id)).rejects.toMatchObject({ code: "conflict" });
 

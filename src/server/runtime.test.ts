@@ -813,7 +813,16 @@ describe("parseProviderReply", () => {
       const createdAt = "2026-09-03T00:00:00.000Z";
       const planArguments = JSON.stringify({
         title: "Implementation plan",
-        steps: [{ title: "Build feature", description: "Implement and verify it." }],
+        steps: [
+          {
+            title: "Build feature",
+            description: "Implement and verify it.",
+            kind: "code",
+            acceptanceCriteria: [
+              { behavior: "Feature works", verification: "Run the acceptance test" },
+            ],
+          },
+        ],
       });
       const delegateArguments = JSON.stringify({
         taskId,
@@ -916,6 +925,9 @@ describe("parseProviderReply", () => {
                 workspaceId: invocation.thread.workspaceId,
                 title: step.title,
                 description: step.description,
+                kind: step.kind ?? "mixed",
+                revision: 1,
+                acceptanceCriteria: step.acceptanceCriteria ?? [],
                 status: "todo" as const,
                 assigneeId: null,
                 threadId: invocation.thread.id,

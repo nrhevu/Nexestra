@@ -347,6 +347,12 @@ export function createApp(options: CreateAppOptions) {
     );
   });
 
+  app.post("/api/tasks/:id/review", async (context) => {
+    return context.json(
+      await options.store.reviewTask(context.req.param("id"), await context.req.json()),
+    );
+  });
+
   app.delete("/api/tasks/:id", async (context) => {
     await options.store.deleteTask(context.req.param("id"));
     return context.body(null, 204);

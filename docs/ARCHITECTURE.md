@@ -268,8 +268,8 @@ credentials.
 
 ## Known gaps
 
-- Worker success still marks legacy assignments/tasks complete without an independent evidence
-  gate. Work Brief checks describe acceptance but are not yet executable verifiers.
+- Worker success moves a task to In review. Human acceptance requires evidence against its frozen
+  task contract (ADR 0018). Executable checks and immutable output snapshots are not yet implemented.
 - Work Briefs are thread-scoped; cross-thread goals, execution contracts, durable loops, budgets,
   graph scheduling and generated surface plugins remain roadmap items.
 - Codex/OpenCode receive brief context but do not yet expose app-native brief mutation tools.

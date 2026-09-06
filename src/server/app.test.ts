@@ -698,11 +698,13 @@ describe("HTTP app", () => {
     if (!workspace || !thread) throw new Error("expected seeded workspace and thread");
     const now = new Date().toISOString();
     const assignmentId = "assignment-open";
+    const openTask = await store.createTask({ title: "Open", threadId: thread.id });
+    const outsideTask = await store.createTask({ title: "Outside", threadId: thread.id });
     const relativeWorktree = `workspaces/${workspace.id}/worktrees/${assignmentId}`;
     await store.createAssignment({
       id: assignmentId,
       workspaceId: workspace.id,
-      taskId: "task-open",
+      taskId: openTask.id,
       threadId: thread.id,
       masterRunId: "run-master",
       workerAgentId: "agent-worker",
@@ -729,7 +731,7 @@ describe("HTTP app", () => {
     await store.createAssignment({
       id: "assignment-outside",
       workspaceId: workspace.id,
-      taskId: "task-outside",
+      taskId: outsideTask.id,
       threadId: thread.id,
       masterRunId: "run-master",
       workerAgentId: "agent-worker",

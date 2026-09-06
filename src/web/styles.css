@@ -2332,10 +2332,10 @@ kbd {
 }
 .board {
   display: grid;
-  grid-template-columns: repeat(3, minmax(230px, 1fr));
+  grid-template-columns: repeat(4, minmax(210px, 1fr));
   gap: 12px;
   padding: 18px;
-  min-width: 760px;
+  min-width: 940px;
   background: var(--board-bg);
 }
 .board-column {
@@ -2376,6 +2376,9 @@ kbd {
   background: #e5a64d;
 }
 .dot-2 {
+  background: #60b8d0;
+}
+.dot-3 {
   background: #59bf8e;
 }
 .task-card {
@@ -2486,7 +2489,7 @@ kbd {
   padding: 10px;
   border: 1px solid var(--border-soft);
   border-radius: 7px;
-  background: #1a1c21;
+  background: var(--panel-raised);
 }
 .task-process-summary span,
 .task-process-location span {
@@ -2500,7 +2503,7 @@ kbd {
   display: flex;
   align-items: center;
   gap: 5px;
-  color: #d5d1d8;
+  color: var(--text);
   font-size: 12px;
   text-overflow: ellipsis;
   text-transform: capitalize;
@@ -2523,11 +2526,11 @@ kbd {
   padding: 13px 14px;
   border: 1px solid var(--border-soft);
   border-radius: 8px;
-  background: #191b20;
+  background: var(--panel-raised);
 }
 .task-detail-copy p {
   margin: 0;
-  color: #c8c5cb;
+  color: var(--text);
   font-size: 12px;
   line-height: 1.55;
 }
@@ -2544,10 +2547,10 @@ kbd {
   padding: 14px;
   border: 1px dashed #45424b;
   border-radius: 8px;
-  color: #9d98a3;
+  color: var(--muted);
 }
 .task-process-empty strong {
-  color: #d7d2db;
+  color: var(--text);
   font-size: 13px;
 }
 .task-process-empty p {
@@ -2558,12 +2561,12 @@ kbd {
 }
 .task-process-location {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr) auto;
   align-items: start;
   gap: 9px;
   padding: 10px;
   border-radius: 7px;
-  background: #191b20;
+  background: var(--panel-raised);
   color: var(--muted);
 }
 .task-process-location > div {
@@ -2591,7 +2594,7 @@ kbd {
 .task-process-location code {
   display: block;
   overflow: hidden;
-  color: #c8c5cb;
+  color: var(--text);
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2607,7 +2610,7 @@ kbd {
 .task-process-tools h3,
 .task-process-result h3 {
   margin: 0 0 2px;
-  color: #d7d3da;
+  color: var(--text);
   font-size: 12px;
 }
 .task-process-live {
@@ -2620,13 +2623,13 @@ kbd {
   display: flex;
   align-items: center;
   gap: 7px;
-  color: #d5ced9;
+  color: var(--text);
   font-size: 12px;
 }
 .task-process-live .message-markdown,
 .task-process-live .message-markdown-fallback {
   margin-top: 10px;
-  color: #d9d9de;
+  color: var(--text);
   font-size: 13px;
 }
 .task-process-result {
@@ -2637,7 +2640,7 @@ kbd {
 }
 .task-process-result .message-markdown,
 .task-process-result .message-markdown-fallback {
-  color: #d4d8d5;
+  color: var(--text);
   font-size: 13px;
 }
 .task-process-interrupted {
@@ -2754,7 +2757,7 @@ kbd {
   min-height: 67px;
   padding: 15px 18px;
   border-bottom: 1px solid var(--border-soft);
-  background: rgba(30, 32, 38, 0.96);
+  background: var(--panel-raised);
   display: flex;
   align-items: center;
   justify-content: space-between;

@@ -13,7 +13,15 @@ export interface MasterToolHooks {
   requestInput?(toolCall: ToolCall): Promise<string[][]>;
   readWorkBrief?(): Promise<WorkBrief | undefined>;
   saveWorkBrief?(input: SaveWorkBriefInput): Promise<WorkBrief>;
-  createPlan?(title: string, steps: { title: string; description: string }[]): Promise<Task[]>;
+  createPlan?(
+    title: string,
+    steps: {
+      title: string;
+      description: string;
+      kind?: Task["kind"];
+      acceptanceCriteria?: Task["acceptanceCriteria"];
+    }[],
+  ): Promise<Task[]>;
   delegate?(input: {
     taskId: string;
     workerHandle: string;

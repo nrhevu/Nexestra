@@ -113,7 +113,10 @@ commits on that branch. Nexestra does not merge or push the branch automatically
 
 Every assignment is also a durable Worker run. Click any Taskboard card to inspect its assignee,
 repository, isolated branch and worktree, current phase, live reasoning, streamed response, and
-tool calls. Completed cards retain the Worker result and tool history in this process view; a task
+tool calls. Successful runs move tasks into **In review**. Record evidence for every acceptance
+criterion and review notes to accept a result, or request changes to reopen it. A Worker cannot
+mark its own task Done. Task requirements are frozen during a run; later edits invalidate that
+contract. Completed runs retain the Worker result and tool history in this process view; a task
 that was never delegated says so explicitly. The same detail view can edit every task field or
 permanently delete the task when no Worker assignment is active. While an assignment is queued or
 running, **Stop process** terminates its Codex/OpenCode process group, records the run and unfinished

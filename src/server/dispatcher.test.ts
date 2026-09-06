@@ -616,7 +616,7 @@ describe("mention dispatch", () => {
     if (!assignment) throw new Error("expected Worker assignment");
     const [plannedTask] = store.listTasks();
     expect(plannedTask).toEqual(
-      expect.objectContaining({ status: "done", assigneeId: worker.id, threadId: thread.id }),
+      expect.objectContaining({ status: "in_review", assigneeId: worker.id, threadId: thread.id }),
     );
     if (!plannedTask) throw new Error("expected planned task");
     const threadData = await store.threadData(thread.id);

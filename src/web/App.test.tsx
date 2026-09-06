@@ -706,6 +706,68 @@ describe("Worker creation", () => {
 });
 
 describe("Taskboard Worker process", () => {
+  it("records a review without reporting that a Worker was stopped", async () => {
+    window.history.replaceState({}, "", "/surfaces/taskboard");
+    const task = {
+      id: "review-task",
+      workspaceId: workspace.id,
+      title: "Review the memo",
+      description: "",
+      status: "in_review",
+      assigneeId: workerAgent.id,
+      threadId: null,
+      kind: "research",
+      revision: 1,
+      acceptanceCriteria: [{ behavior: "Claims are sourced", verification: "Open each source" }],
+      createdAt: now,
+      updatedAt: now,
+    };
+    const assignment = {
+      id: "review-assignment",
+      workspaceId: workspace.id,
+      taskId: task.id,
+      threadId: "thread",
+      masterRunId: "run",
+      workerAgentId: workerAgent.id,
+      repositoryId: "",
+      status: "completed",
+      branch: "preview",
+      worktreePath: "preview",
+      contract: task,
+      result: "A memo",
+      createdAt: now,
+      updatedAt: now,
+    };
+    let recorded = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path.startsWith("/api/bootstrap"))
+          return jsonResponse({
+            ...bootstrapData,
+            tasks: [{ ...task, status: recorded ? "todo" : "in_review" }],
+            assignments: [assignment],
+          });
+        if (path.endsWith("/process")) return jsonResponse({ task, assignment, toolCalls: [] });
+        if (path.endsWith("/review") && init?.method === "POST") {
+          recorded = true;
+          return jsonResponse(task);
+        }
+        return jsonResponse({});
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(
+      await screen.findByRole("button", { name: "Open process for Review the memo" }),
+    );
+    await user.type(await screen.findByLabelText("Review notes"), "Add primary sources.");
+    await user.click(screen.getByRole("button", { name: "Request changes" }));
+    expect(await screen.findByText("Review recorded.")).toBeVisible();
+    expect(screen.queryByText("Worker process stopped.")).not.toBeInTheDocument();
+  });
+
   it("opens a task card and shows its live Worker activity and tool calls", async () => {
     window.history.replaceState({}, "", "/surfaces/taskboard");
     vi.spyOn(window, "setInterval").mockImplementation(

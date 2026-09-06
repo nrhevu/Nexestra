@@ -73,6 +73,7 @@ import type {
 import { extractMentionHandles, handleFromName } from "../shared/contracts.js";
 import { api } from "./api.js";
 import { findSurface, type Surface, surfaces } from "./surfaces/registry.js";
+import { TaskReview } from "./surfaces/TaskReview.js";
 import { WorkBriefs } from "./surfaces/WorkBriefs.js";
 import "./surfaces/briefs.css";
 
@@ -612,6 +613,10 @@ export function App() {
           onStopped={async () => {
             await refresh(true);
             flash("Worker process stopped.");
+          }}
+          onReviewed={async () => {
+            await refresh(true);
+            flash("Review recorded.");
           }}
         />
       )}
@@ -2740,6 +2745,7 @@ function Taskboard(props: {
   const columns: { status: Task["status"]; title: string }[] = [
     { status: "todo", title: "To do" },
     { status: "in_progress", title: "In progress" },
+    { status: "in_review", title: "In review" },
     { status: "done", title: "Done" },
   ];
   const agents = new Map(props.data.agents.map((agent) => [agent.id, agent]));
@@ -2769,13 +2775,15 @@ function Taskboard(props: {
                 <span className={`column-dot dot-${index}`} />
                 <h2>{column.title}</h2>
                 <span>{tasks.length}</span>
-                <button
-                  type="button"
-                  onClick={() => props.onCreate(column.status)}
-                  aria-label={`Create a task in ${column.title}`}
-                >
-                  <Plus size={16} />
-                </button>
+                {column.status !== "in_review" && (
+                  <button
+                    type="button"
+                    onClick={() => props.onCreate(column.status)}
+                    aria-label={`Create a task in ${column.title}`}
+                  >
+                    <Plus size={16} />
+                  </button>
+                )}
               </header>
               {tasks.length === 0 && <p className="column-empty">No tasks yet</p>}
               {tasks.map((task) => (
@@ -2812,7 +2820,7 @@ function TaskCard({
   onThread: (id: string) => void;
   onInspect: (task: Task) => void;
 }) {
-  const statuses: Task["status"][] = ["todo", "in_progress", "done"];
+  const statuses: Task["status"][] = ["todo", "in_progress", "in_review", "done"];
   const position = statuses.indexOf(task.status);
   const assignmentActive = assignment?.status === "queued" || assignment?.status === "running";
   return (
@@ -2824,6 +2832,15 @@ function TaskCard({
         onClick={() => onInspect(task)}
       >
         <span className="task-id">NX-{task.id.slice(0, 4).toUpperCase()}</span>
+        <span className="task-id">
+          {" "}
+          ·{" "}
+          {task.status === "done"
+            ? assignment?.review?.outcome === "accepted"
+              ? "Accepted"
+              : "Completed manually"
+            : task.kind}
+        </span>
         <h3>{task.title}</h3>
         {task.description && <p>{task.description}</p>}
         {assignment && (
@@ -2860,9 +2877,12 @@ function TaskCard({
           )}
           <button
             type="button"
-            disabled={position === 0}
+            disabled={position === 0 || assignmentActive || task.status === "in_review"}
             onClick={() => {
-              void onMove(task, statuses[position - 1] ?? task.status);
+              void onMove(
+                task,
+                task.status === "done" ? "todo" : (statuses[position - 1] ?? task.status),
+              );
             }}
             aria-label="Move left"
           >
@@ -2870,9 +2890,12 @@ function TaskCard({
           </button>
           <button
             type="button"
-            disabled={position === statuses.length - 1}
+            disabled={position === statuses.length - 1 || Boolean(assignment)}
             onClick={() => {
-              void onMove(task, statuses[position + 1] ?? task.status);
+              void onMove(
+                task,
+                task.status === "in_progress" ? "done" : (statuses[position + 1] ?? task.status),
+              );
             }}
             aria-label="Move right"
           >
@@ -2892,6 +2915,7 @@ function TaskProcessDialog({
   onEdit,
   onDelete,
   onStopped,
+  onReviewed,
 }: {
   task: Task;
   data: BootstrapData;
@@ -2900,6 +2924,7 @@ function TaskProcessDialog({
   onEdit: (task: Task) => void;
   onDelete: (task: Task) => void;
   onStopped: () => Promise<void>;
+  onReviewed: () => Promise<void>;
 }) {
   const [process, setProcess] = useState<TaskProcessData>();
   const [loadError, setLoadError] = useState<string>();
@@ -2994,7 +3019,7 @@ function TaskProcessDialog({
         <div className="task-process">
           <div className="task-process-summary">
             <div>
-              <span>Status</span>
+              <span>Run status</span>
               <strong className={`task-process-status status-${assignment?.status ?? "idle"}`}>
                 {isActive && <LoaderCircle className="spin" size={13} />}
                 {assignment?.status === "completed" && <Check size={13} />}
@@ -3146,6 +3171,16 @@ function TaskProcessDialog({
                   </Suspense>
                 </section>
               )}
+
+              <TaskReview
+                key={`${assignment.id}-${process.task.revision}`}
+                task={process.task}
+                assignment={assignment}
+                onReviewed={async () => {
+                  await loadProcess();
+                  await onReviewed();
+                }}
+              />
 
               {assignment.status === "failed" && (
                 <div className="run-error task-process-error">
@@ -4143,6 +4178,9 @@ function TaskDialog({
 }) {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string>();
+  const [criteria, setCriteria] = useState(() =>
+    (task?.acceptanceCriteria ?? []).map((item) => ({ ...item, key: crypto.randomUUID() })),
+  );
   return (
     <Modal
       title={task ? `Edit ${task.title}` : "Create task"}
@@ -4159,9 +4197,16 @@ function TaskDialog({
             await api(task ? `/api/tasks/${encodeURIComponent(task.id)}` : "/api/tasks", {
               method: task ? "PATCH" : "POST",
               body: JSON.stringify({
-                ...(task ? {} : { workspaceId: data.workspace.id }),
+                ...(task
+                  ? { expectedRevision: task.revision }
+                  : { workspaceId: data.workspace.id }),
                 title: String(fields.get("title") ?? ""),
                 description: String(fields.get("description") ?? ""),
+                kind: String(fields.get("kind") ?? "mixed"),
+                acceptanceCriteria: criteria.map(({ behavior, verification }) => ({
+                  behavior,
+                  verification,
+                })),
                 status: String(fields.get("status") ?? initialStatus),
                 assigneeId: String(fields.get("assigneeId") ?? "") || null,
                 threadId: String(fields.get("threadId") ?? "") || null,
@@ -4200,6 +4245,7 @@ function TaskDialog({
             <select name="status" aria-label="Column" defaultValue={task?.status ?? initialStatus}>
               <option value="todo">To do</option>
               <option value="in_progress">In progress</option>
+              {task?.status === "in_review" && <option value="in_review">In review</option>}
               <option value="done">Done</option>
             </select>
           </Field>
@@ -4216,6 +4262,73 @@ function TaskDialog({
             </select>
           </Field>
         </div>
+        <Field label="Work type">
+          <select name="kind" aria-label="Work type" defaultValue={task?.kind ?? "mixed"}>
+            <option value="mixed">Mixed work</option>
+            <option value="research">Research</option>
+            <option value="document">Document</option>
+            <option value="design">Design</option>
+            <option value="code">Code</option>
+          </select>
+        </Field>
+        <section className="task-criteria-editor" aria-label="Acceptance criteria">
+          <strong>Acceptance criteria</strong>
+          <p className="form-hint">Describe observable behavior and how a reviewer can check it.</p>
+          {criteria.map((criterion, index) => (
+            <div key={criterion.key}>
+              <input
+                aria-label={`Criterion ${index + 1}`}
+                value={criterion.behavior}
+                required
+                maxLength={400}
+                placeholder="What must be true?"
+                onChange={(event) =>
+                  setCriteria((items) =>
+                    items.map((item) =>
+                      item.key === criterion.key ? { ...item, behavior: event.target.value } : item,
+                    ),
+                  )
+                }
+              />
+              <input
+                aria-label={`Verification ${index + 1}`}
+                value={criterion.verification}
+                required
+                maxLength={400}
+                placeholder="How will you verify it?"
+                onChange={(event) =>
+                  setCriteria((items) =>
+                    items.map((item) =>
+                      item.key === criterion.key
+                        ? { ...item, verification: event.target.value }
+                        : item,
+                    ),
+                  )
+                }
+              />
+              <button
+                type="button"
+                onClick={() =>
+                  setCriteria((items) => items.filter((item) => item.key !== criterion.key))
+                }
+              >
+                Remove criterion {index + 1}
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            disabled={criteria.length >= 10}
+            onClick={() =>
+              setCriteria((items) => [
+                ...items,
+                { key: crypto.randomUUID(), behavior: "", verification: "" },
+              ])
+            }
+          >
+            Add acceptance criterion
+          </button>
+        </section>
         <Field label="Linked thread" optional>
           <select name="threadId" aria-label="Linked thread" defaultValue={task?.threadId ?? ""}>
             <option value="">No linked thread</option>

@@ -27,10 +27,23 @@ Original checkout is clean and remains on `master`.
   with no console errors. Browser runner was an explicit offline fixture, not a live provider.
 - Mermaid canonical schema validation and static lint passed; no renderer acceptance claimed.
 
-## Current WIP: general work units and independent acceptance
+## Completed checkpoint: task contracts and human acceptance
 
-Next inspect the existing task/assignment lifecycle, add a review state and version-bound acceptance,
-then support isolated non-Git work. Preserve legacy data and explicit mention-only invocation.
+- Typed research/document/design/code tasks, structured criteria, revisioned task requirements,
+  frozen per-assignment contracts, atomic WIP per task, and dispatch revision comparison.
+- Successful Workers move tasks to In review; only a separate human review with criterion evidence
+  can accept an assigned task. Changes requested reopens it; prior reviews remain immutable.
+- Added review API, Taskboard column, criterion editor, explicit manual-completion label and review UI.
+  Browser QA caught and fixed a misleading stopped-process toast and unreadable light-theme text.
+- `pnpm check` passed at 19:38 UTC: 159 tests, lint, types and build. After the final header-color-only
+  fix, production Vite build and browser visual QA passed; no browser errors. Offline fixtures only.
+- ADR 0018 documents limits: human observations are not executable checks; artifact snapshots and
+  full-access-agent isolation are still outstanding.
+
+## Current WIP: general execution environments and durable delegation
+
+Unify manual and Master assignment paths, persist explicit manual mentions, support non-Git
+work directories and inspectable outputs, and let new sessions discover existing tasks.
 
 ## Subsequent work, after current WIP passes
 
@@ -63,9 +76,9 @@ as established facts. Validate important mechanisms against primary engineering 
 
 ## Active preview and tooling
 
-- Preview process session: 22915; loopback port 4387. Script: `/private/tmp/nexestra-ui-preview.mts`.
-- Preview data: `/private/tmp/nexestra-preview-data-fYJAlP`, disposable and independent of user data.
-- CUA browser binding `browser`, tab `tab` (id 1); viewport reset after QA. Browser is hidden.
+- Preview process session: 41338; loopback port 4387. Script: `/private/tmp/nexestra-ui-preview.mts`.
+- Preview data: `/private/tmp/nexestra-preview-data-lnmmKX`, disposable and independent of user data.
+- CUA binding `tab` (id "1", browser id "1"); session reset during QA, browser handle not currently bound. Browser is hidden.
 - Source schema tooling: `PYTHONPATH=/private/tmp/nexestra-schema-validator python3` (jsonschema 4.25.1).
 - Anthropic primary source read: `/private/tmp/nexestra-primary-long-running.html`. Its guidance is
   coding-focused; applying it to other domains is explicitly a design inference.

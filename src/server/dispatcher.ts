@@ -12,6 +12,7 @@ import {
   type ToolCall,
   type WorkAssignment,
 } from "../shared/contracts.js";
+import { formatTaskCriteria } from "../shared/task-contract.js";
 import { type AssignmentRepositoryManager, RepositoryManager } from "./repository-manager.js";
 import {
   type AgentInvocation,
@@ -372,6 +373,8 @@ export class AgentDispatcher {
                   workspaceId: thread.workspaceId,
                   title: step.title,
                   description: [title, step.description].filter(Boolean).join("\n\n"),
+                  kind: step.kind,
+                  acceptanceCriteria: step.acceptanceCriteria,
                   status: "todo",
                   assigneeId: null,
                   threadId: thread.id,
@@ -490,8 +493,11 @@ export class AgentDispatcher {
         .some(
           (assignment) =>
             assignment.taskId === task.id &&
-            assignment.status !== "failed" &&
-            assignment.status !== "interrupted",
+            (assignment.status === "queued" ||
+              assignment.status === "running" ||
+              (assignment.status === "completed" &&
+                !assignment.review &&
+                assignment.contract?.revision === task.revision)),
         )
     ) {
       throw new StoreError("conflict", "This task already has an active assignment.");
@@ -539,7 +545,7 @@ export class AgentDispatcher {
     this.runControllers.set(id, controller);
 
     try {
-      await this.store.createAssignment(assignment);
+      await this.store.createAssignment(assignment, task.revision);
       await this.store.updateTask(task.id, { status: "in_progress", assigneeId: worker.id });
 
       // Start the worker directly
@@ -561,6 +567,7 @@ export class AgentDispatcher {
             ``,
             `Task: ${task.title}`,
             task.description,
+            formatTaskCriteria(task),
             `Repository: #${knowledge.handle}`,
             `Worktree: ${location.absolutePath}`,
           ].join("\n\n"),
@@ -596,7 +603,6 @@ export class AgentDispatcher {
           status: "completed",
           result: response.slice(0, 20_000),
         });
-        await this.store.updateTask(task.id, { status: "done" });
         this.notifyThread(thread.id, true);
 
         const result = await this.store.listAssignments();
@@ -632,8 +638,11 @@ export class AgentDispatcher {
         .some(
           (assignment) =>
             assignment.taskId === task.id &&
-            assignment.status !== "failed" &&
-            assignment.status !== "interrupted",
+            (assignment.status === "queued" ||
+              assignment.status === "running" ||
+              (assignment.status === "completed" &&
+                !assignment.review &&
+                assignment.contract?.revision === task.revision)),
         )
     ) {
       throw new StoreError("conflict", "This planned task already has an assignment.");
@@ -685,7 +694,7 @@ export class AgentDispatcher {
     };
     let workerRunPersisted = false;
     try {
-      assignment = await this.store.createAssignment(assignment);
+      assignment = await this.store.createAssignment(assignment, task.revision);
       controller.signal.throwIfAborted();
       await this.store.updateTask(task.id, { status: "in_progress", assigneeId: worker.id });
       controller.signal.throwIfAborted();
@@ -726,6 +735,7 @@ export class AgentDispatcher {
               `Assigned by @${master.handle}.`,
               `Task: ${task.title}`,
               task.description,
+              formatTaskCriteria(task),
               `Repository: #${knowledge.handle}`,
               `Worktree: ${location.absolutePath}`,
               "Implement the task, verify the result, and commit your changes on the assigned branch. Do not merge or push.",
@@ -775,7 +785,7 @@ export class AgentDispatcher {
 
           // Post a summary message from the Master
           const summaryMessage = [
-            `## Worker @${worker.handle} completed task: **${task.title}**`,
+            `## Worker @${worker.handle} submitted for review: **${task.title}**`,
             "",
             `> ${response.slice(0, 500)}${response.length > 500 ? "..." : ""}`,
             "",
@@ -802,7 +812,6 @@ export class AgentDispatcher {
         result: result.slice(0, 20_000),
       });
       controller.signal.throwIfAborted();
-      await this.store.updateTask(task.id, { status: "done" });
       controller.signal.throwIfAborted();
       this.notifyThread(thread.id, true);
       return { assignment, result };

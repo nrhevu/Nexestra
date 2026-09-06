@@ -33,9 +33,12 @@ import {
   type KnowledgeRepository,
   type Message,
   MessageSchema,
+  ReviewTaskSchema,
   RunSchema,
   SaveWorkBriefSchema,
   type Task,
+  TaskContractSchema,
+  TaskReviewSchema,
   TaskSchema,
   type Thread,
   type ThreadData,
@@ -1010,6 +1013,8 @@ export class FileStore {
         workspaceId,
         title: input.title,
         description: input.description,
+        kind: input.kind,
+        acceptanceCriteria: input.acceptanceCriteria,
         status: input.status,
         assigneeId: input.assigneeId,
         threadId: input.threadId,
@@ -1028,12 +1033,56 @@ export class FileStore {
       const index = this.state.tasks.findIndex((task) => task.id === id);
       const current = this.state.tasks[index];
       if (!current) throw new StoreError("not_found", "Task not found.");
+      if (input.expectedRevision !== undefined && input.expectedRevision !== current.revision) {
+        throw new StoreError(
+          "conflict",
+          "The task requirements changed. Reload the task before editing.",
+        );
+      }
+      const assignments = this.state.assignments.filter((entry) => entry.taskId === id);
+      const active = assignments.some(
+        (entry) => entry.status === "queued" || entry.status === "running",
+      );
+      const contractChanged = [
+        "title",
+        "description",
+        "kind",
+        "acceptanceCriteria",
+        "threadId",
+      ].some((key) => {
+        const field = key as keyof typeof input & keyof Task;
+        return (
+          input[field] !== undefined &&
+          JSON.stringify(input[field]) !== JSON.stringify(current[field])
+        );
+      });
+      if (active && (contractChanged || (input.status && input.status !== "in_progress"))) {
+        throw new StoreError(
+          "conflict",
+          "Stop the active assignment before changing this task's requirements or status.",
+        );
+      }
+      if (input.status === "done" && current.status !== "done" && assignments.length > 0) {
+        throw new StoreError(
+          "invalid",
+          "Review the Worker result against its acceptance criteria to complete this task.",
+        );
+      }
+      if (input.status === "in_review" && current.status !== "in_review") {
+        throw new StoreError(
+          "invalid",
+          "Only a completed Worker assignment can move a task into review.",
+        );
+      }
       const assigneeId = input.assigneeId === undefined ? current.assigneeId : input.assigneeId;
       const threadId = input.threadId === undefined ? current.threadId : input.threadId;
       this.validateReferences(current.workspaceId, assigneeId, threadId);
       const updated = TaskSchema.parse({
         ...current,
         ...input,
+        revision: current.revision + (contractChanged ? 1 : 0),
+        status:
+          contractChanged && assignments.length > 0 ? "todo" : (input.status ?? current.status),
         updatedAt: new Date().toISOString(),
       });
       this.state.tasks[index] = updated;
@@ -1065,12 +1114,52 @@ export class FileStore {
     });
   }
 
-  async createAssignment(input: WorkAssignment): Promise<WorkAssignment> {
+  async createAssignment(
+    input: WorkAssignment,
+    expectedTaskRevision?: number,
+  ): Promise<WorkAssignment> {
     const assignment = WorkAssignmentSchema.parse(input);
     return this.withWrite(async () => {
       if (this.state.assignments.some((entry) => entry.id === assignment.id)) {
         throw new StoreError("conflict", "Assignment already exists.");
       }
+      const task = this.state.tasks.find((entry) => entry.id === assignment.taskId);
+      if (
+        !task ||
+        task.workspaceId !== assignment.workspaceId ||
+        task.threadId !== assignment.threadId
+      ) {
+        throw new StoreError(
+          "invalid",
+          "An assignment must belong to its task's workspace and thread.",
+        );
+      }
+      if (task.status === "done")
+        throw new StoreError("conflict", "Reopen this task before starting another assignment.");
+      if (expectedTaskRevision !== undefined && task.revision !== expectedTaskRevision) {
+        throw new StoreError(
+          "conflict",
+          "The task changed before dispatch. Read its current requirements and try again.",
+        );
+      }
+      if (
+        this.state.assignments.some(
+          (entry) =>
+            entry.taskId === task.id &&
+            (entry.status === "queued" ||
+              entry.status === "running" ||
+              (entry.status === "completed" &&
+                !entry.review &&
+                entry.contract?.revision === task.revision)),
+        )
+      ) {
+        throw new StoreError(
+          "conflict",
+          "Finish or review this task's current assignment before starting another.",
+        );
+      }
+      assignment.contract = TaskContractSchema.parse(task);
+      delete assignment.review;
       this.state.assignments.push(assignment);
       await this.writeState();
       return structuredClone(assignment);
@@ -1085,14 +1174,97 @@ export class FileStore {
       const index = this.state.assignments.findIndex((assignment) => assignment.id === id);
       const current = this.state.assignments[index];
       if (!current) throw new StoreError("not_found", "Assignment not found.");
+      if (current.review)
+        throw new StoreError(
+          "conflict",
+          "A reviewed assignment is immutable. Start a new assignment for revisions.",
+        );
       const next = WorkAssignmentSchema.parse({
         ...current,
         ...update,
         updatedAt: new Date().toISOString(),
       });
       this.state.assignments[index] = next;
+      const task = this.state.tasks.find((entry) => entry.id === next.taskId);
+      if (task && next.status === "completed" && task.revision === next.contract?.revision) {
+        task.status = "in_review";
+        task.updatedAt = next.updatedAt;
+      }
       await this.writeState();
       return structuredClone(next);
+    });
+  }
+
+  async reviewTask(id: string, rawInput: unknown): Promise<Task> {
+    const input = ReviewTaskSchema.parse(rawInput);
+    return this.withWrite(async () => {
+      const nextState = structuredClone(this.state);
+      const task = nextState.tasks.find((entry) => entry.id === id);
+      if (!task) throw new StoreError("not_found", "Task not found.");
+      const assignments = nextState.assignments.filter((entry) => entry.taskId === id);
+      const assignment = assignments.find((entry) => entry.id === input.assignmentId);
+      if (
+        !assignment ||
+        assignments.at(-1)?.id !== assignment.id ||
+        assignment.status !== "completed"
+      ) {
+        throw new StoreError(
+          "conflict",
+          "Only the latest completed assignment can be reviewed. Reload the task process.",
+        );
+      }
+      if (assignment.review)
+        throw new StoreError(
+          "conflict",
+          "This assignment already has a review. Start a new assignment for revisions.",
+        );
+      if (
+        task.revision !== input.expectedRevision ||
+        assignment.contract?.revision !== task.revision
+      ) {
+        throw new StoreError(
+          "conflict",
+          "The requirements changed after this assignment. Run the current task before accepting its result.",
+        );
+      }
+      const criteria = assignment.contract.acceptanceCriteria;
+      const indexes = new Set(input.evidence.map((item) => item.criterionIndex));
+      if (
+        indexes.size !== input.evidence.length ||
+        input.evidence.some((item) => item.criterionIndex >= criteria.length)
+      ) {
+        throw new StoreError(
+          "invalid",
+          "Each evidence entry must reference a different acceptance criterion.",
+        );
+      }
+      if (
+        input.outcome === "accepted" &&
+        (criteria.length === 0 || indexes.size !== criteria.length)
+      ) {
+        throw new StoreError(
+          "invalid",
+          "Record an observation for every acceptance criterion before accepting this result.",
+        );
+      }
+      const now = new Date().toISOString();
+      assignment.review = TaskReviewSchema.parse({
+        ...input,
+        id: crypto.randomUUID(),
+        reviewedBy: "local-user",
+        notes: this.redactSecrets(input.notes),
+        evidence: input.evidence.map((item) => ({
+          ...item,
+          observation: this.redactSecrets(item.observation),
+        })),
+        createdAt: now,
+      });
+      assignment.updatedAt = now;
+      task.status = input.outcome === "accepted" ? "done" : "todo";
+      task.updatedAt = now;
+      await this.writeState(nextState);
+      this.state = nextState;
+      return structuredClone(task);
     });
   }
 

@@ -266,6 +266,9 @@ describe("Master harness tools", () => {
           workspaceId: "workspace",
           title: step.title,
           description: step.description,
+          kind: step.kind ?? "mixed",
+          revision: 1,
+          acceptanceCriteria: step.acceptanceCriteria ?? [],
           status: "todo" as const,
           assigneeId: null,
           threadId: "thread",
@@ -309,7 +312,16 @@ describe("Master harness tools", () => {
       await expect(
         callSession(session, "plan", {
           title: "Implementation plan",
-          steps: [{ title: "Build feature", description: "Meet the acceptance criteria." }],
+          steps: [
+            {
+              title: "Build feature",
+              description: "Meet the acceptance criteria.",
+              kind: "code",
+              acceptanceCriteria: [
+                { behavior: "Feature works", verification: "Run the acceptance test" },
+              ],
+            },
+          ],
         }),
       ).resolves.toContain(taskId);
       expect(session.pendingTaskIds()).toEqual([taskId]);

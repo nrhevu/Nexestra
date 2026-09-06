@@ -33,7 +33,7 @@ import type {
   ToolPermission,
   ToolQuestion,
 } from "../shared/contracts.js";
-import { SaveWorkBriefSchema } from "../shared/contracts.js";
+import { SaveWorkBriefSchema, TaskCriteriaSchema, TaskKindSchema } from "../shared/contracts.js";
 import { loadCustomTools } from "./custom-tools.js";
 import {
   configuredPermission,
@@ -353,7 +353,7 @@ function builtInTools(
     ),
     zodTool(
       "plan",
-      "Create the required execution plan as durable Taskboard tasks before delegating work.",
+      "Create durable tasks before delegating. Every task needs observable behavior and a verification method. Worker completion submits a result for independent review; it never accepts the task.",
       "todowrite",
       objectSchema(
         {
@@ -367,8 +367,10 @@ function builtInTools(
               properties: {
                 title: stringProperty("Concrete task title."),
                 description: stringProperty("Acceptance criteria and implementation scope."),
+                kind: z.toJSONSchema(TaskKindSchema),
+                acceptanceCriteria: z.toJSONSchema(TaskCriteriaSchema.unwrap().min(1)),
               },
-              required: ["title", "description"],
+              required: ["title", "description", "kind", "acceptanceCriteria"],
               additionalProperties: false,
             },
           },
@@ -382,6 +384,8 @@ function builtInTools(
             z.object({
               title: z.string().trim().min(1).max(160),
               description: z.string().trim().min(1).max(1_800),
+              kind: TaskKindSchema,
+              acceptanceCriteria: TaskCriteriaSchema.unwrap().min(1),
             }),
           )
           .min(1)
