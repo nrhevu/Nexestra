@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { basename, join } from "node:path";
 import {
   type Agent,
   type AgentRun,
@@ -12,6 +15,9 @@ import {
   type ToolCall,
   type WorkAssignment,
 } from "../shared/contracts.js";
+import { formatTaskCriteria } from "../shared/task-contract.js";
+import { formatWorkBrief } from "../shared/work-brief.js";
+import { collectAssignmentOutputs } from "./assignment-outputs.js";
 import { type AssignmentRepositoryManager, RepositoryManager } from "./repository-manager.js";
 import {
   type AgentInvocation,
@@ -19,11 +25,18 @@ import {
   agentView,
   type RuntimeToolUpdate,
 } from "./runtime.js";
-import { type FileStore, StoreError, type UploadArtifactInput } from "./store.js";
+import {
+  type AgentArtifact,
+  type FileStore,
+  StoreError,
+  type UploadArtifactInput,
+} from "./store.js";
 
 export class AgentDispatcher {
   private readonly queues = new Map<string, Promise<void>>();
   private readonly busy = new Set<string>();
+  private readonly assignmentExecutions = new Set<Promise<void>>();
+  private readonly assignmentListeners = new Set<(assignmentId: string) => void>();
   private readonly pendingEnqueues = new Map<string, number>();
   private readonly deletingAgentIds = new Set<string>();
   private readonly retryingRunIds = new Set<string>();
@@ -53,6 +66,11 @@ export class AgentDispatcher {
     return new Set(this.busy);
   }
 
+  subscribeAssignmentEnd(listener: (assignmentId: string) => void): () => void {
+    this.assignmentListeners.add(listener);
+    return () => this.assignmentListeners.delete(listener);
+  }
+
   activeRuns(workspaceId?: string): AgentRun[] {
     return [...this.liveRuns.values()]
       .filter((run) => {
@@ -62,22 +80,38 @@ export class AgentDispatcher {
       .map((run) => structuredClone(run));
   }
 
-  async taskProcess(taskId: string): Promise<TaskProcessData> {
+  async taskProcess(taskId: string, selectedAssignmentId?: string): Promise<TaskProcessData> {
     const task = this.store.getTask(taskId);
     if (!task) throw new StoreError("not_found", "Task not found.");
-    const assignment = this.store
-      .listAssignments(task.workspaceId)
-      .find((entry) => entry.taskId === task.id);
-    if (!assignment) return { task, toolCalls: [] };
+    const assignments = this.store.taskAssignments(task.id);
+    const assignment = selectedAssignmentId
+      ? assignments.find((entry) => entry.id === selectedAssignmentId)
+      : assignments[0];
+    if (selectedAssignmentId && !assignment)
+      throw new StoreError("not_found", "Attempt not found for this task.");
+    const attempts = assignments.map((entry, index) => ({
+      id: entry.id,
+      ordinal: assignments.length - index,
+      status: entry.status,
+      createdAt: entry.createdAt,
+      contractRevision: entry.contract?.revision ?? null,
+      ...(entry.review ? { reviewOutcome: entry.review.outcome } : {}),
+    }));
+    if (!assignment) return { task, toolCalls: [], attempts, isLatestAttempt: true };
     const thread = await this.store.threadData(assignment.threadId);
     const run = thread.runs.find((entry) => entry.id === assignment.id);
     const activity = this.liveActivities.get(assignment.id);
     return {
       task,
+      attempts,
+      isLatestAttempt: assignment.id === assignments[0]?.id,
       assignment,
       ...(run ? { run } : {}),
       ...(activity ? { activity: structuredClone(activity) } : {}),
       toolCalls: thread.toolCalls.filter((toolCall) => toolCall.runId === assignment.id),
+      artifacts: thread.artifacts.filter(
+        (artifact) => artifact.messageId === assignment.resultMessageId,
+      ),
     };
   }
 
@@ -250,8 +284,8 @@ export class AgentDispatcher {
   }
 
   async waitForIdle(): Promise<void> {
-    while (this.queues.size > 0) {
-      await Promise.all([...this.queues.values()]);
+    while (this.queues.size > 0 || this.assignmentExecutions.size > 0) {
+      await Promise.all([...this.queues.values(), ...this.assignmentExecutions]);
     }
   }
 
@@ -283,10 +317,11 @@ export class AgentDispatcher {
       this.notifyThread(running.threadId, true);
       const thread = this.store.getThread(run.threadId);
       if (!thread) throw new StoreError("not_found", "Thread not found.");
-      const [transcriptSnapshot, artifacts, knowledge] = await Promise.all([
+      const [transcriptSnapshot, artifacts, knowledge, workBrief] = await Promise.all([
         this.store.transcriptSnapshot(run.threadId),
         this.store.agentArtifacts(run.threadId, trigger.id),
         this.store.agentKnowledge(trigger),
+        this.store.getWorkBrief(run.threadId),
       ]);
       const pendingInteractions = new Map<string, "waiting_approval" | "waiting_input">();
       let runStatusQueue: Promise<void> = Promise.resolve();
@@ -318,6 +353,7 @@ export class AgentDispatcher {
         trigger,
         transcriptPath: this.store.transcriptPath(run.threadId),
         transcriptSnapshot,
+        workBrief,
         artifacts,
         knowledge,
         toolHooks: {
@@ -370,6 +406,8 @@ export class AgentDispatcher {
                   workspaceId: thread.workspaceId,
                   title: step.title,
                   description: [title, step.description].filter(Boolean).join("\n\n"),
+                  kind: step.kind,
+                  acceptanceCriteria: step.acceptanceCriteria,
                   status: "todo",
                   assigneeId: null,
                   threadId: thread.id,
@@ -378,6 +416,60 @@ export class AgentDispatcher {
             }
             this.notifyThread(run.threadId, true);
             return tasks;
+          },
+          readWorkBrief: () => this.store.getWorkBrief(thread.id),
+          readHistory: (input) => this.store.readHistory(thread.id, input),
+          readWorkGoals: async () =>
+            this.store.listGoals(thread.workspaceId).filter((goal) => goal.threadId === thread.id),
+          createWorkGoal: async (input) => {
+            const goal = await this.store.createGoal({ ...input, threadId: thread.id }, agent.id);
+            this.notifyThread(thread.id, true);
+            return goal;
+          },
+          readSurfaces: async () => this.store.listSurfaces(thread.workspaceId),
+          readSurface: async (id) => {
+            this.store.readSurfaceContext(id, [], agent.id);
+            const surface = this.store.getSurface(id);
+            if (!surface) throw new StoreError("not_found", "Surface not found.");
+            return surface;
+          },
+          createSurface: async (input) => {
+            const surface = await this.store.createSurface(
+              { ...input, workspaceId: thread.workspaceId },
+              agent.id,
+            );
+            this.notifyThread(thread.id, true);
+            return surface;
+          },
+          updateSurface: async (id, input) => {
+            const surface = await this.store.updateSurface(id, input, agent.id);
+            this.notifyThread(thread.id, true);
+            return surface;
+          },
+          saveSurfaceRecord: async (id, input) => {
+            const surface = await this.store.saveSurfaceRecord(id, input, agent.id);
+            this.notifyThread(thread.id, true);
+            return surface;
+          },
+          archiveSurfaceRecord: async (id, recordId, input) => {
+            const surface = await this.store.archiveSurfaceRecord(id, recordId, input, agent.id);
+            this.notifyThread(thread.id, true);
+            return surface;
+          },
+          readTasks: async () =>
+            this.store
+              .listTasks(thread.workspaceId)
+              .filter((task) => task.threadId === thread.id)
+              .map((task) => ({
+                task,
+                assignment: this.store
+                  .listAssignments(thread.workspaceId)
+                  .find((entry) => entry.taskId === task.id),
+              })),
+          saveWorkBrief: async (input) => {
+            const brief = await this.store.saveWorkBrief(thread.id, input, agent.id);
+            this.notifyThread(thread.id, true);
+            return brief;
           },
           delegate: (input) =>
             this.delegateWork(currentRun, agent, trigger, transcriptSnapshot, input),
@@ -463,169 +555,86 @@ export class AgentDispatcher {
     }
   }
 
-  // Manual delegation from Taskboard (without a Master run)
+  // A Taskboard action is an explicit, persisted user mention, then uses the same Worker queue.
   async delegateFromTask(
     taskId: string,
     workerHandle: string,
-    repositoryHandle: string,
+    repositoryHandle?: string,
+    expectedRevision?: number,
+    goalId?: string,
   ): Promise<WorkAssignment> {
     const task = this.store.getTask(taskId);
     if (!task) throw new StoreError("not_found", "Task not found.");
-    if (!task.threadId) throw new StoreError("invalid", "Task must be linked to a thread.");
-    const thread = this.store.getThread(task.threadId);
-    if (!thread) throw new StoreError("not_found", "Thread not found.");
-
-    // Check if already assigned
-    if (
-      this.store
-        .listAssignments(thread.workspaceId)
-        .some(
-          (assignment) =>
-            assignment.taskId === task.id &&
-            assignment.status !== "failed" &&
-            assignment.status !== "interrupted",
-        )
-    ) {
-      throw new StoreError("conflict", "This task already has an active assignment.");
-    }
-
-    const worker = this.store.findAgentByHandle(workerHandle, thread.workspaceId);
-    if (worker?.kind !== "worker" || !worker.enabled || worker.archived) {
-      throw new StoreError("invalid", `@${workerHandle} is not an available Worker.`);
-    }
-
-    const knowledge = this.store.findKnowledgeByHandle(repositoryHandle, thread.workspaceId);
-    if (knowledge?.kind !== "repository") {
-      throw new StoreError("invalid", `#${repositoryHandle} is not a repository.`);
-    }
-    if (knowledge.status !== "ready") {
+    if (!task.threadId)
+      throw new StoreError("invalid", "Link this task to a thread before starting a Worker.");
+    if (expectedRevision !== undefined && task.revision !== expectedRevision)
       throw new StoreError(
-        "invalid",
-        `#${knowledge.handle} is not ready for delegation (status: ${knowledge.status}).`,
+        "conflict",
+        "The task changed. Reload its requirements before starting a Worker.",
       );
-    }
-
-    const location = this.repositories.assignmentLocation(thread.workspaceId, crypto.randomUUID());
-    const now = new Date().toISOString();
-    const id = crypto.randomUUID();
-
-    const assignment: WorkAssignment = {
-      id,
-      workspaceId: thread.workspaceId,
-      taskId: task.id,
-      threadId: thread.id,
-      masterRunId: "", // No master run for manual delegation
-      workerAgentId: worker.id,
-      repositoryId: knowledge.id,
-      status: "queued",
-      branch: location.branch,
-      worktreePath: location.worktreePath,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    const release = this.reserveAgent(worker.id);
-    if (!release) throw new StoreError("conflict", `@${worker.handle} is being deleted.`);
-
-    const controller = new AbortController();
-    this.runControllers.set(id, controller);
-
-    try {
-      await this.store.createAssignment(assignment);
-      await this.store.updateTask(task.id, { status: "in_progress", assigneeId: worker.id });
-
-      // Start the worker directly
-      this.busy.add(worker.id);
-      this.notifyThread(thread.id, true);
-
-      try {
-        await this.repositories.prepareAssignment(knowledge, location, controller.signal);
-        await this.store.updateAssignment(assignment.id, { status: "running" });
-
-        // Get or create a system trigger message
-        const trigger: Message = {
-          id: id,
-          threadId: thread.id,
-          sequence: 0,
-          author: { kind: "user", id: "local-user", name: "User" },
-          content: [
-            `**Manual delegation from Taskboard**`,
-            ``,
-            `Task: ${task.title}`,
-            task.description,
-            `Repository: #${knowledge.handle}`,
-            `Worktree: ${location.absolutePath}`,
-          ].join("\n\n"),
-          mentions: [{ agentId: worker.id, handle: worker.handle }],
-          knowledgeReferences: [{ knowledgeId: knowledge.id, handle: knowledge.handle }],
-          artifactIds: [],
-          createdAt: now,
-        };
-
-        const rawResponse = (
-          await this.runner.invoke(worker, {
-            runId: id,
-            thread,
-            trigger,
-            transcriptPath: this.store.transcriptPath(thread.id),
-            transcriptSnapshot: "",
-            knowledge: [{ item: knowledge, localPath: location.absolutePath }],
-            workingDirectory: location.absolutePath,
-            mode: "task",
-            signal: controller.signal,
-            activityHooks: {
-              status: () => {},
-              thinking: () => {},
-              text: () => {},
-              tool: async () => {},
-            },
-          })
-        ).trim();
-        const response = this.store.redactSecrets(rawResponse);
-
-        await this.store.createAgentMessage(thread.id, worker, response, trigger.id);
-        await this.store.updateAssignment(assignment.id, {
-          status: "completed",
-          result: response.slice(0, 20_000),
-        });
-        await this.store.updateTask(task.id, { status: "done" });
-        this.notifyThread(thread.id, true);
-
-        const result = await this.store.listAssignments();
-        const finalAssignment = result.find((a) => a.id === id);
-        if (!finalAssignment) throw new StoreError("not_found", "Assignment not found.");
-        return finalAssignment;
-      } finally {
-        this.busy.delete(worker.id);
-      }
-    } finally {
-      this.runControllers.delete(id);
-      release();
-    }
+    const worker = this.store.findAgentByHandle(workerHandle, task.workspaceId);
+    if (worker?.kind !== "worker" || !worker.enabled || worker.archived)
+      throw new StoreError("invalid", `@${workerHandle} is not an available Worker.`);
+    const trigger = await this.store.createUserMessage(
+      task.threadId,
+      `@${worker.handle} Work on task: ${task.title} (revision ${task.revision}).${repositoryHandle ? ` Use #${repositoryHandle}.` : " Use an isolated workspace directory."}${goalId ? `\nAuthorized goal ${goalId}: ${this.store.getGoal(goalId)?.objective ?? "Goal unavailable"}. Submit this task for independent review; the host controls continuation.` : ""}`,
+      [{ agentId: worker.id, handle: worker.handle }],
+    );
+    const snapshot = await this.store.transcriptSnapshot(task.threadId);
+    return new Promise<WorkAssignment>((resolve, reject) => {
+      const execution = this.delegateWork(
+        undefined,
+        undefined,
+        trigger,
+        snapshot,
+        { taskId, workerHandle, repositoryHandle, expectedRevision: task.revision, goalId },
+        resolve,
+      );
+      const tracked = execution
+        .then(() => undefined, reject)
+        .finally(() => this.assignmentExecutions.delete(tracked));
+      this.assignmentExecutions.add(tracked);
+    });
   }
 
   private async delegateWork(
-    masterRun: AgentRun,
-    master: Agent,
+    masterRun: AgentRun | undefined,
+    master: Agent | undefined,
     trigger: Message,
     transcriptSnapshot: string,
-    input: { taskId: string; workerHandle: string; repositoryHandle: string },
+    input: {
+      taskId: string;
+      workerHandle: string;
+      repositoryHandle?: string;
+      expectedRevision?: number;
+      goalId?: string;
+    },
+    onQueued?: (assignment: WorkAssignment) => void,
   ): Promise<{ assignment: WorkAssignment; result: string }> {
-    if (master.kind !== "master") throw new StoreError("invalid", "Only Masters can delegate.");
-    const thread = this.store.getThread(masterRun.threadId);
+    if (master && master.kind !== "master")
+      throw new StoreError("invalid", "Only Masters can delegate.");
+    const thread = this.store.getThread(masterRun?.threadId ?? trigger.threadId);
     if (!thread) throw new StoreError("not_found", "Thread not found.");
     const task = this.store.getTask(input.taskId);
     if (!task || task.workspaceId !== thread.workspaceId || task.threadId !== thread.id) {
-      throw new StoreError("invalid", "Delegation must use a task from this run's plan.");
+      throw new StoreError("invalid", "Delegation must use a task from the current thread.");
     }
+    if (task.acceptanceCriteria.length === 0)
+      throw new StoreError(
+        "invalid",
+        "Add an acceptance criterion and verification method before starting this task.",
+      );
     if (
       this.store
         .listAssignments(thread.workspaceId)
         .some(
           (assignment) =>
             assignment.taskId === task.id &&
-            assignment.status !== "failed" &&
-            assignment.status !== "interrupted",
+            (assignment.status === "queued" ||
+              assignment.status === "running" ||
+              (assignment.status === "completed" &&
+                !assignment.review &&
+                assignment.contract?.revision === task.revision)),
         )
     ) {
       throw new StoreError("conflict", "This planned task already has an assignment.");
@@ -634,22 +643,40 @@ export class AgentDispatcher {
     if (worker?.kind !== "worker" || !worker.enabled || worker.archived) {
       throw new StoreError("invalid", `@${input.workerHandle} is not an available Worker.`);
     }
-    const knowledge = this.store.findKnowledgeByHandle(input.repositoryHandle, thread.workspaceId);
-    if (knowledge?.kind !== "repository") {
+    const knowledge = input.repositoryHandle
+      ? this.store.findKnowledgeByHandle(input.repositoryHandle, thread.workspaceId)
+      : undefined;
+    if (input.repositoryHandle && knowledge?.kind !== "repository")
       throw new StoreError("invalid", `#${input.repositoryHandle} is not a repository.`);
-    }
-    if (knowledge.status !== "ready") {
+    if (knowledge && knowledge.kind !== "repository")
+      throw new StoreError("invalid", "Choose a repository or an isolated directory.");
+    if (knowledge && knowledge.status !== "ready")
       throw new StoreError(
         "invalid",
         `#${knowledge.handle} is not ready for delegation (status: ${knowledge.status}).`,
       );
-    }
+    if (!knowledge && task.kind === "code")
+      throw new StoreError(
+        "invalid",
+        "Code tasks require a ready repository. Choose a repository or change the work type.",
+      );
+    if (input.expectedRevision !== undefined && task.revision !== input.expectedRevision)
+      throw new StoreError(
+        "conflict",
+        "The task changed before dispatch. Reload its requirements.",
+      );
+    const environment = knowledge ? "worktree" : "directory";
+    const workBrief =
+      task.sourceBrief ??
+      (input.goalId
+        ? this.store.getGoal(input.goalId)?.workBrief
+        : await this.store.getWorkBrief(thread.id));
     const release = this.reserveAgent(worker.id);
     if (!release) throw new StoreError("conflict", `@${worker.handle} is being deleted.`);
     const id = crypto.randomUUID();
     const controller = new AbortController();
     this.runControllers.set(id, controller);
-    const location = this.repositories.assignmentLocation(thread.workspaceId, id);
+    const location = this.repositories.assignmentLocation(thread.workspaceId, id, environment);
     const now = new Date().toISOString();
     let workerRun: AgentRun = {
       id,
@@ -666,9 +693,20 @@ export class AgentDispatcher {
       workspaceId: thread.workspaceId,
       taskId: task.id,
       threadId: thread.id,
-      masterRunId: masterRun.id,
+      masterRunId: masterRun?.id ?? "",
+      ...(input.goalId ? { goalId: input.goalId } : {}),
       workerAgentId: worker.id,
-      repositoryId: knowledge.id,
+      executionProfile: {
+        name: worker.name,
+        handle: worker.handle,
+        harness: worker.harness,
+        model: worker.model ?? null,
+        reasoningEffort: worker.reasoningEffort ?? null,
+        instructionsSha256: createHash("sha256").update(worker.instructions).digest("hex"),
+        capturedAt: now,
+      },
+      repositoryId: knowledge?.id ?? null,
+      environment,
       status: "queued",
       branch: location.branch,
       worktreePath: location.worktreePath,
@@ -676,8 +714,16 @@ export class AgentDispatcher {
       updatedAt: now,
     };
     let workerRunPersisted = false;
+    let assignmentPersisted = false;
     try {
-      assignment = await this.store.createAssignment(assignment);
+      assignment = await this.store.createAssignment(assignment, task.revision);
+      assignmentPersisted = true;
+      const source = assignment.inputSource
+        ? this.store
+            .listAssignments(thread.workspaceId)
+            .find((entry) => entry.id === assignment.inputSource?.assignmentId)
+        : undefined;
+      const previousReview = source?.review;
       controller.signal.throwIfAborted();
       await this.store.updateTask(task.id, { status: "in_progress", assigneeId: worker.id });
       controller.signal.throwIfAborted();
@@ -695,12 +741,53 @@ export class AgentDispatcher {
         updatedAt: now,
       });
       this.notifyThread(thread.id, true);
+      onQueued?.(assignment);
       const result = await this.enqueueDelegation(worker.id, async () => {
         this.busy.add(worker.id);
         try {
           controller.signal.throwIfAborted();
-          this.updateActivity(workerRun, "thinking", "Preparing an isolated worktree");
+          this.updateActivity(workerRun, "thinking", "Preparing an isolated workspace");
+          const readiness = agentView(worker, await this.runner.runtimeStatus(), new Set());
+          if (readiness.readiness !== "ready")
+            throw new StoreError("invalid", readiness.readinessLabel);
           await this.repositories.prepareAssignment(knowledge, location, controller.signal);
+          const revisionArtifacts: AgentArtifact[] = [];
+          if (source && (source.outputs?.length ?? 0) > 0) {
+            const verified = await this.store.verifiedAssignmentOutputs(source.id);
+            const inputsDirectory = join(location.absolutePath, "inputs");
+            await mkdir(inputsDirectory, { mode: 0o700 });
+            for (const [index, { artifact, bytes }] of verified.entries()) {
+              controller.signal.throwIfAborted();
+              const name = `${String(index + 1).padStart(2, "0")}-${
+                basename(artifact.name.replaceAll("\\", "/"))
+                  .replace(/[^\p{L}\p{N}._-]/gu, "_")
+                  .slice(-120) || "deliverable"
+              }`;
+              const localPath = join(inputsDirectory, name);
+              await writeFile(localPath, bytes, { mode: 0o600, flag: "wx" });
+              revisionArtifacts.push({ artifact, localPath });
+            }
+          }
+          if (environment === "directory") {
+            await mkdir(join(location.absolutePath, "outputs"), { mode: 0o700 });
+            await writeFile(
+              join(location.absolutePath, "TASK.md"),
+              [
+                `# ${task.title}`,
+                task.description,
+                formatTaskCriteria(task),
+                formatWorkBrief(workBrief),
+                previousReview
+                  ? `Previous review: ${previousReview.notes}\n${previousReview.evidence.map((item) => item.observation).join("\n")}`
+                  : "",
+                revisionArtifacts.length
+                  ? "Prior reviewed deliverables are in inputs/. Read those copies, then save the revised deliverables in outputs/."
+                  : "",
+                "Save deliverable files in outputs/. Report checks and limitations. This run does not accept its own result.",
+              ].join("\n\n"),
+              { mode: 0o600, flag: "wx" },
+            );
+          }
           controller.signal.throwIfAborted();
           assignment = await this.store.updateAssignment(assignment.id, { status: "running" });
           workerRun = await this.store.updateRun({
@@ -713,20 +800,39 @@ export class AgentDispatcher {
           this.notifyThread(thread.id, true);
           const delegatedTrigger: Message = {
             ...trigger,
-            id: assignment.id,
             content: [
-              `Assigned by @${master.handle}.`,
+              master
+                ? `Assigned by @${master.handle}.`
+                : input.goalId
+                  ? `Assigned under authorized goal ${input.goalId}: ${this.store.getGoal(input.goalId)?.objective ?? "Goal unavailable"}`
+                  : "Assigned by the user from Taskboard.",
               `Task: ${task.title}`,
+              task.sourceBrief
+                ? `This task retains source Work Brief revision ${task.sourceBrief.revision}. Use the saved source context; the current task's explicit requirements take precedence. Report unresolved scope conflicts.`
+                : "",
               task.description,
-              `Repository: #${knowledge.handle}`,
-              `Worktree: ${location.absolutePath}`,
-              "Implement the task, verify the result, and commit your changes on the assigned branch. Do not merge or push.",
+              formatTaskCriteria(task),
+              knowledge
+                ? `Repository: #${knowledge.handle}`
+                : "General-purpose assignment; no Git repository required.",
+              `Working directory: ${location.absolutePath}`,
+              previousReview
+                ? `Previous review (${previousReview.outcome}): ${previousReview.notes}\n${previousReview.evidence.map((item) => item.observation).join("\n")}`
+                : "",
+              revisionArtifacts.length
+                ? "Revision inputs are verified copies of the previously reviewed submission. Read inputs/ and save new deliverables in outputs/. Preserve the captured source artifacts."
+                : "",
+              knowledge
+                ? "Complete the task, verify the result, and commit changes on the assigned branch. Do not merge or push."
+                : "Create the requested deliverables in outputs/. Use TASK.md as the frozen assignment contract. Report your checks and limitations; a reviewer decides acceptance.",
             ]
               .filter(Boolean)
               .join("\n\n"),
             mentions: [{ agentId: worker.id, handle: worker.handle }],
-            knowledgeReferences: [{ knowledgeId: knowledge.id, handle: knowledge.handle }],
-            artifactIds: [],
+            knowledgeReferences: knowledge
+              ? [{ knowledgeId: knowledge.id, handle: knowledge.handle }]
+              : [],
+            artifactIds: revisionArtifacts.map((entry) => entry.artifact.id),
           };
           const runtimeToolCalls = new Map<string, ToolCall>();
           const rawResponse = (
@@ -736,7 +842,12 @@ export class AgentDispatcher {
               trigger: delegatedTrigger,
               transcriptPath: this.store.transcriptPath(thread.id),
               transcriptSnapshot,
-              knowledge: [{ item: knowledge, localPath: location.absolutePath }],
+              workBrief,
+              artifacts: revisionArtifacts,
+              knowledge: knowledge
+                ? [{ item: knowledge, localPath: location.absolutePath }]
+                : await this.store.agentKnowledge(trigger),
+              executionEnvironment: environment,
               workingDirectory: location.absolutePath,
               mode: "task",
               signal: controller.signal,
@@ -762,17 +873,46 @@ export class AgentDispatcher {
           if (!response) throw new Error("The Worker returned an empty response.");
 
           // Post the Worker's result to the thread
-          await this.store.createAgentMessage(thread.id, worker, response, trigger.id);
+          const uploads =
+            environment === "directory"
+              ? await collectAssignmentOutputs(location.absolutePath, (value) =>
+                  this.store.redactSecrets(value),
+                )
+              : [];
+          const resultMessage = await this.store.createAgentMessage(
+            thread.id,
+            worker,
+            response,
+            trigger.id,
+            uploads,
+          );
+          const outputs = (await this.store.threadData(thread.id)).artifacts.flatMap((artifact) =>
+            artifact.messageId === resultMessage.id &&
+            artifact.source === "generated" &&
+            artifact.sha256
+              ? [
+                  {
+                    artifactId: artifact.id,
+                    name: artifact.name,
+                    sha256: artifact.sha256,
+                    size: artifact.size ?? 0,
+                  },
+                ]
+              : [],
+          );
 
           // Post a summary message from the Master
           const summaryMessage = [
-            `## Worker @${worker.handle} completed task: **${task.title}**`,
+            `## Worker @${worker.handle} submitted for review: **${task.title}**`,
             "",
             `> ${response.slice(0, 500)}${response.length > 500 ? "..." : ""}`,
             "",
-            `**Branch:** \`${location.branch}\`  **Worktree:** \`${location.worktreePath}\``,
+            knowledge
+              ? `**Branch:** \`${location.branch}\`  **Worktree:** \`${location.worktreePath}\``
+              : `**Working directory:** \`${location.worktreePath}\``,
           ].join("\n");
-          await this.store.createAgentMessage(thread.id, master, summaryMessage, trigger.id);
+          if (master)
+            await this.store.createAgentMessage(thread.id, master, summaryMessage, trigger.id);
 
           controller.signal.throwIfAborted();
           workerRun = await this.store.updateRun({
@@ -782,22 +922,22 @@ export class AgentDispatcher {
           });
           controller.signal.throwIfAborted();
           this.liveRuns.set(workerRun.id, workerRun);
+          assignment = await this.store.updateAssignment(assignment.id, {
+            status: "completed",
+            result: response.slice(0, 20_000),
+            resultMessageId: resultMessage.id,
+            outputs,
+          });
           return response;
         } finally {
           this.busy.delete(worker.id);
         }
       });
       controller.signal.throwIfAborted();
-      assignment = await this.store.updateAssignment(assignment.id, {
-        status: "completed",
-        result: result.slice(0, 20_000),
-      });
-      controller.signal.throwIfAborted();
-      await this.store.updateTask(task.id, { status: "done" });
-      controller.signal.throwIfAborted();
       this.notifyThread(thread.id, true);
       return { assignment, result };
     } catch (error) {
+      if (!assignmentPersisted) throw error;
       const stopped = controller.signal.aborted || this.stoppingRunIds.has(id);
       const message = this.store.redactSecrets(
         stopped
@@ -836,9 +976,9 @@ export class AgentDispatcher {
       this.stoppingRunIds.delete(id);
       this.liveRuns.delete(id);
       this.liveActivities.delete(id);
-      this.busy.delete(worker.id);
       this.notifyThread(thread.id, true);
       release();
+      if (assignmentPersisted) for (const listener of this.assignmentListeners) listener(id);
     }
   }
 

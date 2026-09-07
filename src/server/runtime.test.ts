@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MasterAccessMode } from "../shared/contracts.js";
+import { PROVIDER_TEXT_CONTEXT_CHARACTERS } from "../shared/conversation-context.js";
 import type { AgentInvocation, RuntimeToolUpdate } from "./runtime.js";
 import {
   LocalAgentRunner,
@@ -77,6 +78,62 @@ describe("Worker harness arguments", () => {
     processMocks.runCommand.mockReset();
   });
 
+  it.each(["codex", "opencode"] as const)(
+    "pins the current work brief in the %s prompt",
+    async (harness) => {
+      const { agent, invocation, root, runner } = await workerFixture(harness);
+      const store = await FileStore.open({ root, workspacePath: root });
+      invocation.workBrief = await store.saveWorkBrief(invocation.thread.id, {
+        title: "Research contract",
+        kind: "research",
+        outcome: "Compare two audiences",
+        expectedRevision: 0,
+        deliverables: ["Recommendation memo"],
+        acceptanceCriteria: [
+          { behavior: "Sources support claims", verification: "Reviewer checks primary sources" },
+        ],
+      });
+      processMocks.findExecutable.mockResolvedValue(`/fake/${harness}`);
+      processMocks.runCommand.mockResolvedValue({
+        stdout: JSON.stringify(
+          harness === "codex"
+            ? { type: "item.completed", item: { type: "agent_message", text: "Done." } }
+            : { type: "text", part: { type: "text", text: "Done." } },
+        ),
+        stderr: "",
+        exitCode: 0,
+      });
+      await expect(runner.invoke(agent, invocation)).resolves.toBe("Done.");
+      const args = processMocks.runCommand.mock.calls[0]?.[1] as string[];
+      expect(args.at(-1)).toContain("Current work brief (revision 1, draft; work type: research)");
+      expect(args.at(-1)).toContain("Reviewer checks primary sources");
+    },
+  );
+
+  it.each(["codex", "opencode"] as const)(
+    "runs a non-Git document assignment with %s",
+    async (harness) => {
+      const { agent, invocation, root, runner } = await workerFixture(harness);
+      invocation.mode = "task";
+      invocation.executionEnvironment = "directory";
+      invocation.workingDirectory = root;
+      processMocks.findExecutable.mockResolvedValue(`/fake/${harness}`);
+      processMocks.runCommand.mockResolvedValue({
+        stdout: JSON.stringify(
+          harness === "codex"
+            ? { type: "item.completed", item: { type: "agent_message", text: "Memo ready." } }
+            : { type: "text", part: { type: "text", text: "Memo ready." } },
+        ),
+        stderr: "",
+        exitCode: 0,
+      });
+      await expect(runner.invoke(agent, invocation)).resolves.toBe("Memo ready.");
+      const args = processMocks.runCommand.mock.calls[0]?.[1] as string[];
+      expect(args.at(-1)).toContain("Put deliverable files in outputs/");
+      expect(args.at(-1)).toContain("No Git repository or commit is required");
+    },
+  );
+
   it("passes model and reasoning effort to Codex", async () => {
     const { agent, invocation, root, runner } = await workerFixture("codex", "gpt-5.4", "high");
     processMocks.findExecutable.mockResolvedValue("/fake/codex");
@@ -141,11 +198,12 @@ describe("Worker harness arguments", () => {
       "--variant",
       "high",
       "--thinking",
-      "--file",
-      invocation.transcriptPath,
       "--",
       expect.stringContaining("@opencode"),
     ]);
+    expect(args).not.toContain(invocation.transcriptPath);
+    expect(args.at(-1)).toContain(invocation.transcriptPath);
+    expect(args.at(-1)).toContain(invocation.transcriptSnapshot);
   });
 
   it.each(["codex", "opencode"] as const)(
@@ -393,10 +451,64 @@ describe("ChatGPT Master harness arguments", () => {
 });
 
 describe("parseProviderReply", () => {
+  it.each(["openai-chat", "openai-responses"] as const)(
+    "stops oversized %s context before sending or retrying a provider request",
+    async (protocol) => {
+      const { agent, invocation, store } = await customMasterFixture(protocol);
+      const fetchMock = vi.fn();
+      const runner = new LocalAgentRunner({ store, fetch: fetchMock as typeof fetch });
+      await expect(
+        runner.invoke(agent, {
+          ...invocation,
+          transcriptSnapshot: "x".repeat(PROVIDER_TEXT_CONTEXT_CHARACTERS),
+        }),
+      ).rejects.toThrow("before another request");
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
   it("supports chat completions and responses payloads", () => {
     expect(parseProviderReply({ choices: [{ message: { content: "hello" } }] })).toBe("hello");
     expect(parseProviderReply({ output_text: "world" })).toBe("world");
   });
+
+  it.each(["openai-chat", "openai-responses"] as const)(
+    "pins the brief in a %s request without changing tool authority",
+    async (protocol) => {
+      const { agent, invocation, store } = await customMasterFixture(protocol);
+      const workBrief = await store.saveWorkBrief(invocation.thread.id, {
+        title: "Design a diagram",
+        kind: "design",
+        outcome: "Explain the architecture",
+        expectedRevision: 0,
+      });
+      const fetchMock = vi.fn(
+        async (_input: RequestInfo | URL, _init?: RequestInit) =>
+          new Response(
+            JSON.stringify(
+              protocol === "openai-chat"
+                ? { choices: [{ message: { content: "Ready." } }] }
+                : {
+                    output: [
+                      { type: "message", content: [{ type: "output_text", text: "Ready." }] },
+                    ],
+                  },
+            ),
+            { headers: { "content-type": "application/json" } },
+          ),
+      );
+      const runner = new LocalAgentRunner({
+        store,
+        fetch: fetchMock as typeof fetch,
+        env: { HOME: store.workspacePath, XDG_CONFIG_HOME: store.workspacePath },
+      });
+      await expect(runner.invoke(agent, { ...invocation, workBrief })).resolves.toBe("Ready.");
+      const body = String(fetchMock.mock.calls[0]?.[1]?.body);
+      expect(body).toContain("Current work brief (revision 1, draft; work type: design)");
+      expect(body).toContain("draft_brief");
+      expect(body).not.toContain("confirm_brief");
+    },
+  );
 
   it("streams Chat Completions text deltas while preserving the final reply", async () => {
     const { agent, invocation, store } = await customMasterFixture("openai-chat");
@@ -662,6 +774,9 @@ describe("parseProviderReply", () => {
     expect(
       firstBody.tools.map((tool: { function: { name: string } }) => tool.function.name),
     ).toEqual([
+      "read_tasks",
+      "read_brief",
+      "draft_brief",
       "list",
       "glob",
       "grep",
@@ -677,6 +792,15 @@ describe("parseProviderReply", () => {
       "webfetch",
       "websearch",
       "question",
+      "read_surfaces",
+      "read_surface",
+      "create_surface",
+      "update_surface",
+      "save_surface_record",
+      "archive_surface_record",
+      "read_history",
+      "read_goals",
+      "draft_goal",
     ]);
     expect(firstBody.messages[0]?.content).toContain("@builder: codex");
     const readDefinition = firstBody.tools.find(
@@ -733,15 +857,30 @@ describe("parseProviderReply", () => {
     });
   });
 
-  it.each(["openai-chat", "openai-responses"] as const)(
-    "requires %s Masters to delegate every planned task before finalizing",
-    async (protocol) => {
+  it.each([
+    ["openai-chat", "execute"],
+    ["openai-responses", "execute"],
+    ["openai-chat", "draft"],
+    ["openai-responses", "draft"],
+  ] as const)(
+    "honors %s planning in %s mode without turning a draft into execution",
+    async (protocol, mode) => {
       const { agent, invocation, root, store } = await customMasterFixture(protocol, "full");
       const taskId = "f5a80f87-456d-4c35-9081-356cbe665510";
       const createdAt = "2026-09-03T00:00:00.000Z";
       const planArguments = JSON.stringify({
         title: "Implementation plan",
-        steps: [{ title: "Build feature", description: "Implement and verify it." }],
+        ...(mode === "execute" ? { mode } : {}),
+        steps: [
+          {
+            title: "Build feature",
+            description: "Implement and verify it.",
+            kind: "code",
+            acceptanceCriteria: [
+              { behavior: "Feature works", verification: "Run the acceptance test" },
+            ],
+          },
+        ],
       });
       const delegateArguments = JSON.stringify({
         taskId,
@@ -844,6 +983,9 @@ describe("parseProviderReply", () => {
                 workspaceId: invocation.thread.workspaceId,
                 title: step.title,
                 description: step.description,
+                kind: step.kind ?? "mixed",
+                revision: 1,
+                acceptanceCriteria: step.acceptanceCriteria ?? [],
                 status: "todo" as const,
                 assigneeId: null,
                 threadId: invocation.thread.id,
@@ -853,18 +995,22 @@ describe("parseProviderReply", () => {
             delegate,
           },
         }),
-      ).resolves.toBe("The Worker completed the task.");
-
-      expect(fetchMock).toHaveBeenCalledTimes(4);
-      expect(delegate).toHaveBeenCalledWith({
-        taskId,
-        workerHandle: "builder",
-        repositoryHandle: "product-repo",
-      });
-      const correctiveRequest = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body));
-      expect(JSON.stringify(correctiveRequest)).toContain(
-        "Call delegate for every remaining task before returning a final answer",
+      ).resolves.toBe(
+        mode === "execute" ? "The Worker completed the task." : "I created the task.",
       );
+
+      expect(fetchMock).toHaveBeenCalledTimes(mode === "execute" ? 4 : 2);
+      if (mode === "execute") {
+        expect(delegate).toHaveBeenCalledWith({
+          taskId,
+          workerHandle: "builder",
+          repositoryHandle: "product-repo",
+        });
+        const correctiveRequest = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body));
+        expect(JSON.stringify(correctiveRequest)).toContain(
+          "Call delegate for every remaining task before returning a final answer",
+        );
+      } else expect(delegate).not.toHaveBeenCalled();
     },
   );
 

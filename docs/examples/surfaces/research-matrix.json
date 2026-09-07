@@ -1,0 +1,55 @@
+{
+  "manifest": {
+    "apiVersion": 1,
+    "pluginId": "local.research-matrix",
+    "version": "1.0.0",
+    "name": "Research matrix",
+    "description": "Compare claims, sources, confidence and unresolved questions.",
+    "view": "table",
+    "titleField": "claim",
+    "bodyField": "notes",
+    "fields": [
+      {
+        "key": "claim",
+        "label": "Claim",
+        "type": "text"
+      },
+      {
+        "key": "source",
+        "label": "Source",
+        "type": "url"
+      },
+      {
+        "key": "confidence",
+        "label": "Confidence",
+        "type": "select",
+        "options": ["Unverified", "Supported", "Contested"]
+      },
+      {
+        "key": "notes",
+        "label": "Evidence and limitations",
+        "type": "long_text"
+      },
+      {
+        "key": "checked",
+        "label": "Source inspected",
+        "type": "checkbox"
+      }
+    ]
+  },
+  "records": [
+    {
+      "data": {
+        "claim": "Which audience has the clearest unmet need?",
+        "confidence": "Unverified",
+        "notes": "Replace this example with findings from actual source inspection. A checkbox is a note, not independent task acceptance.",
+        "checked": false
+      },
+      "position": {
+        "x": 40,
+        "y": 40
+      },
+      "color": "blue"
+    }
+  ]
+}

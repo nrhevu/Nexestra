@@ -1,0 +1,412 @@
+.goals-view :where(button:not(.primary-button)),
+.goal-form :where(button:not(.primary-button, .secondary-button)) {
+  border: 0;
+  background: transparent;
+}
+.goals-layout {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  padding: 24px;
+  gap: 24px;
+}
+.goals-catalog {
+  border-right: 1px solid var(--border-soft);
+  padding-right: 18px;
+}
+.goals-catalog > button {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 13px 10px;
+  margin-bottom: 8px;
+  border-radius: 9px;
+  text-align: left;
+}
+.goals-catalog > button[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.goals-catalog svg {
+  flex-shrink: 0;
+  color: var(--accent);
+  margin-top: 3px;
+}
+.goals-catalog strong {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.7;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
+}
+.goals-catalog small {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  margin-top: 8px;
+}
+.goals-catalog > p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.goal-detail {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+  align-self: start;
+}
+.goal-empty {
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 72px 32px;
+  text-align: center;
+}
+.goal-empty > svg {
+  color: var(--accent);
+}
+.goal-empty h2 {
+  font-weight: 500;
+  font-size: 24px;
+  letter-spacing: -0.04em;
+}
+.goal-empty p {
+  font-size: 13px;
+  line-height: 1.9;
+  color: var(--muted);
+}
+.goal-empty .primary-button {
+  margin: 24px auto 0;
+}
+.goal-heading {
+  padding: 26px;
+}
+.goal-heading h2 {
+  font-size: 23px;
+  line-height: 1.5;
+  font-weight: 550;
+  letter-spacing: -0.03em;
+  margin: 14px 0 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.goal-heading p {
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--muted);
+  margin: 0;
+}
+.goal-status {
+  font-size: 10px;
+  padding: 5px 9px;
+  border-radius: 6px;
+  color: var(--muted);
+  background: var(--panel-raised);
+}
+.goal-status.active,
+.goal-status.waiting_review {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.goal-status.completed {
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 12%, transparent);
+}
+.goal-status.blocked,
+.goal-status.exhausted {
+  color: var(--cyan);
+}
+.goal-budget {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  padding: 0 26px 24px;
+  gap: 18px;
+}
+.goal-budget strong {
+  font-size: 25px;
+  font-weight: 500;
+}
+.goal-budget strong span {
+  color: var(--muted);
+  font-size: 16px;
+}
+.goal-budget small {
+  display: block;
+  margin-top: 7px;
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.goal-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 26px 22px;
+}
+.goal-controls button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+.goal-controls .primary-button {
+  border-color: transparent;
+}
+.goal-policy {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 14px 26px;
+  margin: 0;
+  border-top: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 11px;
+  line-height: 1.8;
+  color: var(--muted);
+  background: var(--panel);
+}
+.goal-policy svg {
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+.goal-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0 26px;
+}
+.goal-steps > li {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 24px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.goal-step-index {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  font-size: 11px;
+  color: var(--muted);
+}
+.goal-step-index.accepted {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 40%, var(--border));
+}
+.goal-step-copy {
+  min-width: 0;
+  flex: 1;
+}
+.goal-step-copy h3 {
+  margin: 3px 0 8px;
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1.6;
+}
+.goal-step-copy p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.8;
+}
+.goal-step-copy details {
+  font-size: 11px;
+  margin-top: 12px;
+}
+.goal-step-copy summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.goal-step-copy .goal-criteria {
+  margin-top: 14px;
+  font-size: 11px;
+  color: var(--text);
+  white-space: pre-wrap;
+  line-height: 1.8;
+}
+.goal-step-action {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 13px;
+  padding-top: 5px;
+}
+.goal-step-action small {
+  color: var(--muted);
+  font-size: 10px;
+}
+.goal-step-action button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent);
+  font-size: 11px;
+}
+.goal-history {
+  padding: 22px 26px;
+  font-size: 11px;
+}
+.goal-history summary {
+  color: var(--muted);
+  cursor: pointer;
+}
+.goal-history ol {
+  list-style: none;
+  margin: 18px 0 0;
+  padding: 0;
+}
+.goal-history li {
+  display: flex;
+  gap: 14px;
+  margin-bottom: 15px;
+  line-height: 1.7;
+}
+.goal-history time {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.goal-error {
+  margin: 0 26px 20px;
+  padding: 12px;
+  color: #dd798d;
+  background: var(--panel);
+  font-size: 12px;
+  line-height: 1.7;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.goal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.goal-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+}
+.goal-form input,
+.goal-form textarea,
+.goal-form select {
+  width: 100%;
+  font: inherit;
+  color: var(--text);
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 7px;
+  padding: 10px 12px;
+}
+.goal-form textarea {
+  resize: vertical;
+  line-height: 1.6;
+}
+.goal-form-tasks > p {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.8;
+}
+.goal-form-tasks > div {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-top: 8px;
+}
+.goal-form-tasks > div.selected {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+}
+.goal-task-choice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  width: 100%;
+  text-align: left;
+  font-size: 12px;
+}
+.goal-task-choice small {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  margin-top: 6px;
+}
+.goal-task-choice > svg {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+.goal-step-config {
+  padding: 0 14px 14px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.goal-form-limits {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+.goal-form-note {
+  font-size: 11px;
+  line-height: 1.8;
+  color: var(--muted);
+  margin: 0;
+}
+.goal-form .goal-error {
+  margin: 0;
+}
+@media (max-width: 1150px) {
+  .goals-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .goals-catalog {
+    display: flex;
+    overflow: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    padding: 0 0 12px;
+    gap: 8px;
+  }
+  .goals-catalog > button {
+    min-width: 200px;
+    width: 240px;
+    margin: 0;
+  }
+}
+.task-goal-context {
+  margin-bottom: 20px;
+  padding: 14px 16px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.task-goal-context > strong {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.task-goal-context > p {
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--text);
+}
+.task-goal-context > small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.goal-heading .goal-brief {
+  margin: 0 0 12px;
+  color: var(--accent);
+  font-size: 11px;
+}

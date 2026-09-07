@@ -136,7 +136,14 @@ class DelegatingMasterRunner implements AgentRunner {
       throw new Error("expected planning and delegation hooks");
     }
     const [task] = await invocation.toolHooks.createPlan("Implementation plan", [
-      { title: "Implement feature", description: "Make the requested repository change." },
+      {
+        title: "Implement feature",
+        description: "Make the requested repository change.",
+        kind: "code",
+        acceptanceCriteria: [
+          { behavior: "The requested feature works", verification: "Run its acceptance test" },
+        ],
+      },
     ]);
     if (!task) throw new Error("expected planned task");
     const delegated = await invocation.toolHooks.delegate({
@@ -181,7 +188,14 @@ class StoppableDelegatingMasterRunner implements AgentRunner {
       throw new Error("expected planning and delegation hooks");
     }
     const [task] = await invocation.toolHooks.createPlan("Implementation plan", [
-      { title: "Implement feature", description: "Make the requested repository change." },
+      {
+        title: "Implement feature",
+        description: "Make the requested repository change.",
+        kind: "code",
+        acceptanceCriteria: [
+          { behavior: "The requested feature works", verification: "Run its acceptance test" },
+        ],
+      },
     ]);
     if (!task) throw new Error("expected planned task");
     try {
@@ -616,7 +630,7 @@ describe("mention dispatch", () => {
     if (!assignment) throw new Error("expected Worker assignment");
     const [plannedTask] = store.listTasks();
     expect(plannedTask).toEqual(
-      expect.objectContaining({ status: "done", assigneeId: worker.id, threadId: thread.id }),
+      expect.objectContaining({ status: "in_review", assigneeId: worker.id, threadId: thread.id }),
     );
     if (!plannedTask) throw new Error("expected planned task");
     const threadData = await store.threadData(thread.id);

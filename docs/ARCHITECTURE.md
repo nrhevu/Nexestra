@@ -6,6 +6,9 @@ M9 is a single-user, local-first control center. The server binds to `127.0.0.1`
 communicates over HTTP, and the server invokes configured coding harnesses or providers. The two
 primary navigation areas are Threads and Surfaces; the initial surfaces are Taskboard, Knowledge,
 and Agents.
+Work Briefs adds shared scope for research, documents, design and code without requiring a repository.
+Goals adds bounded, review-driven continuation (ADR 0021). Custom surfaces adds four declarative host
+renderers and shared human/Master commands (ADR 0020).
 The far-left rail switches between workspaces, while the adjacent panel owns the Threads, Surfaces,
 and Settings navigation.
 
@@ -32,9 +35,47 @@ ChatService ── AgentDispatcher ── LocalAgentRunner
 
 The shared Zod contracts in `src/shared/contracts.ts` define the boundary between browser and server.
 
+The [target harness design](HARNESS-DESIGN.md) and [surface extension contract](SURFACE-EXTENSIONS.md)
+describe planned layers; they are not claims about the current implementation.
+
+## Shared scope and surface catalog
+
+Each thread may have a Work Brief with outcome, deliverables, constraints, non-goals, open questions
+and paired behavior/check descriptions. Its revisions are `brief.updated` events in that thread's
+canonical JSONL. The latest event is replayed into an in-memory index during startup, avoiding full
+transcript scans on each bootstrap. No second canonical brief exists in `state.json`.
+
+Store writes require an expected revision and use the existing serialized write queue. Content is
+bounded and redacted before append/fsync. User and dispatcher-bound agent drafts are attributed by
+the server; input cannot supply status or authorship. Every edit returns to draft. Optional user
+confirmation requires an outcome, output and check, with no open questions; it records scope
+agreement only. Neither operation invokes an agent or changes its permissions.
+
+The HTTP API and Master `read_brief`/`draft_brief` tools share the same store operations. The
+dispatcher pins the current brief in each invocation, and both CLI adapters and HTTP protocols
+include it in their prompts. Agent tool edits notify the existing thread event stream. Brief events
+are not rendered as duplicate chat messages and do not change message counts.
+
+Built-in surface metadata lives in `src/web/surfaces/registry.ts` and feeds routes, sidebar entries
+and command search. Work Briefs has its own component and stylesheet; existing renderers remain
+explicitly composed in App. Declarative definitions can be imported or written by the Master;
+there is no executable external UI plugin loader. See [extensions](SURFACE-EXTENSIONS.md).
+
+Thread-scoped Goals freeze task contracts and the available Work Brief, then use atomic attempt
+admission and human review events to continue. The original deadline survives pause/restart;
+active work is paused on recovery, without replay. Goal controls are user-owned. See [Goals](GOALS.md).
+
+## Workspace creation consistency
+
+Workspace creation stages both the workspace and its initial general thread in a cloned metadata
+snapshot. It publishes that snapshot only after persistence succeeds; a failed write must not leave
+an in-memory workspace that disappears on restart. This uses the same write/publish ordering as
+the task, goal and surface mutations introduced in the harness work.
+
 ## Refresh and rendering model
 
-The SPA performs no periodic requests while the selected workspace is idle. While the visible
+The SPA performs no periodic requests while the selected workspace is idle. The Goals surface polls
+checkpoints while a goal is active or awaiting review. While the visible
 thread has queued, running, approval-waiting, or input-waiting work, it opens one Server-Sent Events
 connection. The dispatcher publishes phase changes, runtime-emitted reasoning, and accumulated
 response text directly, and marks events that require the browser to reload durable messages, runs,
@@ -123,20 +164,23 @@ agent. Historical failed runs for a deleted profile cannot be retried.
 
 ## Planning and Worker delegation
 
-The provider-neutral Master tool session owns a per-run set of planned task IDs. `plan` creates
-durable Taskboard tasks linked to the triggering thread. `delegate` accepts only a task returned by
-that same session, an enabled Worker, and a ready repository in the thread's workspace. The runtime
+The provider-neutral Master tool session owns known task IDs and a separate per-run set of
+execute-mode commitments. `plan` defaults to draft and creates durable Taskboard tasks without
+requiring delegation; explicit mode execute registers a completion obligation. `read_tasks` discovers existing eligible tasks. `delegate` accepts a task returned by either
+tool in that session and an enabled Worker; repository-backed work also needs a ready repository. The runtime
 lists those repositories in the Master context, so the triggering message does not need to include
-the repository handle. When both a Worker and ready repository are available, a custom-provider
-Master cannot return its final answer while that set still contains undelegated tasks; the runtime
+the repository handle. When a Worker is available, a custom-provider
+Master cannot return its final answer while the execute-mode set still contains undelegated tasks; the runtime
 adds a corrective turn and keeps the tool loop active.
+Draft-goal handoff clears that obligation and preserves the user-owned activation gate. Modes do
+not create new permissions. See [ADR 0027](adr/0027-draft-and-execution-plans.md).
 
-Each repository is cloned once under the owning workspace. Every assignment creates a unique
+Each repository is cloned once under the owning workspace. Every repository assignment creates a unique
 `nexestra/<assignment-id>` branch and a Git worktree under the same managed workspace tree. The
 dispatcher reuses the normal per-agent queue, so one Worker remains serial while different Workers
 can execute concurrently. A delegated Worker receives task mode, the worktree as its process cwd,
-the shared transcript snapshot, and the selected repository as knowledge. Success marks the
-assignment and task complete; failure records a redacted error and returns the task to To do.
+the shared transcript snapshot, and the selected repository as knowledge. Success completes the
+assignment and submits the task for review; failure records a redacted error and returns it to To do.
 Branches and worktrees are retained for inspection. Nexestra never merges or pushes.
 
 Each delegated assignment owns an in-memory abort controller from before it is queued until its
@@ -154,9 +198,30 @@ same thread SSE stream as chat, with an active-only polling fallback when EventS
 
 ## Agent runtimes
 
+Revision assignments pin a host-selected `inputSource` (assignment/review/contract revision and
+output manifest). Source files are verified with bounded descriptor reads before invocation and
+copied into the new assignment's `inputs/` directory. Both CLI adapters receive these files plus
+review observations; new deliverables belong in `outputs/`. A failed retry does not hide the last
+changes-requested source. The same bounded manifest verification is used for human acceptance.
+See [ADR 0023](adr/0023-reviewed-revision-inputs.md) for changed-scope and repository limits.
+
+Tasks created with `sourceBriefRevision` retain a host-validated complete source brief in their
+contract. These assignments use the saved source as brief context; otherwise goal/current-thread
+brief lookup applies. Current task requirements take precedence over source context, and the goal
+objective remains explicit. Non-Git TASK.md includes the pinned brief as well as acceptance criteria.
+See [ADR 0024](adr/0024-tasks-from-saved-briefs.md) for the editable UI handoff and divergence policy.
+
+Invocations receive a bounded 48,000-character recent transcript with marked omissions, plus
+separate trigger/brief/task context. Canonical JSONL and full exports remain unchanged. The
+host-scoped `read_history` tool retrieves older messages through bounded search, pages and complete
+chunks; CLI harnesses also receive the transcript path. Before every custom HTTP request, a
+240,000-character guard counts text, tool schemas and accumulated results. This stops oversized
+requests with recovery instructions; it does not estimate tokens. See
+[conversation context](CONVERSATION-CONTEXT.md) for exact bounds and known gaps.
+
 Worker profiles select either `codex` or `opencode`, with optional model and reasoning-effort
 overrides. Worker chat turns require read-only discussion mode. Delegated task turns use
-workspace-write for Codex and OpenCode's build agent, scoped to the assignment worktree. Codex maps the overrides to
+workspace-write for Codex and OpenCode's build agent, scoped to the assignment worktree or general working directory. Codex maps the overrides to
 `--model` and `model_reasoning_effort`; OpenCode maps them to `--model` and its provider-specific
 `--variant`. Missing overrides preserve the harness defaults. Master profiles select one of the
 following:
@@ -169,7 +234,7 @@ following:
 
 Codex receives safe raster images through `--image`; OpenCode receives each local artifact through
 `--file`. Custom providers receive safe raster images as data URLs in the selected OpenAI protocol
-shape and up to 512 KB of attached text context. Image provider payloads are capped at 10 MB; larger
+shape and up to 512 KB of attached text context before the combined request guard. Image provider payloads are capped at 10 MB; larger
 artifacts remain indexed but are represented only by metadata.
 
 The Master tool registry provides repository list, glob, grep, read, exact edit, file write,
@@ -220,6 +285,31 @@ sends TERM, then KILL after a grace period, and reports an error only after the 
 Local MCP is the deliberate exception: its stdio transport owns stdin for JSON-RPC and is closed
 with the per-run tool session.
 
+## General work assignments and captured outputs
+
+ADR 0019 extends repository delegation with managed directories for research, document, design
+and mixed tasks. Manual Taskboard starts persist user mentions and return a queued run immediately;
+Master and manual work share queues, cancellation and durable activity. Code tasks still require
+repositories. `read_tasks` supplies durable task and review state across fresh Master sessions.
+
+Non-Git outputs are captured into the canonical Worker reply as generated artifacts, with bounded
+file counts, sizes and traversal. The assignment and human review record a digest manifest. Review
+rejects changed snapshot bytes. Task detail and chat both expose the captured files; no executable
+HTML from a Worker is hosted in the trusted app origin. Working directories are retained.
+
+## Execution provenance
+
+`GET /api/tasks/:id/process?assignmentId=...` inspects a task-scoped historical attempt. The response
+includes lightweight attempt summaries and an isLatestAttempt flag. Canonical admission order
+identifies the latest attempt, including tied/backward timestamps. Historical UI uses the frozen
+contract and existing reviews, with mutation/launch/new-review controls hidden. Current server
+admission/review checks are unchanged. See [ADR 0026](adr/0026-inspectable-task-attempts.md).
+
+New assignment records retain the invoked Worker's configured name/handle/harness/model/reasoning
+settings, an instruction fingerprint and admission timestamp. The process UI uses this snapshot
+after profile deletion or handle reuse. Null overrides mean runtime default; the app does not claim
+to know the actual provider-served model. See [ADR 0025](adr/0025-assignment-execution-profiles.md).
+
 ## Security model
 
 The application trusts the current OS user and user-supplied custom endpoints. The server binds only
@@ -241,6 +331,15 @@ access may use the current OS user's existing SSH and Git configuration; Nexestr
 credentials.
 
 ## Known gaps
+
+- Worker success moves a task to In review. Human acceptance requires evidence against its frozen
+  task contract (ADR 0018). Non-Git outputs are captured with hashes (ADR 0019); executable checks
+  and repository diff/commit manifests are not yet implemented.
+- Work Briefs and Goals are thread-scoped. Durable goals, attempt/time limits and declarative generated
+  surfaces are implemented. Cross-thread goals, executable verifiers/plugins, token budgets and graph
+  scheduling remain roadmap items.
+- Codex/OpenCode receive brief context but do not yet expose app-native brief mutation tools.
+- Brief index consistency assumes one server process per data directory, like the existing store.
 
 - App-native `plan` and `delegate` are currently available to custom OpenAI-compatible Masters.
   ChatGPT OAuth Masters run through Codex CLI and do not yet receive this bridge.

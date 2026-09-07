@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import {
   access,
@@ -20,6 +21,7 @@ import {
   AgentSchema,
   type Artifact,
   ArtifactSchema,
+  ConfirmWorkBriefSchema,
   CreateAgentSchema,
   CreateKnowledgeDocumentSchema,
   CreateKnowledgeRepositorySchema,
@@ -32,8 +34,12 @@ import {
   type KnowledgeRepository,
   type Message,
   MessageSchema,
+  ReviewTaskSchema,
   RunSchema,
+  SaveWorkBriefSchema,
   type Task,
+  TaskContractSchema,
+  TaskReviewSchema,
   TaskSchema,
   type Thread,
   type ThreadData,
@@ -46,9 +52,40 @@ import {
   UpdateTaskSchema,
   type WorkAssignment,
   WorkAssignmentSchema,
+  type WorkBrief,
+  WorkBriefSchema,
   type Workspace,
   WorkspaceSchema,
+  workBriefReadiness,
 } from "../shared/contracts.js";
+import {
+  HISTORY_MESSAGE_CHARACTERS,
+  packRecentContext,
+  ReadHistorySchema,
+  shortenContext,
+} from "../shared/conversation-context.js";
+import {
+  ControlWorkGoalSchema,
+  CreateWorkGoalSchema,
+  goalHoldsTasks,
+  inspectGoal,
+  recordGoalEvent,
+  terminalGoalStatuses,
+  type WorkGoal,
+  WorkGoalSchema,
+} from "../shared/goals.js";
+import {
+  ArchiveSurfaceRecordSchema,
+  CreateSurfaceSchema,
+  SaveSurfaceRecordSchema,
+  SetSurfaceEnabledSchema,
+  SurfaceManifestSchema,
+  surfaceContext,
+  surfaceDataError,
+  UpdateSurfaceSchema,
+  type WorkspaceSurface,
+  WorkspaceSurfaceSchema,
+} from "../shared/surfaces.js";
 
 const StateSchema = z.object({
   version: z.literal(6),
@@ -58,6 +95,8 @@ const StateSchema = z.object({
   tasks: z.array(TaskSchema),
   knowledge: z.array(KnowledgeItemSchema),
   assignments: z.array(WorkAssignmentSchema),
+  surfaces: z.array(WorkspaceSurfaceSchema).default([]),
+  goals: z.array(WorkGoalSchema).default([]),
 });
 
 const VersionFiveStateSchema = z.object({
@@ -110,7 +149,8 @@ type TranscriptEvent =
   | { type: "message.created"; sequence: number; message: Message }
   | { type: "artifact.created"; sequence: number; artifact: Artifact }
   | { type: "run.updated"; sequence: number; run: AgentRun }
-  | { type: "tool.updated"; sequence: number; toolCall: ToolCall };
+  | { type: "tool.updated"; sequence: number; toolCall: ToolCall }
+  | { type: "brief.updated"; sequence: number; workBrief: WorkBrief };
 
 export const MAX_UPLOAD_FILES = 10;
 export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
@@ -164,6 +204,7 @@ export class FileStore {
   private credentials: Record<string, string>;
   private writeQueue: Promise<void> = Promise.resolve();
   private readonly sequenceByThread = new Map<string, number>();
+  private readonly workBriefByThread = new Map<string, WorkBrief>();
 
   private constructor(
     paths: {
@@ -218,6 +259,7 @@ export class FileStore {
     await store.repairTranscriptTails();
     await store.repairThreadSummaries();
     await store.recoverInterruptedRuns();
+    await store.recoverGoalsAndAssignments();
     return store;
   }
 
@@ -302,12 +344,506 @@ export class FileStore {
     return structuredClone(
       this.state.assignments
         .filter((assignment) => workspaceId === undefined || assignment.workspaceId === workspaceId)
+        .reverse()
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
     );
   }
 
+  taskAssignments(taskId: string): WorkAssignment[] {
+    // Admission order is authoritative even when clocks tie or move backward.
+    return structuredClone(
+      this.state.assignments.filter((entry) => entry.taskId === taskId).reverse(),
+    );
+  }
+
+  listGoals(workspaceId?: string): WorkGoal[] {
+    return structuredClone(
+      this.state.goals
+        .filter((goal) => workspaceId === undefined || goal.workspaceId === workspaceId)
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    );
+  }
+
+  getGoal(id: string): WorkGoal | undefined {
+    const goal = this.state.goals.find((entry) => entry.id === id);
+    return goal ? structuredClone(goal) : undefined;
+  }
+
+  inspectGoal(id: string) {
+    const goal = this.getGoal(id);
+    if (!goal) throw new StoreError("not_found", "Goal not found.");
+    return inspectGoal(goal, this.state.tasks, this.state.assignments);
+  }
+
+  async createGoal(rawInput: unknown, agentId?: string): Promise<WorkGoal> {
+    const input = CreateWorkGoalSchema.parse(rawInput);
+    return this.withWrite(async () => {
+      const thread = this.requireThread(input.threadId);
+      const createdBy = this.workspaceAuthor(thread.workspaceId, agentId);
+      if (this.state.goals.filter((goal) => goal.workspaceId === thread.workspaceId).length >= 50)
+        throw new StoreError("invalid", "A workspace supports up to 50 goals.");
+      const steps = input.steps.map((step) => {
+        const task = this.state.tasks.find(
+          (entry) =>
+            entry.id === step.taskId &&
+            entry.threadId === thread.id &&
+            entry.workspaceId === thread.workspaceId,
+        );
+        if (!task)
+          throw new StoreError("invalid", "Every goal task must belong to the selected thread.");
+        if (task.revision !== step.expectedRevision)
+          throw new StoreError(
+            "conflict",
+            "A selected task changed. Reload it before creating this goal.",
+          );
+        if (!task.acceptanceCriteria.length)
+          throw new StoreError("invalid", `Add acceptance criteria to ${task.title} first.`);
+        const worker = this.state.agents.find(
+          (entry) =>
+            entry.workspaceId === thread.workspaceId &&
+            entry.handle === step.workerHandle &&
+            entry.kind === "worker" &&
+            entry.enabled &&
+            !entry.archived,
+        );
+        if (!worker)
+          throw new StoreError("invalid", `@${step.workerHandle} is not an available Worker.`);
+        const repository = step.repositoryHandle
+          ? this.state.knowledge.find(
+              (entry) =>
+                entry.workspaceId === thread.workspaceId &&
+                entry.kind === "repository" &&
+                entry.handle === step.repositoryHandle &&
+                entry.status === "ready",
+            )
+          : undefined;
+        if ((step.repositoryHandle || task.kind === "code") && !repository)
+          throw new StoreError(
+            "invalid",
+            "Code tasks and explicit repositories require a ready repository.",
+          );
+        return {
+          taskId: task.id,
+          contract: TaskContractSchema.parse(task),
+          workerAgentId: worker.id,
+          repositoryId: repository?.id ?? null,
+        };
+      });
+      const now = new Date().toISOString();
+      const goal = WorkGoalSchema.parse({
+        id: crypto.randomUUID(),
+        workspaceId: thread.workspaceId,
+        threadId: thread.id,
+        objective: this.redactSecrets(input.objective),
+        createdBy,
+        workBrief: await this.getWorkBrief(thread.id),
+        revision: 1,
+        status: "draft",
+        steps,
+        attemptLimit: input.attemptLimit,
+        attemptsUsed: 0,
+        timeLimitMinutes: input.timeLimitMinutes,
+        startedAt: null,
+        deadlineAt: null,
+        activeAssignmentId: null,
+        stopReason: "Review the task scope and limits, then start explicitly.",
+        accepted: [],
+        events: [
+          {
+            id: crypto.randomUUID(),
+            at: now,
+            detail: "Goal drafted. No execution authorized yet.",
+          },
+        ],
+        createdAt: now,
+        updatedAt: now,
+      });
+      const nextState = structuredClone(this.state);
+      nextState.goals.push(goal);
+      await this.writeState(nextState);
+      this.state = nextState;
+      return structuredClone(goal);
+    });
+  }
+
+  async controlGoal(id: string, rawInput: unknown): Promise<WorkGoal> {
+    const input = ControlWorkGoalSchema.parse(rawInput);
+    return this.withWrite(async () => {
+      const nextState = structuredClone(this.state);
+      const goal = nextState.goals.find((entry) => entry.id === id);
+      if (!goal) throw new StoreError("not_found", "Goal not found.");
+      if (goal.revision !== input.expectedRevision)
+        throw new StoreError(
+          "conflict",
+          "This goal changed. Reload its current checkpoint before continuing.",
+        );
+      if (terminalGoalStatuses.has(goal.status))
+        throw new StoreError(
+          "conflict",
+          "This goal already ended. Create a new goal to authorize new work.",
+        );
+      if (input.action === "start") {
+        if (["active", "waiting_review"].includes(goal.status))
+          throw new StoreError("conflict", "This goal is already active.");
+        if (
+          nextState.goals.some(
+            (entry) =>
+              entry.id !== id &&
+              entry.workspaceId === goal.workspaceId &&
+              ["active", "waiting_review"].includes(entry.status),
+          )
+        )
+          throw new StoreError(
+            "conflict",
+            "Pause the active goal in this workspace before starting another.",
+          );
+        if (
+          nextState.goals.some(
+            (entry) =>
+              entry.id !== id &&
+              goalHoldsTasks(entry) &&
+              entry.steps.some((step) =>
+                goal.steps.some((current) => current.taskId === step.taskId),
+              ),
+          )
+        )
+          throw new StoreError(
+            "conflict",
+            "Another authorized goal owns a selected task. Cancel it before assigning that task to this goal.",
+          );
+        if (
+          goal.steps.some((step) =>
+            nextState.assignments.some(
+              (assignment) =>
+                assignment.taskId === step.taskId &&
+                ["queued", "running"].includes(assignment.status),
+            ),
+          )
+        )
+          throw new StoreError(
+            "conflict",
+            "Wait for the selected tasks' existing processes to stop before starting this goal.",
+          );
+        for (const step of goal.steps) {
+          const task = nextState.tasks.find((entry) => entry.id === step.taskId);
+          if (!task || task.threadId !== goal.threadId || task.revision !== step.contract.revision)
+            throw new StoreError(
+              "conflict",
+              "Goal requirements changed. Create a new goal for the current task revisions.",
+            );
+        }
+        const now = new Date().toISOString();
+        goal.startedAt ??= now;
+        goal.deadlineAt ??= new Date(
+          Date.parse(goal.startedAt) + goal.timeLimitMinutes * 60_000,
+        ).toISOString();
+        goal.status = "active";
+        goal.activeAssignmentId = null;
+        goal.stopReason =
+          "Execution authorized for this frozen task scope, within the original attempt and elapsed-time limits.";
+      } else {
+        goal.status = input.action === "pause" ? "paused" : "cancelled";
+        goal.stopReason =
+          input.action === "pause"
+            ? "Paused by the user. Attempts and the original deadline are retained."
+            : "Cancelled by the user. Existing tasks, outputs and reviews are retained.";
+      }
+      recordGoalEvent(goal, goal.stopReason);
+      await this.writeState(nextState);
+      this.state = nextState;
+      return structuredClone(goal);
+    });
+  }
+
+  async reconcileGoal(id: string): Promise<WorkGoal> {
+    return this.withWrite(async () => {
+      const nextState = structuredClone(this.state);
+      const goal = nextState.goals.find((entry) => entry.id === id);
+      if (!goal) throw new StoreError("not_found", "Goal not found.");
+      if (!["active", "waiting_review", "paused"].includes(goal.status) || !goal.startedAt)
+        return structuredClone(goal);
+      const check = inspectGoal(goal, nextState.tasks, nextState.assignments);
+      if (goal.status === "paused" && check.status !== "completed") {
+        if (JSON.stringify(goal.accepted) === JSON.stringify(check.accepted))
+          return structuredClone(goal);
+        goal.accepted = check.accepted;
+        recordGoalEvent(
+          goal,
+          "Human review checkpoint updated while paused. No new work was started.",
+        );
+        await this.writeState(nextState);
+        this.state = nextState;
+        return structuredClone(goal);
+      }
+      const assignmentId = check.assignmentId ?? goal.activeAssignmentId;
+      if (
+        goal.status === check.status &&
+        goal.stopReason === check.reason &&
+        JSON.stringify(goal.accepted) === JSON.stringify(check.accepted) &&
+        assignmentId === goal.activeAssignmentId
+      )
+        return structuredClone(goal);
+      goal.status = check.status;
+      goal.stopReason = this.redactSecrets(check.reason).slice(0, 1000);
+      goal.accepted = check.accepted;
+      goal.activeAssignmentId = assignmentId;
+      recordGoalEvent(goal, goal.stopReason);
+      await this.writeState(nextState);
+      this.state = nextState;
+      return structuredClone(goal);
+    });
+  }
+
+  async stopGoal(id: string, status: "blocked" | "exhausted", reason: string): Promise<WorkGoal> {
+    return this.withWrite(async () => {
+      const nextState = structuredClone(this.state);
+      const goal = nextState.goals.find((entry) => entry.id === id);
+      if (!goal) throw new StoreError("not_found", "Goal not found.");
+      if (!["active", "waiting_review"].includes(goal.status)) return structuredClone(goal);
+      goal.status = status;
+      goal.stopReason = this.redactSecrets(reason).slice(0, 1000);
+      recordGoalEvent(goal, goal.stopReason);
+      await this.writeState(nextState);
+      this.state = nextState;
+      return structuredClone(goal);
+    });
+  }
+
+  private async recoverGoalsAndAssignments(): Promise<void> {
+    for (const assignment of this.state.assignments.filter((entry) =>
+      ["queued", "running"].includes(entry.status),
+    )) {
+      await this.updateAssignment(assignment.id, {
+        status: "interrupted",
+        error:
+          "The server restarted before this assignment completed. Inspect its workspace before retrying.",
+      });
+    }
+    const nextState = structuredClone(this.state);
+    let changed = false;
+    for (const goal of nextState.goals)
+      if (["active", "waiting_review"].includes(goal.status)) {
+        goal.status = "paused";
+        goal.stopReason =
+          "Server restarted. Inspect the last assignment and checkpoint, then resume explicitly. No work was replayed.";
+        recordGoalEvent(goal, goal.stopReason);
+        changed = true;
+      }
+    if (changed) {
+      await this.writeState(nextState);
+      this.state = nextState;
+    }
+  }
+
   getCredential(agentId: string): string | undefined {
     return this.credentials[agentId];
+  }
+
+  listSurfaces(workspaceId: string): WorkspaceSurface[] {
+    return structuredClone(
+      this.state.surfaces
+        .filter((surface) => surface.workspaceId === workspaceId)
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    );
+  }
+
+  getSurface(id: string): WorkspaceSurface | undefined {
+    const surface = this.state.surfaces.find((entry) => entry.id === id);
+    return surface ? structuredClone(surface) : undefined;
+  }
+
+  readSurfaceContext(id: string, recordIds: string[] = [], agentId?: string) {
+    const surface = this.getSurface(id);
+    if (!surface) throw new StoreError("not_found", "Surface not found.");
+    this.workspaceAuthor(surface.workspaceId, agentId);
+    if (agentId && !surface.enabled)
+      throw new StoreError(
+        "invalid",
+        "This surface is disabled. The user can enable it in the surface settings.",
+      );
+    if (
+      recordIds.some(
+        (recordId) => !surface.records.some((record) => record.id === recordId && !record.archived),
+      )
+    )
+      throw new StoreError(
+        "invalid",
+        "The selection contains an unavailable record. Read the current surface before selecting records.",
+      );
+    return surfaceContext(surface, recordIds);
+  }
+
+  async createSurface(rawInput: unknown, agentId?: string): Promise<WorkspaceSurface> {
+    const input = CreateSurfaceSchema.parse(rawInput);
+    return this.withWrite(async () => {
+      const workspaceId = this.requireWorkspace(input.workspaceId).id;
+      const actor = this.workspaceAuthor(workspaceId, agentId);
+      if (this.state.surfaces.filter((surface) => surface.workspaceId === workspaceId).length >= 30)
+        throw new StoreError("invalid", "A workspace supports up to 30 custom surfaces.");
+      const now = new Date().toISOString();
+      const surface = this.validateSurface({
+        id: crypto.randomUUID(),
+        workspaceId,
+        manifest: input.manifest,
+        revision: 1,
+        enabled: true,
+        records: input.records.map((record) => ({
+          ...record,
+          id: crypto.randomUUID(),
+          revision: 1,
+          archived: false,
+          updatedAt: now,
+          updatedBy: actor,
+        })),
+        createdAt: now,
+        updatedAt: now,
+        updatedBy: actor,
+      });
+      const nextState = structuredClone(this.state);
+      nextState.surfaces.push(surface);
+      await this.writeState(nextState);
+      this.state = nextState;
+      return structuredClone(surface);
+    });
+  }
+
+  async updateSurface(id: string, rawInput: unknown, agentId?: string): Promise<WorkspaceSurface> {
+    const input = UpdateSurfaceSchema.parse(rawInput);
+    return this.mutateSurface(id, input.expectedRevision, agentId, (surface) => {
+      surface.manifest = SurfaceManifestSchema.parse(input.manifest);
+    });
+  }
+
+  async setSurfaceEnabled(id: string, rawInput: unknown): Promise<WorkspaceSurface> {
+    const input = SetSurfaceEnabledSchema.parse(rawInput);
+    return this.mutateSurface(
+      id,
+      input.expectedRevision,
+      undefined,
+      (surface) => {
+        surface.enabled = input.enabled;
+      },
+      true,
+    );
+  }
+
+  async saveSurfaceRecord(
+    id: string,
+    rawInput: unknown,
+    agentId?: string,
+  ): Promise<WorkspaceSurface> {
+    const input = SaveSurfaceRecordSchema.parse(rawInput);
+    return this.mutateSurface(id, input.expectedRevision, agentId, (surface) => {
+      const index = input.id ? surface.records.findIndex((record) => record.id === input.id) : -1;
+      if (input.id && index === -1)
+        throw new StoreError("not_found", "Surface record not found. Read the surface again.");
+      const current = surface.records[index];
+      if (current?.archived)
+        throw new StoreError("invalid", "Restore this archived record before editing it.");
+      if (!current && surface.records.length >= 100)
+        throw new StoreError(
+          "invalid",
+          "This surface supports up to 100 records, including archived records.",
+        );
+      const record = {
+        id: current?.id ?? crypto.randomUUID(),
+        revision: (current?.revision ?? 0) + 1,
+        data: input.data,
+        position: input.position ?? current?.position ?? { x: 40, y: 40 },
+        color: input.color ?? current?.color ?? "lilac",
+        archived: false,
+        updatedAt: new Date().toISOString(),
+        updatedBy: this.workspaceAuthor(surface.workspaceId, agentId),
+      };
+      if (index === -1) surface.records.push(record);
+      else surface.records[index] = record;
+    });
+  }
+
+  async archiveSurfaceRecord(
+    id: string,
+    recordId: string,
+    rawInput: unknown,
+    agentId?: string,
+  ): Promise<WorkspaceSurface> {
+    const input = ArchiveSurfaceRecordSchema.parse(rawInput);
+    return this.mutateSurface(id, input.expectedRevision, agentId, (surface) => {
+      const record = surface.records.find((entry) => entry.id === recordId);
+      if (!record) throw new StoreError("not_found", "Surface record not found.");
+      record.archived = input.archived;
+      record.revision += 1;
+      record.updatedAt = new Date().toISOString();
+      record.updatedBy = this.workspaceAuthor(surface.workspaceId, agentId);
+    });
+  }
+
+  private workspaceAuthor(workspaceId: string, agentId?: string): WorkspaceSurface["updatedBy"] {
+    if (!agentId) return { kind: "user", id: "local-user" };
+    const agent = this.state.agents.find(
+      (entry) =>
+        entry.id === agentId &&
+        entry.workspaceId === workspaceId &&
+        entry.enabled &&
+        !entry.archived,
+    );
+    if (!agent)
+      throw new StoreError("invalid", "An author must be an enabled agent in its workspace.");
+    return { kind: "agent", id: agentId };
+  }
+
+  private validateSurface(input: unknown): WorkspaceSurface {
+    const redact = (value: unknown): unknown => {
+      if (typeof value === "string") return this.redactSecrets(value);
+      if (Array.isArray(value)) return value.map(redact);
+      if (value && typeof value === "object")
+        return Object.fromEntries(
+          Object.entries(value).map(([key, entry]) => [this.redactSecrets(key), redact(entry)]),
+        );
+      return value;
+    };
+    const surface = WorkspaceSurfaceSchema.parse(redact(input));
+    for (const record of surface.records) {
+      const error = surfaceDataError(surface.manifest, record.data);
+      if (error) throw new StoreError("invalid", error);
+    }
+    if (JSON.stringify(surface).length > 400_000)
+      throw new StoreError(
+        "invalid",
+        "Surface data must fit within 400,000 characters. Shorten records or split the work across surfaces.",
+      );
+    return surface;
+  }
+
+  private async mutateSurface(
+    id: string,
+    expectedRevision: number,
+    agentId: string | undefined,
+    change: (surface: WorkspaceSurface) => void,
+    allowDisabled = false,
+  ): Promise<WorkspaceSurface> {
+    return this.withWrite(async () => {
+      const nextState = structuredClone(this.state);
+      const index = nextState.surfaces.findIndex((entry) => entry.id === id);
+      const surface = nextState.surfaces[index];
+      if (!surface) throw new StoreError("not_found", "Surface not found.");
+      const actor = this.workspaceAuthor(surface.workspaceId, agentId);
+      if (surface.revision !== expectedRevision)
+        throw new StoreError(
+          "conflict",
+          "This surface changed. Reload the latest version and reconcile your edit.",
+        );
+      if (!surface.enabled && !allowDisabled)
+        throw new StoreError("invalid", "This surface is disabled. Enable it before editing.");
+      change(surface);
+      surface.revision += 1;
+      surface.updatedAt = new Date().toISOString();
+      surface.updatedBy = actor;
+      const updated = this.validateSurface(surface);
+      nextState.surfaces[index] = updated;
+      await this.writeState(nextState);
+      this.state = nextState;
+      return structuredClone(updated);
+    });
   }
 
   redactSecrets(value: string): string {
@@ -356,9 +892,73 @@ export class FileStore {
     );
   }
 
+  /** Read only the stored manifest's captured bytes, bounded before allocation and verified by hash. */
+  async verifiedAssignmentOutputs(
+    assignmentId: string,
+  ): Promise<Array<{ artifact: Artifact; bytes: Buffer }>> {
+    const assignment = this.state.assignments.find((entry) => entry.id === assignmentId);
+    if (!assignment) throw new StoreError("not_found", "Assignment not found.");
+    const verified: Array<{ artifact: Artifact; bytes: Buffer }> = [];
+    let total = 0;
+    for (const output of assignment.outputs ?? []) {
+      const { artifact, file } = await this.artifactContent(assignment.threadId, output.artifactId);
+      if (
+        artifact.source !== "generated" ||
+        artifact.messageId !== assignment.resultMessageId ||
+        artifact.sha256 !== output.sha256 ||
+        artifact.size !== output.size ||
+        output.size > MAX_UPLOAD_BYTES ||
+        total + output.size > MAX_UPLOAD_TOTAL_BYTES
+      )
+        throw new StoreError(
+          "conflict",
+          "A captured output changed after submission. Restore its original bytes before using this evidence.",
+        );
+      const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW).catch(() => {
+        throw new StoreError(
+          "conflict",
+          "A captured output cannot be read safely. Restore its original file before using this evidence.",
+        );
+      });
+      try {
+        const before = await handle.stat();
+        if (!before.isFile() || before.nlink !== 1 || before.size !== output.size)
+          throw new StoreError(
+            "conflict",
+            "A captured output changed after submission. Restore its original bytes before using this evidence.",
+          );
+        const buffer = Buffer.alloc(output.size + 1);
+        let count = 0;
+        while (count < buffer.length) {
+          const result = await handle.read(buffer, count, buffer.length - count, count);
+          if (!result.bytesRead) break;
+          count += result.bytesRead;
+        }
+        const after = await handle.stat();
+        const bytes = buffer.subarray(0, count);
+        if (
+          count !== output.size ||
+          after.size !== before.size ||
+          after.mtimeMs !== before.mtimeMs ||
+          createHash("sha256").update(bytes).digest("hex") !== output.sha256
+        )
+          throw new StoreError(
+            "conflict",
+            "A captured output changed after submission. Restore its original bytes before using this evidence.",
+          );
+        verified.push({ artifact, bytes });
+        total += count;
+      } finally {
+        await handle.close();
+      }
+    }
+    return verified;
+  }
+
   async createWorkspace(rawInput: unknown): Promise<Workspace> {
     const input = CreateWorkspaceSchema.parse(rawInput);
     return this.withWrite(async () => {
+      const nextState = structuredClone(this.state);
       const now = new Date().toISOString();
       const workspace = WorkspaceSchema.parse({
         id: crypto.randomUUID(),
@@ -368,9 +968,10 @@ export class FileStore {
         updatedAt: now,
       });
       const thread = createThreadRecord(workspace.id, "general", now, []);
-      this.state.workspaces.push(workspace);
-      this.state.threads.push(thread);
-      await this.writeState();
+      nextState.workspaces.push(workspace);
+      nextState.threads.push(thread);
+      await this.writeState(nextState);
+      this.state = nextState;
       return structuredClone(workspace);
     });
   }
@@ -712,23 +1313,28 @@ export class FileStore {
     agent: Agent,
     content: string,
     triggerMessageId: string,
+    uploads: UploadArtifactInput[] = [],
   ): Promise<Message> {
-    return this.appendMessage(threadId, {
-      id: crypto.randomUUID(),
+    return this.appendMessage(
       threadId,
-      author: {
-        kind: "agent",
-        id: agent.id,
-        name: agent.name,
-        handle: agent.handle,
+      {
+        id: crypto.randomUUID(),
+        threadId,
+        author: {
+          kind: "agent",
+          id: agent.id,
+          name: agent.name,
+          handle: agent.handle,
+        },
+        content,
+        mentions: [],
+        knowledgeReferences: [],
+        artifactIds: [],
+        triggerMessageId,
+        createdAt: new Date().toISOString(),
       },
-      content,
-      mentions: [],
-      knowledgeReferences: [],
-      artifactIds: [],
-      triggerMessageId,
-      createdAt: new Date().toISOString(),
-    });
+      uploads,
+    );
   }
 
   async updateRun(run: AgentRun): Promise<AgentRun> {
@@ -768,14 +1374,17 @@ export class FileStore {
     const artifacts: Artifact[] = [];
     const runs = new Map<string, AgentRun>();
     const toolCalls = new Map<string, ToolCall>();
+    let workBrief: WorkBrief | undefined;
     for (const event of events) {
       if (event.type === "message.created") messages.push(event.message);
       else if (event.type === "artifact.created") artifacts.push(event.artifact);
       else if (event.type === "run.updated") runs.set(event.run.id, event.run);
       else if (event.type === "tool.updated") toolCalls.set(event.toolCall.id, event.toolCall);
+      else if (event.type === "brief.updated") workBrief = event.workBrief;
     }
     return {
       thread: structuredClone(thread),
+      ...(workBrief ? { workBrief } : {}),
       messages: messages.sort((left, right) => left.sequence - right.sequence),
       artifacts: artifacts.sort((left, right) => left.sequence - right.sequence),
       runs: [...runs.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
@@ -783,6 +1392,98 @@ export class FileStore {
         left.createdAt.localeCompare(right.createdAt),
       ),
     };
+  }
+
+  async getWorkBrief(threadId: string): Promise<WorkBrief | undefined> {
+    this.requireThread(threadId);
+    const brief = this.workBriefByThread.get(threadId);
+    return brief ? structuredClone(brief) : undefined;
+  }
+
+  async listWorkBriefs(workspaceId: string): Promise<WorkBrief[]> {
+    return structuredClone(
+      [...this.workBriefByThread.values()].filter((brief) => brief.workspaceId === workspaceId),
+    );
+  }
+
+  async saveWorkBrief(threadId: string, rawInput: unknown, agentId?: string): Promise<WorkBrief> {
+    const input = SaveWorkBriefSchema.parse(rawInput);
+    return this.withWrite(async () => {
+      const thread = this.requireThread(threadId);
+      if (agentId) {
+        const agent = this.getAgent(agentId);
+        if (!agent || agent.workspaceId !== thread.workspaceId) {
+          throw new StoreError("invalid", "The brief's author must belong to this workspace.");
+        }
+      }
+      const current = await this.getWorkBrief(threadId);
+      if ((current?.revision ?? 0) !== input.expectedRevision) {
+        throw new StoreError(
+          "conflict",
+          "This brief changed. Reload it and reconcile your edits before saving.",
+        );
+      }
+      const clean = (value: string) => this.redactSecrets(value);
+      const workBrief = WorkBriefSchema.parse({
+        title: clean(input.title),
+        kind: input.kind,
+        outcome: clean(input.outcome),
+        deliverables: input.deliverables.map(clean),
+        constraints: clean(input.constraints),
+        nonGoals: clean(input.nonGoals),
+        acceptanceCriteria: input.acceptanceCriteria.map((criterion) => ({
+          behavior: clean(criterion.behavior),
+          verification: clean(criterion.verification),
+        })),
+        openQuestions: clean(input.openQuestions),
+        threadId,
+        workspaceId: thread.workspaceId,
+        revision: input.expectedRevision + 1,
+        status: "draft",
+        updatedBy: agentId ? { kind: "agent", id: agentId } : { kind: "user", id: "local-user" },
+        updatedAt: new Date().toISOString(),
+        confirmedAt: null,
+      });
+      return this.appendWorkBrief(workBrief);
+    });
+  }
+
+  async confirmWorkBrief(threadId: string, rawInput: unknown): Promise<WorkBrief> {
+    const input = ConfirmWorkBriefSchema.parse(rawInput);
+    return this.withWrite(async () => {
+      const current = await this.getWorkBrief(threadId);
+      if (!current) throw new StoreError("not_found", "Save a brief before confirming it.");
+      if (current.revision !== input.expectedRevision) {
+        throw new StoreError(
+          "conflict",
+          "This brief changed. Reload and review the current revision before confirming.",
+        );
+      }
+      const gaps = workBriefReadiness(current);
+      if (gaps.length) throw new StoreError("invalid", gaps.join(" "));
+      if (current.status === "confirmed") return current;
+      const now = new Date().toISOString();
+      return this.appendWorkBrief({
+        ...current,
+        revision: current.revision + 1,
+        status: "confirmed",
+        updatedBy: { kind: "user", id: "local-user" },
+        updatedAt: now,
+        confirmedAt: now,
+      });
+    });
+  }
+
+  private async appendWorkBrief(workBrief: WorkBrief): Promise<WorkBrief> {
+    const sequence = await this.nextSequence(workBrief.threadId);
+    await appendSynced(this.transcriptPath(workBrief.threadId), {
+      type: "brief.updated",
+      sequence,
+      workBrief,
+    } satisfies TranscriptEvent);
+    this.sequenceByThread.set(workBrief.threadId, sequence);
+    this.workBriefByThread.set(workBrief.threadId, structuredClone(workBrief));
+    return structuredClone(workBrief);
   }
 
   async transcriptSnapshot(threadId: string): Promise<string> {
@@ -793,19 +1494,91 @@ export class FileStore {
       artifacts.push(artifact);
       artifactsByMessage.set(artifact.messageId, artifacts);
     }
-    return data.messages
-      .map((message) => {
-        const handle = message.author.kind === "agent" ? ` @${message.author.handle}` : "";
-        const artifacts = artifactsByMessage.get(message.id) ?? [];
-        const artifactText = artifacts.length
-          ? `\nArtifacts:\n${artifacts.map(formatArtifactForTranscript).join("\n")}`
-          : "";
-        const knowledgeText = message.knowledgeReferences.length
-          ? `\nKnowledge: ${message.knowledgeReferences.map((reference) => `#${reference.handle}`).join(", ")}`
-          : "";
-        return `[${message.createdAt}] ${message.author.name}${handle}:\n${message.content}${artifactText}${knowledgeText}`;
-      })
-      .join("\n\n");
+    return packRecentContext(data.messages, (message) => {
+      const handle = message.author.kind === "agent" ? ` @${message.author.handle}` : "";
+      const artifacts = artifactsByMessage.get(message.id) ?? [];
+      const artifactText = artifacts.length
+        ? `\nArtifacts:\n${artifacts.map(formatArtifactForTranscript).join("\n")}`
+        : "";
+      const knowledgeText = message.knowledgeReferences.length
+        ? `\nKnowledge: ${message.knowledgeReferences.map((reference) => `#${reference.handle}`).join(", ")}`
+        : "";
+      return `[${message.createdAt}] ${message.author.name}${handle}:\n${message.content}${artifactText}${knowledgeText}`;
+    });
+  }
+
+  async readHistory(threadId: string, rawInput: unknown) {
+    const input = ReadHistorySchema.parse(rawInput);
+    const data = await this.threadData(threadId);
+    const metadata = (message: Message) => ({
+      id: message.id,
+      sequence: message.sequence,
+      author: message.author,
+      createdAt: message.createdAt,
+      artifactIds: message.artifactIds.slice(0, 10),
+      knowledgeReferences: message.knowledgeReferences.slice(0, 20),
+      referencesTruncated:
+        message.artifactIds.length > 10 || message.knowledgeReferences.length > 20,
+    });
+    if (input.messageId) {
+      const message = data.messages.find((entry) => entry.id === input.messageId);
+      if (!message) throw new StoreError("not_found", "Message not found in this conversation.");
+      if (input.offset > message.content.length)
+        throw new StoreError("invalid", "The offset is past the end of this message.");
+      // Keep a surrogate pair together so each retrieved chunk can be rendered independently.
+      if (/^[\uDC00-\uDFFF]/.test(message.content.slice(input.offset)))
+        throw new StoreError("invalid", "Use the nextOffset returned by the previous chunk.");
+      let end = Math.min(message.content.length, input.offset + HISTORY_MESSAGE_CHARACTERS);
+      if (/[\uD800-\uDBFF]/.test(message.content.charAt(end - 1))) end -= 1;
+      return {
+        threadId,
+        messages: [
+          {
+            ...metadata(message),
+            content: message.content.slice(input.offset, end),
+            contentOffset: input.offset,
+            truncated: end < message.content.length || input.offset > 0,
+            nextOffset: end < message.content.length ? end : null,
+          },
+        ],
+        nextBeforeSequence: null,
+        hasMore: false,
+      };
+    }
+    const query = input.query?.toLocaleLowerCase();
+    const eligible = data.messages.filter(
+      (message) =>
+        (!input.beforeSequence || message.sequence < input.beforeSequence) &&
+        (!query || message.content.toLocaleLowerCase().includes(query)),
+    );
+    const candidates = eligible.slice(-input.limit).reverse();
+    const messages = [];
+    let characters = 0;
+    for (const message of candidates) {
+      const match = query ? message.content.toLocaleLowerCase().indexOf(query) : 0;
+      const offset = Math.max(0, match - 180);
+      const text = query
+        ? message.content.slice(offset, offset + 1500)
+        : shortenContext(message.content, 1500);
+      const entry = {
+        ...metadata(message),
+        content: text,
+        contentOffset: query ? offset : 0,
+        truncated: text.length < message.content.length,
+        nextOffset: null,
+      };
+      const size = JSON.stringify(entry).length;
+      if (characters + size > 30_000) break;
+      messages.unshift(entry);
+      characters += size;
+    }
+    return {
+      threadId,
+      messages,
+      nextBeforeSequence:
+        eligible.length > messages.length ? (messages[0]?.sequence ?? null) : null,
+      hasMore: eligible.length > messages.length,
+    };
   }
 
   async exportThreadMarkdown(threadId: string): Promise<string> {
@@ -899,43 +1672,129 @@ export class FileStore {
 
   async createTask(rawInput: unknown): Promise<Task> {
     const input = CreateTaskSchema.parse(rawInput);
+    input.title = this.redactSecrets(input.title);
+    input.description = this.redactSecrets(input.description);
+    input.acceptanceCriteria = input.acceptanceCriteria.map((item) => ({
+      behavior: this.redactSecrets(item.behavior),
+      verification: this.redactSecrets(item.verification),
+    }));
     return this.withWrite(async () => {
+      const nextState = structuredClone(this.state);
       const workspaceId = this.requireWorkspace(input.workspaceId).id;
       this.validateReferences(workspaceId, input.assigneeId, input.threadId);
+      const sourceBrief =
+        input.sourceBriefRevision && input.threadId
+          ? await this.getWorkBrief(input.threadId)
+          : undefined;
+      if (
+        input.sourceBriefRevision &&
+        (!sourceBrief || sourceBrief.revision !== input.sourceBriefRevision)
+      )
+        throw new StoreError(
+          "conflict",
+          "The source brief changed or is unavailable. Reload its latest version before drafting this task.",
+        );
       const now = new Date().toISOString();
       const task = TaskSchema.parse({
         id: crypto.randomUUID(),
         workspaceId,
         title: input.title,
         description: input.description,
+        kind: input.kind,
+        acceptanceCriteria: input.acceptanceCriteria,
+        ...(sourceBrief ? { sourceBrief } : {}),
         status: input.status,
         assigneeId: input.assigneeId,
         threadId: input.threadId,
         createdAt: now,
         updatedAt: now,
       });
-      this.state.tasks.push(task);
-      await this.writeState();
+      nextState.tasks.push(task);
+      await this.writeState(nextState);
+      this.state = nextState;
       return structuredClone(task);
     });
   }
 
   async updateTask(id: string, rawInput: unknown): Promise<Task> {
     const input = UpdateTaskSchema.parse(rawInput);
+    if (input.title !== undefined) input.title = this.redactSecrets(input.title);
+    if (input.description !== undefined) input.description = this.redactSecrets(input.description);
+    if (input.acceptanceCriteria !== undefined)
+      input.acceptanceCriteria = input.acceptanceCriteria.map((item) => ({
+        behavior: this.redactSecrets(item.behavior),
+        verification: this.redactSecrets(item.verification),
+      }));
     return this.withWrite(async () => {
-      const index = this.state.tasks.findIndex((task) => task.id === id);
-      const current = this.state.tasks[index];
+      const nextState = structuredClone(this.state);
+      const index = nextState.tasks.findIndex((task) => task.id === id);
+      const current = nextState.tasks[index];
       if (!current) throw new StoreError("not_found", "Task not found.");
+      if (input.expectedRevision !== undefined && input.expectedRevision !== current.revision) {
+        throw new StoreError(
+          "conflict",
+          "The task requirements changed. Reload the task before editing.",
+        );
+      }
+      const assignments = nextState.assignments.filter((entry) => entry.taskId === id);
+      const active = assignments.some(
+        (entry) => entry.status === "queued" || entry.status === "running",
+      );
+      const contractChanged = [
+        "title",
+        "description",
+        "kind",
+        "acceptanceCriteria",
+        "threadId",
+      ].some((key) => {
+        const field = key as keyof typeof input & keyof Task;
+        return (
+          input[field] !== undefined &&
+          JSON.stringify(input[field]) !== JSON.stringify(current[field])
+        );
+      });
+      if (
+        contractChanged &&
+        nextState.goals.some(
+          (goal) => goalHoldsTasks(goal) && goal.steps.some((step) => step.taskId === id),
+        )
+      )
+        throw new StoreError(
+          "conflict",
+          "Cancel the authorized goal before changing this task's frozen requirements.",
+        );
+      if (active && (contractChanged || (input.status && input.status !== "in_progress"))) {
+        throw new StoreError(
+          "conflict",
+          "Stop the active assignment before changing this task's requirements or status.",
+        );
+      }
+      if (input.status === "done" && current.status !== "done" && assignments.length > 0) {
+        throw new StoreError(
+          "invalid",
+          "Review the Worker result against its acceptance criteria to complete this task.",
+        );
+      }
+      if (input.status === "in_review" && current.status !== "in_review") {
+        throw new StoreError(
+          "invalid",
+          "Only a completed Worker assignment can move a task into review.",
+        );
+      }
       const assigneeId = input.assigneeId === undefined ? current.assigneeId : input.assigneeId;
       const threadId = input.threadId === undefined ? current.threadId : input.threadId;
       this.validateReferences(current.workspaceId, assigneeId, threadId);
       const updated = TaskSchema.parse({
         ...current,
         ...input,
+        revision: current.revision + (contractChanged ? 1 : 0),
+        status:
+          contractChanged && assignments.length > 0 ? "todo" : (input.status ?? current.status),
         updatedAt: new Date().toISOString(),
       });
-      this.state.tasks[index] = updated;
-      await this.writeState();
+      nextState.tasks[index] = updated;
+      await this.writeState(nextState);
+      this.state = nextState;
       return structuredClone(updated);
     });
   }
@@ -945,6 +1804,15 @@ export class FileStore {
       const nextState = structuredClone(this.state);
       const index = nextState.tasks.findIndex((task) => task.id === id);
       if (index === -1) throw new StoreError("not_found", "Task not found.");
+      if (
+        nextState.goals.some(
+          (goal) => goalHoldsTasks(goal) && goal.steps.some((step) => step.taskId === id),
+        )
+      )
+        throw new StoreError(
+          "conflict",
+          "Cancel the authorized goal before deleting one of its tasks.",
+        );
       if (
         nextState.assignments.some(
           (assignment) =>
@@ -963,34 +1831,255 @@ export class FileStore {
     });
   }
 
-  async createAssignment(input: WorkAssignment): Promise<WorkAssignment> {
+  async createAssignment(
+    input: WorkAssignment,
+    expectedTaskRevision?: number,
+  ): Promise<WorkAssignment> {
     const assignment = WorkAssignmentSchema.parse(input);
     return this.withWrite(async () => {
-      if (this.state.assignments.some((entry) => entry.id === assignment.id)) {
+      const nextState = structuredClone(this.state);
+      if (nextState.assignments.some((entry) => entry.id === assignment.id)) {
         throw new StoreError("conflict", "Assignment already exists.");
       }
-      this.state.assignments.push(assignment);
-      await this.writeState();
+      const task = nextState.tasks.find((entry) => entry.id === assignment.taskId);
+      if (
+        !task ||
+        task.workspaceId !== assignment.workspaceId ||
+        task.threadId !== assignment.threadId
+      ) {
+        throw new StoreError(
+          "invalid",
+          "An assignment must belong to its task's workspace and thread.",
+        );
+      }
+      if (task.status === "done")
+        throw new StoreError("conflict", "Reopen this task before starting another assignment.");
+      if (expectedTaskRevision !== undefined && task.revision !== expectedTaskRevision) {
+        throw new StoreError(
+          "conflict",
+          "The task changed before dispatch. Read its current requirements and try again.",
+        );
+      }
+      if (
+        nextState.assignments.some(
+          (entry) =>
+            entry.taskId === task.id &&
+            (entry.status === "queued" ||
+              entry.status === "running" ||
+              (entry.status === "completed" &&
+                !entry.review &&
+                entry.contract?.revision === task.revision)),
+        )
+      ) {
+        throw new StoreError(
+          "conflict",
+          "Finish or review this task's current assignment before starting another.",
+        );
+      }
+      assignment.contract = TaskContractSchema.parse(task);
+      // The host selects revision provenance under the same lock as assignment admission.
+      const source = [...nextState.assignments]
+        .reverse()
+        .find(
+          (entry) =>
+            entry.taskId === task.id &&
+            entry.threadId === task.threadId &&
+            entry.workspaceId === task.workspaceId &&
+            entry.status === "completed" &&
+            entry.contract?.revision === task.revision &&
+            Boolean(entry.review),
+        );
+      if (source?.review?.outcome === "changes_requested")
+        assignment.inputSource = {
+          assignmentId: source.id,
+          reviewId: source.review.id,
+          taskRevision: task.revision,
+          outputs: structuredClone(source.outputs ?? []),
+        };
+      else delete assignment.inputSource;
+      const owner = nextState.goals.find(
+        (goal) => goalHoldsTasks(goal) && goal.steps.some((step) => step.taskId === task.id),
+      );
+      if (owner && assignment.goalId !== owner.id)
+        throw new StoreError(
+          "conflict",
+          "This task belongs to an authorized goal. Use the goal controls or cancel the goal before a manual assignment.",
+        );
+      if (
+        assignment.masterRunId &&
+        !assignment.goalId &&
+        nextState.goals.some(
+          (goal) => goal.status === "draft" && goal.steps.some((step) => step.taskId === task.id),
+        )
+      )
+        throw new StoreError(
+          "conflict",
+          "This task is part of a draft goal. The user must start that goal or explicitly start the task from Taskboard.",
+        );
+      if (assignment.goalId) {
+        const goal = nextState.goals.find((entry) => entry.id === assignment.goalId);
+        if (goal?.status !== "active" || goal.workspaceId !== assignment.workspaceId)
+          throw new StoreError("conflict", "The goal is no longer active. Reload its checkpoint.");
+        const check = inspectGoal(goal, nextState.tasks, nextState.assignments);
+        if (
+          !check.next ||
+          check.next.taskId !== task.id ||
+          check.next.workerAgentId !== assignment.workerAgentId ||
+          check.next.repositoryId !== assignment.repositoryId ||
+          assignment.status !== "queued"
+        )
+          throw new StoreError("conflict", check.reason);
+        goal.attemptsUsed += 1;
+        goal.activeAssignmentId = assignment.id;
+        goal.stopReason = `Attempt ${goal.attemptsUsed}/${goal.attemptLimit}: ${task.title}.`;
+        recordGoalEvent(goal, goal.stopReason);
+      }
+      delete assignment.review;
+      task.status =
+        assignment.status === "completed"
+          ? "in_review"
+          : assignment.status === "failed" || assignment.status === "interrupted"
+            ? "todo"
+            : "in_progress";
+      task.assigneeId = assignment.workerAgentId;
+      task.updatedAt = assignment.updatedAt;
+      nextState.assignments.push(assignment);
+      await this.writeState(nextState);
+      this.state = nextState;
       return structuredClone(assignment);
     });
   }
 
   async updateAssignment(
     id: string,
-    update: Partial<Pick<WorkAssignment, "status" | "result" | "error">>,
+    update: Partial<
+      Pick<WorkAssignment, "status" | "result" | "error" | "resultMessageId" | "outputs">
+    >,
   ): Promise<WorkAssignment> {
     return this.withWrite(async () => {
-      const index = this.state.assignments.findIndex((assignment) => assignment.id === id);
-      const current = this.state.assignments[index];
+      const nextState = structuredClone(this.state);
+      const index = nextState.assignments.findIndex((assignment) => assignment.id === id);
+      const current = nextState.assignments[index];
       if (!current) throw new StoreError("not_found", "Assignment not found.");
+      if (current.review)
+        throw new StoreError(
+          "conflict",
+          "A reviewed assignment is immutable. Start a new assignment for revisions.",
+        );
+      if (["completed", "failed", "interrupted"].includes(current.status)) {
+        if (
+          Object.entries(update).some(
+            ([key, value]) =>
+              JSON.stringify(current[key as keyof WorkAssignment]) !== JSON.stringify(value),
+          )
+        ) {
+          throw new StoreError(
+            "conflict",
+            "This assignment already ended. Start a new attempt instead of changing its submitted result or final status.",
+          );
+        }
+        return structuredClone(current);
+      }
       const next = WorkAssignmentSchema.parse({
         ...current,
         ...update,
         updatedAt: new Date().toISOString(),
       });
-      this.state.assignments[index] = next;
-      await this.writeState();
+      nextState.assignments[index] = next;
+      const task = nextState.tasks.find((entry) => entry.id === next.taskId);
+      if (task && next.status === "completed" && task.revision === next.contract?.revision) {
+        task.status = "in_review";
+        task.updatedAt = next.updatedAt;
+      }
+      if (
+        task &&
+        (next.status === "failed" || next.status === "interrupted") &&
+        task.revision === next.contract?.revision
+      ) {
+        task.status = "todo";
+        task.assigneeId = null;
+        task.updatedAt = next.updatedAt;
+      }
+      await this.writeState(nextState);
+      this.state = nextState;
       return structuredClone(next);
+    });
+  }
+
+  async reviewTask(id: string, rawInput: unknown): Promise<Task> {
+    const input = ReviewTaskSchema.parse(rawInput);
+    return this.withWrite(async () => {
+      const nextState = structuredClone(this.state);
+      const task = nextState.tasks.find((entry) => entry.id === id);
+      if (!task) throw new StoreError("not_found", "Task not found.");
+      const assignments = nextState.assignments.filter((entry) => entry.taskId === id);
+      const assignment = assignments.find((entry) => entry.id === input.assignmentId);
+      if (
+        !assignment ||
+        assignments.at(-1)?.id !== assignment.id ||
+        assignment.status !== "completed"
+      ) {
+        throw new StoreError(
+          "conflict",
+          "Only the latest completed assignment can be reviewed. Reload the task process.",
+        );
+      }
+      if (assignment.review)
+        throw new StoreError(
+          "conflict",
+          "This assignment already has a review. Start a new assignment for revisions.",
+        );
+      if (
+        task.revision !== input.expectedRevision ||
+        assignment.contract?.revision !== task.revision
+      ) {
+        throw new StoreError(
+          "conflict",
+          "The requirements changed after this assignment. Run the current task before accepting its result.",
+        );
+      }
+      const criteria = assignment.contract.acceptanceCriteria;
+      const indexes = new Set(input.evidence.map((item) => item.criterionIndex));
+      if (
+        indexes.size !== input.evidence.length ||
+        input.evidence.some((item) => item.criterionIndex >= criteria.length)
+      ) {
+        throw new StoreError(
+          "invalid",
+          "Each evidence entry must reference a different acceptance criterion.",
+        );
+      }
+      if (
+        input.outcome === "accepted" &&
+        (criteria.length === 0 || indexes.size !== criteria.length)
+      ) {
+        throw new StoreError(
+          "invalid",
+          "Record an observation for every acceptance criterion before accepting this result.",
+        );
+      }
+      if (input.outcome === "accepted") {
+        await this.verifiedAssignmentOutputs(assignment.id);
+      }
+      const now = new Date().toISOString();
+      assignment.review = TaskReviewSchema.parse({
+        ...input,
+        id: crypto.randomUUID(),
+        reviewedBy: "local-user",
+        notes: this.redactSecrets(input.notes),
+        evidence: input.evidence.map((item) => ({
+          ...item,
+          observation: this.redactSecrets(item.observation),
+        })),
+        createdAt: now,
+        outputs: assignment.outputs ?? [],
+      });
+      assignment.updatedAt = now;
+      task.status = input.outcome === "accepted" ? "done" : "todo";
+      task.updatedAt = now;
+      await this.writeState(nextState);
+      this.state = nextState;
+      return structuredClone(task);
     });
   }
 
@@ -1054,7 +2143,8 @@ export class FileStore {
         threadId: message.threadId,
         messageId: message.id,
         kind: isSafeImageType(mediaType) ? "image" : "file",
-        source: "upload",
+        source: message.author.kind === "agent" ? "generated" : "upload",
+        sha256: createHash("sha256").update(upload.bytes).digest("hex"),
         name: normaliseArtifactName(upload.name),
         ...(mediaType ? { mediaType } : {}),
         size: upload.bytes.byteLength,
@@ -1144,7 +2234,7 @@ export class FileStore {
 
   private async resolveArtifactFile(artifact: Artifact): Promise<string | undefined> {
     if (artifact.kind === "link") return undefined;
-    if (artifact.source === "upload") {
+    if (artifact.source === "upload" || artifact.source === "generated") {
       const file = this.uploadArtifactPath(artifact.threadId, artifact.id);
       const details = await stat(file).catch(() => undefined);
       if (!details?.isFile()) throw new StoreError("not_found", "Artifact content not found.");
@@ -1209,6 +2299,16 @@ export class FileStore {
     let changed = false;
     for (const thread of this.state.threads) {
       const events = await this.readEvents(thread.id);
+      for (const event of events) {
+        if (event.type !== "brief.updated") continue;
+        if (
+          event.workBrief.threadId !== thread.id ||
+          event.workBrief.workspaceId !== thread.workspaceId
+        ) {
+          throw new Error(`Work brief in transcript ${thread.id} has invalid workspace ownership.`);
+        }
+        this.workBriefByThread.set(thread.id, event.workBrief);
+      }
       const messages = events.filter((event) => event.type === "message.created");
       const last = messages.at(-1)?.message;
       this.sequenceByThread.set(thread.id, events.at(-1)?.sequence ?? 0);
@@ -1369,6 +2469,8 @@ function createInitialState(): PersistedState {
     tasks: [],
     knowledge: [],
     assignments: [],
+    surfaces: [],
+    goals: [],
   };
 }
 
@@ -1607,6 +2709,9 @@ function parseTranscriptEvent(line: string): TranscriptEvent | undefined {
       sequence,
       toolCall: ToolCallSchema.parse(parsed.toolCall),
     };
+  }
+  if (parsed.type === "brief.updated") {
+    return { type: "brief.updated", sequence, workBrief: WorkBriefSchema.parse(parsed.workBrief) };
   }
   return undefined;
 }

@@ -1,15 +1,226 @@
-import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { MasterAccessMode, MasterAgent, ToolCall } from "../shared/contracts.js";
+import {
+  type MasterAccessMode,
+  type MasterAgent,
+  TaskSchema,
+  type ToolCall,
+  WorkAssignmentSchema,
+} from "../shared/contracts.js";
+import { surfaceTemplate } from "../shared/surfaces.js";
 import {
   createMasterToolSession,
   executeMasterTool,
   type MasterToolContext,
 } from "./master-harness.js";
+import { FileStore } from "./store.js";
 
 describe("Master harness tools", () => {
+  it("retrieves history through its thread-bound read hook without edit approval", async () => {
+    const context = await toolContext("ask");
+    const store = await FileStore.open({
+      root: context.dataPath,
+      workspacePath: context.workspacePath,
+    });
+    const thread = store.listThreads()[0];
+    if (!thread) throw new Error("Expected thread");
+    const message = await store.createUserMessage(
+      thread.id,
+      "Decision: support research and design",
+      [],
+    );
+    let approvals = 0;
+    context.hooks = {
+      update: async () => undefined,
+      requestApproval: async () => {
+        approvals += 1;
+        return false;
+      },
+      readHistory: (input) => store.readHistory(thread.id, input),
+    };
+    const session = await createMasterToolSession(context);
+    try {
+      const result = JSON.parse(await callSession(session, "read_history", { query: "design" }));
+      expect(result.messages[0]).toMatchObject({ id: message.id, content: message.content });
+      expect(approvals).toBe(0);
+      await expect(
+        callSession(session, "read_history", { threadId: "foreign" }),
+      ).resolves.toContain("Unrecognized key");
+    } finally {
+      await session.close();
+    }
+  });
+
+  it("hands planned tasks to a draft goal without forcing immediate delegation", async () => {
+    const context = await toolContext("full");
+    const store = await FileStore.open({
+      root: context.dataPath,
+      workspacePath: context.workspacePath,
+    });
+    const thread = store.listThreads()[0];
+    if (!thread) throw new Error("Expected thread");
+    const worker = await store.createAgent({
+      kind: "worker",
+      name: "Writer",
+      handle: "writer",
+      harness: "codex",
+    });
+    context.threadId = thread.id;
+    context.hooks = {
+      update: async () => undefined,
+      requestApproval: async () => true,
+      createPlan: async (_title, steps) =>
+        Promise.all(steps.map((step) => store.createTask({ ...step, threadId: thread.id }))),
+      createWorkGoal: (input) => store.createGoal({ ...input, threadId: thread.id }),
+      readWorkGoals: async () => store.listGoals(),
+    };
+    const session = await createMasterToolSession(context);
+    try {
+      await callSession(session, "plan", {
+        title: "Draft a document",
+        mode: "execute",
+        steps: [
+          {
+            title: "Write a memo",
+            description: "Explain the decision",
+            kind: "document",
+            acceptanceCriteria: [
+              { behavior: "The reasoning is explicit", verification: "Read the memo" },
+            ],
+          },
+        ],
+      });
+      expect(session.pendingTaskIds()).toHaveLength(1);
+      const task = store.listTasks()[0];
+      if (!task) throw new Error("Expected task");
+      const drafted = JSON.parse(
+        await callSession(session, "draft_goal", {
+          objective: "Explain the decision",
+          steps: [
+            { taskId: task.id, expectedRevision: task.revision, workerHandle: worker.handle },
+          ],
+          attemptLimit: 2,
+          timeLimitMinutes: 30,
+        }),
+      );
+      expect(drafted.status).toBe("draft");
+      expect(session.pendingTaskIds()).toEqual([]);
+      expect(store.listAssignments()).toEqual([]);
+      await expect(callSession(session, "read_goals", {})).resolves.toContain(
+        "Explain the decision",
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  it("uses scoped surface commands, preserves complete records, and respects write approval", async () => {
+    const context = await toolContext("ask");
+    const store = await FileStore.open({
+      root: context.dataPath,
+      workspacePath: context.workspacePath,
+    });
+    const agent = await store.createAgent({
+      kind: "master",
+      name: "Master",
+      handle: "master",
+      instructions: "",
+      description: "",
+      provider: {
+        type: "custom",
+        name: "Test",
+        baseUrl: "http://localhost:9876/v1",
+        model: "test",
+        protocol: "openai-chat",
+      },
+    });
+    if (agent.kind !== "master") throw new Error("Expected master");
+    context.agent = agent;
+    let approved = false;
+    context.hooks = {
+      update: async () => undefined,
+      requestApproval: async () => approved,
+      readSurfaces: async () => store.listSurfaces(agent.workspaceId),
+      readSurface: async (id) => {
+        store.readSurfaceContext(id, [], agent.id);
+        const surface = store.getSurface(id);
+        if (!surface) throw new Error("Expected surface");
+        return surface;
+      },
+      createSurface: (input) =>
+        store.createSurface({ ...input, workspaceId: agent.workspaceId }, agent.id),
+      saveSurfaceRecord: (id, input) => store.saveSurfaceRecord(id, input, agent.id),
+    };
+    const input = {
+      manifest: surfaceTemplate("table", "Evidence"),
+      records: [{ data: { title: "Claim", notes: "x".repeat(2000) } }],
+    };
+    await expect(call(context, "create_surface", input)).resolves.toContain("denied");
+    expect(store.listSurfaces(agent.workspaceId)).toHaveLength(0);
+    approved = true;
+    const created = JSON.parse(await call(context, "create_surface", input));
+    expect(created.truncated).toBe(true);
+    await expect(call(context, "read_surfaces", {})).resolves.toContain("Evidence");
+    const complete = JSON.parse(
+      await call(context, "read_surface", {
+        surfaceId: created.surfaceId,
+        recordId: created.records[0].id,
+      }),
+    );
+    expect(complete.record.data.notes).toHaveLength(2000);
+    const saved = JSON.parse(
+      await call(context, "save_surface_record", {
+        surfaceId: created.surfaceId,
+        expectedRevision: complete.revision,
+        id: complete.record.id,
+        data: { ...complete.record.data, title: "Verified claim" },
+      }),
+    );
+    expect(saved.revision).toBe(2);
+    await expect(
+      call(context, "save_surface_record", {
+        surfaceId: created.surfaceId,
+        expectedRevision: 1,
+        id: complete.record.id,
+        data: { title: "Stale" },
+      }),
+    ).resolves.toContain("changed");
+    expect(store.getSurface(created.surfaceId)?.records[0]?.data.title).toBe("Verified claim");
+  });
+
+  it("uses canonical boundaries while accepting a workspace's declared symlink path", async () => {
+    const context = await toolContext("full");
+    const actual = await realpath(context.workspacePath);
+    const aliasParent = await mkdtemp(join(tmpdir(), "nexestra-workspace-alias-"));
+    const alias = join(aliasParent, "workspace");
+    await symlink(actual, alias, "dir");
+    context.workspacePath = alias;
+    context.dataPath = join(alias, ".nexestra");
+    await mkdir(join(actual, "src"));
+    await mkdir(join(actual, ".nexestra"));
+    await writeFile(join(actual, "src", "source.ts"), "const source = 1;\n");
+    await writeFile(join(actual, ".nexestra", "state.json"), "private metadata");
+    await expect(call(context, "glob", { pattern: "**/*.ts" })).resolves.toContain("src/source.ts");
+    await expect(call(context, "grep", { pattern: "source", path: "src" })).resolves.toContain(
+      "Line 1",
+    );
+    await expect(
+      call(context, "read", { filePath: join(alias, "src", "source.ts") }),
+    ).resolves.toContain("const source = 1");
+    await expect(
+      call(context, "write", { filePath: join(alias, "new", "memo.md"), content: "A memo" }),
+    ).resolves.toContain("Wrote");
+    expect(await readFile(join(actual, "new", "memo.md"), "utf8")).toBe("A memo");
+    await expect(
+      call(context, "read", { filePath: join(alias, ".nexestra", "state.json") }),
+    ).resolves.toContain("protected");
+    await expect(
+      call(context, "read", { filePath: join(actual, ".nexestra", "state.json") }),
+    ).resolves.toContain("protected");
+  });
+
   it("lists, searches, reads, edits, writes, and runs bounded shell commands", async () => {
     const context = await toolContext("full");
     await mkdir(join(context.workspacePath, "src"));
@@ -222,10 +433,74 @@ describe("Master harness tools", () => {
     expect(statuses).toEqual(["running", "completed", "waiting_approval", "running", "completed"]);
   });
 
+  it("resumes an existing task discovered in a fresh session without creating a duplicate plan", async () => {
+    const context = await toolContext("full");
+    const task = TaskSchema.parse({
+      id: crypto.randomUUID(),
+      workspaceId: "workspace",
+      title: "Revise memo",
+      description: "Add sources",
+      kind: "document",
+      status: "todo",
+      assigneeId: null,
+      threadId: "thread",
+      acceptanceCriteria: [{ behavior: "Claims are sourced", verification: "Read sources" }],
+      createdAt: "2026-09-07",
+      updatedAt: "2026-09-07",
+    });
+    let delegated = false;
+    context.hooks = {
+      update: async () => undefined,
+      requestApproval: async () => true,
+      readTasks: async () => [{ task }],
+      createPlan: async () => {
+        throw new Error("Do not create a duplicate plan");
+      },
+      delegate: async (input) => {
+        expect(input).toEqual({
+          taskId: task.id,
+          workerHandle: "writer",
+          repositoryHandle: undefined,
+        });
+        delegated = true;
+        return {
+          result: "A revised memo",
+          assignment: WorkAssignmentSchema.parse({
+            id: "assignment",
+            workspaceId: "workspace",
+            taskId: task.id,
+            threadId: "thread",
+            masterRunId: "run",
+            workerAgentId: "worker",
+            repositoryId: null,
+            environment: "directory",
+            status: "completed",
+            branch: "",
+            worktreePath: "assignments/test",
+            createdAt: "2026-09-07",
+            updatedAt: "2026-09-07",
+          }),
+        };
+      },
+    };
+    const session = await createMasterToolSession(context);
+    try {
+      await expect(callSession(session, "read_tasks", {})).resolves.toContain(task.id);
+      expect(session.pendingTaskIds()).toEqual([]);
+      expect(delegated).toBe(false);
+      await expect(
+        callSession(session, "delegate", { taskId: task.id, worker: "writer" }),
+      ).resolves.toContain('"taskStatus": "in_review"');
+      expect(delegated).toBe(true);
+    } finally {
+      await session.close();
+    }
+  });
+
   it("requires a durable plan before delegating its tasks to Workers", async () => {
     const context = await toolContext("full");
     const taskId = "f5a80f87-456d-4c35-9081-356cbe665510";
-    const delegated: { workerHandle: string; repositoryHandle: string }[] = [];
+    const delegated: { workerHandle: string; repositoryHandle?: string }[] = [];
     context.hooks = {
       update: async () => undefined,
       requestApproval: async () => true,
@@ -235,6 +510,9 @@ describe("Master harness tools", () => {
           workspaceId: "workspace",
           title: step.title,
           description: step.description,
+          kind: step.kind ?? "mixed",
+          revision: 1,
+          acceptanceCriteria: step.acceptanceCriteria ?? [],
           status: "todo" as const,
           assigneeId: null,
           threadId: "thread",
@@ -278,7 +556,17 @@ describe("Master harness tools", () => {
       await expect(
         callSession(session, "plan", {
           title: "Implementation plan",
-          steps: [{ title: "Build feature", description: "Meet the acceptance criteria." }],
+          mode: "execute",
+          steps: [
+            {
+              title: "Build feature",
+              description: "Meet the acceptance criteria.",
+              kind: "code",
+              acceptanceCriteria: [
+                { behavior: "Feature works", verification: "Run the acceptance test" },
+              ],
+            },
+          ],
         }),
       ).resolves.toContain(taskId);
       expect(session.pendingTaskIds()).toEqual([taskId]);
@@ -350,7 +638,9 @@ describe("Master harness tools", () => {
       const skill = await callSession(session, "skill", { name: "review-code" });
       expect(skill).toContain("Check the diff");
       expect(skill).not.toContain("description: Review changes carefully.");
-      expect(skill).toContain(`<file>${join(skillDirectory, "checklist.md")}</file>`);
+      expect(skill).toContain(
+        `<file>${await realpath(join(skillDirectory, "checklist.md"))}</file>`,
+      );
       await expect(
         callSession(session, "read", { filePath: join(skillDirectory, "checklist.md") }),
       ).resolves.toContain("Inspect tests");

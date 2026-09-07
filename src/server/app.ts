@@ -5,9 +5,11 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { ZodError } from "zod";
-import { type BootstrapData, ToolAnswersSchema } from "../shared/contracts.js";
+import { type BootstrapData, DelegateTaskSchema, ToolAnswersSchema } from "../shared/contracts.js";
+import { SurfaceContextQuerySchema } from "../shared/surfaces.js";
 import { ChatGptAuthManager } from "./auth.js";
 import { AgentDispatcher, ChatService } from "./dispatcher.js";
+import { GoalController } from "./goal-controller.js";
 import { RepositoryManager } from "./repository-manager.js";
 import { type AgentRunner, agentView, LocalAgentRunner } from "./runtime.js";
 import {
@@ -31,6 +33,7 @@ export function createApp(options: CreateAppOptions) {
   const runner = options.runner ?? new LocalAgentRunner({ store: options.store });
   const repositories = new RepositoryManager(options.store);
   const dispatcher = new AgentDispatcher(options.store, runner, repositories);
+  const goals = new GoalController(options.store, dispatcher);
   const chat = new ChatService(options.store, dispatcher);
   const launchPath = options.launchPath ?? launchDesktopPath;
   const localRunner = runner instanceof LocalAgentRunner ? runner : undefined;
@@ -52,6 +55,19 @@ export function createApp(options: CreateAppOptions) {
   });
 
   app.get("/api/health", (context) => context.json({ ok: true, version: "0.1.0" }));
+  app.get("/api/threads/:id/history", async (context) =>
+    context.json(
+      await options.store.readHistory(context.req.param("id"), {
+        ...(context.req.query("beforeSequence")
+          ? { beforeSequence: Number(context.req.query("beforeSequence")) }
+          : {}),
+        ...(context.req.query("limit") ? { limit: Number(context.req.query("limit")) } : {}),
+        ...(context.req.query("query") ? { query: context.req.query("query") } : {}),
+        ...(context.req.query("messageId") ? { messageId: context.req.query("messageId") } : {}),
+        ...(context.req.query("offset") ? { offset: Number(context.req.query("offset")) } : {}),
+      }),
+    ),
+  );
 
   app.get("/api/bootstrap", async (context) => {
     const runtime = await runner.runtimeStatus();
@@ -67,6 +83,9 @@ export function createApp(options: CreateAppOptions) {
         .listAgents(workspace.id)
         .map((agent) => agentView(agent, runtime, dispatcher.busyAgentIds())),
       threads: options.store.listThreads(workspace.id),
+      workBriefs: await options.store.listWorkBriefs(workspace.id),
+      surfaces: options.store.listSurfaces(workspace.id),
+      goals: options.store.listGoals(workspace.id),
       tasks: options.store.listTasks(workspace.id),
       knowledge: options.store.listKnowledge(workspace.id),
       assignments: options.store.listAssignments(workspace.id),
@@ -89,6 +108,24 @@ export function createApp(options: CreateAppOptions) {
 
   app.post("/api/workspaces", async (context) => {
     return context.json(await options.store.createWorkspace(await context.req.json()), 201);
+  });
+
+  app.get("/api/threads/:id/brief", async (context) => {
+    return context.json({
+      workBrief: (await options.store.getWorkBrief(context.req.param("id"))) ?? null,
+    });
+  });
+
+  app.put("/api/threads/:id/brief", async (context) => {
+    return context.json(
+      await options.store.saveWorkBrief(context.req.param("id"), await context.req.json()),
+    );
+  });
+
+  app.post("/api/threads/:id/brief/confirm", async (context) => {
+    return context.json(
+      await options.store.confirmWorkBrief(context.req.param("id"), await context.req.json()),
+    );
   });
 
   app.post("/api/agents", async (context) => {
@@ -296,6 +333,45 @@ export function createApp(options: CreateAppOptions) {
     return context.json(await options.store.createTask(await context.req.json()), 201);
   });
 
+  app.post("/api/surfaces", async (context) =>
+    context.json(await options.store.createSurface(await context.req.json()), 201),
+  );
+  app.get("/api/surfaces/:id", (context) => {
+    const surface = options.store.getSurface(context.req.param("id"));
+    if (!surface) throw new StoreError("not_found", "Surface not found.");
+    return context.json(surface);
+  });
+  app.put("/api/surfaces/:id", async (context) =>
+    context.json(
+      await options.store.updateSurface(context.req.param("id"), await context.req.json()),
+    ),
+  );
+  app.patch("/api/surfaces/:id/enabled", async (context) =>
+    context.json(
+      await options.store.setSurfaceEnabled(context.req.param("id"), await context.req.json()),
+    ),
+  );
+  app.post("/api/surfaces/:id/records", async (context) =>
+    context.json(
+      await options.store.saveSurfaceRecord(context.req.param("id"), await context.req.json()),
+    ),
+  );
+  app.patch("/api/surfaces/:id/records/:recordId/archive", async (context) =>
+    context.json(
+      await options.store.archiveSurfaceRecord(
+        context.req.param("id"),
+        context.req.param("recordId"),
+        await context.req.json(),
+      ),
+    ),
+  );
+  app.get("/api/surfaces/:id/context", (context) => {
+    const query = SurfaceContextQuerySchema.parse({
+      recordIds: context.req.query("ids")?.split(",").filter(Boolean) ?? [],
+    });
+    return context.json(options.store.readSurfaceContext(context.req.param("id"), query.recordIds));
+  });
+
   app.get("/api/tasks/:id", (context) => {
     const task = options.store.getTask(context.req.param("id"));
     if (!task) throw new StoreError("not_found", "Task not found.");
@@ -303,7 +379,9 @@ export function createApp(options: CreateAppOptions) {
   });
 
   app.get("/api/tasks/:id/process", async (context) => {
-    return context.json(await dispatcher.taskProcess(context.req.param("id")));
+    return context.json(
+      await dispatcher.taskProcess(context.req.param("id"), context.req.query("assignmentId")),
+    );
   });
 
   app.post("/api/tasks/:id/stop", async (context) => {
@@ -328,6 +406,31 @@ export function createApp(options: CreateAppOptions) {
     );
   });
 
+  app.post("/api/tasks/:id/review", async (context) => {
+    const task = await options.store.reviewTask(context.req.param("id"), await context.req.json());
+    await goals.taskReviewed(task.id);
+    return context.json(task);
+  });
+
+  app.post("/api/goals", async (context) =>
+    context.json(await options.store.createGoal(await context.req.json()), 201),
+  );
+  app.get("/api/goals", (context) => {
+    const workspace = options.store.getWorkspace(
+      context.req.query("workspaceId") ?? options.store.listWorkspaces()[0]?.id ?? "",
+    );
+    if (!workspace) throw new StoreError("not_found", "Workspace not found.");
+    return context.json(options.store.listGoals(workspace.id));
+  });
+  app.get("/api/goals/:id", (context) => {
+    const goal = options.store.getGoal(context.req.param("id"));
+    if (!goal) throw new StoreError("not_found", "Goal not found.");
+    return context.json(goal);
+  });
+  app.post("/api/goals/:id/control", async (context) =>
+    context.json(await goals.control(context.req.param("id"), await context.req.json())),
+  );
+
   app.delete("/api/tasks/:id", async (context) => {
     await options.store.deleteTask(context.req.param("id"));
     return context.body(null, 204);
@@ -335,9 +438,16 @@ export function createApp(options: CreateAppOptions) {
 
   app.post("/api/tasks/:taskId/delegate", async (context) => {
     const taskId = context.req.param("taskId");
-    const body = await context.req.json();
-    const { workerHandle, repositoryHandle } = body;
-    return context.json(await dispatcher.delegateFromTask(taskId, workerHandle, repositoryHandle));
+    const input = DelegateTaskSchema.parse(await context.req.json());
+    return context.json(
+      await dispatcher.delegateFromTask(
+        taskId,
+        input.workerHandle,
+        input.repositoryHandle,
+        input.expectedRevision,
+      ),
+      202,
+    );
   });
 
   app.post("/api/auth/chatgpt/start", async (context) => {
@@ -400,7 +510,7 @@ export function createApp(options: CreateAppOptions) {
     });
   }
 
-  return Object.assign(app, { dispatcher, runner });
+  return Object.assign(app, { dispatcher, runner, goals });
 }
 
 function isApiPath(path: string): boolean {

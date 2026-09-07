@@ -4,7 +4,7 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgentView, BootstrapData, ThreadData } from "../shared/contracts.js";
+import type { AgentView, BootstrapData, ThreadData, WorkBrief } from "../shared/contracts.js";
 import { App } from "./App.js";
 
 const now = "2026-09-02T12:00:00.000Z";
@@ -39,6 +39,9 @@ const bootstrapData: BootstrapData = {
   agents: [],
   threads: [],
   tasks: [],
+  workBriefs: [],
+  surfaces: [],
+  goals: [],
   knowledge: [],
   assignments: [],
   activeRuns: [],
@@ -705,6 +708,241 @@ describe("Worker creation", () => {
 });
 
 describe("Taskboard Worker process", () => {
+  it("browses historical scope read-only and returns to the latest review", async () => {
+    window.history.replaceState({}, "", "/surfaces/taskboard");
+    const task = {
+      id: "history-task",
+      workspaceId: workspace.id,
+      title: "Current scope",
+      description: "New requirements",
+      status: "in_review",
+      revision: 2,
+      kind: "document",
+      acceptanceCriteria: [{ behavior: "A memo exists", verification: "Read it" }],
+      threadId: "thread",
+      assigneeId: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const base = {
+      workspaceId: workspace.id,
+      taskId: task.id,
+      threadId: "thread",
+      masterRunId: "",
+      workerAgentId: "worker",
+      repositoryId: null,
+      environment: "directory",
+      status: "completed",
+      branch: "",
+      worktreePath: "directory",
+      createdAt: now,
+      updatedAt: now,
+    };
+    const first = {
+      ...base,
+      id: "first",
+      contract: {
+        ...task,
+        title: "Original scope",
+        description: "Original requirements",
+        revision: 1,
+      },
+      result: "Original result",
+    };
+    const latest = { ...base, id: "latest", contract: task, result: "Current result" };
+    const attempts = [
+      { id: "latest", ordinal: 2, status: "completed", contractRevision: 2, createdAt: now },
+      { id: "first", ordinal: 1, status: "completed", contractRevision: 1, createdAt: now },
+    ];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap"))
+        return jsonResponse({ ...bootstrapData, tasks: [task], assignments: [latest, first] });
+      const historical = path.endsWith("?assignmentId=first");
+      return jsonResponse({
+        task,
+        assignment: historical ? first : latest,
+        isLatestAttempt: !historical,
+        attempts,
+        toolCalls: [],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Open process for Current scope" }));
+    expect(await screen.findByLabelText("Review notes")).toBeVisible();
+    await user.selectOptions(screen.getByLabelText("Attempt history"), "first");
+    const old = await screen.findByRole("dialog", { name: "Original scope" });
+    expect(within(old).getByText("Original requirements")).toBeVisible();
+    expect(await within(old).findByText("Original result")).toBeVisible();
+    expect(within(old).queryByLabelText("Review notes")).not.toBeInTheDocument();
+    expect(within(old).queryByRole("button", { name: "Start Worker" })).not.toBeInTheDocument();
+    expect(within(old).queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+    await user.selectOptions(within(old).getByLabelText("Attempt history"), "");
+    await screen.findByRole("dialog", { name: "Current scope" });
+    expect(await screen.findByLabelText("Review notes")).toBeVisible();
+  });
+
+  it("opens an editable task from a saved brief and saves its source revision without starting work", async () => {
+    window.history.replaceState({}, "", "/surfaces/briefs");
+    const thread = {
+      id: "source-thread",
+      workspaceId: workspace.id,
+      name: "Audience research",
+      slug: "audience",
+      createdAt: now,
+      updatedAt: now,
+      messageCount: 0,
+      lastMessageAt: null,
+    };
+    const brief: WorkBrief = {
+      threadId: thread.id,
+      workspaceId: workspace.id,
+      revision: 3,
+      status: "draft",
+      title: "Choose an audience",
+      kind: "research",
+      outcome: "Make a recommendation",
+      deliverables: ["A sourced memo"],
+      constraints: "Public evidence only",
+      nonGoals: "No outreach",
+      openQuestions: "",
+      acceptanceCriteria: [
+        { behavior: "Claims have sources", verification: "Open the cited pages" },
+      ],
+      updatedAt: now,
+      updatedBy: { kind: "user", id: "local-user" },
+      confirmedAt: null,
+    };
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) =>
+      String(url).startsWith("/api/bootstrap")
+        ? jsonResponse({ ...bootstrapData, threads: [thread], workBriefs: [brief] })
+        : jsonResponse({}),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Draft task" }));
+    const dialog = await screen.findByRole("dialog", { name: "Create task" });
+    expect(within(dialog).getByLabelText("Title")).toHaveValue(brief.title);
+    expect(within(dialog).getByLabelText("Description")).toHaveValue(brief.outcome);
+    expect(within(dialog).getByLabelText("Criterion 1")).toHaveValue("Claims have sources");
+    expect(within(dialog).getByLabelText("Linked thread")).toBeDisabled();
+    await user.click(within(dialog).getByRole("button", { name: "Create task" }));
+    expect(await screen.findByText("Task added to the board.")).toBeVisible();
+    const calls = fetchMock.mock.calls as unknown as Array<[string, RequestInit | undefined]>;
+    const saved = calls.find(([url, init]) => url === "/api/tasks" && init?.method === "POST");
+    expect(JSON.parse(String(saved?.[1]?.body))).toMatchObject({
+      title: brief.title,
+      description: brief.outcome,
+      kind: "research",
+      threadId: thread.id,
+      sourceBriefRevision: 3,
+      status: "todo",
+      acceptanceCriteria: brief.acceptanceCriteria,
+    });
+    expect(calls.some(([url]) => url.includes("/delegate") || url.includes("/messages"))).toBe(
+      false,
+    );
+    await user.click(screen.getByRole("button", { name: "Create task" }));
+    expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue("");
+    expect(screen.queryByText(/Source brief · revision/)).not.toBeInTheDocument();
+  });
+
+  it("records a review without reporting that a Worker was stopped", async () => {
+    window.history.replaceState({}, "", "/surfaces/taskboard");
+    const task = {
+      id: "review-task",
+      workspaceId: workspace.id,
+      title: "Review the memo",
+      description: "",
+      status: "in_review",
+      assigneeId: workerAgent.id,
+      threadId: null,
+      kind: "research",
+      revision: 1,
+      acceptanceCriteria: [{ behavior: "Claims are sourced", verification: "Open each source" }],
+      createdAt: now,
+      updatedAt: now,
+    };
+    const assignment = {
+      id: "review-assignment",
+      workspaceId: workspace.id,
+      taskId: task.id,
+      threadId: "thread",
+      masterRunId: "run",
+      workerAgentId: workerAgent.id,
+      repositoryId: "",
+      status: "completed",
+      branch: "preview",
+      worktreePath: "preview",
+      contract: task,
+      result: "A memo",
+      executionProfile: {
+        name: "Former writer",
+        handle: "former-writer",
+        harness: "opencode",
+        model: "fixture/glm",
+        reasoningEffort: "high",
+        instructionsSha256: "a".repeat(64),
+        capturedAt: now,
+      },
+      inputSource: {
+        assignmentId: "previous-assignment",
+        reviewId: "previous-review",
+        taskRevision: 1,
+        outputs: [
+          {
+            artifactId: "previous-memo",
+            name: "Original memo.md",
+            sha256: "a".repeat(64),
+            size: 42,
+          },
+        ],
+      },
+      createdAt: now,
+      updatedAt: now,
+    };
+    let recorded = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path.startsWith("/api/bootstrap"))
+          return jsonResponse({
+            ...bootstrapData,
+            tasks: [{ ...task, status: recorded ? "todo" : "in_review" }],
+            assignments: [assignment],
+          });
+        if (path.endsWith("/process")) return jsonResponse({ task, assignment, toolCalls: [] });
+        if (path.endsWith("/review") && init?.method === "POST") {
+          recorded = true;
+          return jsonResponse(task);
+        }
+        return jsonResponse({});
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(
+      await screen.findByRole("button", { name: "Open process for Review the memo" }),
+    );
+    expect(await screen.findByRole("region", { name: "Revision inputs" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Execution profile" })).toHaveTextContent(
+      "OpenCode · fixture/glm",
+    );
+    expect(screen.getByText("@former-writer")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Original memo.md" })).toHaveAttribute(
+      "href",
+      "/api/threads/thread/artifacts/previous-memo/content",
+    );
+    await user.type(await screen.findByLabelText("Review notes"), "Add primary sources.");
+    await user.click(screen.getByRole("button", { name: "Request changes" }));
+    expect(await screen.findByText("Review recorded.")).toBeVisible();
+    expect(screen.queryByText("Worker process stopped.")).not.toBeInTheDocument();
+  });
+
   it("opens a task card and shows its live Worker activity and tool calls", async () => {
     window.history.replaceState({}, "", "/surfaces/taskboard");
     vi.spyOn(window, "setInterval").mockImplementation(

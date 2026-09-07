@@ -1,7 +1,7 @@
 # Nexestra
 
-Nexestra is a local-first workspace where people can chat and work with coding agents.
-Milestone M9 is a fresh rebuild focused on two primary workflows:
+Nexestra is a local-first workspace where people and configurable AI agents plan, execute and
+review research, documents, design and code. Built on the M9 single-server foundation, it supports:
 
 - create **Worker agents** powered by Codex or OpenCode;
 - create **Master agents** using ChatGPT OAuth through Codex CLI or an OpenAI-compatible endpoint;
@@ -9,6 +9,9 @@ Milestone M9 is a fresh rebuild focused on two primary workflows:
 - save shared documents and Git repositories, then reference them with a `#handle`;
 - attach files and images, and browse each thread's indexed files and links;
 - manage planned work, repository knowledge, and agents in Taskboard, Knowledge, and Agents.
+- maintain shared **Work Briefs** for research, documents, design, code, or mixed work.
+- run bounded **Goals**, with pinned scope, durable budgets and independent human review;
+- create **Custom surfaces** from reusable table, board, whiteboard and document definitions.
 
 Workspaces are selected from the far-left rail. Each workspace has its own threads, agents, and
 tasks; Threads, Surfaces, and Settings live in the navigation panel beside that rail. Creating a
@@ -30,7 +33,7 @@ By default, data is stored in `.nexestra/` in the running repository:
 
 ```text
 .nexestra/
-├── state.json          # workspace, agent, thread, task, knowledge, and assignment metadata
+├── state.json          # workspace, agent, task, knowledge, assignment, surface and goal metadata
 ├── credentials.json    # custom API keys, mode 0600
 ├── artifacts/
 │   └── <thread-id>/<artifact-id> # uploaded bytes, mode 0600
@@ -38,12 +41,72 @@ By default, data is stored in `.nexestra/` in the running repository:
 │   └── <workspace-id>/
 │       ├── knowledge/<knowledge-id>/document
 │       ├── repositories/<knowledge-id>/source
-│       └── worktrees/<assignment-id>
+│       ├── worktrees/<assignment-id>
+│       └── assignments/<assignment-id>/outputs/ # general non-Git deliverables
 └── threads/
     └── <thread-id>.jsonl  # the thread's shared append-only transcript
 ```
 
 Set `NEXESTRA_HOME=/another/path` to keep data outside the repository.
+
+## Shared work briefs
+
+For a complete tour in Vietnamese, see [Start here](docs/START-HERE.vi.md).
+
+Open **Surfaces → Work briefs**, choose a conversation, or create a new one. Record the outcome,
+deliverables, constraints, out-of-scope work, open questions and success criteria with a concrete
+check for each. Drafts can be incomplete. Optional **Confirm scope** records agreement after the
+outcome, outputs and checks are specified and open questions are resolved. Confirmation does not
+start work or grant tool permissions.
+
+Briefs work without a Git repository. Every save creates a revision in the conversation's canonical
+JSONL; stale updates fail instead of overwriting newer edits. Editing a confirmed brief returns it
+to draft. The brief is included when an agent is next mentioned in that conversation. Custom-provider
+Masters can use `read_brief` and `draft_brief`; Codex/OpenCode receive the context but do not yet
+have that native tool bridge. Use **Work brief** in the conversation tabs to jump to its scope.
+
+Use **Draft task** on a saved brief to review an editable task with the outcome, work type and
+checks already filled in. Saving retains the complete source brief, including constraints and
+deliverables, and opens Taskboard. This does not run an agent. A stale source revision fails safely;
+later brief edits do not change the task's source snapshot. Open **Source brief** in the task to
+inspect it before assigning a Worker.
+
+The [product vision](docs/PRODUCT-VISION.vi.md), [target harness design](docs/HARNESS-DESIGN.md) and
+[roadmap](docs/ROADMAP.md) describe the next steps toward a general-purpose execution workspace.
+Worker delegation supports repository worktrees and isolated directories for non-code work.
+
+After **Request changes**, the next assignment receives the prior review and verified copies of
+its captured files in `inputs/`. Save the revision in `outputs/`; later edits to the old working
+directory do not replace the reviewed source. Failed retries and restarts retain that source.
+Changing the task requirements creates a new scope without automatically reusing the old inputs.
+
+The task process view records the configured Worker harness, model and reasoning overrides at
+queue time. That attribution survives deleting a Worker or reusing its handle. A runtime-default
+model is labeled as such; the app does not infer which remote model was actually served.
+
+Use **Attempt history** in a task's process dialog to inspect earlier files, failures and reviews
+against their original scope. Historical views are read-only. Select **Latest attempt** to continue
+working or review a new result.
+
+Long conversations retain their complete canonical history and exports. Each invocation receives
+up to 48,000 characters of recent conversation, with explicit omission markers; pinned work briefs
+and assignment contracts remain separate. Custom Masters can use `read_history` to search, page
+backward or read a complete message in chunks. Codex/OpenCode also receive the canonical transcript
+path. Custom HTTP requests stop before exceeding 240,000 text characters including tool schemas
+and accumulated outputs. This is a size guard, not token or spend accounting. See
+[conversation context](docs/CONVERSATION-CONTEXT.md) for recovery and limits.
+
+## Goals and shared surfaces
+
+Use **Surfaces → Goals** to create a draft from tasks in one conversation. Review the scope and
+limits, then Start. Results wait for your review before the next task or revision runs. Pause and
+restart retain usage and the original deadline; a Worker cannot accept its own result. See the
+[goal workflow](docs/GOALS.md) for bounds, recovery and current limitations.
+
+Use **Surfaces → Custom surfaces** for a table, board, whiteboard or living document. Import a
+definition written by your harness, edit records, select semantic context, or export a reusable
+definition. Edits use version checks. These extensions describe data and trusted host views;
+they do not execute arbitrary scripts. See the [extension contract and examples](docs/SURFACE-EXTENSIONS.md).
 
 ## Invoking agents
 
@@ -56,7 +119,7 @@ canonical thread history.
 Messages render as safe GitHub Flavored Markdown with headings, emphasis, lists, task lists, tables,
 quotes, links, inline code, fenced code blocks, and KaTeX math. Raw HTML is shown as text instead of
 executed, unsafe link schemes are disabled, and external HTTP(S) links open in a new tab. The exact
-Markdown source remains unchanged in the shared transcript and agent context.
+Markdown source remains unchanged in the shared transcript; bounded context copies mark omissions.
 
 While an agent is active, the thread receives a live event stream with its current phase, tool
 activity, runtime-emitted reasoning, and in-progress answer. Reasoning is collapsed behind a
@@ -84,17 +147,27 @@ Git paths are also accepted. URLs containing embedded credentials are rejected. 
 card to inspect its details, edit its name, `#handle`, and description, download a stored document,
 or permanently delete it. Replacing document bytes or a repository source uses delete-and-create.
 
-Workers run in read-only discussion mode. For an implementation request, a custom-provider Master
-must call `plan` to create durable Taskboard tasks and then call `delegate` for each task it assigns.
-If the provider tries to return a final answer while planned tasks are still undelegated, the
+Workers run in read-only discussion mode in chat. From a task detail, choose **Start Worker** to
+record an explicit request in its linked conversation. Non-code work can use a new directory
+without Git; deliverables placed in outputs/ are captured into the conversation and task detail.
+For an implementation request, a custom-provider Master
+uses `read_tasks` to resume existing work, or `plan` with `mode: "execute"` to create new tasks with behavioral criteria,
+then calls `delegate` for each task it assigns. Omit the repository for non-Git work.
+The default `plan` mode is `draft`: proposals create tasks without requiring execution. If the
+provider tries to return a final answer while execute-mode tasks are still undelegated, the
 harness sends it back to the tool loop instead of leaving silent, unassigned work on the board.
+Handing those tasks to a draft goal clears that obligation and retains the separate user Start gate.
+Plan mode does not grant tool permissions or replace the user's execution intent.
 Delegation creates `nexestra/<assignment-id>` from the selected `#repository` and checks it out into
 an isolated managed worktree. The Worker runs there with write access, verifies its work, and
 commits on that branch. Nexestra does not merge or push the branch automatically.
 
 Every assignment is also a durable Worker run. Click any Taskboard card to inspect its assignee,
 repository, isolated branch and worktree, current phase, live reasoning, streamed response, and
-tool calls. Completed cards retain the Worker result and tool history in this process view; a task
+tool calls. Successful runs move tasks into **In review**. Record evidence for every acceptance
+criterion and review notes to accept a result, or request changes to reopen it. A Worker cannot
+mark its own task Done. Task requirements are frozen during a run; later edits invalidate that
+contract. Completed runs retain the Worker result and tool history in this process view; a task
 that was never delegated says so explicitly. The same detail view can edit every task field or
 permanently delete the task when no Worker assignment is active. While an assignment is queued or
 running, **Stop process** terminates its Codex/OpenCode process group, records the run and unfinished
@@ -102,7 +175,8 @@ tools as interrupted, and returns the task to To do so it can be delegated again
 
 Custom-provider Master agents have a provider-neutral
 harness with `list`, `glob`, `grep`, `read`, `edit`, `write`, `bash`, `apply_patch`, `skill`,
-`plan`, `delegate`, `todowrite`, `webfetch`, `websearch`, and `question`. LSP is intentionally not
+`read_brief`, `draft_brief`, `read_tasks`, `plan`, `delegate`, `todowrite`, `webfetch`,
+`websearch`, and `question`. LSP is intentionally not
 included. Questions
 pause in the thread until the user answers; approval-gated tools pause until the user allows or
 denies the call.

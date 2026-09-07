@@ -154,6 +154,27 @@ describe("HTTP app", () => {
     });
   });
 
+  it("exposes bounded scoped history with stable message identifiers and validated cursors", async () => {
+    const thread = store.listThreads()[0];
+    if (!thread) throw new Error("Expected thread");
+    const first = await store.createUserMessage(thread.id, "Earlier research decision", []);
+    await store.createUserMessage(thread.id, "Latest question", []);
+    const search = await app.request(`/api/threads/${thread.id}/history?query=research&limit=2`);
+    expect(search.status).toBe(200);
+    await expect(search.json()).resolves.toMatchObject({
+      threadId: thread.id,
+      messages: [{ id: first.id, sequence: first.sequence, content: first.content }],
+      hasMore: false,
+    });
+    const invalid = await app.request(`/api/threads/${thread.id}/history?beforeSequence=invalid`);
+    expect(invalid.status).toBe(400);
+    const other = await store.createThread({ name: "Other history" });
+    expect(
+      (await app.request(`/api/threads/${other.id}/history?messageId=${first.id}`)).status,
+    ).toBe(404);
+    expect(runner.invocations).toBe(0);
+  });
+
   it("creates an agent and dispatches only an explicit mention", async () => {
     const agentResponse = await app.request("/api/agents", {
       method: "POST",
@@ -698,11 +719,13 @@ describe("HTTP app", () => {
     if (!workspace || !thread) throw new Error("expected seeded workspace and thread");
     const now = new Date().toISOString();
     const assignmentId = "assignment-open";
+    const openTask = await store.createTask({ title: "Open", threadId: thread.id });
+    const outsideTask = await store.createTask({ title: "Outside", threadId: thread.id });
     const relativeWorktree = `workspaces/${workspace.id}/worktrees/${assignmentId}`;
     await store.createAssignment({
       id: assignmentId,
       workspaceId: workspace.id,
-      taskId: "task-open",
+      taskId: openTask.id,
       threadId: thread.id,
       masterRunId: "run-master",
       workerAgentId: "agent-worker",
@@ -729,7 +752,7 @@ describe("HTTP app", () => {
     await store.createAssignment({
       id: "assignment-outside",
       workspaceId: workspace.id,
-      taskId: "task-outside",
+      taskId: outsideTask.id,
       threadId: thread.id,
       masterRunId: "run-master",
       workerAgentId: "agent-worker",

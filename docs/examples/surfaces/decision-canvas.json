@@ -1,0 +1,61 @@
+{
+  "manifest": {
+    "apiVersion": 1,
+    "pluginId": "local.decision-canvas",
+    "version": "1.0.0",
+    "name": "Decisions and open questions",
+    "description": "Make assumptions, questions and decisions visible before committing to a plan.",
+    "view": "canvas",
+    "titleField": "title",
+    "bodyField": "notes",
+    "fields": [
+      {
+        "key": "title",
+        "label": "Title",
+        "type": "text"
+      },
+      {
+        "key": "notes",
+        "label": "Reasoning and evidence",
+        "type": "long_text"
+      },
+      {
+        "key": "kind",
+        "label": "Kind",
+        "type": "select",
+        "options": ["Question", "Assumption", "Decision"]
+      },
+      {
+        "key": "source",
+        "label": "Source",
+        "type": "url"
+      }
+    ]
+  },
+  "records": [
+    {
+      "data": {
+        "title": "What outcome matters?",
+        "notes": "Describe the change the user should experience.",
+        "kind": "Question"
+      },
+      "position": {
+        "x": 40,
+        "y": 40
+      },
+      "color": "lilac"
+    },
+    {
+      "data": {
+        "title": "What evidence would change our mind?",
+        "notes": "Name a check before starting the work.",
+        "kind": "Question"
+      },
+      "position": {
+        "x": 310,
+        "y": 80
+      },
+      "color": "yellow"
+    }
+  ]
+}

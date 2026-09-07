@@ -18,3 +18,14 @@
 | [0014](0014-task-knowledge-crud-lifecycle.md) | Accepted | Complete Task and Knowledge CRUD while preserving active and historical Worker state |
 | [0015](0015-stoppable-worker-processes.md) | Accepted | Stop queued or running Worker processes while retaining interrupted history |
 | [0016](0016-bounded-agent-auto-retries.md) | Accepted | Bound automatic retries without resetting the budget for each new run ID |
+| [0017](0017-thread-work-briefs.md) | Accepted | Revisioned shared work briefs with separate scope confirmation |
+| [0018](0018-versioned-task-acceptance.md) | Accepted | Freeze task requirements and separate Worker completion from human acceptance |
+| [0019](0019-general-work-execution.md) | Accepted | Unify delegation, execute non-Git work and capture immutable deliverables |
+| [0020](0020-declarative-shared-surfaces.md) | Accepted | Shared declarative surface commands with trusted host renderers |
+| [0021](0021-durable-review-driven-goals.md) | Accepted | Durable goals with bounded execution and human review gates |
+| [0022](0022-bounded-conversation-context.md) | Accepted | Bounded recent context with explicit scoped history retrieval |
+| [0023](0023-reviewed-revision-inputs.md) | Accepted | Carry verified captured inputs into revisions without losing review provenance |
+| [0024](0024-tasks-from-saved-briefs.md) | Accepted | Draft editable tasks from saved briefs and retain the source scope |
+| [0025](0025-assignment-execution-profiles.md) | Accepted | Preserve configured Worker provenance for every new assignment |
+| [0026](0026-inspectable-task-attempts.md) | Accepted | Inspect earlier attempts with frozen scope and read-only controls |
+| [0027](0027-draft-and-execution-plans.md) | Accepted | Separate draft planning from execution obligations |

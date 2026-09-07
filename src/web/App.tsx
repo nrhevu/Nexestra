@@ -8,7 +8,6 @@ import {
   Check,
   CircleAlert,
   CodeXml,
-  Columns3,
   Copy,
   Download,
   ExternalLink,
@@ -69,15 +68,24 @@ import type {
   ThreadData,
   ThreadStreamEvent,
   ToolCall,
+  WorkBrief,
   Workspace,
 } from "../shared/contracts.js";
 import { extractMentionHandles, handleFromName } from "../shared/contracts.js";
 import { api } from "./api.js";
+import { Modal } from "./components/Modal.js";
+import { SourceBrief } from "./components/SourceBrief.js";
+import { Goals } from "./surfaces/Goals.js";
+import { findSurface, type Surface, surfaces } from "./surfaces/registry.js";
+import { SurfaceStudio } from "./surfaces/SurfaceStudio.js";
+import { TaskLaunch } from "./surfaces/TaskLaunch.js";
+import { TaskReview } from "./surfaces/TaskReview.js";
+import { WorkBriefs } from "./surfaces/WorkBriefs.js";
+import "./surfaces/briefs.css";
 
 const RichMessage = lazy(() => import("./RichMessage.js"));
 
 type PrimaryView = "threads" | "surfaces";
-type Surface = "taskboard" | "agents" | "knowledge";
 type ModalName = "workspace" | "thread" | "agent" | "task" | "knowledge" | "settings" | null;
 
 interface RouteState {
@@ -102,6 +110,7 @@ export function App() {
   const [notice, setNotice] = useState<string>();
   const [error, setError] = useState<string>();
   const [taskStatus, setTaskStatus] = useState<Task["status"]>("todo");
+  const [taskBrief, setTaskBrief] = useState<WorkBrief>();
   const [taskToInspect, setTaskToInspect] = useState<Task>();
   const [taskToEdit, setTaskToEdit] = useState<Task>();
   const [taskToDelete, setTaskToDelete] = useState<Task>();
@@ -109,6 +118,8 @@ export function App() {
   const [knowledgeToEdit, setKnowledgeToEdit] = useState<KnowledgeItem>();
   const [knowledgeToDelete, setKnowledgeToDelete] = useState<KnowledgeItem>();
   const [agentToDelete, setAgentToDelete] = useState<AgentView>();
+  const [surfaceCreateSequence, setSurfaceCreateSequence] = useState(0);
+  const [goalCreateSequence, setGoalCreateSequence] = useState(0);
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     const stored = window.localStorage.getItem("nexestra.theme") as "dark" | "light" | null;
     return stored ?? "dark";
@@ -133,6 +144,7 @@ export function App() {
   useEffect(() => {
     const handleNewThread = () => setModal("thread");
     const handleNewTask = () => {
+      setTaskBrief(undefined);
       setTaskStatus("todo");
       setModal("task");
     };
@@ -399,9 +411,12 @@ export function App() {
         }}
         onSettings={() => setModal("settings")}
         onCreate={() => {
-          if (route.view === "threads") setModal("thread");
+          if (route.view === "threads" || route.surface === "briefs") setModal("thread");
+          else if (route.surface === "custom") setSurfaceCreateSequence((value) => value + 1);
+          else if (route.surface === "goals") setGoalCreateSequence((value) => value + 1);
           else if (route.surface === "agents") setModal("agent");
           else if (route.surface === "taskboard") {
+            setTaskBrief(undefined);
             setTaskStatus("todo");
             setModal("task");
           } else setModal("knowledge");
@@ -412,6 +427,13 @@ export function App() {
           <ThreadView
             key={route.threadId}
             data={data}
+            onBrief={(threadId) =>
+              navigate(`/surfaces/briefs?threadId=${encodeURIComponent(threadId)}`, {
+                view: "surfaces",
+                surface: "briefs",
+                threadId,
+              })
+            }
             threadData={visibleThreadData}
             runActivities={deferredRunActivities}
             onSend={async (content, files) => {
@@ -446,6 +468,37 @@ export function App() {
                 body: JSON.stringify({ answers }),
               });
               if (route.threadId) await loadThread(route.threadId, true);
+            }}
+          />
+        ) : route.surface === "briefs" ? (
+          <WorkBriefs
+            key={`${data.workspace.id}:${route.threadId ?? "all"}`}
+            data={data}
+            initialThreadId={route.threadId}
+            onChanged={() => refresh(true)}
+            onThread={openThread}
+            onDraftTask={(brief) => {
+              setTaskBrief(brief);
+              setTaskStatus("todo");
+              setModal("task");
+            }}
+          />
+        ) : route.surface === "goals" ? (
+          <Goals
+            key={data.workspace.id}
+            data={data}
+            createSequence={goalCreateSequence}
+            onChanged={() => refresh(true)}
+            onTask={setTaskToInspect}
+            onThread={openThread}
+          />
+        ) : route.surface === "custom" ? (
+          <SurfaceStudio
+            key={data.workspace.id}
+            data={data}
+            createSequence={surfaceCreateSequence}
+            onChanged={async () => {
+              await refresh(true);
             }}
           />
         ) : route.surface === "agents" ? (
@@ -484,6 +537,7 @@ export function App() {
           <Taskboard
             data={data}
             onCreate={(status = "todo") => {
+              setTaskBrief(undefined);
               setTaskStatus(status);
               setModal("task");
             }}
@@ -565,10 +619,16 @@ export function App() {
         <TaskDialog
           data={data}
           initialStatus={taskStatus}
-          onClose={() => setModal(null)}
+          brief={taskBrief}
+          onClose={() => {
+            setModal(null);
+            setTaskBrief(undefined);
+          }}
           onCreated={async () => {
             await refresh();
             setModal(null);
+            setTaskBrief(undefined);
+            if (taskBrief) openSurface("taskboard");
             flash("Task added to the board.");
           }}
         />
@@ -596,6 +656,14 @@ export function App() {
           onStopped={async () => {
             await refresh(true);
             flash("Worker process stopped.");
+          }}
+          onReviewed={async () => {
+            await refresh(true);
+            flash("Review recorded.");
+          }}
+          onStarted={async () => {
+            await refresh(true);
+            flash("Worker queued.");
           }}
         />
       )}
@@ -765,33 +833,15 @@ function TopBar(props: {
             document.dispatchEvent(new CustomEvent("nexestra:new-task"));
           },
         },
-        {
-          id: "taskboard",
-          label: "Go to Taskboard",
-          description: "Open the task management surface",
+        ...surfaces.map((surface) => ({
+          id: surface.id,
+          label: `Go to ${surface.label}`,
+          description: surface.description,
           action: () => {
-            props.onSurface("taskboard");
+            props.onSurface(surface.id);
             setQueryText("");
           },
-        },
-        {
-          id: "agents",
-          label: "Go to Agents",
-          description: "Manage your agents",
-          action: () => {
-            props.onSurface("agents");
-            setQueryText("");
-          },
-        },
-        {
-          id: "knowledge",
-          label: "Go to Knowledge",
-          description: "Manage your documents and repositories",
-          action: () => {
-            props.onSurface("knowledge");
-            setQueryText("");
-          },
-        },
+        })),
         {
           id: "settings",
           label: "Open Settings",
@@ -1053,39 +1103,20 @@ function Sidebar(props: {
           <>
             <p className="sidebar-kicker">Workspace</p>
             <div className="sidebar-list surface-list">
-              <button
-                className={
-                  props.route.surface === "taskboard" ? "sidebar-row selected" : "sidebar-row"
-                }
-                type="button"
-                onClick={() => props.onSurface("taskboard")}
-              >
-                <Columns3 size={17} />
-                <span className="row-label">Taskboard</span>
-                <span className="count">{props.data.tasks.length}</span>
-              </button>
-              <button
-                className={
-                  props.route.surface === "knowledge" ? "sidebar-row selected" : "sidebar-row"
-                }
-                type="button"
-                onClick={() => props.onSurface("knowledge")}
-              >
-                <BookOpen size={17} />
-                <span className="row-label">Knowledge</span>
-                <span className="count">{props.data.knowledge.length}</span>
-              </button>
-              <button
-                className={
-                  props.route.surface === "agents" ? "sidebar-row selected" : "sidebar-row"
-                }
-                type="button"
-                onClick={() => props.onSurface("agents")}
-              >
-                <UsersRound size={17} />
-                <span className="row-label">Agent management</span>
-                <span className="count">{visibleAgents.length}</span>
-              </button>
+              {surfaces.map((surface) => (
+                <button
+                  key={surface.id}
+                  className={
+                    props.route.surface === surface.id ? "sidebar-row selected" : "sidebar-row"
+                  }
+                  type="button"
+                  onClick={() => props.onSurface(surface.id)}
+                >
+                  <surface.icon size={17} />
+                  <span className="row-label">{surface.label}</span>
+                  <span className="count">{surface.count(props.data)}</span>
+                </button>
+              ))}
             </div>
           </>
         )}
@@ -1114,6 +1145,7 @@ function ComposerFormatButton(props: { label: string; onClick: () => void; child
 
 function ThreadView(props: {
   data: BootstrapData;
+  onBrief: (threadId: string) => void;
   threadData?: ThreadData;
   runActivities: RunActivity[];
   onSend: (content: string, files: File[]) => Promise<void>;
@@ -1435,6 +1467,10 @@ function ThreadView(props: {
         </div>
       </header>
       <div className="thread-tabs">
+        <button type="button" onClick={() => props.onBrief(thread.id)}>
+          <FileText size={15} /> Work brief
+          {props.threadData.workBrief?.status === "confirmed" && <Check size={13} />}
+        </button>
         <button
           type="button"
           className={activeTab === "messages" ? "active" : ""}
@@ -2134,8 +2170,12 @@ function ThreadArtifacts({
                         {artifact.name}
                       </a>
                       <small>
-                        {artifact.source === "upload" ? "Shared" : "Referenced"} by{" "}
-                        {message?.author.name ?? "Unknown"}
+                        {artifact.source === "generated"
+                          ? "Generated"
+                          : artifact.source === "upload"
+                            ? "Shared"
+                            : "Referenced"}{" "}
+                        by {message?.author.name ?? "Unknown"}
                         {artifact.size !== undefined ? ` · ${formatBytes(artifact.size)}` : ""}
                         {artifact.kind === "link" ? ` · ${safeHostname(artifact.url)}` : ""}
                       </small>
@@ -2756,6 +2796,7 @@ function Taskboard(props: {
   const columns: { status: Task["status"]; title: string }[] = [
     { status: "todo", title: "To do" },
     { status: "in_progress", title: "In progress" },
+    { status: "in_review", title: "In review" },
     { status: "done", title: "Done" },
   ];
   const agents = new Map(props.data.agents.map((agent) => [agent.id, agent]));
@@ -2769,7 +2810,7 @@ function Taskboard(props: {
         <div>
           <p className="eyebrow">SURFACE</p>
           <h1>Taskboard</h1>
-          <p className="subtitle">Organize work here; only an @mention in chat invokes an agent.</p>
+          <p className="subtitle">Define the work, assign a Worker, and review its evidence.</p>
         </div>
         <button className="primary-button" type="button" onClick={() => props.onCreate("todo")}>
           <Plus size={17} />
@@ -2785,13 +2826,15 @@ function Taskboard(props: {
                 <span className={`column-dot dot-${index}`} />
                 <h2>{column.title}</h2>
                 <span>{tasks.length}</span>
-                <button
-                  type="button"
-                  onClick={() => props.onCreate(column.status)}
-                  aria-label={`Create a task in ${column.title}`}
-                >
-                  <Plus size={16} />
-                </button>
+                {column.status !== "in_review" && (
+                  <button
+                    type="button"
+                    onClick={() => props.onCreate(column.status)}
+                    aria-label={`Create a task in ${column.title}`}
+                  >
+                    <Plus size={16} />
+                  </button>
+                )}
               </header>
               {tasks.length === 0 && <p className="column-empty">No tasks yet</p>}
               {tasks.map((task) => (
@@ -2828,7 +2871,7 @@ function TaskCard({
   onThread: (id: string) => void;
   onInspect: (task: Task) => void;
 }) {
-  const statuses: Task["status"][] = ["todo", "in_progress", "done"];
+  const statuses: Task["status"][] = ["todo", "in_progress", "in_review", "done"];
   const position = statuses.indexOf(task.status);
   const assignmentActive = assignment?.status === "queued" || assignment?.status === "running";
   return (
@@ -2840,12 +2883,21 @@ function TaskCard({
         onClick={() => onInspect(task)}
       >
         <span className="task-id">NX-{task.id.slice(0, 4).toUpperCase()}</span>
+        <span className="task-id">
+          {" "}
+          ·{" "}
+          {task.status === "done"
+            ? assignment?.review?.outcome === "accepted"
+              ? "Accepted"
+              : "Completed manually"
+            : task.kind}
+        </span>
         <h3>{task.title}</h3>
         {task.description && <p>{task.description}</p>}
         {assignment && (
           <span className="task-assignment">
             <GitBranch size={12} />
-            <code>{assignment.branch}</code>
+            <code>{assignment.branch || "Isolated directory"}</code>
             <span role={assignmentActive ? "status" : undefined}>
               {assignmentActive && <LoaderCircle className="spin" size={11} />}
               {assignment.status}
@@ -2876,9 +2928,12 @@ function TaskCard({
           )}
           <button
             type="button"
-            disabled={position === 0}
+            disabled={position === 0 || assignmentActive || task.status === "in_review"}
             onClick={() => {
-              void onMove(task, statuses[position - 1] ?? task.status);
+              void onMove(
+                task,
+                task.status === "done" ? "todo" : (statuses[position - 1] ?? task.status),
+              );
             }}
             aria-label="Move left"
           >
@@ -2886,9 +2941,12 @@ function TaskCard({
           </button>
           <button
             type="button"
-            disabled={position === statuses.length - 1}
+            disabled={position === statuses.length - 1 || Boolean(assignment)}
             onClick={() => {
-              void onMove(task, statuses[position + 1] ?? task.status);
+              void onMove(
+                task,
+                task.status === "in_progress" ? "done" : (statuses[position + 1] ?? task.status),
+              );
             }}
             aria-label="Move right"
           >
@@ -2908,6 +2966,8 @@ function TaskProcessDialog({
   onEdit,
   onDelete,
   onStopped,
+  onReviewed,
+  onStarted,
 }: {
   task: Task;
   data: BootstrapData;
@@ -2916,38 +2976,55 @@ function TaskProcessDialog({
   onEdit: (task: Task) => void;
   onDelete: (task: Task) => void;
   onStopped: () => Promise<void>;
+  onReviewed: () => Promise<void>;
+  onStarted: () => Promise<void>;
 }) {
   const [process, setProcess] = useState<TaskProcessData>();
   const [loadError, setLoadError] = useState<string>();
   const [stopping, setStopping] = useState(false);
   const [stopError, setStopError] = useState<string>();
+  const [selectedAssignmentId, setSelectedAssignmentId] = useState("");
+  const processRequest = useRef(0);
   const loadProcess = useCallback(
     async (quiet = false) => {
+      const request = ++processRequest.current;
       try {
         const next = await api<TaskProcessData>(
-          `/api/tasks/${encodeURIComponent(task.id)}/process`,
+          `/api/tasks/${encodeURIComponent(task.id)}/process${selectedAssignmentId ? `?assignmentId=${encodeURIComponent(selectedAssignmentId)}` : ""}`,
         );
+        if (request !== processRequest.current) return undefined;
         setProcess(next);
         if (!quiet) setLoadError(undefined);
         return next;
       } catch (caught) {
+        if (request !== processRequest.current) return undefined;
         if (!quiet) setLoadError(messageFrom(caught));
         return undefined;
       }
     },
-    [task.id],
+    [task.id, selectedAssignmentId],
   );
 
   useEffect(() => {
     setProcess(undefined);
     setLoadError(undefined);
     void loadProcess();
+    return () => {
+      processRequest.current += 1;
+    };
   }, [loadProcess]);
 
   const assignment = process?.assignment;
   const assignmentId = assignment?.id;
   const assignmentThreadId = assignment?.threadId;
-  const isActive = assignment?.status === "queued" || assignment?.status === "running";
+  const isHistorical = process?.isLatestAttempt === false;
+  const isActive =
+    !isHistorical && (assignment?.status === "queued" || assignment?.status === "running");
+  const displayedTask = isHistorical
+    ? assignment?.contract && process
+      ? { ...process.task, ...assignment.contract }
+      : undefined
+    : process?.task;
   useEffect(() => {
     if (!isActive || !assignmentId || !assignmentThreadId) return;
     const refreshProcess = () => void loadProcess(true);
@@ -2983,10 +3060,13 @@ function TaskProcessDialog({
     : undefined;
   const knownHandles = new Set(data.agents.map((agent) => agent.handle));
   const status = assignment?.status ?? "not delegated";
+  const linkedGoal = assignment?.goalId
+    ? data.goals.find((goal) => goal.id === assignment.goalId)
+    : undefined;
 
   return (
     <Modal
-      title={process?.task.title ?? task.title}
+      title={displayedTask?.title ?? (isHistorical ? "Historical attempt" : task.title)}
       eyebrow="WORKER PROCESS"
       onClose={onClose}
       wide
@@ -3008,9 +3088,42 @@ function TaskProcessDialog({
       )}
       {process && (
         <div className="task-process">
+          {(process.attempts?.length ?? 0) > 1 && (
+            <div className="attempt-history">
+              <label>
+                Attempt history
+                <select
+                  aria-label="Attempt history"
+                  value={selectedAssignmentId}
+                  onChange={(event) => {
+                    setSelectedAssignmentId(event.target.value);
+                    setStopError(undefined);
+                  }}
+                >
+                  <option value="">Latest attempt</option>
+                  {process.attempts?.map((entry) => (
+                    <option key={entry.id} value={entry.id}>
+                      Attempt {entry.ordinal} · {entry.status} · revision{" "}
+                      {entry.contractRevision ?? "unknown"}
+                      {entry.reviewOutcome ? ` · ${entry.reviewOutcome.replace("_", " ")}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {isHistorical && (
+                <p>
+                  Viewing a historical attempt
+                  {assignment?.contract
+                    ? " and its frozen scope"
+                    : "; the original requirements are unavailable"}
+                  . Select Latest attempt to continue or review current work.
+                </p>
+              )}
+            </div>
+          )}
           <div className="task-process-summary">
             <div>
-              <span>Status</span>
+              <span>Run status</span>
               <strong className={`task-process-status status-${assignment?.status ?? "idle"}`}>
                 {isActive && <LoaderCircle className="spin" size={13} />}
                 {assignment?.status === "completed" && <Check size={13} />}
@@ -3021,26 +3134,88 @@ function TaskProcessDialog({
             </div>
             <div>
               <span>Worker</span>
-              <strong>{worker ? `@${worker.handle}` : "Unassigned"}</strong>
+              <strong>
+                {assignment?.executionProfile
+                  ? `@${assignment.executionProfile.handle}`
+                  : worker
+                    ? `@${worker.handle}`
+                    : assignment
+                      ? "Profile unavailable"
+                      : "Unassigned"}
+              </strong>
             </div>
             <div>
-              <span>Repository</span>
-              <strong>{repository ? `#${repository.handle}` : "—"}</strong>
+              <span>Environment</span>
+              <strong>
+                {repository
+                  ? `#${repository.handle}`
+                  : assignment?.environment === "directory"
+                    ? "Isolated directory"
+                    : "—"}
+              </strong>
             </div>
           </div>
 
           <div className="task-detail-copy">
-            {process.task.description ? (
+            {linkedGoal && (
+              <div className="task-goal-context">
+                <strong>Goal this work supports</strong>
+                <p>{linkedGoal.objective}</p>
+                <small>
+                  Review this result against both its success criteria and the intended outcome.
+                </small>
+              </div>
+            )}
+            {displayedTask?.description ? (
               <Suspense
-                fallback={<p className="message-markdown-fallback">{process.task.description}</p>}
+                fallback={<p className="message-markdown-fallback">{displayedTask.description}</p>}
               >
-                <RichMessage content={process.task.description} knownHandles={knownHandles} />
+                <RichMessage content={displayedTask.description} knownHandles={knownHandles} />
               </Suspense>
             ) : (
-              <p>No description.</p>
+              <p>
+                {isHistorical && !assignment?.contract
+                  ? "Original requirements are unavailable for this legacy attempt."
+                  : "No description."}
+              </p>
             )}
-            <small>Updated {formatDateTime(process.task.updatedAt)}</small>
+            <small>
+              {isHistorical && assignment
+                ? `Attempt queued ${formatDateTime(assignment.createdAt)}`
+                : `Updated ${formatDateTime(process.task.updatedAt)}`}
+            </small>
           </div>
+
+          {displayedTask?.sourceBrief && <SourceBrief brief={displayedTask.sourceBrief} />}
+
+          {assignment?.executionProfile && (
+            <section
+              className="task-process-result execution-profile"
+              aria-label="Execution profile"
+            >
+              <h3>
+                {assignment.executionProfile.harness === "codex" ? "Codex" : "OpenCode"} ·{" "}
+                {assignment.executionProfile.model ?? "Runtime default model"}
+              </h3>
+              <p>
+                Reasoning: {assignment.executionProfile.reasoningEffort ?? "runtime default"} ·
+                Profile saved when this attempt was queued.
+              </p>
+              <details>
+                <summary>Profile provenance</summary>
+                <p>
+                  {assignment.executionProfile.name} ·{" "}
+                  {formatDateTime(assignment.executionProfile.capturedAt)}
+                </p>
+                <p>Instruction fingerprint</p>
+                <code>{assignment.executionProfile.instructionsSha256}</code>
+                <p>
+                  These are the configured overrides. The runtime may resolve its own default model;
+                  this record does not verify which model a provider actually served.
+                </p>
+              </details>
+            </section>
+          )}
 
           {!assignment ? (
             <div className="task-process-empty">
@@ -3048,8 +3223,8 @@ function TaskProcessDialog({
               <div>
                 <strong>This task has not been delegated</strong>
                 <p>
-                  A Master created the task but did not start a Worker assignment. Mention the
-                  Master again with an available Worker and a #repository reference.
+                  Choose a Worker below, or mention a Master in the linked conversation to plan the
+                  work together.
                 </p>
               </div>
             </div>
@@ -3058,17 +3233,25 @@ function TaskProcessDialog({
               <div className="task-process-location">
                 <GitBranch size={14} />
                 <div>
-                  <span>Isolated branch</span>
-                  <code>{assignment.branch}</code>
+                  <span>
+                    {assignment.environment === "directory" ? "Environment" : "Isolated branch"}
+                  </span>
+                  <code>{assignment.branch || "General workspace"}</code>
                 </div>
                 <div>
-                  <span>Worktree</span>
+                  <span>
+                    {assignment.environment === "directory" ? "Working directory" : "Worktree"}
+                  </span>
                   <code>{assignment.worktreePath}</code>
                 </div>
                 <div className="worktree-actions">
                   <button
                     type="button"
-                    title="Open worktree"
+                    title={
+                      assignment.environment === "directory"
+                        ? "Open working directory"
+                        : "Open worktree"
+                    }
                     onClick={async () => {
                       try {
                         await api(`/api/assignments/${encodeURIComponent(assignment.id)}/open`, {
@@ -3163,6 +3346,49 @@ function TaskProcessDialog({
                 </section>
               )}
 
+              {assignment.inputSource && (
+                <section className="task-process-result" aria-label="Revision inputs">
+                  <h3>Revision inputs</h3>
+                  <p>
+                    Continues a changes-requested submission under task revision{" "}
+                    {assignment.inputSource.taskRevision}. Captured input files are linked below and
+                    verified before the Worker starts.
+                  </p>
+                  {assignment.inputSource.outputs.map((output) => (
+                    <p key={output.artifactId}>
+                      <a
+                        href={`/api/threads/${assignment.threadId}/artifacts/${output.artifactId}/content`}
+                      >
+                        {output.name}
+                      </a>
+                    </p>
+                  ))}
+                </section>
+              )}
+
+              {(process.artifacts?.length ?? 0) > 0 && (
+                <section className="task-process-result" aria-label="Submitted files">
+                  <h3>Submitted files</h3>
+                  <p>
+                    Captured with this result. Later edits in the working directory do not change
+                    these copies.
+                  </p>
+                  <MessageArtifacts artifacts={process.artifacts ?? []} />
+                </section>
+              )}
+
+              {(!isHistorical || assignment.review) && (
+                <TaskReview
+                  key={`${assignment.id}-${process.task.revision}`}
+                  task={process.task}
+                  assignment={assignment}
+                  onReviewed={async () => {
+                    await loadProcess();
+                    await onReviewed();
+                  }}
+                />
+              )}
+
               {assignment.status === "failed" && (
                 <div className="run-error task-process-error">
                   <CircleAlert size={15} />
@@ -3183,6 +3409,20 @@ function TaskProcessDialog({
                 </div>
               )}
             </>
+          )}
+
+          {!isHistorical && (
+            <TaskLaunch
+              key={`${process.task.id}-${process.task.revision}-${assignment?.id ?? "new"}`}
+              task={process.task}
+              data={data}
+              assignment={assignment}
+              onStarted={async () => {
+                if (selectedAssignmentId) setSelectedAssignmentId("");
+                else await loadProcess();
+                await onStarted();
+              }}
+            />
           )}
 
           {stopError && (
@@ -3218,16 +3458,27 @@ function TaskProcessDialog({
                 {stopping ? "Stopping…" : "Stop process"}
               </button>
             )}
-            <button type="button" onClick={() => onEdit(process.task)}>
-              <Pencil size={14} />
-              Edit
-            </button>
-            <button type="button" className="danger-button" onClick={() => onDelete(process.task)}>
-              <Trash2 size={14} />
-              Delete
-            </button>
-            {process.task.threadId && (
-              <button type="button" onClick={() => onThread(process.task.threadId ?? "")}>
+            {!isHistorical && (
+              <button type="button" onClick={() => onEdit(process.task)}>
+                <Pencil size={14} />
+                Edit
+              </button>
+            )}
+            {!isHistorical && (
+              <button
+                type="button"
+                className="danger-button"
+                onClick={() => onDelete(process.task)}
+              >
+                <Trash2 size={14} />
+                Delete
+              </button>
+            )}
+            {(assignment?.threadId ?? process.task.threadId) && (
+              <button
+                type="button"
+                onClick={() => onThread(assignment?.threadId ?? process.task.threadId ?? "")}
+              >
                 <MessageSquareMore size={14} />
                 Open thread
               </button>
@@ -4147,18 +4398,27 @@ function KnowledgeDialog({
 function TaskDialog({
   data,
   task,
+  brief,
   initialStatus,
   onClose,
   onCreated,
 }: {
   data: BootstrapData;
   task?: Task;
+  brief?: WorkBrief;
   initialStatus: Task["status"];
   onClose: () => void;
   onCreated: () => Promise<void>;
 }) {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string>();
+  const sourceBrief = task?.sourceBrief ?? brief;
+  const [criteria, setCriteria] = useState(() =>
+    (task?.acceptanceCriteria ?? brief?.acceptanceCriteria ?? []).map((item) => ({
+      ...item,
+      key: crypto.randomUUID(),
+    })),
+  );
   return (
     <Modal
       title={task ? `Edit ${task.title}` : "Create task"}
@@ -4175,12 +4435,20 @@ function TaskDialog({
             await api(task ? `/api/tasks/${encodeURIComponent(task.id)}` : "/api/tasks", {
               method: task ? "PATCH" : "POST",
               body: JSON.stringify({
-                ...(task ? {} : { workspaceId: data.workspace.id }),
+                ...(task
+                  ? { expectedRevision: task.revision }
+                  : { workspaceId: data.workspace.id }),
+                ...(!task && brief ? { sourceBriefRevision: brief.revision } : {}),
                 title: String(fields.get("title") ?? ""),
                 description: String(fields.get("description") ?? ""),
+                kind: String(fields.get("kind") ?? "mixed"),
+                acceptanceCriteria: criteria.map(({ behavior, verification }) => ({
+                  behavior,
+                  verification,
+                })),
                 status: String(fields.get("status") ?? initialStatus),
                 assigneeId: String(fields.get("assigneeId") ?? "") || null,
-                threadId: String(fields.get("threadId") ?? "") || null,
+                threadId: brief?.threadId ?? (String(fields.get("threadId") ?? "") || null),
               }),
             });
             await onCreated();
@@ -4191,11 +4459,12 @@ function TaskDialog({
           }
         }}
       >
+        {sourceBrief && <SourceBrief brief={sourceBrief} />}
         <Field label="Title">
           <input
             name="title"
             aria-label="Title"
-            defaultValue={task?.title}
+            defaultValue={task?.title ?? brief?.title}
             placeholder="Work item to complete"
             required
             maxLength={160}
@@ -4206,7 +4475,7 @@ function TaskDialog({
             name="description"
             aria-label="Description"
             rows={3}
-            defaultValue={task?.description}
+            defaultValue={task?.description ?? brief?.outcome}
             placeholder="Desired outcome…"
             maxLength={2000}
           />
@@ -4216,6 +4485,7 @@ function TaskDialog({
             <select name="status" aria-label="Column" defaultValue={task?.status ?? initialStatus}>
               <option value="todo">To do</option>
               <option value="in_progress">In progress</option>
+              {task?.status === "in_review" && <option value="in_review">In review</option>}
               <option value="done">Done</option>
             </select>
           </Field>
@@ -4232,8 +4502,84 @@ function TaskDialog({
             </select>
           </Field>
         </div>
+        <Field label="Work type">
+          <select
+            name="kind"
+            aria-label="Work type"
+            defaultValue={task?.kind ?? brief?.kind ?? "mixed"}
+          >
+            <option value="mixed">Mixed work</option>
+            <option value="research">Research</option>
+            <option value="document">Document</option>
+            <option value="design">Design</option>
+            <option value="code">Code</option>
+          </select>
+        </Field>
+        <section className="task-criteria-editor" aria-label="Acceptance criteria">
+          <strong>Acceptance criteria</strong>
+          <p className="form-hint">Describe observable behavior and how a reviewer can check it.</p>
+          {criteria.map((criterion, index) => (
+            <div key={criterion.key}>
+              <input
+                aria-label={`Criterion ${index + 1}`}
+                value={criterion.behavior}
+                required
+                maxLength={400}
+                placeholder="What must be true?"
+                onChange={(event) =>
+                  setCriteria((items) =>
+                    items.map((item) =>
+                      item.key === criterion.key ? { ...item, behavior: event.target.value } : item,
+                    ),
+                  )
+                }
+              />
+              <input
+                aria-label={`Verification ${index + 1}`}
+                value={criterion.verification}
+                required
+                maxLength={400}
+                placeholder="How will you verify it?"
+                onChange={(event) =>
+                  setCriteria((items) =>
+                    items.map((item) =>
+                      item.key === criterion.key
+                        ? { ...item, verification: event.target.value }
+                        : item,
+                    ),
+                  )
+                }
+              />
+              <button
+                type="button"
+                onClick={() =>
+                  setCriteria((items) => items.filter((item) => item.key !== criterion.key))
+                }
+              >
+                Remove criterion {index + 1}
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            disabled={criteria.length >= 10}
+            onClick={() =>
+              setCriteria((items) => [
+                ...items,
+                { key: crypto.randomUUID(), behavior: "", verification: "" },
+              ])
+            }
+          >
+            Add acceptance criterion
+          </button>
+        </section>
         <Field label="Linked thread" optional>
-          <select name="threadId" aria-label="Linked thread" defaultValue={task?.threadId ?? ""}>
+          <select
+            name="threadId"
+            aria-label="Linked thread"
+            defaultValue={task?.threadId ?? brief?.threadId ?? ""}
+            disabled={Boolean(brief)}
+          >
             <option value="">No linked thread</option>
             {data.threads.map((thread) => (
               <option key={thread.id} value={thread.id}>
@@ -4366,91 +4712,6 @@ function SettingsDialog({ data, onClose }: { data: BootstrapData; onClose: () =>
         </button>
       </div>
     </Modal>
-  );
-}
-
-function Modal({
-  title,
-  eyebrow,
-  onClose,
-  closeDisabled = false,
-  wide = false,
-  children,
-}: {
-  title: string;
-  eyebrow: string;
-  onClose: () => void;
-  closeDisabled?: boolean;
-  wide?: boolean;
-  children: ReactNode;
-}) {
-  const modalRef = useRef<HTMLElement>(null);
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
-  const closeDisabledRef = useRef(closeDisabled);
-  closeDisabledRef.current = closeDisabled;
-  useEffect(() => {
-    const previousActive =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const focusable = () =>
-      Array.from(
-        modalRef.current?.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        ) ?? [],
-      );
-    focusable()[0]?.focus();
-    const onKey = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") {
-        if (!closeDisabledRef.current) onCloseRef.current();
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const items = focusable();
-      if (items.length === 0) {
-        event.preventDefault();
-        modalRef.current?.focus();
-        return;
-      }
-      const first = items[0];
-      const last = items.at(-1);
-      if (!first || !last) return;
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      previousActive?.focus();
-    };
-  }, []);
-  return (
-    <div className="modal-backdrop">
-      <section
-        ref={modalRef}
-        className={wide ? "modal modal-wide" : "modal"}
-        role="dialog"
-        aria-modal="true"
-        aria-busy={closeDisabled || undefined}
-        aria-labelledby="modal-title"
-        tabIndex={-1}
-      >
-        <header>
-          <div>
-            <p className="eyebrow">{eyebrow}</p>
-            <h2 id="modal-title">{title}</h2>
-          </div>
-          <button type="button" onClick={onClose} aria-label="Close" disabled={closeDisabled}>
-            <X size={18} />
-          </button>
-        </header>
-        <div className="modal-body">{children}</div>
-      </section>
-    </div>
   );
 }
 
@@ -4602,8 +4863,12 @@ function messageFrom(error: unknown): string {
 function routeFromLocation(): RouteState {
   const parts = window.location.pathname.split("/").filter(Boolean);
   if (parts[0] === "surfaces") {
-    const surface = parts[1] === "taskboard" || parts[1] === "knowledge" ? parts[1] : "agents";
-    return { view: "surfaces", surface };
+    const surface = findSurface(parts[1])?.id ?? "agents";
+    const threadId =
+      surface === "briefs"
+        ? (new URLSearchParams(window.location.search).get("threadId") ?? undefined)
+        : undefined;
+    return { view: "surfaces", surface, ...(threadId ? { threadId } : {}) };
   }
   return { view: "threads", surface: "agents", ...(parts[1] ? { threadId: parts[1] } : {}) };
 }

@@ -1,4 +1,6 @@
 import { z } from "zod";
+import type { WorkGoal } from "./goals.js";
+import type { WorkspaceSurface } from "./surfaces.js";
 
 export const HandleSchema = z
   .string()
@@ -207,6 +209,65 @@ export const CreateThreadSchema = z.object({
   name: z.string().trim().min(1).max(80),
 });
 
+export const WorkBriefContentSchema = z.object({
+  title: z.string().trim().min(1).max(160),
+  kind: z.enum(["mixed", "research", "document", "design", "code"]).default("mixed"),
+  outcome: z.string().trim().max(2_000).default(""),
+  deliverables: z.array(z.string().trim().min(1).max(240)).max(10).default([]),
+  constraints: z.string().trim().max(2_000).default(""),
+  nonGoals: z.string().trim().max(1_000).default(""),
+  acceptanceCriteria: z
+    .array(
+      z
+        .object({
+          behavior: z.string().trim().min(1).max(400),
+          verification: z.string().trim().min(1).max(400),
+        })
+        .strict(),
+    )
+    .max(10)
+    .default([]),
+  openQuestions: z.string().trim().max(2_000).default(""),
+});
+export type WorkBriefContent = z.infer<typeof WorkBriefContentSchema>;
+
+export const SaveWorkBriefSchema = WorkBriefContentSchema.extend({
+  expectedRevision: z.number().int().nonnegative(),
+}).strict();
+export type SaveWorkBriefInput = z.infer<typeof SaveWorkBriefSchema>;
+
+export const ConfirmWorkBriefSchema = z
+  .object({ expectedRevision: z.number().int().positive() })
+  .strict();
+
+export const WorkBriefSchema = WorkBriefContentSchema.extend({
+  threadId: z.string(),
+  workspaceId: z.string(),
+  revision: z.number().int().positive(),
+  status: z.enum(["draft", "confirmed"]),
+  updatedBy: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("user"), id: z.literal("local-user") }),
+    z.object({ kind: z.literal("agent"), id: z.string() }),
+  ]),
+  updatedAt: z.string(),
+  confirmedAt: z.string().nullable(),
+});
+export type WorkBrief = z.infer<typeof WorkBriefSchema>;
+
+export function workBriefReadiness(brief: WorkBriefContent): string[] {
+  const gaps: string[] = [];
+  if (!brief.outcome.trim()) gaps.push("Describe the outcome you want.");
+  if (!brief.deliverables.some((item) => item.trim())) gaps.push("Add at least one deliverable.");
+  if (
+    brief.acceptanceCriteria.length === 0 ||
+    brief.acceptanceCriteria.some((item) => !item.behavior.trim() || !item.verification.trim())
+  ) {
+    gaps.push("Add a success criterion and how it will be checked.");
+  }
+  if (brief.openQuestions.trim()) gaps.push("Resolve the open questions before confirming.");
+  return gaps;
+}
+
 export const MentionSchema = z.object({
   agentId: z.string(),
   handle: HandleSchema,
@@ -261,7 +322,11 @@ export const ArtifactSchema = z.object({
   messageId: z.string(),
   sequence: z.number().int().positive(),
   kind: z.enum(["file", "image", "link"]),
-  source: z.enum(["upload", "reference"]),
+  source: z.enum(["upload", "generated", "reference"]),
+  sha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
   name: z.string().trim().min(1).max(255),
   mediaType: z.string().trim().max(160).optional(),
   size: z.number().int().nonnegative().optional(),
@@ -394,12 +459,20 @@ export const ToolCallSchema = z.object({
 });
 export type ToolCall = z.infer<typeof ToolCallSchema>;
 
+export const TaskKindSchema = WorkBriefContentSchema.shape.kind;
+export const TaskCriteriaSchema = WorkBriefContentSchema.shape.acceptanceCriteria;
+export const TaskStatusSchema = z.enum(["todo", "in_progress", "in_review", "done"]);
+
 export const TaskSchema = z.object({
   id: z.string(),
   workspaceId: z.string(),
   title: z.string(),
   description: z.string(),
-  status: z.enum(["todo", "in_progress", "done"]),
+  status: TaskStatusSchema,
+  kind: TaskKindSchema,
+  revision: z.number().int().positive().default(1),
+  acceptanceCriteria: TaskCriteriaSchema,
+  sourceBrief: WorkBriefSchema.optional(),
   assigneeId: z.string().nullable(),
   threadId: z.string().nullable(),
   createdAt: z.string(),
@@ -407,17 +480,83 @@ export const TaskSchema = z.object({
 });
 export type Task = z.infer<typeof TaskSchema>;
 
+export const TaskContractSchema = TaskSchema.pick({
+  title: true,
+  description: true,
+  kind: true,
+  revision: true,
+  acceptanceCriteria: true,
+  sourceBrief: true,
+  threadId: true,
+});
+
+export const ReviewTaskSchema = z
+  .object({
+    assignmentId: z.string().min(1),
+    expectedRevision: z.number().int().positive(),
+    outcome: z.enum(["accepted", "changes_requested"]),
+    evidence: z
+      .array(
+        z
+          .object({
+            criterionIndex: z.number().int().min(0).max(9),
+            observation: z.string().trim().min(1).max(2_000),
+          })
+          .strict(),
+      )
+      .max(10),
+    notes: z.string().trim().min(1).max(4_000),
+  })
+  .strict();
+export const AssignmentOutputSchema = z.object({
+  artifactId: z.string(),
+  name: z.string(),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  size: z.number().int().nonnegative(),
+});
+export const TaskReviewSchema = ReviewTaskSchema.extend({
+  id: z.string(),
+  reviewedBy: z.literal("local-user"),
+  createdAt: z.string(),
+  outputs: z.array(AssignmentOutputSchema).max(10).default([]),
+});
+
 export const WorkAssignmentSchema = z.object({
   id: z.string(),
   workspaceId: z.string(),
   taskId: z.string(),
   threadId: z.string(),
   masterRunId: z.string(),
+  goalId: z.string().uuid().optional(),
   workerAgentId: z.string(),
-  repositoryId: z.string(),
+  executionProfile: z
+    .object({
+      name: z.string().max(60),
+      handle: HandleSchema,
+      harness: z.enum(["codex", "opencode"]),
+      model: WorkerModelSchema.nullable(),
+      reasoningEffort: WorkerReasoningEffortSchema.nullable(),
+      instructionsSha256: z.string().regex(/^[a-f0-9]{64}$/),
+      capturedAt: z.string(),
+    })
+    .optional(),
+  repositoryId: z.string().nullable(),
+  environment: z.enum(["worktree", "directory"]).optional(),
   status: z.enum(["queued", "running", "completed", "failed", "interrupted"]),
   branch: z.string(),
   worktreePath: z.string(),
+  contract: TaskContractSchema.optional(),
+  inputSource: z
+    .object({
+      assignmentId: z.string(),
+      reviewId: z.string(),
+      taskRevision: z.number().int().positive(),
+      outputs: z.array(AssignmentOutputSchema).max(10),
+    })
+    .optional(),
+  review: TaskReviewSchema.optional(),
+  resultMessageId: z.string().optional(),
+  outputs: z.array(AssignmentOutputSchema).max(10).optional(),
   result: z.string().max(20_000).optional(),
   error: z.string().max(2_000).optional(),
   createdAt: z.string(),
@@ -425,19 +564,40 @@ export const WorkAssignmentSchema = z.object({
 });
 export type WorkAssignment = z.infer<typeof WorkAssignmentSchema>;
 
+export const DelegateTaskSchema = z
+  .object({
+    workerHandle: z
+      .string()
+      .trim()
+      .regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{1,30}$/),
+    repositoryHandle: z
+      .string()
+      .trim()
+      .regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{1,47}$/)
+      .optional(),
+    expectedRevision: z.number().int().positive(),
+  })
+  .strict();
+
 export const CreateTaskSchema = z.object({
   workspaceId: z.string().optional(),
+  sourceBriefRevision: z.number().int().positive().optional(),
   title: z.string().trim().min(1).max(160),
   description: z.string().trim().max(2_000).default(""),
   status: z.enum(["todo", "in_progress", "done"]).default("todo"),
+  kind: TaskKindSchema,
+  acceptanceCriteria: TaskCriteriaSchema,
   assigneeId: z.string().nullable().default(null),
   threadId: z.string().nullable().default(null),
 });
 
 export const UpdateTaskSchema = z.object({
+  expectedRevision: z.number().int().positive().optional(),
   title: z.string().trim().min(1).max(160).optional(),
   description: z.string().trim().max(2_000).optional(),
-  status: z.enum(["todo", "in_progress", "done"]).optional(),
+  status: TaskStatusSchema.optional(),
+  kind: TaskKindSchema.unwrap().optional(),
+  acceptanceCriteria: TaskCriteriaSchema.unwrap().optional(),
   assigneeId: z.string().nullable().optional(),
   threadId: z.string().nullable().optional(),
 });
@@ -456,6 +616,9 @@ export interface BootstrapData {
   workspace: Workspace;
   agents: AgentView[];
   threads: Thread[];
+  workBriefs: WorkBrief[];
+  surfaces: WorkspaceSurface[];
+  goals: WorkGoal[];
   tasks: Task[];
   knowledge: KnowledgeItem[];
   assignments: WorkAssignment[];
@@ -467,6 +630,7 @@ export interface BootstrapData {
 
 export interface ThreadData {
   thread: Thread;
+  workBrief?: WorkBrief;
   messages: Message[];
   artifacts: Artifact[];
   runs: AgentRun[];
@@ -475,10 +639,20 @@ export interface ThreadData {
 
 export interface TaskProcessData {
   task: Task;
+  isLatestAttempt?: boolean;
+  attempts?: Array<{
+    id: string;
+    ordinal: number;
+    status: WorkAssignment["status"];
+    createdAt: string;
+    contractRevision: number | null;
+    reviewOutcome?: "accepted" | "changes_requested";
+  }>;
   assignment?: WorkAssignment;
   run?: AgentRun;
   activity?: RunActivity;
   toolCalls: ToolCall[];
+  artifacts?: Artifact[];
 }
 
 export function extractMentionHandles(content: string): string[] {

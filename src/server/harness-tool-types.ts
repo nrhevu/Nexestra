@@ -1,14 +1,56 @@
-import type { HarnessPermissionKey, Task, ToolCall, WorkAssignment } from "../shared/contracts.js";
+import type {
+  HarnessPermissionKey,
+  SaveWorkBriefInput,
+  Task,
+  ToolCall,
+  WorkAssignment,
+  WorkBrief,
+} from "../shared/contracts.js";
+import type { ReadHistoryInput } from "../shared/conversation-context.js";
+import type { CreateWorkGoalInput, WorkGoal } from "../shared/goals.js";
+import type {
+  CreateSurfaceInput,
+  SaveSurfaceRecordInput,
+  SurfaceManifest,
+  WorkspaceSurface,
+} from "../shared/surfaces.js";
 
 export interface MasterToolHooks {
   update(toolCall: ToolCall): Promise<void>;
   requestApproval(toolCall: ToolCall): Promise<boolean>;
   requestInput?(toolCall: ToolCall): Promise<string[][]>;
-  createPlan?(title: string, steps: { title: string; description: string }[]): Promise<Task[]>;
+  readWorkBrief?(): Promise<WorkBrief | undefined>;
+  readHistory?(input: ReadHistoryInput): Promise<unknown>;
+  readWorkGoals?(): Promise<WorkGoal[]>;
+  createWorkGoal?(input: Omit<CreateWorkGoalInput, "threadId">): Promise<WorkGoal>;
+  saveWorkBrief?(input: SaveWorkBriefInput): Promise<WorkBrief>;
+  readTasks?(): Promise<{ task: Task; assignment?: WorkAssignment }[]>;
+  readSurfaces?(): Promise<WorkspaceSurface[]>;
+  readSurface?(id: string): Promise<WorkspaceSurface>;
+  createSurface?(input: Omit<CreateSurfaceInput, "workspaceId">): Promise<WorkspaceSurface>;
+  updateSurface?(
+    id: string,
+    input: { expectedRevision: number; manifest: SurfaceManifest },
+  ): Promise<WorkspaceSurface>;
+  saveSurfaceRecord?(id: string, input: SaveSurfaceRecordInput): Promise<WorkspaceSurface>;
+  archiveSurfaceRecord?(
+    id: string,
+    recordId: string,
+    input: { expectedRevision: number; archived: boolean },
+  ): Promise<WorkspaceSurface>;
+  createPlan?(
+    title: string,
+    steps: {
+      title: string;
+      description: string;
+      kind?: Task["kind"];
+      acceptanceCriteria?: Task["acceptanceCriteria"];
+    }[],
+  ): Promise<Task[]>;
   delegate?(input: {
     taskId: string;
     workerHandle: string;
-    repositoryHandle: string;
+    repositoryHandle?: string;
   }): Promise<{ assignment: WorkAssignment; result: string }>;
 }
 

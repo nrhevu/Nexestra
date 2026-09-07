@@ -33,7 +33,9 @@ import type {
   ToolPermission,
   ToolQuestion,
 } from "../shared/contracts.js";
+import { SaveWorkBriefSchema, TaskCriteriaSchema, TaskKindSchema } from "../shared/contracts.js";
 import { loadCustomTools } from "./custom-tools.js";
+import { goalTools } from "./goal-tools.js";
 import {
   configuredPermission,
   type HarnessConfig,
@@ -46,9 +48,11 @@ import type {
   ProviderToolDefinition,
   ToolDefinition,
 } from "./harness-tool-types.js";
+import { historyTools } from "./history-tools.js";
 import { callRemoteMcpTool, loadMcpTools } from "./mcp-tools.js";
 import { findExecutable, runCommand, safeProcessEnv } from "./process.js";
 import { discoverSkills, type HarnessSkill, readSkill, skillDescription } from "./skills.js";
+import { surfaceTools } from "./surface-tools.js";
 
 export type {
   HarnessToolRequest,
@@ -75,6 +79,7 @@ export interface MasterToolSession {
 }
 
 interface PlanState {
+  knownTaskIds: Set<string>;
   plannedTaskIds: Set<string>;
   delegatingTaskIds: Set<string>;
 }
@@ -92,11 +97,18 @@ export async function createMasterToolSession(
     ? await loadMcpTools(config, context)
     : { tools: [], warnings: [], close: async () => undefined };
   const planState: PlanState = {
+    knownTaskIds: new Set(),
     plannedTaskIds: new Set(),
     delegatingTaskIds: new Set(),
   };
   const definitions = new Map<string, ToolDefinition>();
   for (const tool of builtInTools(config, skills, planState)) definitions.set(tool.name, tool);
+  for (const tool of surfaceTools()) definitions.set(tool.name, tool);
+  for (const tool of historyTools()) definitions.set(tool.name, tool);
+  for (const tool of goalTools((goal) => {
+    for (const step of goal.steps) planState.plannedTaskIds.delete(step.taskId);
+  }))
+    definitions.set(tool.name, tool);
   for (const tool of custom.tools) definitions.set(tool.name, tool);
   for (const tool of mcp.tools) definitions.set(tool.name, tool);
   return {
@@ -131,8 +143,58 @@ function builtInTools(
   planState: PlanState,
 ): ToolDefinition[] {
   let todos: Record<string, unknown>[] = [];
-  const { plannedTaskIds, delegatingTaskIds } = planState;
+  const { plannedTaskIds, delegatingTaskIds, knownTaskIds } = planState;
   return [
+    zodTool(
+      "read_tasks",
+      "Read durable tasks and the latest assignment/review in this thread before planning or resuming work. Reuse eligible existing task IDs instead of creating duplicate tasks. Reading tasks does not start them.",
+      "read",
+      objectSchema({}, []),
+      z.object({}).strict(),
+      async (_input, context) => {
+        if (!context.hooks?.readTasks)
+          throw new Error("Task discovery is unavailable in this runtime.");
+        const entries = await context.hooks.readTasks();
+        for (const { task } of entries) if (task.status === "todo") knownTaskIds.add(task.id);
+        return JSON.stringify({
+          tasks: entries.map(({ task, assignment }) => ({
+            ...task,
+            assignment: assignment
+              ? {
+                  id: assignment.id,
+                  status: assignment.status,
+                  environment: assignment.environment ?? "worktree",
+                  review: assignment.review,
+                }
+              : null,
+          })),
+        });
+      },
+    ),
+    zodTool(
+      "read_brief",
+      "Read this thread's current work brief and revision. A brief records desired outcomes, deliverables, constraints, open questions and success checks for research, documents, design or code.",
+      "read",
+      objectSchema({}, []),
+      z.object({}).strict(),
+      async (_input, context) => {
+        if (!context.hooks?.readWorkBrief)
+          throw new Error("Work briefs are unavailable in this runtime.");
+        return JSON.stringify({ workBrief: (await context.hooks.readWorkBrief()) ?? null });
+      },
+    ),
+    zodTool(
+      "draft_brief",
+      "Save a full draft of this thread's work brief. Read it first and pass expectedRevision (0 for a new brief). Preserve the user's constraints, record uncertainty in openQuestions, and give every criterion a concrete check. A conflict requires re-reading and reconciling changes. Editing returns the brief to draft; this tool cannot confirm scope, execute work or mark it complete.",
+      "todowrite",
+      z.toJSONSchema(SaveWorkBriefSchema),
+      SaveWorkBriefSchema,
+      async (input, context) => {
+        if (!context.hooks?.saveWorkBrief)
+          throw new Error("Work briefs are unavailable in this runtime.");
+        return JSON.stringify(await context.hooks.saveWorkBrief(input));
+      },
+    ),
     zodTool(
       "list",
       "List files and directories inside the repository.",
@@ -328,11 +390,18 @@ function builtInTools(
     ),
     zodTool(
       "plan",
-      "Create the required execution plan as durable Taskboard tasks before delegating work.",
+      "Create durable tasks. The default draft mode is for analysis, design proposals or planning without an execution commitment. Choose execute only when the user has requested implementation: every task must then be delegated or handed to a draft goal. Mode is not a new permission grant. Every task needs observable behavior and a verification method. Worker completion submits for independent review; it never accepts the task.",
       "todowrite",
       objectSchema(
         {
           title: stringProperty("Short name for the overall plan."),
+          mode: {
+            type: "string",
+            enum: ["draft", "execute"],
+            default: "draft",
+            description:
+              "Draft records a plan without requiring execution. Execute commits to completing authorized delegation.",
+          },
           steps: {
             type: "array",
             minItems: 1,
@@ -342,8 +411,10 @@ function builtInTools(
               properties: {
                 title: stringProperty("Concrete task title."),
                 description: stringProperty("Acceptance criteria and implementation scope."),
+                kind: z.toJSONSchema(TaskKindSchema),
+                acceptanceCriteria: z.toJSONSchema(TaskCriteriaSchema.unwrap().min(1)),
               },
-              required: ["title", "description"],
+              required: ["title", "description", "kind", "acceptanceCriteria"],
               additionalProperties: false,
             },
           },
@@ -352,11 +423,14 @@ function builtInTools(
       ),
       z.object({
         title: z.string().trim().min(1).max(160),
+        mode: z.enum(["draft", "execute"]).default("draft"),
         steps: z
           .array(
             z.object({
               title: z.string().trim().min(1).max(160),
               description: z.string().trim().min(1).max(1_800),
+              kind: TaskKindSchema,
+              acceptanceCriteria: TaskCriteriaSchema.unwrap().min(1),
             }),
           )
           .min(1)
@@ -367,10 +441,14 @@ function builtInTools(
           throw new Error("Planning is unavailable in this runtime.");
         }
         const tasks = await context.hooks.createPlan(input.title, input.steps);
-        for (const task of tasks) plannedTaskIds.add(task.id);
+        for (const task of tasks) {
+          if (input.mode === "execute") plannedTaskIds.add(task.id);
+          knownTaskIds.add(task.id);
+        }
         return JSON.stringify(
           {
             title: input.title,
+            mode: input.mode,
             tasks: tasks.map((task) => ({ id: task.id, title: task.title, status: task.status })),
           },
           null,
@@ -380,24 +458,28 @@ function builtInTools(
     ),
     zodTool(
       "delegate",
-      "Assign one planned task to a Worker in an isolated worktree of a ready #repository. Use any Worker handle and repository handle listed in the conversation context.",
+      "Assign one task from plan or read_tasks to an available Worker. For code, provide a ready repository handle. Omit repository for research, document or design work in an isolated directory. The result goes to review, never directly to Done.",
       "edit",
       objectSchema(
         {
-          taskId: stringProperty("Task ID returned by the plan tool."),
+          taskId: stringProperty("Task ID returned by plan or read_tasks."),
           worker: stringProperty("Worker handle without @."),
-          repository: stringProperty("Knowledge repository handle without #."),
+          repository: stringProperty(
+            "Optional repository handle without #. Omit for non-Git work.",
+          ),
         },
-        ["taskId", "worker", "repository"],
+        ["taskId", "worker"],
       ),
       z.object({
         taskId: z.string().uuid(),
         worker: z.string().trim().min(2).max(31),
-        repository: z.string().trim().min(2).max(48),
+        repository: z.string().trim().min(2).max(48).optional(),
       }),
       async (input, context) => {
-        if (!plannedTaskIds.has(input.taskId)) {
-          throw new Error("Call plan first, then delegate only task IDs returned by that plan.");
+        if (!knownTaskIds.has(input.taskId)) {
+          throw new Error(
+            "Call plan first or read_tasks, then delegate only an eligible task ID returned by those tools.",
+          );
         }
         if (delegatingTaskIds.has(input.taskId)) {
           throw new Error("This planned task is already being delegated.");
@@ -410,13 +492,16 @@ function builtInTools(
           const { assignment, result } = await context.hooks.delegate({
             taskId: input.taskId,
             workerHandle: input.worker.toLowerCase(),
-            repositoryHandle: input.repository.toLowerCase(),
+            repositoryHandle: input.repository?.toLowerCase(),
           });
           plannedTaskIds.delete(input.taskId);
+          knownTaskIds.delete(input.taskId);
           return JSON.stringify(
             {
               assignmentId: assignment.id,
               status: assignment.status,
+              taskStatus: "in_review",
+              environment: assignment.environment ?? "worktree",
               branch: assignment.branch,
               worktreePath: assignment.worktreePath,
               workerResult: result,
@@ -768,12 +853,13 @@ async function repositoryFiles(
   pattern: string,
 ): Promise<string[]> {
   const target = await securePath(context, requestedPath, "read");
+  const workspace = await realpath(context.workspacePath);
   if (!(await stat(target)).isDirectory()) throw new Error(`${requestedPath} is not a directory.`);
   const binary = await findExecutable("rg", context.env);
   if (!binary) throw new Error("File discovery requires ripgrep (rg) in PATH.");
   const args = ["--files", "--hidden", "--no-require-git", "--color", "never"];
   addIgnoreGlobs(args, config.ignore);
-  args.push("--", relative(context.workspacePath, target) || ".");
+  args.push("--", relative(workspace, target) || ".");
   const result = await runCommand(binary, args, {
     cwd: context.workspacePath,
     timeoutMs: 10_000,
@@ -790,7 +876,7 @@ async function repositoryFiles(
     .sort();
   if (pattern === "**/*") return files;
   return files.filter((file) => {
-    const fromTarget = relative(target, resolve(context.workspacePath, file));
+    const fromTarget = relative(target, resolve(workspace, file));
     return !fromTarget.startsWith("..") && matchesGlob(fromTarget, pattern);
   });
 }
@@ -801,6 +887,7 @@ async function grepTool(
   config: HarnessConfig,
 ): Promise<string> {
   const target = await securePath(context, input.path as string, "read");
+  const workspace = await realpath(context.workspacePath);
   const binary = await findExecutable("rg", context.env);
   if (!binary) throw new Error("The grep tool requires ripgrep (rg) in PATH.");
   const args = [
@@ -817,7 +904,7 @@ async function grepTool(
   addIgnoreGlobs(args, config.ignore);
   const include = validateGlob(input.pattern as string);
   if (include !== "**/*") args.push("--glob", include);
-  args.push("--", input.query as string, relative(context.workspacePath, target) || ".");
+  args.push("--", input.query as string, relative(workspace, target) || ".");
   const result = await runCommand(binary, args, {
     cwd: context.workspacePath,
     timeoutMs: 10_000,
@@ -1017,7 +1104,9 @@ async function secureReadPath(context: MasterToolContext, requestedPath: string)
     return resolved;
   }
   const workspace = await realpath(context.workspacePath);
-  if (isWithin(workspace, requested)) return securePath(context, requested, "read");
+  if (isWithin(workspace, requested) || isWithin(resolve(context.workspacePath), requested)) {
+    return securePath(context, requested, "read");
+  }
   throw new Error("Paths must stay inside the repository root or reference an attached artifact.");
 }
 
@@ -1500,17 +1589,26 @@ async function securePath(
   allowMissing = false,
 ): Promise<string> {
   const workspace = await realpath(context.workspacePath);
-  const target = isAbsolute(requestedPath)
+  const declaredWorkspace = resolve(context.workspacePath);
+  let target = isAbsolute(requestedPath)
     ? resolve(requestedPath)
     : resolve(workspace, requestedPath);
+  if (isAbsolute(requestedPath) && isWithin(declaredWorkspace, target)) {
+    target = resolve(workspace, relative(declaredWorkspace, target));
+  }
   if (!isWithin(workspace, target)) throw new Error("Path escapes the repository root.");
-  if (isSensitivePath(context, target))
+  const canonicalContext = {
+    ...context,
+    workspacePath: workspace,
+    dataPath: await canonicalPath(context.dataPath),
+  };
+  if (isSensitivePath(canonicalContext, target))
     throw new Error("Nexestra credentials and auth files are protected.");
   try {
     const resolved = await realpath(target);
     if (!isWithin(workspace, resolved))
       throw new Error("Path resolves outside the repository root.");
-    if (isSensitivePath(context, resolved))
+    if (isSensitivePath(canonicalContext, resolved))
       throw new Error("Nexestra credentials and auth files are protected.");
     return resolved;
   } catch (error) {
@@ -1532,6 +1630,17 @@ async function securePath(
   }
   if (operation === "read") throw new Error(`${requestedPath} does not exist.`);
   return target;
+}
+
+async function canonicalPath(path: string): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch (error) {
+    if (!isNodeError(error, "ENOENT")) throw error;
+    const parent = dirname(resolve(path));
+    if (parent === resolve(path)) throw error;
+    return join(await canonicalPath(parent), basename(path));
+  }
 }
 
 function isSensitivePath(context: MasterToolContext, target: string): boolean {
@@ -1593,6 +1702,9 @@ function toolInputSummary(
   permission: HarnessPermissionKey,
 ): string {
   if (permission === "external") return compactSummary({ argument_keys: Object.keys(input) });
+  if (name === "draft_brief") {
+    return compactSummary({ expectedRevision: input.expectedRevision, kind: input.kind });
+  }
   if (name === "write") {
     return compactSummary({
       path: input.path,

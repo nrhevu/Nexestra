@@ -1,0 +1,143 @@
+.task-review {
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.task-review h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+.task-review p {
+  color: var(--muted);
+  line-height: 1.6;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.task-review small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.review-criterion {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+  font-size: 12px;
+}
+.review-criterion span {
+  color: var(--muted);
+  line-height: 1.5;
+}
+.review-criterion textarea {
+  width: 100%;
+  min-height: 70px;
+  resize: vertical;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--input-bg, var(--panel));
+  color: var(--text);
+  font: inherit;
+  line-height: 1.5;
+}
+.review-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+.review-actions button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+.review-actions button.primary-button {
+  background: var(--text);
+  color: var(--panel);
+}
+.review-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.review-observation {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-soft);
+  font-size: 12px;
+}
+.review-warning {
+  border-left: 2px solid var(--cyan);
+  padding-left: 10px;
+}
+.task-criteria-editor {
+  margin: 12px 0 20px;
+  display: grid;
+  gap: 10px;
+}
+.task-criteria-editor legend {
+  margin-bottom: 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.task-launch-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 14px 0;
+}
+.task-launch-options label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.task-launch-options select {
+  width: 100%;
+  padding: 9px;
+  border: 1px solid var(--input-border);
+  border-radius: 7px;
+  background: var(--input-bg);
+  color: var(--text);
+  font: inherit;
+}
+@media (max-width: 600px) {
+  .task-launch-options {
+    grid-template-columns: 1fr;
+  }
+}
+.task-criteria-editor > div {
+  display: grid;
+  gap: 6px;
+}
+
+.task-criteria-editor input {
+  width: 100%;
+  padding: 9px 11px;
+  background: var(--input-bg);
+  color: var(--text);
+  border: 1px solid var(--input-border);
+  border-radius: 7px;
+  font: inherit;
+  font-size: 12px;
+}
+.task-criteria-editor button {
+  justify-self: start;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-raised);
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+}
