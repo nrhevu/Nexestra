@@ -970,6 +970,94 @@ describe("Taskboard Worker process", () => {
     ).toBe(true);
   });
 
+  it("delegates an unstarted task from its process dialog", async () => {
+    window.history.replaceState({}, "", "/surfaces/taskboard");
+    const thread = {
+      id: "thread-delegate",
+      workspaceId: workspace.id,
+      name: "general",
+      slug: "general",
+      createdAt: now,
+      updatedAt: now,
+      messageCount: 1,
+      lastMessageAt: now,
+    };
+    const task = {
+      id: "task-delegate",
+      workspaceId: workspace.id,
+      title: "Implement the repository feature",
+      description: "Build and verify it.",
+      status: "todo" as const,
+      assigneeId: null,
+      threadId: thread.id,
+      verificationCommand: "pnpm test",
+      createdAt: now,
+      updatedAt: now,
+    };
+    const repository = {
+      id: "repository-delegate",
+      workspaceId: workspace.id,
+      kind: "repository" as const,
+      name: "Product repository",
+      handle: "product-repo",
+      description: "",
+      source: "https://github.com/example/product.git",
+      storagePath: "workspaces/workspace-nexestra/repositories/product/source",
+      status: "ready" as const,
+      defaultBranch: "main",
+      createdAt: now,
+      updatedAt: now,
+    };
+    const assignment = {
+      id: "assignment-delegate",
+      workspaceId: workspace.id,
+      taskId: task.id,
+      threadId: thread.id,
+      masterRunId: "",
+      workerAgentId: workerAgent.id,
+      repositoryId: repository.id,
+      status: "running" as const,
+      branch: "nexestra/assignment-delegate",
+      worktreePath: "workspaces/workspace-nexestra/worktrees/assignment-delegate",
+      createdAt: now,
+      updatedAt: now,
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        return jsonResponse({
+          ...bootstrapData,
+          agents: [workerAgent],
+          threads: [thread],
+          tasks: [task],
+          knowledge: [repository],
+        });
+      }
+      if (path === `/api/tasks/${task.id}/process`) {
+        return jsonResponse({ task, toolCalls: [] });
+      }
+      if (path === `/api/tasks/${task.id}/delegate` && init?.method === "POST") {
+        return jsonResponse(assignment);
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: `Open process for ${task.title}` }));
+    const dialog = await screen.findByRole("dialog", { name: task.title });
+    expect(within(dialog).getByRole("combobox", { name: "Worker" })).toHaveValue(workerAgent.id);
+    expect(within(dialog).getByRole("combobox", { name: "Repository" })).toHaveValue(repository.id);
+    await user.click(within(dialog).getByRole("button", { name: "Delegate Worker" }));
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) =>
+          String(input) === `/api/tasks/${task.id}/delegate` && init?.method === "POST",
+      ),
+    ).toBe(true);
+  });
+
   it("shows task details and supports editing and deletion", async () => {
     window.history.replaceState({}, "", "/surfaces/taskboard");
     const task = {

@@ -2933,6 +2933,10 @@ function TaskProcessDialog({
   const [cleanupError, setCleanupError] = useState<string>();
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string>();
+  const [delegateWorkerId, setDelegateWorkerId] = useState<string>();
+  const [delegateRepositoryId, setDelegateRepositoryId] = useState<string>();
+  const [delegating, setDelegating] = useState(false);
+  const [delegateError, setDelegateError] = useState<string>();
   const loadProcess = useCallback(
     async (quiet = false) => {
       try {
@@ -2995,6 +2999,17 @@ function TaskProcessDialog({
     : undefined;
   const knownHandles = new Set(data.agents.map((agent) => agent.handle));
   const status = assignment?.status ?? "not delegated";
+  const availableWorkers = data.agents.filter(
+    (agent) => agent.kind === "worker" && agent.enabled && !agent.archived,
+  );
+  const availableRepositories = data.knowledge.filter(
+    (item) => item.kind === "repository" && item.status === "ready",
+  );
+  useEffect(() => {
+    if (assignment || delegateWorkerId || delegateRepositoryId) return;
+    setDelegateWorkerId(availableWorkers[0]?.id);
+    setDelegateRepositoryId(availableRepositories[0]?.id);
+  }, [assignment, availableRepositories, availableWorkers, delegateRepositoryId, delegateWorkerId]);
   const canRetryWorker =
     process !== undefined &&
     assignment !== undefined &&
@@ -3104,15 +3119,102 @@ function TaskProcessDialog({
           </div>
 
           {!assignment ? (
-            <div className="task-process-empty">
-              <Bot size={22} />
-              <div>
-                <strong>This task has not been delegated</strong>
-                <p>
-                  A Master created the task but did not start a Worker assignment. Mention the
-                  Master again with an available Worker and a #repository reference.
-                </p>
+            <div className="task-process-delegate">
+              <div className="task-process-empty">
+                <Bot size={22} />
+                <div>
+                  <strong>This task has not been delegated</strong>
+                  <p>
+                    Choose an enabled Worker and a ready repository. Nexestra will create a new
+                    isolated branch and worktree for this task.
+                  </p>
+                </div>
               </div>
+              <form
+                onSubmit={async (event) => {
+                  event.preventDefault();
+                  const worker = availableWorkers.find((agent) => agent.id === delegateWorkerId);
+                  const repository = availableRepositories.find(
+                    (item) => item.id === delegateRepositoryId,
+                  );
+                  if (!process.task.threadId || !worker || !repository) return;
+                  setDelegating(true);
+                  setDelegateError(undefined);
+                  try {
+                    await api<WorkAssignment>(
+                      `/api/tasks/${encodeURIComponent(process.task.id)}/delegate`,
+                      {
+                        method: "POST",
+                        body: JSON.stringify({
+                          workerHandle: worker.handle,
+                          repositoryHandle: repository.handle,
+                        }),
+                      },
+                    );
+                    await loadProcess(true);
+                  } catch (caught) {
+                    setDelegateError(messageFrom(caught));
+                  } finally {
+                    setDelegating(false);
+                  }
+                }}
+              >
+                <div className="form-grid">
+                  <Field label="Worker">
+                    <select
+                      name="worker"
+                      aria-label="Worker"
+                      value={delegateWorkerId ?? ""}
+                      onChange={(event) => setDelegateWorkerId(event.target.value)}
+                    >
+                      {availableWorkers.map((agent) => (
+                        <option key={agent.id} value={agent.id}>
+                          @{agent.handle}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Repository">
+                    <select
+                      name="repository"
+                      aria-label="Repository"
+                      value={delegateRepositoryId ?? ""}
+                      onChange={(event) => setDelegateRepositoryId(event.target.value)}
+                    >
+                      {availableRepositories.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          #{item.handle}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+                <button
+                  className="primary-button"
+                  type="submit"
+                  disabled={
+                    delegating ||
+                    !process.task.threadId ||
+                    availableWorkers.length === 0 ||
+                    availableRepositories.length === 0
+                  }
+                >
+                  {delegating ? <LoaderCircle className="spin" size={14} /> : <Bot size={14} />}
+                  {delegating ? "Delegating…" : "Delegate Worker"}
+                </button>
+              </form>
+              {!process.task.threadId && (
+                <p className="form-error">
+                  <CircleAlert size={14} />
+                  Link this task to a thread before delegating it.
+                </p>
+              )}
+              {delegateError && (
+                <p className="form-error">
+                  <CircleAlert size={14} />
+                  {delegateError}
+                </p>
+              )}
             </div>
           ) : (
             <>

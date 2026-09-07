@@ -148,6 +148,8 @@ and leaves the branch and durable run history intact.
 The process dialog can also retry the latest failed, interrupted, or verification-blocked
 assignment with its same Worker and repository. Retry creates a new assignment, branch, and worktree
 while preserving all historical assignment and run records.
+A task with no assignment can be delegated directly from its process dialog by selecting an enabled
+Worker and ready repository; a linked thread remains mandatory.
 
 Each delegated assignment owns an in-memory abort controller from before it is queued until its
 final cleanup. Stopping a task aborts both Git worktree preparation and the Worker harness process;

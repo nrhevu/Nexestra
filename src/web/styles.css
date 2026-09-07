@@ -2619,6 +2619,18 @@ kbd {
   font-size: 12px;
   line-height: 1.5;
 }
+.task-process-delegate {
+  display: grid;
+  gap: 10px;
+}
+.task-process-delegate form {
+  display: grid;
+  gap: 10px;
+}
+.task-process-delegate .primary-button {
+  justify-content: center;
+  width: 100%;
+}
 .task-process-location {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
