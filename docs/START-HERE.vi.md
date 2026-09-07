@@ -6,20 +6,25 @@ Goals nối các task thành một chuỗi có giới hạn và dừng tại bư
 
 ## Mở bản mới
 
-Mã nguồn ở nhánh `codex/workspace-harness-foundation`, trong worktree:
-`/Users/vunguyen13/Works/Nexestra/.worktrees/workspace-harness`.
+Nhánh tích hợp để test là `codex/workspace-harness-integration`, được tạo từ `master` và merge
+`codex/workspace-harness-foundation` vào. Worktree:
+`/Users/vunguyen13/Works/Nexestra/.worktrees/workspace-harness-integration`.
 
-Trên máy hiện tại, Node phù hợp nằm trong `/opt/homebrew/bin`. Chạy:
+Trên máy hiện tại, Node phù hợp nằm trong `/opt/homebrew/bin`. Khi server chưa chạy, khởi động bằng:
 
 ```bash
-cd /Users/vunguyen13/Works/Nexestra/.worktrees/workspace-harness
+cd /Users/vunguyen13/Works/Nexestra/.worktrees/workspace-harness-integration
 PATH=/opt/homebrew/bin:$PATH pnpm dev
 ```
 
-Ứng dụng cần Node >= 24 và pnpm 11. Dữ liệu mặc định nằm trong `.nexestra/` của thư mục chạy;
-`NEXESTRA_HOME` chọn một thư mục dữ liệu khác. Bản kiểm tra trên cổng 4387 dùng dữ liệu riêng và
-runner offline, không gọi provider thật. Chất lượng câu trả lời của model thật chưa được đánh giá
-trong phiên phát triển này.
+[Mở app tại cổng 5173](http://127.0.0.1:5173); backend ở cổng 4242. Bản tích hợp dùng runtime thật và dữ liệu riêng
+trong `.nexestra/` của worktree này. Vào **Agent management** để cấu hình Master/Worker trước khi
+gọi agent. Server được chạy nền để bạn test; log và PID ở `.nexestra/dev-server.log` và
+`.nexestra/dev-server.pid`.
+
+Ứng dụng cần Node >= 24 và pnpm 11. `NEXESTRA_HOME` chọn một thư mục dữ liệu khác. Bản kiểm tra
+trước đó trên cổng 4387 dùng runner offline. Chất lượng câu trả lời của model thật chưa được
+đánh giá trong các bài kiểm tra tự động hoặc phiên kiểm tra giao diện trước đó.
 
 ## Thử một công việc hoàn chỉnh
 

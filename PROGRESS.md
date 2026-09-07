@@ -8,9 +8,11 @@ for at least four hours of continued implementation and verification starting **
 beyond **2026-09-06 22:49:52 UTC**, satisfying that minimum window. This is a tested foundation;
 the remaining product scope is recorded in the roadmap and architecture gaps.
 
-Working branch: `codex/workspace-harness-foundation`.
-Working tree: `/Users/vunguyen13/Works/Nexestra/.worktrees/workspace-harness`.
-Moved from `/private/tmp/nexestra-workspace-harness` after the tested 40da323 checkpoint.
+Working branch: `codex/workspace-harness-integration`.
+Working tree: `/Users/vunguyen13/Works/Nexestra/.worktrees/workspace-harness-integration`.
+Created from `master` and merged `codex/workspace-harness-foundation` at 937ef79 for user testing.
+The foundation branch remains in `.worktrees/workspace-harness`, previously moved from
+`/private/tmp/nexestra-workspace-harness` after the tested 40da323 checkpoint.
 Original tracked files remain unchanged on `master`. An untracked `.pnpm-store/` cache was observed
 in the original checkout at move time and left intact; do not delete unrelated files or worktrees.
 
@@ -146,6 +148,20 @@ files remain unchanged; all local Markdown links resolve.
 `docs/START-HERE.vi.md` explains the complete product flow and material gaps; `docs/VERIFICATION.md`
 records offline acceptance evidence. The four-hour minimum work window is complete.
 
+## Integration for user testing
+
+- User requested a new branch, merge and running app. Merge 937ef79 has parents d1ac8bb and
+  4acd3fa, with the same resulting source tree as the foundation branch and no code conflicts.
+- Dependencies installed from the frozen lockfile and existing offline cache. The integration
+  worktree passed `pnpm check`: 228 tests across 25 files, lint, TypeScript and production build.
+- Real app runtime is launched with `pnpm dev` on loopback: web 5173, backend 4242. Its separate
+  persistent data is `.nexestra/` in this integration worktree. No offline fixture runner is injected.
+- Detached server launcher PID and logs are recorded in `.nexestra/dev-server.pid` and
+  `.nexestra/dev-server.log`. Agent/provider configuration is left for the user in Agent management.
+- The merge hook flagged only the deletion of a known example.com URL in an unsafe-URL test.
+  Its documented allowlist was scoped to that exact deleted fixture line for one commit command;
+  no persistent scanner configuration or hooks were changed.
+
 ## Environment and verification
 
 - Use `PATH=/opt/homebrew/bin:$PATH` to select Node 26 instead of the default Node 22.
@@ -166,9 +182,9 @@ read-only `curl` works. Saved source: `/private/tmp/nexestra-harness-lecture-01.
 The user's detailed L1–L14 summary is a design input. Do not repeat unverified numerical claims
 as established facts. Validate important mechanisms against primary engineering sources.
 
-## Active preview and tooling
+## Earlier offline preview and tooling
 
-- Preview loopback port: 4387. Script: `/private/tmp/nexestra-ui-preview.mts`.
+- Earlier preview loopback port: 4387. Script: `/private/tmp/nexestra-ui-preview.mts`.
 - Preview data: `/private/tmp/nexestra-preview-data-octqCw`, disposable and independent of user data.
 - Restart preserving preview data with NEXESTRA_PREVIEW_ROOT set to that path. No live providers.
 - CUA binding `tab` (id "1", browser id "1"); session reset during QA, browser handle not currently bound. Browser is hidden.
