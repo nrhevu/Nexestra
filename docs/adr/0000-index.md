@@ -21,3 +21,4 @@
 | [0017](0017-external-task-verification.md) | Accepted | Verify delegated tasks externally and block them when verification fails |
 | [0018](0018-canonical-path-containment.md) | Accepted | Compare Master tool paths against canonical workspace and data roots |
 | [0019](0019-explicit-worktree-cleanup.md) | Accepted | Remove finished Worker worktrees explicitly without force or branch deletion |
+| [0020](0020-retry-blocked-worker-assignments.md) | Accepted | Retry blocked, failed, or interrupted Worker assignments explicitly |

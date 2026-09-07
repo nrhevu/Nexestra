@@ -145,6 +145,9 @@ Branches and worktrees are retained for inspection. Nexestra never merges or pus
 A finished assignment can be cleaned up explicitly from its process dialog. Cleanup uses Git's
 non-forced worktree removal, so dirty or untracked work is refused, records `worktreeCleanedAt`,
 and leaves the branch and durable run history intact.
+The process dialog can also retry the latest failed, interrupted, or verification-blocked
+assignment with its same Worker and repository. Retry creates a new assignment, branch, and worktree
+while preserving all historical assignment and run records.
 
 Each delegated assignment owns an in-memory abort controller from before it is queued until its
 final cleanup. Stopping a task aborts both Git worktree preparation and the Worker harness process;

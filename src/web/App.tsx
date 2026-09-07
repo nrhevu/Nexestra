@@ -2931,6 +2931,8 @@ function TaskProcessDialog({
   const [stopError, setStopError] = useState<string>();
   const [cleaning, setCleaning] = useState(false);
   const [cleanupError, setCleanupError] = useState<string>();
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string>();
   const loadProcess = useCallback(
     async (quiet = false) => {
       try {
@@ -2993,6 +2995,19 @@ function TaskProcessDialog({
     : undefined;
   const knownHandles = new Set(data.agents.map((agent) => agent.handle));
   const status = assignment?.status ?? "not delegated";
+  const canRetryWorker =
+    process !== undefined &&
+    assignment !== undefined &&
+    worker !== undefined &&
+    repository !== undefined &&
+    (assignment.status === "failed" ||
+      assignment.status === "interrupted" ||
+      (assignment.status === "completed" && process.task.status === "blocked")) &&
+    worker.kind === "worker" &&
+    worker.enabled &&
+    !worker.archived &&
+    repository.kind === "repository" &&
+    repository.status === "ready";
 
   return (
     <Modal
@@ -3275,6 +3290,12 @@ function TaskProcessDialog({
               {cleanupError}
             </p>
           )}
+          {retryError && (
+            <p className="form-error">
+              <CircleAlert size={14} />
+              {retryError}
+            </p>
+          )}
           <div className="modal-actions">
             {isActive && (
               <button
@@ -3306,6 +3327,37 @@ function TaskProcessDialog({
               <Pencil size={14} />
               Edit
             </button>
+            {canRetryWorker && worker && repository && (
+              <button
+                type="button"
+                className="primary-button"
+                disabled={retrying}
+                onClick={async () => {
+                  setRetrying(true);
+                  setRetryError(undefined);
+                  try {
+                    await api<WorkAssignment>(
+                      `/api/tasks/${encodeURIComponent(process.task.id)}/delegate`,
+                      {
+                        method: "POST",
+                        body: JSON.stringify({
+                          workerHandle: worker.handle,
+                          repositoryHandle: repository.handle,
+                        }),
+                      },
+                    );
+                    await loadProcess(true);
+                  } catch (caught) {
+                    setRetryError(messageFrom(caught));
+                  } finally {
+                    setRetrying(false);
+                  }
+                }}
+              >
+                {retrying ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}
+                {retrying ? "Retrying…" : "Retry Worker"}
+              </button>
+            )}
             <button type="button" className="danger-button" onClick={() => onDelete(process.task)}>
               <Trash2 size={14} />
               Delete

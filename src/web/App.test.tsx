@@ -912,18 +912,41 @@ describe("Taskboard Worker process", () => {
       createdAt: now,
       updatedAt: now,
     };
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const repository = {
+      id: "repository-product",
+      workspaceId: workspace.id,
+      kind: "repository" as const,
+      name: "Product repository",
+      handle: "product-repo",
+      description: "",
+      source: "https://github.com/example/product.git",
+      storagePath: "workspaces/workspace-nexestra/repositories/product/source",
+      status: "ready" as const,
+      defaultBranch: "main",
+      createdAt: now,
+      updatedAt: now,
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
       if (path.startsWith("/api/bootstrap")) {
         return jsonResponse({
           ...bootstrapData,
           agents: [workerAgent],
           tasks: [task],
+          knowledge: [repository],
           assignments: [assignment],
         });
       }
       if (path === `/api/tasks/${task.id}/process`) {
         return jsonResponse({ task, assignment, toolCalls: [] });
+      }
+      if (path === `/api/tasks/${task.id}/delegate` && init?.method === "POST") {
+        return jsonResponse({
+          ...assignment,
+          id: "assignment-retry",
+          status: "running" as const,
+          worktreeCleanedAt: undefined,
+        });
       }
       return jsonResponse({ error: { message: "Not found" } }, 404);
     });
@@ -938,6 +961,13 @@ describe("Taskboard Worker process", () => {
     const dialog = await screen.findByRole("dialog", { name: task.title });
     expect(within(dialog).getByText("Exit 42")).toBeVisible();
     expect(within(dialog).getByText("1 failed test")).toBeVisible();
+    await user.click(within(dialog).getByRole("button", { name: "Retry Worker" }));
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) =>
+          String(input) === `/api/tasks/${task.id}/delegate` && init?.method === "POST",
+      ),
+    ).toBe(true);
   });
 
   it("shows task details and supports editing and deletion", async () => {

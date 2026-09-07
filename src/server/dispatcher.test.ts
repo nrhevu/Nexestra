@@ -797,6 +797,15 @@ describe("mention dispatch", () => {
       verificationOutput: "verification-failed",
     });
     expect(store.getTask(task.id)).toMatchObject({ status: "blocked" });
+
+    const retried = await dispatcher.delegateFromTask(task.id, worker.handle, repository.handle);
+    expect(retried.id).not.toBe(assignment.id);
+    expect(retried).toMatchObject({
+      status: "completed",
+      verificationExitCode: 42,
+      workerAgentId: worker.id,
+      repositoryId: repository.id,
+    });
   });
 
   it("stops an active Worker process and preserves interrupted run and tool history", async () => {
