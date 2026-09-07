@@ -68,16 +68,19 @@ export class AgentDispatcher {
   async taskProcess(taskId: string): Promise<TaskProcessData> {
     const task = this.store.getTask(taskId);
     if (!task) throw new StoreError("not_found", "Task not found.");
-    const assignment = this.store
+    const assignments = this.store
       .listAssignments(task.workspaceId)
-      .find((entry) => entry.taskId === task.id);
-    if (!assignment) return { task, toolCalls: [] };
+      .filter((entry) => entry.taskId === task.id)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    const assignment = assignments.at(-1);
+    if (!assignment) return { task, assignments, toolCalls: [] };
     const thread = await this.store.threadData(assignment.threadId);
     const run = thread.runs.find((entry) => entry.id === assignment.id);
     const activity = this.liveActivities.get(assignment.id);
     return {
       task,
       assignment,
+      assignments,
       ...(run ? { run } : {}),
       ...(activity ? { activity: structuredClone(activity) } : {}),
       toolCalls: thread.toolCalls.filter((toolCall) => toolCall.runId === assignment.id),

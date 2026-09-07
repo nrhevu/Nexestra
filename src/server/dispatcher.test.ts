@@ -806,6 +806,9 @@ describe("mention dispatch", () => {
       workerAgentId: worker.id,
       repositoryId: repository.id,
     });
+    const process = await dispatcher.taskProcess(task.id);
+    expect(process.assignment?.id).toBe(retried.id);
+    expect(process.assignments.map((entry) => entry.id)).toEqual([assignment.id, retried.id]);
   });
 
   it("stops an active Worker process and preserves interrupted run and tool history", async () => {

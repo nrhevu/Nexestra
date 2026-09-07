@@ -482,6 +482,7 @@ export interface ThreadData {
 export interface TaskProcessData {
   task: Task;
   assignment?: WorkAssignment;
+  assignments: WorkAssignment[];
   run?: AgentRun;
   activity?: RunActivity;
   toolCalls: ToolCall[];

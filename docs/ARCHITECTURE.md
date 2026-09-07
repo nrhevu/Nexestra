@@ -161,7 +161,8 @@ left without an in-memory controller after a restart.
 The assignment ID is also the delegated Worker's durable run ID in the canonical thread JSONL.
 Native Worker tool events are normalized and persisted against that run, while reasoning and
 partial text remain in the dispatcher's bounded live projection. The Taskboard process endpoint
-joins task, assignment, run, tool history, and current live activity. Its dialog subscribes to the
+joins task, every assignment attempt, the latest run, tool history, and current live activity. Its
+dialog subscribes to the
 same thread SSE stream as chat, with an active-only polling fallback when EventSource is unavailable.
 
 ## Agent runtimes

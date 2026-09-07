@@ -2677,6 +2677,35 @@ kbd {
   color: var(--quiet);
   font-size: 10px;
 }
+.task-process-history {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  background: #191b20;
+}
+.task-process-history h3 {
+  margin: 0;
+  color: #d7d3da;
+  font-size: 12px;
+}
+.task-history-row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.task-history-row.current {
+  color: #d5d1d8;
+}
+.task-history-row code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .task-process-thinking,
 .task-process-error {
   margin: 0;

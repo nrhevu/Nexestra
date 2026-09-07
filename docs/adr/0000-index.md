@@ -23,3 +23,4 @@
 | [0019](0019-explicit-worktree-cleanup.md) | Accepted | Remove finished Worker worktrees explicitly without force or branch deletion |
 | [0020](0020-retry-blocked-worker-assignments.md) | Accepted | Retry blocked, failed, or interrupted Worker assignments explicitly |
 | [0021](0021-delegate-unstarted-tasks-from-process-dialog.md) | Accepted | Delegate unstarted tasks from the Taskboard process dialog |
+| [0022](0022-visible-assignment-history.md) | Accepted | Show every task assignment attempt in the process dialog |

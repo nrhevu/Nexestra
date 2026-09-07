@@ -103,8 +103,9 @@ streamed response, and tool calls. Completed cards retain the Worker result and 
 in this process view. A finished worktree can be removed explicitly; Git refuses dirty or untracked
 work, while the branch and run history remain. A blocked, failed, or interrupted assignment can be
 retried with the same Worker and repository. An unstarted task can be delegated from its process
-dialog by selecting an enabled Worker and ready repository. A task
-that was never delegated says so explicitly. The same detail view can edit every task field or
+dialog by selecting an enabled Worker and ready repository. The process also lists every
+assignment attempt with its branch, status, verification exit code, and worktree cleanup state. A
+task that was never delegated says so explicitly. The same detail view can edit every task field or
 permanently delete the task when no Worker assignment is active. While an assignment is queued or
 running, **Stop process** terminates its Codex/OpenCode process group, records the run and unfinished
 tools as interrupted, and returns the task to To do so it can be delegated again.

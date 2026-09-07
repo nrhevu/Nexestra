@@ -3288,6 +3288,26 @@ function TaskProcessDialog({
                 </div>
               </div>
 
+              {(process.assignments ?? []).length > 0 && (
+                <section className="task-process-history" aria-label="Assignment history">
+                  <h3>Assignment history</h3>
+                  {(process.assignments ?? []).map((entry, index) => (
+                    <div
+                      className={`task-history-row ${entry.id === assignment.id ? "current" : ""}`}
+                      key={entry.id}
+                    >
+                      <span>Attempt {index + 1}</span>
+                      <code>{entry.branch}</code>
+                      <span>{entry.status.replace("_", " ")}</span>
+                      {entry.verificationExitCode !== undefined && (
+                        <span>Exit {entry.verificationExitCode}</span>
+                      )}
+                      {entry.worktreeCleanedAt && <span>worktree removed</span>}
+                    </div>
+                  ))}
+                </section>
+              )}
+
               {process.activity?.thinking && (
                 <details className="thinking-activity task-process-thinking">
                   <summary>

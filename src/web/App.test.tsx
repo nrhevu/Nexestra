@@ -938,7 +938,12 @@ describe("Taskboard Worker process", () => {
         });
       }
       if (path === `/api/tasks/${task.id}/process`) {
-        return jsonResponse({ task, assignment, toolCalls: [] });
+        return jsonResponse({
+          task,
+          assignment,
+          assignments: [assignment],
+          toolCalls: [],
+        });
       }
       if (path === `/api/tasks/${task.id}/delegate` && init?.method === "POST") {
         return jsonResponse({
@@ -959,8 +964,9 @@ describe("Taskboard Worker process", () => {
     await user.click(await screen.findByRole("button", { name: `Open process for ${task.title}` }));
 
     const dialog = await screen.findByRole("dialog", { name: task.title });
-    expect(within(dialog).getByText("Exit 42")).toBeVisible();
+    expect(within(dialog).getAllByText("Exit 42").length).toBeGreaterThan(0);
     expect(within(dialog).getByText("1 failed test")).toBeVisible();
+    expect(within(dialog).getByText("Attempt 1")).toBeVisible();
     await user.click(within(dialog).getByRole("button", { name: "Retry Worker" }));
     expect(
       fetchMock.mock.calls.some(
@@ -968,6 +974,7 @@ describe("Taskboard Worker process", () => {
           String(input) === `/api/tasks/${task.id}/delegate` && init?.method === "POST",
       ),
     ).toBe(true);
+    expect(within(dialog).getByText("Attempt 1")).toBeVisible();
   });
 
   it("delegates an unstarted task from its process dialog", async () => {
