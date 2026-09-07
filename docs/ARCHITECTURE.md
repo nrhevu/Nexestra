@@ -145,6 +145,8 @@ Branches and worktrees are retained for inspection. Nexestra never merges or pus
 A finished assignment can be cleaned up explicitly from its process dialog. Cleanup uses Git's
 non-forced worktree removal, so dirty or untracked work is refused, records `worktreeCleanedAt`,
 and leaves the branch and durable run history intact.
+After the worktree is removed, the same dialog can delete the assignment branch. Branch cleanup uses
+Git's non-forced `branch -d`, records `branchDeletedAt`, and refuses unmerged branches.
 The process dialog can also retry the latest failed, interrupted, or verification-blocked
 assignment with its same Worker and repository. Retry creates a new assignment, branch, and worktree
 while preserving all historical assignment and run records.
@@ -259,9 +261,9 @@ credentials.
 
 - App-native `plan` and `delegate` are currently available to custom OpenAI-compatible Masters.
   ChatGPT OAuth Masters run through Codex CLI and do not yet receive this bridge.
-- Assignment branches are retained and cannot yet be deleted, merged, or pushed from the UI.
-  Finished worktrees can be removed explicitly, but dirty or untracked work is refused. Repository
-  fetch/pull and retry are not yet exposed.
+- Assignment branches can be deleted only when Git confirms they are merged; merge and push are not
+  yet exposed. Finished worktrees can be removed explicitly, but dirty or untracked work is refused.
+  Repository fetch/pull and retry are not yet exposed.
 - Knowledge metadata can be edited, but replacing stored document bytes or a repository source
   requires deleting and creating the item again.
 - Tasks created before the delegation-completion guard may remain unassigned; their process dialog

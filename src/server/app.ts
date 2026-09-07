@@ -351,6 +351,36 @@ export function createApp(options: CreateAppOptions) {
     );
   });
 
+  app.post("/api/assignments/:id/branch", async (context) => {
+    const assignmentId = context.req.param("id");
+    const assignment = options.store.listAssignments().find((entry) => entry.id === assignmentId);
+    if (!assignment) throw new StoreError("not_found", "Assignment not found.");
+    if (assignment.status === "queued" || assignment.status === "running") {
+      throw new StoreError("conflict", "Wait for the Worker assignment to finish first.");
+    }
+    if (!assignment.worktreeCleanedAt) {
+      throw new StoreError("conflict", "Remove this Worker worktree before deleting its branch.");
+    }
+    if (assignment.branchDeletedAt) {
+      throw new StoreError("conflict", "This Worker branch has already been deleted.");
+    }
+    const knowledge = options.store.getKnowledge(assignment.repositoryId);
+    if (knowledge?.kind !== "repository") {
+      throw new StoreError("invalid", "The assignment repository is unavailable.");
+    }
+    const absolutePath = assignmentWorktreePath(options.store, assignment.id);
+    await repositories.deleteAssignmentBranch(knowledge, {
+      branch: assignment.branch,
+      worktreePath: assignment.worktreePath,
+      absolutePath,
+    });
+    return context.json(
+      await options.store.updateAssignment(assignment.id, {
+        branchDeletedAt: new Date().toISOString(),
+      }),
+    );
+  });
+
   app.patch("/api/tasks/:id", async (context) => {
     return context.json(
       await options.store.updateTask(context.req.param("id"), await context.req.json()),

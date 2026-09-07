@@ -105,6 +105,8 @@ work, while the branch and run history remain. A blocked, failed, or interrupted
 retried with the same Worker and repository. An unstarted task can be delegated from its process
 dialog by selecting an enabled Worker and ready repository. The process also lists every
 assignment attempt with its branch, status, verification exit code, and worktree cleanup state. A
+merged assignment branch can be deleted after its worktree is removed; Git refuses unmerged
+branches. A
 task that was never delegated says so explicitly. The same detail view can edit every task field or
 permanently delete the task when no Worker assignment is active. While an assignment is queued or
 running, **Stop process** terminates its Codex/OpenCode process group, records the run and unfinished

@@ -847,6 +847,14 @@ describe("Taskboard Worker process", () => {
           worktreeCleanedAt: now,
         });
       }
+      if (path === `/api/assignments/${assignment.id}/branch` && init?.method === "POST") {
+        return jsonResponse({
+          ...assignment,
+          status: "interrupted" as const,
+          worktreeCleanedAt: now,
+          branchDeletedAt: now,
+        });
+      }
       return jsonResponse({ error: { message: "Not found" } }, 404);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -867,6 +875,10 @@ describe("Taskboard Worker process", () => {
     await user.click(within(dialog).getByText("Thinking"));
     expect(await within(dialog).findByText("Inspecting")).toBeVisible();
     const cleanupButton = within(dialog).getByTitle("Remove this finished worktree");
+    const deleteBranchButton = within(dialog).getByTitle(
+      "Remove the worktree before deleting this branch",
+    );
+    expect(deleteBranchButton).toBeDisabled();
     expect(cleanupButton).toBeDisabled();
     await user.click(within(dialog).getByRole("button", { name: "Stop process" }));
     expect(await within(dialog).findByText("Worker process stopped")).toBeVisible();
@@ -874,6 +886,10 @@ describe("Taskboard Worker process", () => {
     await user.click(cleanupButton);
     expect(await within(dialog).findByText(`Removed ${formatDateTimeForTest(now)}`)).toBeVisible();
     expect(within(dialog).getByTitle("Open worktree")).toBeDisabled();
+    expect(within(dialog).getByTitle("Delete branch if merged")).toBeEnabled();
+    await user.click(within(dialog).getByTitle("Delete branch if merged"));
+    expect(await within(dialog).findByText(`Deleted ${formatDateTimeForTest(now)}`)).toBeVisible();
+    expect(within(dialog).getByTitle("Branch already deleted")).toBeDisabled();
     expect(
       fetchMock.mock.calls.some(
         ([input, init]) =>

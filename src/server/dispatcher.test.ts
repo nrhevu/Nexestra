@@ -216,6 +216,8 @@ class FakeAssignmentRepositories implements AssignmentRepositoryManager {
   }
 
   async cleanupAssignment() {}
+
+  async deleteAssignmentBranch() {}
 }
 
 async function setup() {

@@ -784,6 +784,7 @@ describe("HTTP app", () => {
       updatedAt: now,
     });
     const cleanupAssignment = vi.fn(async () => undefined);
+    const deleteAssignmentBranch = vi.fn(async () => undefined);
     const repositories: AssignmentRepositoryManager = {
       assignmentLocation: (workspaceId, id) => ({
         branch: `nexestra/${id}`,
@@ -792,6 +793,7 @@ describe("HTTP app", () => {
       }),
       prepareAssignment: async () => undefined,
       cleanupAssignment,
+      deleteAssignmentBranch,
     };
     app = createApp({ store, runner, repositories });
 
@@ -814,6 +816,24 @@ describe("HTTP app", () => {
       method: "POST",
     });
     expect(repeat.status).toBe(409);
+    const branchDeleted = await app.request(`/api/assignments/${assignmentId}/branch`, {
+      method: "POST",
+    });
+    expect(branchDeleted.status).toBe(200);
+    const deleted = (await branchDeleted.json()) as { branchDeletedAt?: string };
+    expect(deleted.branchDeletedAt).toEqual(expect.any(String));
+    expect(deleteAssignmentBranch).toHaveBeenCalledWith(
+      expect.objectContaining({ id: repository.id }),
+      expect.objectContaining({
+        branch: `nexestra/${assignmentId}`,
+        worktreePath: relativeWorktree,
+        absolutePath: join(store.root, relativeWorktree),
+      }),
+    );
+    const branchRepeat = await app.request(`/api/assignments/${assignmentId}/branch`, {
+      method: "POST",
+    });
+    expect(branchRepeat.status).toBe(409);
     await store.createAssignment({
       id: "assignment-cleanup-active",
       workspaceId: workspace.id,
@@ -833,5 +853,10 @@ describe("HTTP app", () => {
     });
     expect(active.status).toBe(409);
     expect(cleanupAssignment).toHaveBeenCalledTimes(1);
+    const activeBranch = await app.request("/api/assignments/assignment-cleanup-active/branch", {
+      method: "POST",
+    });
+    expect(activeBranch.status).toBe(409);
+    expect(deleteAssignmentBranch).toHaveBeenCalledTimes(1);
   });
 });

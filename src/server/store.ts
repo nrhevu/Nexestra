@@ -997,6 +997,7 @@ export class FileStore {
         | "verificationOutput"
         | "verificationExitCode"
         | "worktreeCleanedAt"
+        | "branchDeletedAt"
       >
     >,
   ): Promise<WorkAssignment> {

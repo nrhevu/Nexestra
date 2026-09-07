@@ -2931,6 +2931,8 @@ function TaskProcessDialog({
   const [stopError, setStopError] = useState<string>();
   const [cleaning, setCleaning] = useState(false);
   const [cleanupError, setCleanupError] = useState<string>();
+  const [deletingBranch, setDeletingBranch] = useState(false);
+  const [deleteBranchError, setDeleteBranchError] = useState<string>();
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string>();
   const [delegateWorkerId, setDelegateWorkerId] = useState<string>();
@@ -3223,6 +3225,9 @@ function TaskProcessDialog({
                 <div>
                   <span>Isolated branch</span>
                   <code>{assignment.branch}</code>
+                  {assignment.branchDeletedAt && (
+                    <small>Deleted {formatDateTime(assignment.branchDeletedAt)}</small>
+                  )}
                 </div>
                 <div>
                   <span>Worktree</span>
@@ -3285,6 +3290,45 @@ function TaskProcessDialog({
                   >
                     {cleaning ? <LoaderCircle className="spin" size={13} /> : <Trash2 size={13} />}
                   </button>
+                  <button
+                    type="button"
+                    title={
+                      assignment.branchDeletedAt
+                        ? "Branch already deleted"
+                        : assignment.worktreeCleanedAt
+                          ? "Delete branch if merged"
+                          : "Remove the worktree before deleting this branch"
+                    }
+                    disabled={
+                      isActive ||
+                      deletingBranch ||
+                      Boolean(assignment.branchDeletedAt) ||
+                      !assignment.worktreeCleanedAt
+                    }
+                    onClick={async () => {
+                      setDeletingBranch(true);
+                      setDeleteBranchError(undefined);
+                      try {
+                        const next = await api<WorkAssignment>(
+                          `/api/assignments/${encodeURIComponent(assignment.id)}/branch`,
+                          { method: "POST" },
+                        );
+                        setProcess((current) =>
+                          current ? { ...current, assignment: next } : current,
+                        );
+                      } catch (caught) {
+                        setDeleteBranchError(messageFrom(caught));
+                      } finally {
+                        setDeletingBranch(false);
+                      }
+                    }}
+                  >
+                    {deletingBranch ? (
+                      <LoaderCircle className="spin" size={13} />
+                    ) : (
+                      <GitBranch size={13} />
+                    )}
+                  </button>
                 </div>
               </div>
 
@@ -3303,6 +3347,7 @@ function TaskProcessDialog({
                         <span>Exit {entry.verificationExitCode}</span>
                       )}
                       {entry.worktreeCleanedAt && <span>worktree removed</span>}
+                      {entry.branchDeletedAt && <span>branch deleted</span>}
                     </div>
                   ))}
                 </section>
@@ -3410,6 +3455,12 @@ function TaskProcessDialog({
             <p className="form-error">
               <CircleAlert size={14} />
               {cleanupError}
+            </p>
+          )}
+          {deleteBranchError && (
+            <p className="form-error">
+              <CircleAlert size={14} />
+              {deleteBranchError}
             </p>
           )}
           {retryError && (

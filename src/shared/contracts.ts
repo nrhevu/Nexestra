@@ -424,6 +424,7 @@ export const WorkAssignmentSchema = z.object({
   verificationOutput: z.string().max(4_000).optional(),
   verificationExitCode: z.number().int().optional(),
   worktreeCleanedAt: z.string().optional(),
+  branchDeletedAt: z.string().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
