@@ -1277,6 +1277,32 @@ describe("FileStore", () => {
     expect(JSON.stringify(preview)).not.toContain(splitSecret);
   });
 
+  it("keeps oversized legacy credentials readable and disables preview with a download fallback", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-preview-oversize-"));
+    const oversized = `sk-oversize-${"x".repeat(20_000)}`;
+    await writeFile(
+      join(root, "credentials.json"),
+      JSON.stringify({ version: 1, credentials: { legacy: oversized } }),
+    );
+    const store = await FileStore.open({ root, workspacePath: root });
+    expect(store.listWorkspaces()).toHaveLength(1);
+    const item = await store.createKnowledgeDocument(
+      { name: "Legacy notes", handle: "oversize-notes", description: "" },
+      {
+        name: "notes.txt",
+        mediaType: "text/plain",
+        bytes: new TextEncoder().encode(`prefix ${oversized.slice(0, 64)}`),
+      },
+    );
+    const preview = await store.previewKnowledgeDocument(item.id);
+    expect(preview.supported).toBe(false);
+    expect(preview.text).toBeUndefined();
+    expect(preview.truncated).toBe(false);
+    expect(preview.fileName).toBe("notes.txt");
+    expect(preview.reason).toContain("Download");
+    expect(JSON.stringify(preview)).not.toContain(oversized.slice(0, 64));
+  });
+
   it("previews a legacy unpinned document without inventing revision metadata", async () => {
     const store = await openStore();
     const item = await store.createKnowledgeDocument(

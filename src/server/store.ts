@@ -140,7 +140,7 @@ type DocumentRevision = KnowledgeDocument["revisions"][number];
 
 const CredentialSchema = z.object({
   version: z.literal(1),
-  credentials: z.record(z.string(), z.string().max(4_096)),
+  credentials: z.record(z.string(), z.string()),
 });
 
 type TranscriptEvent =
@@ -774,6 +774,20 @@ export class FileStore {
           mediaType: this.redactSecrets(item.mediaType),
           size: item.size,
         };
+    if (
+      Object.values(this.credentials).some(
+        (value) => Buffer.byteLength(value) > MAX_PREVIEW_REDACTION_LOOKAHEAD_BYTES,
+      )
+    ) {
+      return KnowledgeDocumentPreviewSchema.parse({
+        ...base,
+        isCurrent,
+        supported: false,
+        truncated: false,
+        reason:
+          "Preview is unavailable because a stored credential exceeds the redaction lookahead bound. Download this version instead.",
+      });
+    }
     if (!isTextMediaType(base.mediaType)) {
       return KnowledgeDocumentPreviewSchema.parse({
         ...base,

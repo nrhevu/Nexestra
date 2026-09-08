@@ -55,11 +55,15 @@ Redaction:
 - Stored credentials (credentials.json) are redacted from preview text and from the returned
   fileName/mediaType labels on both supported and unsupported paths.
 - A credential that straddles the 128 KiB cutoff cannot leak a prefix: the helper retains a bounded
-  lookahead window large enough for the largest stored credential (4,096 code points, at most
-  4 UTF-8 bytes each) plus a character overread, finds the earliest credential occurrence that
-  starts before the output boundary and ends after it, and cuts the returned text before that
-  occurrence. previewText.length is the UTF-16 boundary marker because indexOf and credential
-  lengths use UTF-16 code units, not code points.
+  lookahead window large enough for credentials accepted by normal creation validation (up to
+  4,096 code points, at most 4 UTF-8 bytes each) plus a character overread, finds the earliest
+  credential occurrence that starts before the output boundary and ends after it, and cuts the
+  returned text before that occurrence. previewText.length is the UTF-16 boundary marker because
+  indexOf and credential lengths use UTF-16 code units, not code points.
+- Legacy credential files are still accepted regardless of value size so existing stores keep
+  opening. If any stored credential exceeds the bounded lookahead, previews return supported:false
+  with no text and the UI's download fallback, because split-secret redaction cannot be guaranteed
+  safely.
 
 UI:
 
@@ -89,6 +93,8 @@ UI:
 - Plain-text preview has no syntax highlighting, rendering, search, or pagination; the first
   128 KiB is shown with a truncation notice and download fallback.
 - Legacy documents without captured history have no checksum to verify yet.
+- Oversized legacy credentials (beyond the creation limit) disable plain-text preview until the
+  credential is rotated or removed; metadata redaction and downloads still work.
 - The bounded lookahead cuts before a straddling credential, so a small amount of preceding
   text may be omitted from a truncated preview rather than shown with an unredacted prefix.
 - Preview content is local text only; binary formats such as PDF and Office formats are not
