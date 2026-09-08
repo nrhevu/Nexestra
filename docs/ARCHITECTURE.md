@@ -115,7 +115,12 @@ public state write fails, so metadata cannot claim a credential the file lacks.
 Task and Knowledge metadata support create, detail, update, and permanent-delete operations.
 Deleting a task is rejected while one of its Worker assignments is queued or running. Historical
 assignment and transcript events are retained after task deletion. Deleting repository knowledge is
-also rejected while cloning or while a related assignment is active. Unused Knowledge storage is
+also rejected while cloning or while a related assignment is active. Repository clones are
+first created in a `source.retrying-*` staging sibling and atomically published only when
+the destination is absent or empty, so a failed clone can be retried from the failed detail card
+without changing the record's id, `#handle`, source, or creation time. An interrupted
+clone is marked failed at startup; an existing matching clone can be adopted after provenance
+checks. Unused Knowledge storage is
 removed; repository storage with assignment history is retained so its worktrees remain inspectable.
 Existing message text and stable historical references are never rewritten.
 
@@ -325,9 +330,12 @@ credentials.
   ChatGPT OAuth Masters run through Codex CLI and do not yet receive this bridge.
 - Assignment branches can be deleted only when Git confirms they are merged; merge and push are not
   yet exposed. Finished worktrees can be removed explicitly, but dirty or untracked work is refused.
-  Repository fetch/pull and retry are not yet exposed.
+  Repository fetch/pull is not yet exposed. A failed repository clone can be retried explicitly,
+  but refresh/pull of a ready clone is deferred.
 - Knowledge metadata can be edited, but replacing stored document bytes or a repository source
   requires deleting and creating the item again.
+- A crash during cloning can leave a `source.retrying-*` staging directory. It is preserved for
+  manual review instead of being auto-removed, because no ownership record exists for it.
 - Tasks created before the delegation-completion guard may remain unassigned; their process dialog
   reports that state, but does not retroactively start a Worker.
 - OpenCode `plan` is an application policy, not an independent OS or container sandbox.

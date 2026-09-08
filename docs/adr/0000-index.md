@@ -30,4 +30,5 @@
 | [0026](0026-agent-profile-editing.md) | Accepted | Editable agent profiles with write-only credential rotation |
 | [0027](0027-workspace-rename-and-reorder.md) | Accepted | Rename workspaces and persist an explicit rail order |
 | [0028](0028-shared-worker-assignment-lifecycle.md) | Accepted | Share the canonical queued Worker lifecycle between manual and Master delegation |
+| [0029](0029-repository-clone-retry.md) | Accepted | Explicit safe retry for failed repository clones |
 | [0030](0030-read-only-assignment-git-review.md) | Accepted | Read-only on-demand Git review of Worker assignment changes before cleanup |

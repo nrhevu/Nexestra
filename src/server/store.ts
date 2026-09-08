@@ -2,8 +2,10 @@ import { constants } from "node:fs";
 import {
   access,
   chmod,
+  lstat,
   mkdir,
   open,
+  readdir,
   readFile,
   realpath,
   rename,
@@ -230,6 +232,7 @@ export class FileStore {
     await store.repairTranscriptTails();
     await store.repairThreadSummaries();
     await store.recoverInterruptedRuns();
+    await store.recoverInterruptedRepositories();
     return store;
   }
 
@@ -532,6 +535,12 @@ export class FileStore {
       const index = nextState.knowledge.findIndex((item) => item.id === id);
       const current = nextState.knowledge[index];
       if (!current) throw new StoreError("not_found", "Knowledge item not found.");
+      if (current.kind === "repository" && current.status === "cloning") {
+        throw new StoreError(
+          "conflict",
+          "Wait for the repository clone to finish before editing this item.",
+        );
+      }
       if (
         input.handle &&
         input.handle !== current.handle &&
@@ -1420,6 +1429,41 @@ export class FileStore {
     }
   }
 
+  private async recoverInterruptedRepositories(): Promise<void> {
+    const interrupted = this.state.knowledge.filter(
+      (item) => item.kind === "repository" && item.status === "cloning",
+    );
+    if (interrupted.length === 0) return;
+    await this.withWrite(async () => {
+      const nextState = structuredClone(this.state);
+      const now = new Date().toISOString();
+      let changed = false;
+      for (const item of interrupted) {
+        if (item.kind !== "repository") continue;
+        const index = nextState.knowledge.findIndex((entry) => entry.id === item.id);
+        const current = nextState.knowledge[index];
+        if (current?.kind !== "repository" || current.status !== "cloning") continue;
+        const state = await inspectRepositoryDestinationKind(this.knowledgePath(current));
+        const error =
+          state === "git"
+            ? "The clone was interrupted. The destination looks like an existing git clone; retry to verify and adopt it."
+            : state === "occupied"
+              ? "The clone was interrupted and left unknown files at its destination. Move or remove them, then retry the clone."
+              : "The clone was interrupted by a server restart. Retry the clone to recover.";
+        nextState.knowledge[index] = KnowledgeItemSchema.parse({
+          ...current,
+          status: "failed",
+          error,
+          updatedAt: now,
+        });
+        changed = true;
+      }
+      if (!changed) return;
+      await this.writeState(nextState);
+      this.state = nextState;
+    });
+  }
+
   private validateReferences(
     workspaceId: string,
     assigneeId: string | null,
@@ -1501,6 +1545,25 @@ export class FileStore {
       release();
     }
   }
+}
+
+export type RepositoryDestinationState = "missing" | "empty" | "git" | "occupied";
+
+export async function inspectRepositoryDestinationKind(
+  destination: string,
+): Promise<RepositoryDestinationState> {
+  let entry: Awaited<ReturnType<typeof lstat>>;
+  try {
+    entry = await lstat(destination);
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return "missing";
+    throw error;
+  }
+  if (!entry.isDirectory()) return "occupied";
+  const entries = await readdir(destination);
+  if (entries.length === 0) return "empty";
+  if (entries.includes(".git")) return "git";
+  return "occupied";
 }
 
 function createInitialState(): PersistedState {

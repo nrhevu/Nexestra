@@ -1,12 +1,16 @@
-import { mkdtemp } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Agent, RuntimeStatus } from "../shared/contracts.js";
 import { createApp } from "./app.js";
 import type { AssignmentRepositoryManager } from "./repository-manager.js";
 import type { AgentInvocation, AgentRunner } from "./runtime.js";
 import { FileStore } from "./store.js";
+
+const execFileAsync = promisify(execFile);
 
 const runtime: RuntimeStatus = {
   chatgpt: { installed: true, connected: true, message: "Logged in using ChatGPT" },
@@ -1032,5 +1036,73 @@ describe("HTTP app", () => {
       });
       expect(response.status).toBe(400);
     }
+  });
+
+  it("recovers a failed repository clone through the retry endpoint without changing identity", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-app-retry-"));
+    const retryStore = await FileStore.open({ root, workspacePath: root });
+    const [workspace] = retryStore.listWorkspaces();
+    if (!workspace) throw new Error("expected seeded workspace");
+    const source = join(root, "docs-source");
+    const failed = await retryStore.createKnowledgeRepository({
+      name: "Docs repository",
+      handle: "docs",
+      description: "",
+      source,
+    });
+    await retryStore.updateKnowledgeRepository(failed.id, {
+      status: "failed",
+      error: "The source was temporarily unavailable.",
+    });
+    await mkdir(source, { recursive: true });
+    await writeFile(join(source, "README.md"), "# Docs\n");
+    await execFileAsync("git", ["init", "--initial-branch=main", source]);
+    await execFileAsync("git", ["-C", source, "add", "README.md"]);
+    await execFileAsync("git", [
+      "-C",
+      source,
+      "-c",
+      "user.name=Nexestra Test",
+      "-c",
+      "user.email=test@nexestra.local",
+      "commit",
+      "-m",
+      "Initial commit",
+    ]);
+    const retryApp = createApp({ store: retryStore, runner });
+
+    const response = await retryApp.request(`/api/knowledge/repositories/${failed.id}/retry`, {
+      method: "POST",
+    });
+
+    expect(response.status).toBe(200);
+    const recovered = (await response.json()) as {
+      id: string;
+      handle: string;
+      source: string;
+      status: string;
+      createdAt: string;
+      defaultBranch?: string;
+    };
+    expect(recovered).toMatchObject({
+      id: failed.id,
+      handle: "docs",
+      source,
+      status: "ready",
+      defaultBranch: "main",
+    });
+    expect(recovered.createdAt).toBe(failed.createdAt);
+    await expect(
+      readFile(join(retryStore.knowledgePath(failed), "README.md"), "utf8"),
+    ).resolves.toContain("# Docs");
+
+    const repeat = await retryApp.request(`/api/knowledge/repositories/${failed.id}/retry`, {
+      method: "POST",
+    });
+    expect(repeat.status).toBe(409);
+    const missing = await retryApp.request("/api/knowledge/repositories/unknown/retry", {
+      method: "POST",
+    });
+    expect(missing.status).toBe(404);
   });
 });

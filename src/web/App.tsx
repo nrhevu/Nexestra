@@ -121,6 +121,7 @@ export function App() {
   const [taskToEdit, setTaskToEdit] = useState<Task>();
   const [taskToDelete, setTaskToDelete] = useState<Task>();
   const [knowledgeToInspect, setKnowledgeToInspect] = useState<KnowledgeItem>();
+  const knowledgeInspectRef = useRef<KnowledgeItem | undefined>(undefined);
   const [knowledgeToEdit, setKnowledgeToEdit] = useState<KnowledgeItem>();
   const [knowledgeToDelete, setKnowledgeToDelete] = useState<KnowledgeItem>();
   const [agentToDelete, setAgentToDelete] = useState<AgentView>();
@@ -360,6 +361,7 @@ export function App() {
     setTaskToEdit(undefined);
     setTaskToDelete(undefined);
     setKnowledgeToInspect(undefined);
+    knowledgeInspectRef.current = undefined;
     setKnowledgeToEdit(undefined);
     setKnowledgeToDelete(undefined);
     setAgentToDelete(undefined);
@@ -659,6 +661,16 @@ export function App() {
     });
   }, [updateData]);
 
+  const openKnowledgeDetail = useCallback((item: KnowledgeItem) => {
+    knowledgeInspectRef.current = item;
+    setKnowledgeToInspect(item);
+  }, []);
+
+  const closeKnowledgeDetail = useCallback(() => {
+    knowledgeInspectRef.current = undefined;
+    setKnowledgeToInspect(undefined);
+  }, []);
+
   const inspectTask = async (taskId: string) => {
     const generation = workspaceGenerationRef.current;
     const workspaceId = workspaceIdRef.current;
@@ -741,7 +753,10 @@ export function App() {
         onSurface={openSurface}
         onSettings={() => setModal("settings")}
         onTask={(id) => void inspectTask(id)}
-        onKnowledge={(id) => setKnowledgeToInspect(data.knowledge.find((item) => item.id === id))}
+        onKnowledge={(id) => {
+          const item = data.knowledge.find((entry) => entry.id === id);
+          if (item) openKnowledgeDetail(item);
+        }}
       />
       <WorkspaceRail
         workspaces={data.workspaces}
@@ -868,7 +883,7 @@ export function App() {
           <KnowledgeView
             data={data}
             onCreate={() => setModal("knowledge")}
-            onInspect={setKnowledgeToInspect}
+            onInspect={openKnowledgeDetail}
           />
         ) : (
           <Taskboard
@@ -1040,13 +1055,36 @@ export function App() {
       {knowledgeToInspect && (
         <KnowledgeDetailDialog
           item={knowledgeToInspect}
-          onClose={() => setKnowledgeToInspect(undefined)}
+          generation={workspaceGenerationRef.current}
+          onClose={closeKnowledgeDetail}
           onEdit={(item) => {
-            setKnowledgeToInspect(undefined);
+            closeKnowledgeDetail();
             setKnowledgeToEdit(item);
           }}
+          onRetried={(item, retryGeneration) => {
+            updateData((current) =>
+              current && item.workspaceId === current.workspace.id
+                ? {
+                    ...current,
+                    knowledge: current.knowledge.map((entry) =>
+                      entry.id === item.id ? item : entry,
+                    ),
+                  }
+                : current,
+            );
+            const stillCurrent =
+              item.workspaceId === workspaceIdRef.current &&
+              retryGeneration === workspaceGenerationRef.current;
+            if (!stillCurrent) return;
+            if (item.kind === "repository" && item.status === "ready") {
+              flash("Repository recovered.");
+            }
+            if (knowledgeInspectRef.current?.id === item.id) {
+              setKnowledgeToInspect(item);
+            }
+          }}
           onDelete={(item) => {
-            setKnowledgeToInspect(undefined);
+            closeKnowledgeDetail();
             setKnowledgeToDelete(item);
           }}
         />
@@ -4665,15 +4703,21 @@ function MasterAccessModeField({ agent }: { agent?: AgentView }) {
 
 function KnowledgeDetailDialog({
   item,
+  generation,
   onClose,
   onEdit,
   onDelete,
+  onRetried,
 }: {
   item: KnowledgeItem;
+  generation: number;
   onClose: () => void;
   onEdit: (item: KnowledgeItem) => void;
   onDelete: (item: KnowledgeItem) => void;
+  onRetried: (item: KnowledgeItem, generation: number) => void;
 }) {
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string>();
   return (
     <Modal title={item.name} eyebrow="KNOWLEDGE DETAILS" onClose={onClose}>
       <div className="resource-details">
@@ -4735,7 +4779,39 @@ function KnowledgeDetailDialog({
           <strong>{formatDateTime(item.updatedAt)}</strong>
         </div>
       </div>
+      {retryError && (
+        <p className="form-error">
+          <CircleAlert size={14} />
+          {retryError}
+        </p>
+      )}
       <div className="modal-actions resource-actions">
+        {item.kind === "repository" && item.status === "failed" && (
+          <button
+            type="button"
+            className="primary-button"
+            disabled={retrying}
+            onClick={async () => {
+              setRetrying(true);
+              setRetryError(undefined);
+              const retryGeneration = generation;
+              try {
+                const updated = await api<KnowledgeItem>(
+                  `/api/knowledge/repositories/${encodeURIComponent(item.id)}/retry`,
+                  { method: "POST" },
+                );
+                onRetried(updated, retryGeneration);
+              } catch (caught) {
+                setRetryError(messageFrom(caught));
+              } finally {
+                setRetrying(false);
+              }
+            }}
+          >
+            {retrying ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}
+            {retrying ? "Retrying…" : "Retry clone"}
+          </button>
+        )}
         {item.kind === "document" && (
           <a href={`/api/knowledge/${encodeURIComponent(item.id)}/content`} download>
             <Download size={14} />

@@ -1,6 +1,6 @@
-import { appendFile, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { FileStore, StoreError } from "./store.js";
 
@@ -1089,5 +1089,91 @@ describe("FileStore agent profile updates", () => {
     await expect(store.updateAgent(master.id, { harness: "codex" })).rejects.toMatchObject({
       code: "invalid",
     });
+  });
+
+  it("marks interrupted repository clones failed at startup without changing identity", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-store-clone-recovery-"));
+    const store = await FileStore.open({ root, workspacePath: root });
+    const source = join(root, "provenance-source");
+    const gitLike = await store.createKnowledgeRepository({
+      name: "Interrupted complete clone",
+      handle: "interrupted-complete",
+      description: "",
+      source,
+    });
+    await mkdir(join(store.knowledgePath(gitLike), ".git"), { recursive: true });
+    const missing = await store.createKnowledgeRepository({
+      name: "Interrupted early clone",
+      handle: "interrupted-early",
+      description: "",
+      source: join(root, "missing-source"),
+    });
+    const itemRoot = dirname(store.knowledgePath(gitLike));
+    await mkdir(join(itemRoot, "source.retrying-crash", ".git"), { recursive: true });
+
+    const reopened = await FileStore.open({ root, workspacePath: root });
+    const gitLikeRecovered = reopened.getKnowledge(gitLike.id);
+    const missingRecovered = reopened.getKnowledge(missing.id);
+    if (gitLikeRecovered?.kind !== "repository" || missingRecovered?.kind !== "repository") {
+      throw new Error("expected repository knowledge");
+    }
+    expect(gitLikeRecovered).toMatchObject({
+      id: gitLike.id,
+      handle: "interrupted-complete",
+      source,
+      status: "failed",
+      createdAt: gitLike.createdAt,
+    });
+    expect(gitLikeRecovered.error).toMatch(/existing git clone/);
+    expect(missingRecovered).toMatchObject({ status: "failed", createdAt: missing.createdAt });
+    expect(missingRecovered.error).toMatch(/server restart/);
+    expect(await readdir(itemRoot)).toEqual(
+      expect.arrayContaining(["source", "source.retrying-crash"]),
+    );
+    await expect(readdir(join(itemRoot, "source.retrying-crash", ".git"))).resolves.toEqual([]);
+  });
+
+  it("rejects knowledge edits while a repository clone is still running", async () => {
+    const store = await openStore();
+    const repository = await store.createKnowledgeRepository({
+      name: "Cloning repository",
+      handle: "cloning-repo",
+      description: "",
+      source: join(store.workspacePath, "source"),
+    });
+    await expect(
+      store.updateKnowledge(repository.id, { name: "Renamed while cloning" }),
+    ).rejects.toMatchObject({ code: "conflict" });
+    await store.updateKnowledgeRepository(repository.id, { status: "failed", error: "stopped" });
+    await expect(
+      store.updateKnowledge(repository.id, { name: "Renamed after retry failed" }),
+    ).resolves.toMatchObject({ name: "Renamed after retry failed" });
+  });
+
+  it("rolls back interrupted clone recovery when the state write fails", async () => {
+    const store = await openStore();
+    const repository = await store.createKnowledgeRepository({
+      name: "Cloning repository",
+      handle: "cloning-rollback",
+      description: "",
+      source: join(store.workspacePath, "missing-source"),
+    });
+    const internal = store as unknown as {
+      recoverInterruptedRepositories: () => Promise<void>;
+      writeState: (state?: unknown) => Promise<void>;
+    };
+    const writeState = internal.writeState.bind(store);
+    internal.writeState = async () => {
+      throw new Error("simulated state write failure");
+    };
+    try {
+      await expect(internal.recoverInterruptedRepositories()).rejects.toThrow(
+        "simulated state write failure",
+      );
+    } finally {
+      internal.writeState = writeState;
+    }
+    expect(store.getKnowledge(repository.id)).toMatchObject({ status: "cloning" });
+    expect(store.getKnowledge(repository.id)).not.toHaveProperty("error");
   });
 });
