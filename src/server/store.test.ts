@@ -82,6 +82,104 @@ describe("FileStore", () => {
     ).rejects.toMatchObject({ code: "invalid" });
   });
 
+  it("renames workspaces with unique slugs and persists the rail order", async () => {
+    const store = await openStore();
+    const [firstWorkspace] = store.listWorkspaces();
+    if (!firstWorkspace) throw new Error("expected seeded workspace");
+    const secondWorkspace = await store.createWorkspace({ name: "Product Team" });
+
+    await expect(
+      store.updateWorkspace(firstWorkspace.id, { name: "Nexus Studio" }),
+    ).resolves.toMatchObject({
+      id: firstWorkspace.id,
+      name: "Nexus Studio",
+      slug: "nexus-studio",
+    });
+    await expect(
+      store.updateWorkspace(secondWorkspace.id, { name: "Nexus Studio" }),
+    ).resolves.toMatchObject({ slug: "nexus-studio-2" });
+    expect(store.listWorkspaces()).toMatchObject([
+      { id: firstWorkspace.id, name: "Nexus Studio" },
+      { id: secondWorkspace.id, name: "Nexus Studio" },
+    ]);
+
+    await expect(
+      store.reorderWorkspaces({ workspaceIds: [secondWorkspace.id, firstWorkspace.id] }),
+    ).resolves.toMatchObject([{ id: secondWorkspace.id }, { id: firstWorkspace.id }]);
+
+    const reopened = await FileStore.open({ root: store.root, workspacePath: store.workspacePath });
+    expect(reopened.listWorkspaces()).toMatchObject([
+      { id: secondWorkspace.id, name: "Nexus Studio" },
+      { id: firstWorkspace.id, name: "Nexus Studio" },
+    ]);
+  });
+
+  it("rejects reorder payloads that do not exactly match the current workspace list", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected seeded workspace");
+    const secondWorkspace = await store.createWorkspace({ name: "Product Team" });
+
+    await expect(store.reorderWorkspaces({ workspaceIds: [workspace.id] })).rejects.toMatchObject({
+      code: "conflict",
+    });
+    await expect(
+      store.reorderWorkspaces({ workspaceIds: [workspace.id, "workspace-foreign"] }),
+    ).rejects.toMatchObject({ code: "conflict" });
+    await expect(
+      store.reorderWorkspaces({
+        workspaceIds: [workspace.id, secondWorkspace.id, "workspace-foreign"],
+      }),
+    ).rejects.toMatchObject({ code: "conflict" });
+    await expect(
+      store.reorderWorkspaces({ workspaceIds: [workspace.id, workspace.id] }),
+    ).rejects.toThrow(/Include each workspace exactly once/);
+    await expect(store.reorderWorkspaces({ workspaceIds: [] })).rejects.toThrow();
+  });
+
+  it("serializes workspace creation and reorder so concurrent writes cannot lose records", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected seeded workspace");
+    const internal = store as unknown as {
+      writeState: (state?: unknown) => Promise<void>;
+    };
+    const writeState = internal.writeState.bind(store);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    internal.writeState = async (state) => {
+      await gate;
+      await writeState(state);
+    };
+
+    try {
+      const reorder = store.reorderWorkspaces({ workspaceIds: [workspace.id] }).then(
+        (result) => ({ result }),
+        (error: unknown) => ({ error }),
+      );
+      const created = store.createWorkspace({ name: "Second" });
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      release();
+      const [orderOutcome, createdWorkspace] = await Promise.all([reorder, created]);
+      expect(orderOutcome).toEqual({
+        result: [expect.objectContaining({ id: workspace.id })],
+      });
+
+      const reopened = await FileStore.open({
+        root: store.root,
+        workspacePath: store.workspacePath,
+      });
+      expect(reopened.listWorkspaces()).toMatchObject([
+        { id: workspace.id, name: "Nexestra" },
+        { id: createdWorkspace.id, name: "Second" },
+      ]);
+    } finally {
+      internal.writeState = writeState;
+    }
+  });
+
   it("keeps every participant's messages in one append-only thread file", async () => {
     const store = await openStore();
     const [thread] = store.listThreads();

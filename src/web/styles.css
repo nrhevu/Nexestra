@@ -3286,6 +3286,111 @@ kbd {
 .settings-list strong {
   font-size: 11px;
 }
+.settings-workspaces {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-soft);
+}
+.settings-section-title {
+  display: block;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+.settings-hint {
+  margin: 5px 0 12px;
+  color: var(--quiet);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.workspace-order {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.workspace-order li {
+  min-height: 38px;
+  padding: 5px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  background: #191b20;
+}
+.workspace-order li.active {
+  border-color: rgba(92, 201, 201, 0.45);
+  background: rgba(92, 201, 201, 0.06);
+}
+.workspace-order-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.workspace-order em {
+  color: var(--green);
+  font-size: 10px;
+  font-style: normal;
+}
+.workspace-order-actions {
+  display: flex;
+  gap: 4px;
+}
+.workspace-order-actions button {
+  width: 27px;
+  height: 27px;
+  padding: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: transparent;
+  display: grid;
+  place-items: center;
+  color: var(--cyan);
+}
+.workspace-order-actions button:hover:not(:disabled) {
+  background: var(--panel-raised);
+  color: var(--text);
+}
+.workspace-order-actions button:disabled {
+  color: var(--quiet);
+  cursor: default;
+}
+.settings-rename {
+  margin-top: 14px;
+}
+.settings-rename label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.settings-rename-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+.settings-rename-row input {
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 13px;
+}
+.settings-rename-row .secondary-button {
+  height: 34px;
+}
+.workspace-reload {
+  margin-top: 10px;
+  height: 32px;
+}
 .ready-text {
   color: var(--green);
 }

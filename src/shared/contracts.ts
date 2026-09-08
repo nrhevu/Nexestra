@@ -19,6 +19,17 @@ export const CreateWorkspaceSchema = z.object({
   name: z.string().trim().min(1).max(60),
 });
 
+export const UpdateWorkspaceSchema = CreateWorkspaceSchema;
+
+export const ReorderWorkspacesSchema = z.object({
+  workspaceIds: z
+    .array(z.string().min(1))
+    .min(1)
+    .refine((ids) => new Set(ids).size === ids.length, {
+      message: "Include each workspace exactly once.",
+    }),
+});
+
 export const KnowledgeHandleSchema = z
   .string()
   .trim()

@@ -1,7 +1,9 @@
 import {
   Archive,
+  ArrowDown,
   ArrowLeft,
   ArrowRight,
+  ArrowUp,
   Bold,
   BookOpen,
   Bot,
@@ -517,6 +519,48 @@ export function App() {
     }
   };
 
+  const renameWorkspace = useCallback(
+    async (workspaceId: string, name: string) => {
+      const workspace = await api<Workspace>(`/api/workspaces/${encodeURIComponent(workspaceId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name }),
+      });
+      updateData((current) =>
+        current
+          ? {
+              ...current,
+              workspaces: current.workspaces.map((entry) =>
+                entry.id === workspace.id ? workspace : entry,
+              ),
+              workspace: current.workspace.id === workspace.id ? workspace : current.workspace,
+            }
+          : current,
+      );
+    },
+    [updateData],
+  );
+
+  const reorderWorkspaces = useCallback(
+    async (workspaceIds: string[]) => {
+      const workspaces = await api<Workspace[]>("/api/workspaces/order", {
+        method: "PUT",
+        body: JSON.stringify({ workspaceIds }),
+      });
+      updateData((current) => (current ? { ...current, workspaces } : current));
+    },
+    [updateData],
+  );
+
+  const reloadWorkspaces = useCallback(async () => {
+    const workspaces = await api<Workspace[]>("/api/workspaces");
+    updateData((current) => {
+      if (!current) return current;
+      const workspace =
+        workspaces.find((entry) => entry.id === current.workspace.id) ?? current.workspace;
+      return { ...current, workspaces, workspace };
+    });
+  }, [updateData]);
+
   const inspectTask = async (taskId: string) => {
     const generation = workspaceGenerationRef.current;
     const workspaceId = workspaceIdRef.current;
@@ -899,7 +943,24 @@ export function App() {
           }}
         />
       )}
-      {modal === "settings" && <SettingsDialog data={data} onClose={() => setModal(null)} />}
+      {modal === "settings" && (
+        <SettingsDialog
+          data={data}
+          onClose={() => setModal(null)}
+          onRename={async (workspaceId, name) => {
+            await renameWorkspace(workspaceId, name);
+            flash("Workspace renamed.");
+          }}
+          onReorder={async (workspaceIds) => {
+            await reorderWorkspaces(workspaceIds);
+            flash("Workspace order updated.");
+          }}
+          onReload={async () => {
+            await reloadWorkspaces();
+            flash("Workspace list reloaded.");
+          }}
+        />
+      )}
       {agentToDelete && (
         <DeleteAgentDialog
           agent={agentToDelete}
@@ -4739,8 +4800,59 @@ function DeleteTaskDialog({
   );
 }
 
-function SettingsDialog({ data, onClose }: { data: BootstrapData; onClose: () => void }) {
+function SettingsDialog({
+  data,
+  onClose,
+  onRename,
+  onReorder,
+  onReload,
+}: {
+  data: BootstrapData;
+  onClose: () => void;
+  onRename: (workspaceId: string, name: string) => Promise<void>;
+  onReorder: (workspaceIds: string[]) => Promise<void>;
+  onReload: () => Promise<void>;
+}) {
   const [copied, setCopied] = useState(false);
+  const [draftName, setDraftName] = useState(data.workspace.name);
+  const [saving, setSaving] = useState(false);
+  const [reloading, setReloading] = useState(false);
+  const [error, setError] = useState<string>();
+  useEffect(() => {
+    setDraftName(data.workspace.name);
+  }, [data.workspace.name]);
+
+  const move = async (workspaceId: string, delta: number) => {
+    const index = data.workspaces.findIndex((entry) => entry.id === workspaceId);
+    const target = index + delta;
+    if (index < 0 || target < 0 || target >= data.workspaces.length) return;
+    const next = [...data.workspaces];
+    const [entry] = next.splice(index, 1);
+    if (!entry) return;
+    next.splice(target, 0, entry);
+    setSaving(true);
+    setError(undefined);
+    try {
+      await onReorder(next.map((workspace) => workspace.id));
+    } catch (caught) {
+      setError(messageFrom(caught));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const reload = async () => {
+    setReloading(true);
+    setError(undefined);
+    try {
+      await onReload();
+    } catch (caught) {
+      setError(messageFrom(caught));
+    } finally {
+      setReloading(false);
+    }
+  };
+
   return (
     <Modal title="Local workspace" eyebrow="SETTINGS" onClose={onClose}>
       <div className="settings-list">
@@ -4786,6 +4898,88 @@ function SettingsDialog({ data, onClose }: { data: BootstrapData; onClose: () =>
             {data.runtime.chatgpt.connected ? "Connected" : "Not connected"}
           </strong>
         </div>
+      </div>
+      <div className="settings-workspaces">
+        <span className="settings-section-title">Workspaces</span>
+        <p className="settings-hint">
+          Move workspace buttons up or down. The order is saved and restored after a restart.
+        </p>
+        <ol className="workspace-order" aria-label="Workspace order">
+          {data.workspaces.map((workspace, index) => (
+            <li
+              key={workspace.id}
+              className={workspace.id === data.workspace.id ? "active" : undefined}
+            >
+              <span className="workspace-order-name" title={workspace.name}>
+                {workspace.name}
+              </span>
+              {workspace.id === data.workspace.id && <em>Active</em>}
+              <span className="workspace-order-actions">
+                <button
+                  type="button"
+                  aria-label={`Move ${workspace.name} up`}
+                  disabled={saving || index === 0}
+                  onClick={() => void move(workspace.id, -1)}
+                >
+                  <ArrowUp size={13} />
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Move ${workspace.name} down`}
+                  disabled={saving || index === data.workspaces.length - 1}
+                  onClick={() => void move(workspace.id, 1)}
+                >
+                  <ArrowDown size={13} />
+                </button>
+              </span>
+            </li>
+          ))}
+        </ol>
+        <form
+          className="settings-rename"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            const name = draftName.trim();
+            if (!name || name === data.workspace.name) return;
+            setSaving(true);
+            setError(undefined);
+            try {
+              await onRename(data.workspace.id, name);
+            } catch (caught) {
+              setError(messageFrom(caught));
+            } finally {
+              setSaving(false);
+            }
+          }}
+        >
+          <label htmlFor="settings-workspace-name">Rename selected workspace</label>
+          <div className="settings-rename-row">
+            <input
+              id="settings-workspace-name"
+              value={draftName}
+              onChange={(event) => setDraftName(event.target.value)}
+              placeholder={data.workspace.name}
+              maxLength={60}
+              aria-label="Rename selected workspace"
+            />
+            <button
+              type="submit"
+              className="secondary-button"
+              disabled={saving || !draftName.trim() || draftName.trim() === data.workspace.name}
+            >
+              Rename
+            </button>
+          </div>
+        </form>
+        {error && <p className="form-error">{error}</p>}
+        <button
+          type="button"
+          className="secondary-button workspace-reload"
+          disabled={saving || reloading}
+          onClick={() => void reload()}
+        >
+          Reload workspace list
+        </button>
       </div>
       <div className="modal-actions">
         <button type="button" className="primary-button" onClick={onClose}>

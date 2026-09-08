@@ -875,6 +875,201 @@ describe("Workspace navigation", () => {
   });
 });
 
+describe("Workspace settings", () => {
+  it("renames the active workspace without losing its selection or attention state", async () => {
+    const thread = activityThread("thread-waiting", "waiting");
+    const run = { ...activityRun(thread), status: "waiting_input" as const };
+    const pending = runAttentionItem(run, workerAgent.name, thread.name);
+    window.history.replaceState({}, "", "/surfaces/attention");
+    vi.spyOn(window, "setInterval").mockImplementation(
+      () => 1 as unknown as ReturnType<typeof window.setInterval>,
+    );
+    vi.spyOn(window, "clearInterval").mockImplementation(() => undefined);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/bootstrap") {
+        return jsonResponse({
+          ...bootstrapData,
+          workspaces: [workspace],
+          threads: [thread],
+          activeRuns: [run],
+          attention: [pending],
+        });
+      }
+      if (path === `/api/workspaces/${workspace.id}` && init?.method === "PATCH") {
+        return jsonResponse({
+          ...workspace,
+          name: "Nexus Studio",
+          slug: "nexus-studio",
+          updatedAt: now,
+        });
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText("Answer needed");
+    await user.click(screen.getByRole("button", { name: "Open settings" }));
+    const dialog = screen.getByRole("dialog", { name: "Local workspace" });
+    const input = within(dialog).getByRole("textbox", { name: "Rename selected workspace" });
+    await user.clear(input);
+    await user.type(input, "Nexus Studio");
+    await user.click(within(dialog).getByRole("button", { name: "Rename" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Switch to Nexus Studio" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+    });
+    const renameCall = fetchMock.mock.calls.find(
+      ([value, requestInit]) =>
+        String(value) === `/api/workspaces/${workspace.id}` && requestInit?.method === "PATCH",
+    );
+    expect(JSON.parse(String(renameCall?.[1]?.body))).toEqual({ name: "Nexus Studio" });
+    expect(window.localStorage.getItem("nexestra.workspaceId")).toBe(workspace.id);
+    expect(screen.getByText("Answer needed")).toBeVisible();
+    expect(
+      fetchMock.mock.calls.filter(([value]) => String(value).startsWith("/api/bootstrap")),
+    ).toHaveLength(1);
+  });
+
+  it("reorders workspaces with accessible move controls and keeps the active workspace active", async () => {
+    const productWorkspace = {
+      id: "workspace-product",
+      name: "Product Team",
+      slug: "product-team",
+      createdAt: now,
+      updatedAt: now,
+    };
+    const thread = activityThread("thread-waiting", "waiting");
+    const run = { ...activityRun(thread), status: "waiting_input" as const };
+    const pending = runAttentionItem(run, workerAgent.name, thread.name);
+    window.history.replaceState({}, "", "/surfaces/attention");
+    vi.spyOn(window, "setInterval").mockImplementation(
+      () => 1 as unknown as ReturnType<typeof window.setInterval>,
+    );
+    vi.spyOn(window, "clearInterval").mockImplementation(() => undefined);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/bootstrap") {
+        return jsonResponse({
+          ...bootstrapData,
+          workspaces: [workspace, productWorkspace],
+          threads: [thread],
+          activeRuns: [run],
+          attention: [pending],
+        });
+      }
+      if (path === "/api/workspaces/order" && init?.method === "PUT") {
+        return jsonResponse([productWorkspace, workspace]);
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText("Answer needed");
+    await user.click(screen.getByRole("button", { name: "Open settings" }));
+    const dialog = screen.getByRole("dialog", { name: "Local workspace" });
+    const orderList = within(dialog).getByRole("list", { name: "Workspace order" });
+    await user.click(within(orderList).getByRole("button", { name: "Move Product Team up" }));
+
+    const rail = screen.getByRole("navigation", { name: "Workspaces" });
+    await waitFor(() => {
+      const buttons = within(rail).getAllByRole("button");
+      expect(buttons[0]).toHaveAccessibleName("Switch to Product Team");
+      expect(buttons[1]).toHaveAccessibleName("Switch to Nexestra");
+      expect(within(rail).getByRole("button", { name: "Switch to Nexestra" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+    });
+    const orderCall = fetchMock.mock.calls.find(
+      ([value, requestInit]) =>
+        String(value) === "/api/workspaces/order" && requestInit?.method === "PUT",
+    );
+    expect(JSON.parse(String(orderCall?.[1]?.body))).toEqual({
+      workspaceIds: [productWorkspace.id, workspace.id],
+    });
+    expect(window.localStorage.getItem("nexestra.workspaceId")).toBe(workspace.id);
+    expect(screen.getByText("Answer needed")).toBeVisible();
+    expect(within(orderList).getByRole("button", { name: "Move Product Team up" })).toBeDisabled();
+    expect(within(orderList).getByRole("button", { name: "Move Nexestra down" })).toBeDisabled();
+    expect(
+      fetchMock.mock.calls.filter(([value]) => String(value).startsWith("/api/bootstrap")),
+    ).toHaveLength(1);
+  });
+
+  it("shows a stale reorder error and reloads the workspace list from the server", async () => {
+    const productWorkspace = {
+      id: "workspace-product",
+      name: "Product Team",
+      slug: "product-team",
+      createdAt: now,
+      updatedAt: now,
+    };
+    window.history.replaceState({}, "", "/surfaces/attention");
+    vi.spyOn(window, "setInterval").mockImplementation(
+      () => 1 as unknown as ReturnType<typeof window.setInterval>,
+    );
+    vi.spyOn(window, "clearInterval").mockImplementation(() => undefined);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/bootstrap") {
+        return jsonResponse({
+          ...bootstrapData,
+          workspaces: [workspace, productWorkspace],
+        });
+      }
+      if (path === "/api/workspaces/order" && init?.method === "PUT") {
+        return jsonResponse(
+          {
+            error: { message: "Workspace list changed. Reload the workspace list and try again." },
+          },
+          409,
+        );
+      }
+      if (path === "/api/workspaces" && init?.method === undefined) {
+        return jsonResponse([productWorkspace, workspace]);
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByRole("button", { name: "Open settings" });
+    await user.click(screen.getByRole("button", { name: "Open settings" }));
+    const dialog = screen.getByRole("dialog", { name: "Local workspace" });
+    const orderList = within(dialog).getByRole("list", { name: "Workspace order" });
+    await user.click(within(orderList).getByRole("button", { name: "Move Product Team up" }));
+
+    expect(await screen.findByText(/Workspace list changed/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Reload workspace list" }));
+
+    await waitFor(() => {
+      expect(
+        within(orderList).getByRole("button", { name: "Move Product Team up" }),
+      ).toBeDisabled();
+      expect(within(orderList).getByRole("button", { name: "Move Nexestra down" })).toBeDisabled();
+    });
+    const rail = screen.getByRole("navigation", { name: "Workspaces" });
+    expect(within(rail).getAllByRole("button")[0]).toHaveAccessibleName("Switch to Product Team");
+    expect(within(rail).getByRole("button", { name: "Switch to Nexestra" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(within(orderList).getByRole("button", { name: "Move Product Team up" })).toBeDisabled();
+    expect(
+      fetchMock.mock.calls.filter(([value]) => String(value) === "/api/workspaces/order"),
+    ).toHaveLength(1);
+  });
+});
+
 describe("Thread navigation", () => {
   it("keeps the initial idle transcript request when the selected thread is clicked again", async () => {
     const thread = activityThread("thread-reselected", "waiting");

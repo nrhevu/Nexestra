@@ -32,6 +32,7 @@ import {
   type KnowledgeRepository,
   type Message,
   MessageSchema,
+  ReorderWorkspacesSchema,
   RunSchema,
   type Task,
   TaskSchema,
@@ -44,6 +45,7 @@ import {
   UpdateAgentSchema,
   UpdateKnowledgeSchema,
   UpdateTaskSchema,
+  UpdateWorkspaceSchema,
   type WorkAssignment,
   WorkAssignmentSchema,
   type Workspace,
@@ -378,10 +380,58 @@ export class FileStore {
         updatedAt: now,
       });
       const thread = createThreadRecord(workspace.id, "general", now, []);
-      this.state.workspaces.push(workspace);
-      this.state.threads.push(thread);
-      await this.writeState();
+      const next = {
+        ...this.state,
+        workspaces: [...this.state.workspaces, workspace],
+        threads: [...this.state.threads, thread],
+      };
+      await this.writeState(next);
+      this.state = next;
       return structuredClone(workspace);
+    });
+  }
+
+  async updateWorkspace(id: string, rawInput: unknown): Promise<Workspace> {
+    const input = UpdateWorkspaceSchema.parse(rawInput);
+    return this.withWrite(async () => {
+      const current = this.requireWorkspace(id);
+      if (current.name === input.name) return structuredClone(current);
+      const workspace: Workspace = {
+        ...current,
+        name: input.name,
+        slug: uniqueWorkspaceSlug(
+          input.name,
+          this.state.workspaces.filter((entry) => entry.id !== id),
+        ),
+        updatedAt: new Date().toISOString(),
+      };
+      const next = {
+        ...this.state,
+        workspaces: this.state.workspaces.map((entry) => (entry.id === id ? workspace : entry)),
+      };
+      await this.writeState(next);
+      this.state = next;
+      return structuredClone(workspace);
+    });
+  }
+
+  async reorderWorkspaces(rawInput: unknown): Promise<Workspace[]> {
+    const { workspaceIds } = ReorderWorkspacesSchema.parse(rawInput);
+    return this.withWrite(async () => {
+      const byId = new Map(this.state.workspaces.map((workspace) => [workspace.id, workspace]));
+      if (workspaceIds.length !== byId.size || workspaceIds.some((id) => !byId.has(id))) {
+        throw new StoreError(
+          "conflict",
+          "Workspace list changed. Reload the workspace list and try again.",
+        );
+      }
+      const next = {
+        ...this.state,
+        workspaces: workspaceIds.map((id) => this.requireWorkspace(id)),
+      };
+      await this.writeState(next);
+      this.state = next;
+      return this.listWorkspaces();
     });
   }
 

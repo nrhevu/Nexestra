@@ -8,7 +8,8 @@ primary navigation areas are Threads and Surfaces; the initial surfaces are Task
 and Agents.
 The far-left rail switches between workspaces, while the adjacent panel owns the Threads, Surfaces,
 and Settings navigation. **Needs attention** is available directly from workspace navigation and
-collects pending decisions and task failures across the selected workspace.
+collects pending decisions and task failures across the selected workspace. Settings exposes
+workspace rename and rail reordering; the stored order is restored on restart.
 
 ## Components
 
@@ -79,7 +80,11 @@ remain untouched.
 `state.json` stores workspaces, agent profiles, thread metadata, tasks, knowledge metadata, and
 Worker assignments. Every record carries a workspace ID. Handles and thread slugs are unique only
 within their workspace, and task references cannot cross workspace boundaries. Creating a
-workspace seeds a `general` thread.
+workspace seeds a `general` thread. Renaming updates the workspace name and re-derives a unique
+slug within the current list. Reordering stores the exact workspace ID list. The store serializes
+these writes, so a stale reorder from another window is rejected instead of silently dropping a
+concurrent workspace creation. Settings shows the resulting error and can reload the workspace
+list from the server without restarting the app.
 Version 1 state is migrated in place to version 2 by assigning every existing record to a default
 `Nexestra` workspace; record IDs and transcript paths do not change. Version 2 state migrates to
 version 3 by adding the first Master tool permissions; version 3 migrates to version 4 by adding the
@@ -303,7 +308,7 @@ credentials.
 - OpenCode `plan` is an application policy, not an independent OS or container sandbox.
 - Agent profiles cannot yet edit their full configuration after creation; enable, disable, archive,
   and permanent deletion are available.
-- Workspaces cannot yet be renamed, reordered, or deleted.
+- Workspaces can be renamed and reordered from Settings; deletion is not yet supported.
 - Device OAuth displays raw Codex CLI instructions; it does not yet use `codex app-server` JSON-RPC.
 - Custom providers support only two OpenAI-compatible protocols; Anthropic Messages is not supported.
 - Remote MCP supports Streamable HTTP, environment-backed headers, and separate startup, catalog,

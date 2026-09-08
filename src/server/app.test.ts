@@ -168,6 +168,58 @@ describe("HTTP app", () => {
     });
   });
 
+  it("renames and reorders workspaces and rejects stale or duplicate order payloads", async () => {
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected seeded workspace");
+    const created = await app.request("/api/workspaces", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Product Team" }),
+    });
+    expect(created.status).toBe(201);
+    const product = (await created.json()) as { id: string };
+
+    const rename = await app.request(`/api/workspaces/${workspace.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Nexus Studio" }),
+    });
+    expect(rename.status).toBe(200);
+    await expect(rename.json()).resolves.toMatchObject({
+      id: workspace.id,
+      name: "Nexus Studio",
+      slug: "nexus-studio",
+    });
+
+    const order = await app.request("/api/workspaces/order", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspaceIds: [product.id, workspace.id] }),
+    });
+    expect(order.status).toBe(200);
+    await expect(order.json()).resolves.toMatchObject([{ id: product.id }, { id: workspace.id }]);
+
+    const listed = await app.request("/api/workspaces");
+    expect(listed.status).toBe(200);
+    await expect(listed.json()).resolves.toMatchObject([{ id: product.id }, { id: workspace.id }]);
+
+    const stale = await app.request("/api/workspaces/order", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspaceIds: [workspace.id] }),
+    });
+    expect(stale.status).toBe(409);
+    const duplicate = await app.request("/api/workspaces/order", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspaceIds: [workspace.id, workspace.id] }),
+    });
+    expect(duplicate.status).toBe(400);
+
+    const reopened = await FileStore.open({ root: store.root, workspacePath: store.workspacePath });
+    expect(reopened.listWorkspaces().map((entry) => entry.id)).toEqual([product.id, workspace.id]);
+  });
+
   it.each(["bootstrap", "activity"])(
     "rejects an explicitly unknown workspace for %s instead of returning another workspace",
     async (endpoint) => {

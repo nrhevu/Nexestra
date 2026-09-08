@@ -101,8 +101,20 @@ export function createApp(options: CreateAppOptions) {
     );
   });
 
+  app.get("/api/workspaces", (context) => context.json(options.store.listWorkspaces()));
+
   app.post("/api/workspaces", async (context) => {
     return context.json(await options.store.createWorkspace(await context.req.json()), 201);
+  });
+
+  app.patch("/api/workspaces/:id", async (context) => {
+    return context.json(
+      await options.store.updateWorkspace(context.req.param("id"), await context.req.json()),
+    );
+  });
+
+  app.put("/api/workspaces/order", async (context) => {
+    return context.json(await options.store.reorderWorkspaces(await context.req.json()));
   });
 
   app.post("/api/agents", async (context) => {

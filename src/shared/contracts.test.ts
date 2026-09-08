@@ -4,6 +4,7 @@ import {
   extractKnowledgeHandles,
   extractMentionHandles,
   handleFromName,
+  ReorderWorkspacesSchema,
 } from "./contracts.js";
 
 describe("extractMentionHandles", () => {
@@ -71,5 +72,17 @@ describe("CreateAgentSchema", () => {
         provider: { ...customMaster.provider, apiKey: "short" },
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("ReorderWorkspacesSchema", () => {
+  it("requires an exact list with every workspace id exactly once", () => {
+    expect(
+      ReorderWorkspacesSchema.safeParse({ workspaceIds: ["workspace-a", "workspace-b"] }).success,
+    ).toBe(true);
+    expect(
+      ReorderWorkspacesSchema.safeParse({ workspaceIds: ["workspace-a", "workspace-a"] }).success,
+    ).toBe(false);
+    expect(ReorderWorkspacesSchema.safeParse({ workspaceIds: [] }).success).toBe(false);
   });
 });
