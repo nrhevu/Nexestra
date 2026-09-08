@@ -351,6 +351,46 @@ describe("Conversation history pagination", () => {
     expect(window.location.search).toBe("?message=message-5");
   });
 
+  it("copies a durable link to an old paginated message and reopens it through around history", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    mockServer();
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    render(<App />);
+
+    await screen.findByText("Messages 11–60 of 60");
+    await user.click(screen.getByRole("button", { name: /Older messages/ }));
+    await screen.findByText("Messages 1–10 of 60");
+    const messageArticle = screen.getByText("Message 5").closest("article");
+    expect(messageArticle).not.toBeNull();
+    await user.click(
+      within(messageArticle as HTMLElement).getByRole("button", { name: "Copy message link" }),
+    );
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    const copiedUrl = writeText.mock.calls[0]?.[0] as string;
+    expect(copiedUrl).toBe(`${window.location.origin}/threads/${thread.id}?message=message-5`);
+
+    act(() => {
+      window.history.pushState({}, "", copiedUrl.replace(/^https?:\/\/[^/]+/, ""));
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    const selected = await screen.findByRole("region", { name: "Selected message" });
+    await waitFor(() => expect(selected).toHaveFocus());
+    expect(within(selected).getByText("Message 5")).toBeVisible();
+    expect(window.location.search).toBe("?message=message-5");
+
+    if (clipboardDescriptor) {
+      Object.defineProperty(navigator, "clipboard", clipboardDescriptor);
+    } else {
+      Reflect.deleteProperty(navigator, "clipboard");
+    }
+  });
+
   it("reports an unavailable target and falls back to the latest window", async () => {
     mockServer();
     window.history.replaceState({}, "", `/threads/${thread.id}?message=missing`);
