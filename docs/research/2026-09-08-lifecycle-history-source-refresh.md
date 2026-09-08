@@ -45,6 +45,12 @@ production builds. Its nine new local-Git/API tests cover selection and preserva
 restart and rollback, locks, hooks, containment, and redaction. Five UI tests cover success, failure,
 closed details, switching away and back, and no automatic refresh while idle.
 
+An in-app browser check on commit `4a29fe6` advanced a temporary local upstream after cloning,
+clicked **Refresh source**, and verified the selected full SHA in Knowledge. Delegating a fake
+Worker then recorded that SHA as its Git review base. Renaming the upstream branch made the next
+refresh fail visibly while retaining `ready` and the prior commit; restoring the branch and
+refreshing again cleared the error. The Knowledge detail layout was inspected visually.
+
 Thread lifecycle and document history implementation are still in progress. Final integration and
 browser evidence will be recorded here before handoff. Tests use the command-local Node 26 flag
 `NODE_OPTIONS=--no-experimental-webstorage` for jsdom and call no live providers.
