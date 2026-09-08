@@ -215,9 +215,22 @@ interface ArtifactDraft extends Omit<Artifact, "sequence"> {
   bytes?: Uint8Array;
 }
 
+interface UserSubmissionArtifactPlanEntry {
+  id: string;
+  kind: "image" | "file" | "link";
+  source: "upload" | "reference";
+  name: string;
+  mediaType?: string;
+  size?: number;
+  url?: string;
+  path?: string;
+  createdAt: string;
+}
+
 interface UserSubmissionEnvelope {
   requestIdHash: string;
   fingerprint: string;
+  artifactPlan?: UserSubmissionArtifactPlanEntry[];
 }
 
 interface UserSubmissionReceipt {
@@ -258,6 +271,8 @@ export class FileStore {
   private readonly sequenceByThread = new Map<string, number>();
   private readonly historyIndexes = new Map<string, TranscriptHistoryIndex>();
   private readonly submissionReceipts = new Map<string, UserSubmissionReceipt>();
+  private readonly dirtyMetadataThreads = new Set<string>();
+  private readonly uncertainDurabilityThreads = new Set<string>();
 
   private constructor(
     paths: {
@@ -1513,13 +1528,16 @@ export class FileStore {
     validateUploads(uploads);
     const requestIdHash = hashRequestId(normalizeRequestId(requestId));
     const fingerprint = computeSubmissionFingerprint(content, uploads);
-    return this.withWrite(() => this.findSubmissionReplay(threadId, requestIdHash, fingerprint));
+    return this.withWrite(() =>
+      this.findSubmissionReplay(threadId, requestIdHash, fingerprint, uploads),
+    );
   }
 
   private async findSubmissionReplay(
     threadId: string,
     requestIdHash: string,
     fingerprint: string,
+    uploads: UploadArtifactInput[],
   ): Promise<Message | undefined> {
     const receipt = this.submissionReceipts.get(receiptKey(threadId, requestIdHash));
     if (!receipt) return undefined;
@@ -1529,99 +1547,275 @@ export class FileStore {
         "A different message was already stored with this request ID.",
       );
     }
-    return this.readReceiptMessage(threadId, receipt);
+    const message = await this.readReceiptMessage(threadId, receipt, uploads);
+    await this.syncTranscriptDurability(threadId);
+    await this.reconcileReplayMetadata(threadId);
+    return message;
+  }
+
+  private async syncTranscriptDurability(threadId: string): Promise<void> {
+    if (!this.uncertainDurabilityThreads.has(threadId)) return;
+    const handle = await open(this.transcriptPath(threadId), "r+");
+    try {
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    this.uncertainDurabilityThreads.delete(threadId);
   }
 
   private async readReceiptMessage(
     threadId: string,
     receipt: UserSubmissionReceipt,
+    uploads: UploadArtifactInput[],
   ): Promise<Message> {
-    let handle: Awaited<ReturnType<typeof open>> | undefined;
+    const index = this.historyIndexes.get(threadId);
+    if (!index || index.unreliable || index.missing || !index.identity) {
+      throw new StoreError(
+        "conflict",
+        "The stored submission transcript cannot be verified; restart Nexestra before retrying.",
+      );
+    }
+    const lineLength = receipt.lineEnd - receipt.lineStart;
+    if (lineLength <= 0 || lineLength > HISTORY_MAX_EVENT_BYTES) {
+      throw new StoreError(
+        "conflict",
+        "The stored submission receipt is invalid; restart Nexestra before retrying.",
+      );
+    }
+    const outcome = await readTranscriptPageLines(this.transcriptPath(threadId), index.identity, [
+      {
+        sequence: receipt.sequence,
+        kind: "message",
+        id: receipt.messageId,
+        parentId: receipt.messageId,
+        lineStart: receipt.lineStart,
+        lineEnd: receipt.lineEnd,
+        lineBytes: lineLength,
+      },
+    ]);
+    if (outcome.status !== "ok") {
+      throw new StoreError(
+        "conflict",
+        "The stored submission transcript changed or became unreadable outside the app; restart Nexestra before retrying.",
+      );
+    }
+    const line = outcome.lines[0];
+    if (line === undefined) {
+      throw new StoreError(
+        "conflict",
+        "The stored submission receipt is invalid; restart Nexestra before retrying.",
+      );
+    }
+    let event: TranscriptEvent | undefined;
     try {
-      handle = await open(this.transcriptPath(threadId), "r");
-    } catch (error) {
-      if (isNodeError(error, "ENOENT")) {
+      event = parseTranscriptEvent(line);
+    } catch {
+      throw new StoreError(
+        "conflict",
+        "The stored submission transcript is unreadable; restart Nexestra before retrying.",
+      );
+    }
+    let submission: UserSubmissionEnvelope | "invalid" | undefined;
+    try {
+      submission = parseSubmissionEnvelope(
+        (JSON.parse(line) as { submission?: unknown }).submission,
+      );
+    } catch {
+      submission = "invalid";
+    }
+    if (
+      event?.type !== "message.created" ||
+      event.message.id !== receipt.messageId ||
+      event.message.sequence !== receipt.sequence ||
+      event.message.threadId !== threadId ||
+      event.message.author.kind !== "user" ||
+      submission === undefined ||
+      submission === "invalid" ||
+      submission.requestIdHash !== receipt.requestIdHash ||
+      submission.fingerprint !== receipt.fingerprint
+    ) {
+      throw new StoreError(
+        "conflict",
+        "The stored submission receipt is inconsistent; restart Nexestra before retrying.",
+      );
+    }
+    if (
+      event.message.artifactIds.some(
+        (artifactId) => !index.artifacts.some((entry) => entry.id === artifactId),
+      )
+    ) {
+      if (submission.artifactPlan === undefined) {
         throw new StoreError(
           "conflict",
-          "The stored submission transcript is missing; restart Nexestra before retrying.",
+          "A stored submission is missing attachment records and its saved receipt cannot repair them; restore from a backup or restart Nexestra.",
         );
+      }
+      if (this.requireThread(threadId).archived) {
+        throw new StoreError(
+          "conflict",
+          "Restore this thread before repairing its stored attachments.",
+        );
+      }
+      await this.repairMissingArtifacts(threadId, event.message, submission.artifactPlan, uploads);
+    }
+    await this.verifySubmissionUploadFiles(threadId, event.message, uploads);
+    return structuredClone(event.message);
+  }
+
+  private async verifySubmissionUploadFiles(
+    threadId: string,
+    message: Message,
+    uploads: UploadArtifactInput[],
+  ): Promise<void> {
+    if (message.artifactIds.length === 0 || uploads.length === 0) return;
+    const index = this.historyIndexes.get(threadId);
+    if (!index || index.unreliable || index.missing || !index.identity) {
+      throw new StoreError(
+        "conflict",
+        "Stored attachment records cannot be verified; restart Nexestra and retry.",
+      );
+    }
+    for (const [position, artifactId] of message.artifactIds.entries()) {
+      const entry = index.artifacts.find((candidate) => candidate.id === artifactId);
+      if (!entry) {
+        throw new StoreError(
+          "conflict",
+          "A stored submission is missing attachment records that could not be repaired; restart Nexestra and retry.",
+        );
+      }
+      const outcome = await readTranscriptPageLines(this.transcriptPath(threadId), index.identity, [
+        entry,
+      ]);
+      if (outcome.status !== "ok" || outcome.lines[0] === undefined) {
+        throw new StoreError(
+          "conflict",
+          "Stored attachment records changed or became unreadable; restart Nexestra and retry.",
+        );
+      }
+      let artifactEvent: TranscriptEvent | undefined;
+      try {
+        artifactEvent = parseTranscriptEvent(outcome.lines[0]);
+      } catch {
+        throw new StoreError(
+          "conflict",
+          "Stored attachment records are unreadable; restart Nexestra and retry.",
+        );
+      }
+      if (artifactEvent?.type !== "artifact.created" || artifactEvent.artifact.id !== artifactId) {
+        throw new StoreError(
+          "conflict",
+          "Stored attachment records are inconsistent; restart Nexestra and retry.",
+        );
+      }
+      if (artifactEvent.artifact.source !== "upload") continue;
+      const upload = uploads[position];
+      if (!upload) {
+        throw new StoreError(
+          "conflict",
+          "A stored submission references an attachment input that is missing; replay with the original file.",
+        );
+      }
+      const file = this.uploadArtifactPath(threadId, artifactId);
+      let existing: Buffer;
+      try {
+        existing = await readFile(file);
+      } catch (error) {
+        if (isNodeError(error, "ENOENT")) {
+          throw new StoreError(
+            "conflict",
+            "A stored attachment file is missing; replay the submission with the original file to restore it.",
+          );
+        }
+        throw error;
+      }
+      if (hashBytes(existing) !== hashBytes(upload.bytes)) {
+        throw new StoreError(
+          "conflict",
+          "A stored attachment file no longer matches the submission; restart Nexestra or restore the file.",
+        );
+      }
+    }
+  }
+
+  private async repairMissingArtifacts(
+    threadId: string,
+    message: Message,
+    plan: UserSubmissionArtifactPlanEntry[],
+    uploads: UploadArtifactInput[],
+  ): Promise<void> {
+    const index = this.historyIndexes.get(threadId);
+    if (!index || index.unreliable || index.missing) {
+      throw new StoreError(
+        "conflict",
+        "Stored attachment records cannot be verified; restart Nexestra and retry.",
+      );
+    }
+    const planByArtifactId = new Map(plan.map((entry) => [entry.id, entry]));
+    let nextSequence = await this.nextSequence(threadId);
+    const events: TranscriptEvent[] = [];
+    for (const [position, artifactId] of message.artifactIds.entries()) {
+      if (index.artifacts.some((entry) => entry.id === artifactId)) continue;
+      const entry = planByArtifactId.get(artifactId);
+      if (!entry) {
+        throw new StoreError(
+          "conflict",
+          "A stored submission is missing attachment records that its saved receipt cannot reproduce; restore from a backup or restart Nexestra.",
+        );
+      }
+      if (entry.source === "upload") {
+        const upload = uploads[position];
+        if (!upload) {
+          throw new StoreError(
+            "conflict",
+            "A stored submission references an attachment input that is missing; replay with the original file.",
+          );
+        }
+        await writeKeyedUploadFile(this.uploadArtifactPath(threadId, artifactId), upload.bytes);
+      }
+      const artifact = ArtifactSchema.parse({
+        ...entry,
+        threadId,
+        messageId: message.id,
+        sequence: nextSequence,
+      });
+      nextSequence += 1;
+      events.push({ type: "artifact.created", sequence: artifact.sequence, artifact });
+    }
+    if (events.length === 0) return;
+    let appended: { baseOffset: number; endOffset: number } | undefined;
+    try {
+      appended = await appendManySynced(this.transcriptPath(threadId), events);
+    } catch (error) {
+      if (!appended) {
+        await repairTranscriptTail(this.transcriptPath(threadId));
+        const repairedIndex = await this.primeTranscriptIndex(threadId);
+        this.sequenceByThread.set(threadId, transcriptIndexMaxSequence(repairedIndex));
+        this.uncertainDurabilityThreads.add(threadId);
+        try {
+          await this.syncTranscriptDurability(threadId);
+        } catch {
+          // Keep the uncertain flag; retry must sync before returning a message.
+        }
       }
       throw error;
     }
     try {
-      const length = receipt.lineEnd - receipt.lineStart;
-      if (length <= 0 || length > HISTORY_MAX_EVENT_BYTES) {
-        throw new StoreError(
-          "conflict",
-          "The stored submission receipt is invalid; restart Nexestra before retrying.",
-        );
-      }
-      const buffer = Buffer.allocUnsafe(length);
-      const { bytesRead } = await handle.read(buffer, 0, length, receipt.lineStart);
-      if (bytesRead !== length) {
-        throw new StoreError(
-          "conflict",
-          "The stored submission transcript changed outside the app; restart Nexestra before retrying.",
-        );
-      }
-      let line: string;
-      try {
-        line = new TextDecoder("utf-8", { fatal: true }).decode(buffer);
-      } catch {
-        throw new StoreError(
-          "conflict",
-          "The stored submission transcript is unreadable; restart Nexestra before retrying.",
-        );
-      }
-      let event: TranscriptEvent | undefined;
-      try {
-        event = parseTranscriptEvent(line);
-      } catch {
-        throw new StoreError(
-          "conflict",
-          "The stored submission transcript is unreadable; restart Nexestra before retrying.",
-        );
-      }
-      if (event?.type !== "message.created" || event.message.id !== receipt.messageId) {
-        throw new StoreError(
-          "conflict",
-          "The stored submission receipt is inconsistent; restart Nexestra before retrying.",
-        );
-      }
-      const envelope = parseSubmissionEnvelope(
-        (JSON.parse(line) as { submission?: unknown }).submission,
-      );
-      if (
-        envelope === undefined ||
-        envelope === "invalid" ||
-        envelope.requestIdHash !== receipt.requestIdHash ||
-        envelope.fingerprint !== receipt.fingerprint
-      ) {
-        throw new StoreError(
-          "conflict",
-          "The stored submission receipt is inconsistent; restart Nexestra before retrying.",
-        );
-      }
-      const index = this.historyIndexes.get(threadId);
-      if (event.message.artifactIds.length > 0) {
-        if (!index || index.unreliable || index.missing) {
-          throw new StoreError(
-            "conflict",
-            "Stored attachment records cannot be verified; restart Nexestra and retry.",
-          );
-        }
-        const artifactEntries = new Set(index.artifacts.map((entry) => entry.id));
-        if (!event.message.artifactIds.every((artifactId) => artifactEntries.has(artifactId))) {
-          throw new StoreError(
-            "conflict",
-            "A stored submission for this request ID is missing its attachment records; send a new message with a different request ID.",
-          );
-        }
-      }
-      return structuredClone(event.message);
-    } finally {
-      await handle?.close().catch(() => undefined);
+      await this.extendTranscriptIndex(threadId, appended.baseOffset, events);
+    } catch (error) {
+      await this.primeTranscriptIndex(threadId).catch(() => undefined);
+      throw error;
     }
+    this.sequenceByThread.set(
+      threadId,
+      Math.max(this.sequenceByThread.get(threadId) ?? 0, events.at(-1)?.sequence ?? 0),
+    );
+  }
+
+  private async reconcileReplayMetadata(threadId: string): Promise<void> {
+    if (!this.dirtyMetadataThreads.has(threadId)) return;
+    await this.writeState(this.state);
+    this.dirtyMetadataThreads.delete(threadId);
   }
   async createAgentMessage(
     threadId: string,
@@ -1950,6 +2144,7 @@ export class FileStore {
           threadId,
           requestIdHash,
           submissionFingerprint,
+          uploads,
         );
         if (replay !== undefined) return replay;
       }
@@ -1964,6 +2159,17 @@ export class FileStore {
       const artifacts = artifactDrafts.map((draft, index) =>
         ArtifactSchema.parse({ ...draft, sequence: messageSequence + index + 1 }),
       );
+      const artifactPlan = artifacts.map((artifact) => ({
+        id: artifact.id,
+        kind: artifact.kind,
+        source: artifact.source,
+        name: artifact.name,
+        ...(artifact.mediaType !== undefined ? { mediaType: artifact.mediaType } : {}),
+        ...(artifact.size !== undefined ? { size: artifact.size } : {}),
+        ...(artifact.url !== undefined ? { url: artifact.url } : {}),
+        ...(artifact.path !== undefined ? { path: artifact.path } : {}),
+        createdAt: artifact.createdAt,
+      }));
       const baseMessage = MessageSchema.parse({
         ...input,
         artifactIds: artifacts.map((artifact) => artifact.id),
@@ -2011,7 +2217,7 @@ export class FileStore {
             sequence: messageSequence,
             message: persistedMessage,
             ...(requestIdHash && submissionFingerprint
-              ? { submission: { requestIdHash, fingerprint: submissionFingerprint } }
+              ? { submission: { requestIdHash, fingerprint: submissionFingerprint, artifactPlan } }
               : {}),
           },
           ...artifacts.map(
@@ -2038,7 +2244,51 @@ export class FileStore {
         await this.extendTranscriptIndex(threadId, appended.baseOffset, events);
       } catch (error) {
         if (!appended) {
-          await Promise.all(writtenUploads.map((file) => unlink(file).catch(() => undefined)));
+          await repairTranscriptTail(this.transcriptPath(threadId));
+          const repairedIndex = await this.primeTranscriptIndex(threadId);
+          this.sequenceByThread.set(threadId, transcriptIndexMaxSequence(repairedIndex));
+          const durableMessage = repairedIndex.messages.some(
+            (entry) => entry.sequence === messageSequence,
+          );
+          if (durableMessage) {
+            this.uncertainDurabilityThreads.add(threadId);
+            try {
+              await this.syncTranscriptDurability(threadId);
+            } catch {
+              // Keep the uncertain flag; retry must sync before returning.
+            }
+            const lastMessageEntry = repairedIndex.messages.at(-1);
+            if (lastMessageEntry && repairedIndex.identity) {
+              const lastRead = await readTranscriptPageLines(
+                this.transcriptPath(threadId),
+                repairedIndex.identity,
+                [lastMessageEntry],
+              );
+              if (lastRead.status === "ok" && lastRead.lines[0] !== undefined) {
+                try {
+                  const lastEvent = parseTranscriptEvent(lastRead.lines[0]);
+                  if (lastEvent?.type === "message.created") {
+                    thread.messageCount = repairedIndex.messages.length;
+                    thread.lastMessageAt = lastEvent.message.createdAt;
+                    thread.updatedAt = lastEvent.message.createdAt;
+                    this.state = nextState;
+                    this.dirtyMetadataThreads.add(threadId);
+                  }
+                } catch {
+                  // Counters stay stale until the next state write or restart repair.
+                }
+              }
+            }
+          } else {
+            await Promise.all(writtenUploads.map((file) => unlink(file).catch(() => undefined)));
+          }
+        } else {
+          // The append is durable but a later index extension failed; re-prime so
+          // receipts and history reads see the canonical bytes without duplication.
+          const repairedIndex = await this.primeTranscriptIndex(threadId).catch(() => undefined);
+          if (repairedIndex) {
+            this.sequenceByThread.set(threadId, transcriptIndexMaxSequence(repairedIndex));
+          }
         }
         throw error;
       }
@@ -2047,7 +2297,13 @@ export class FileStore {
       thread.lastMessageAt = persistedMessage.createdAt;
       thread.updatedAt = persistedMessage.createdAt;
       this.state = nextState;
-      await this.writeState(this.state);
+      try {
+        await this.writeState(this.state);
+      } catch (error) {
+        this.dirtyMetadataThreads.add(threadId);
+        throw error;
+      }
+      this.dirtyMetadataThreads.delete(threadId);
       return structuredClone(persistedMessage);
     });
   }
@@ -2473,8 +2729,15 @@ export class FileStore {
     baseOffset: number,
     events: TranscriptEvent[],
   ): Promise<void> {
-    const index = this.historyIndexes.get(threadId);
-    if (!index || index.unreliable) return;
+    const existing = this.historyIndexes.get(threadId);
+    if (!existing) {
+      // A thread created after startup has no index yet; prime the just-durable
+      // canonical file so receipt and history reads work without reopening.
+      await this.primeTranscriptIndex(threadId);
+      return;
+    }
+    if (existing.unreliable) return;
+    const index = existing;
     let offset = baseOffset;
     for (const event of events) {
       const line = JSON.stringify(event);
@@ -3570,6 +3833,15 @@ function hashBytes(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+function transcriptIndexMaxSequence(index: TranscriptHistoryIndex): number {
+  let highest = 0;
+  for (const entry of index.messages) highest = Math.max(highest, entry.sequence);
+  for (const entry of index.artifacts) highest = Math.max(highest, entry.sequence);
+  for (const entry of index.runLatestByRunId.values()) highest = Math.max(highest, entry.sequence);
+  for (const entry of index.toolById.values()) highest = Math.max(highest, entry.sequence);
+  return highest;
+}
+
 function receiptKey(threadId: string, requestIdHash: string): string {
   return `${threadId}:${requestIdHash}`;
 }
@@ -3590,23 +3862,21 @@ export function computeSubmissionFingerprint(
   content: string,
   uploads: UploadArtifactInput[],
 ): string {
-  const uploadEntries = uploads.map((upload) => {
-    const mediaType = normaliseMediaType(upload.mediaType) || inferMediaType(upload.name);
-    return (
-      normaliseArtifactName(upload.name) +
-      String.fromCharCode(0) +
-      mediaType +
-      String.fromCharCode(0) +
-      upload.bytes.byteLength +
-      String.fromCharCode(0) +
-      hashBytes(upload.bytes)
-    );
-  });
-  return createHash("sha256")
-    .update(content.trim() + String.fromCharCode(31) + uploadEntries.join(String.fromCharCode(31)))
-    .digest("hex");
+  const payload = {
+    version: 1,
+    content: content.trim(),
+    uploads: uploads.map((upload) => {
+      const mediaType = normaliseMediaType(upload.mediaType) || inferMediaType(upload.name);
+      return {
+        name: normaliseArtifactName(upload.name),
+        mediaType,
+        size: upload.bytes.byteLength,
+        sha256: hashBytes(upload.bytes),
+      };
+    }),
+  };
+  return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 }
-
 export function keyedUploadStorageId(
   threadId: string,
   requestId: string,
@@ -3649,9 +3919,61 @@ function parseSubmissionEnvelope(value: unknown): UserSubmissionEnvelope | "inva
   ) {
     return "invalid";
   }
-  return { requestIdHash: envelope.requestIdHash, fingerprint: envelope.fingerprint };
+  const artifactPlan = parseSubmissionArtifactPlan(envelope.artifactPlan);
+  if (artifactPlan === "invalid") return "invalid";
+  return {
+    requestIdHash: envelope.requestIdHash,
+    fingerprint: envelope.fingerprint,
+    ...(artifactPlan !== undefined ? { artifactPlan } : {}),
+  };
 }
 
+function parseSubmissionArtifactPlan(
+  value: unknown,
+): UserSubmissionArtifactPlanEntry[] | "invalid" | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value) || value.length > 40) return "invalid";
+  const plan: UserSubmissionArtifactPlanEntry[] = [];
+  for (const raw of value) {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return "invalid";
+    const entry = raw as Record<string, unknown>;
+    if (
+      typeof entry.id !== "string" ||
+      entry.id.length === 0 ||
+      entry.id.length > 200 ||
+      typeof entry.name !== "string" ||
+      entry.name.length === 0 ||
+      entry.name.length > 255 ||
+      (entry.kind !== "image" && entry.kind !== "file" && entry.kind !== "link") ||
+      (entry.source !== "upload" && entry.source !== "reference") ||
+      typeof entry.createdAt !== "string"
+    ) {
+      return "invalid";
+    }
+    if (
+      (entry.mediaType !== undefined &&
+        (typeof entry.mediaType !== "string" || entry.mediaType.length > 160)) ||
+      (entry.size !== undefined &&
+        (typeof entry.size !== "number" || !Number.isSafeInteger(entry.size) || entry.size < 0)) ||
+      (entry.url !== undefined && (typeof entry.url !== "string" || entry.url.length > 4_096)) ||
+      (entry.path !== undefined && (typeof entry.path !== "string" || entry.path.length > 1_024))
+    ) {
+      return "invalid";
+    }
+    plan.push({
+      id: entry.id,
+      kind: entry.kind,
+      source: entry.source,
+      name: entry.name,
+      createdAt: entry.createdAt,
+      ...(entry.mediaType !== undefined ? { mediaType: entry.mediaType } : {}),
+      ...(entry.size !== undefined ? { size: entry.size } : {}),
+      ...(entry.url !== undefined ? { url: entry.url } : {}),
+      ...(entry.path !== undefined ? { path: entry.path } : {}),
+    });
+  }
+  return plan;
+}
 function isSubmissionHash(value: string): boolean {
   return /^[a-f0-9]{64}$/.test(value);
 }
