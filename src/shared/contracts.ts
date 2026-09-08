@@ -430,6 +430,11 @@ export const WorkAssignmentSchema = z.object({
 });
 export type WorkAssignment = z.infer<typeof WorkAssignmentSchema>;
 
+export const DelegateTaskSchema = z.object({
+  workerHandle: HandleSchema,
+  repositoryHandle: HandleSchema,
+});
+
 export const CreateTaskSchema = z.object({
   workspaceId: z.string().optional(),
   title: z.string().trim().min(1).max(160),

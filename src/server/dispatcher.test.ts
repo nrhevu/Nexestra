@@ -745,7 +745,10 @@ describe("mention dispatch", () => {
       verificationCommand: "printf verification-passed",
     });
 
-    const assignment = await dispatcher.delegateFromTask(task.id, worker.handle, repository.handle);
+    const queued = await dispatcher.delegateFromTask(task.id, worker.handle, repository.handle);
+    expect(queued.status).toBe("queued");
+    await dispatcher.waitForIdle();
+    const assignment = (await dispatcher.taskProcess(task.id)).assignment;
 
     expect(assignment).toMatchObject({
       status: "completed",
@@ -791,7 +794,10 @@ describe("mention dispatch", () => {
       verificationCommand: "printf verification-failed >&2; exit 42",
     });
 
-    const assignment = await dispatcher.delegateFromTask(task.id, worker.handle, repository.handle);
+    const queued = await dispatcher.delegateFromTask(task.id, worker.handle, repository.handle);
+    expect(queued.status).toBe("queued");
+    await dispatcher.waitForIdle();
+    const assignment = (await dispatcher.taskProcess(task.id)).assignment;
 
     expect(assignment).toMatchObject({
       status: "completed",
@@ -800,8 +806,10 @@ describe("mention dispatch", () => {
     });
     expect(store.getTask(task.id)).toMatchObject({ status: "blocked" });
 
-    const retried = await dispatcher.delegateFromTask(task.id, worker.handle, repository.handle);
-    expect(retried.id).not.toBe(assignment.id);
+    await dispatcher.delegateFromTask(task.id, worker.handle, repository.handle);
+    await dispatcher.waitForIdle();
+    const retried = (await dispatcher.taskProcess(task.id)).assignment;
+    expect(retried?.id).not.toBe(assignment?.id);
     expect(retried).toMatchObject({
       status: "completed",
       verificationExitCode: 42,
@@ -809,8 +817,8 @@ describe("mention dispatch", () => {
       repositoryId: repository.id,
     });
     const process = await dispatcher.taskProcess(task.id);
-    expect(process.assignment?.id).toBe(retried.id);
-    expect(process.assignments.map((entry) => entry.id)).toEqual([assignment.id, retried.id]);
+    expect(process.assignment?.id).toBe(retried?.id);
+    expect(process.assignments.map((entry) => entry.id)).toEqual([assignment?.id, retried?.id]);
   });
 
   it("stops an active Worker process and preserves interrupted run and tool history", async () => {

@@ -121,6 +121,12 @@ permanently delete the task when no Worker assignment is active. While an assign
 running, **Stop process** terminates its Codex/OpenCode process group, records the run and unfinished
 tools as interrupted, and returns the task to To do so it can be delegated again.
 
+Manual delegation saves a user request with the selected Worker's mention before queuing work.
+The process dialog opens the queued assignment immediately, streams its progress, and keeps Stop
+available while it runs. Manual and Master assignments share the Worker's serial queue, including
+verification; other Workers can proceed independently. Failed preparations and Worker calls retain
+their run and tool history so the task can be retried.
+
 Custom-provider Master agents have a provider-neutral
 harness with `list`, `glob`, `grep`, `read`, `edit`, `write`, `bash`, `apply_patch`, `skill`,
 `plan`, `delegate`, `todowrite`, `webfetch`, `websearch`, and `question`. LSP is intentionally not

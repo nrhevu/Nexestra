@@ -171,6 +171,15 @@ while preserving all historical assignment and run records.
 A task with no assignment can be delegated directly from its process dialog by selecting an enabled
 Worker and ready repository; a linked thread remains mandatory.
 
+Master and manual delegation use one assignment lifecycle. A manual request first appends a user
+message with the selected Worker's explicit mention, then persists its assignment and canonical run.
+The HTTP endpoint returns `202` with the queued assignment so the existing process view can observe
+and stop it immediately. An in-memory task reservation rejects duplicate starts while persistence is
+in flight; the per-Worker queue includes worktree preparation, execution, and verification. Run/tool
+failures and interruptions remain durable, and a failed start releases its reservations. Stopping
+selects an active assignment even if an older historical assignment was updated later. See
+[ADR 0028](adr/0028-shared-worker-assignment-lifecycle.md).
+
 Each delegated assignment owns an in-memory abort controller from before it is queued until its
 final cleanup. Stopping a task aborts both Git worktree preparation and the Worker harness process;
 CLI harnesses forward the signal to the detached process group and escalate from TERM to KILL after

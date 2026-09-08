@@ -1,0 +1,47 @@
+# Research: resumable workspaces and editable agent profiles
+
+Research date: 8 September 2026 (Asia/Ho_Chi_Minh).
+
+## Primary sources
+
+- [Slack: Send and read messages](https://slack.com/help/articles/201457107-Send-and-read-messages)
+  documents automatically saved unsent drafts and a sidebar entry for finding them. Nexestra already
+  stores draft text, but repository inspection found hydration and navigation gaps. The selected
+  adaptation is reliable draft restoration plus a visible indication in the owning thread.
+- [OpenCode: Agents](https://opencode.ai/docs/agents/) describes specialized profiles with editable
+  descriptions, prompts, models, and permissions. This supports completing Nexestra's existing
+  profile lifecycle with editing, while retaining Nexestra's mention and credential boundaries.
+- [Linear: Workspaces](https://linear.app/docs/workspaces) places workspace settings and workspace
+  switching in the workspace menu. Nexestra uses a rail and Settings already; keeping management in
+  those controls is a local design inference, not a claim about Linear's rename or reorder behavior.
+
+These sources informed product choices. No usability study or measured productivity improvement is
+claimed. Search tooling was unavailable during this pass; the linked official pages were fetched
+directly over HTTPS and read locally.
+
+## Selected implementation wave
+
+| Repository gap | Selected behavior | Acceptance evidence |
+| --- | --- | --- |
+| Leaving a conversation loses the last working thread; draft effects can overwrite saved text. | Remember one valid thread per workspace; honor explicit URLs; expose Draft in navigation; preserve unsent text through navigation and failed sends. | Navigation, hydration, storage-failure, and send-revision tests. |
+| Agent creation exposes fields that cannot subsequently be edited. | Reuse profile fields for editing, keep credentials write-only, reject configuration changes while work is reserved or active. | API/UI validation, secret keep/rotate/remove, busy and write-failure tests. |
+| Workspace names and order are fixed after creation. | Rename and accessible Move up/down controls in Settings, persisted with stable IDs. | Exact-list validation, concurrent state writes, restart, and UI tests. |
+| Manual delegation bypasses the documented Worker lifecycle. | Share the serial queue, persist its triggering user message and canonical run, return queued acceptance, and expose live progress/Stop. | Fake-runner queue, duplicate, failure, interruption, verification, and HTTP acceptance tests. |
+
+The fourth item came from source inspection rather than competitor research. It is required to keep
+Nexestra's own serial-agent and canonical-transcript invariants true as Taskboard usage expands.
+
+## Remaining candidates
+
+1. **Repository recovery and refresh:** recover a failed initial clone without deleting Knowledge,
+   and explicitly refresh a ready repository for future assignments. Inspect Git status and active
+   assignments first; existing worktrees and branches must retain their recorded starting state.
+2. **Read-only assignment review:** show branch changes before cleanup, including a clear account
+   of dirty/untracked files. Establish byte/file caps and path containment before adding any merge UI.
+3. **Conversation organization:** rename and archive threads while keeping their single transcript,
+   stable links, and active runs. Define how archived threads appear in search and Needs attention.
+4. **Knowledge content revisions:** replace document bytes with retained provenance and safe
+   handling of active invocations, instead of deleting/recreating the Knowledge identity.
+
+These candidates require their own repository audit and primary-source verification before
+implementation. The current wave does not implement them or claim the wider roadmap is complete.

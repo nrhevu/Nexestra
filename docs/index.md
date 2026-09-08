@@ -6,3 +6,5 @@
 4. [Contributing](../CONTRIBUTING.md): development loop and change rules.
 5. [Attention and navigation research](research/2026-09-08-attention-navigation.md): source-backed
    ideas, selected scope, and follow-up candidates.
+6. [Resumable workspace research](research/2026-09-08-resumable-workspaces.md): drafts, profile editing,
+   workspace management, and canonical manual delegation.

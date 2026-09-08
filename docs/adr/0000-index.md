@@ -26,3 +26,4 @@
 | [0022](0022-visible-assignment-history.md) | Accepted | Show every task assignment attempt in the process dialog |
 | [0023](0023-safe-assignment-branch-cleanup.md) | Accepted | Delete merged assignment branches explicitly without force |
 | [0024](0024-workspace-attention-projection.md) | Accepted | Derive workspace attention from current runs and latest task assignments |
+| [0028](0028-shared-worker-assignment-lifecycle.md) | Accepted | Share the canonical queued Worker lifecycle between manual and Master delegation |

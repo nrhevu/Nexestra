@@ -28,6 +28,8 @@ export class AgentDispatcher {
   private readonly pendingEnqueues = new Map<string, number>();
   private readonly deletingAgentIds = new Set<string>();
   private readonly retryingRunIds = new Set<string>();
+  private readonly delegatingTaskIds = new Set<string>();
+  private readonly assignmentCompletions = new Set<Promise<unknown>>();
   private readonly liveRuns = new Map<string, AgentRun>();
   private readonly liveActivities = new Map<string, RunActivity>();
   private readonly runControllers = new Map<string, AbortController>();
@@ -92,8 +94,8 @@ export class AgentDispatcher {
     if (!task) throw new StoreError("not_found", "Task not found.");
     const assignment = this.store
       .listAssignments(task.workspaceId)
-      .find((entry) => entry.taskId === task.id);
-    if (!assignment || !["queued", "running"].includes(assignment.status)) {
+      .find((entry) => entry.taskId === task.id && ["queued", "running"].includes(entry.status));
+    if (!assignment) {
       throw new StoreError("conflict", "This task does not have an active Worker process.");
     }
     this.stoppingRunIds.add(assignment.id);
@@ -223,6 +225,33 @@ export class AgentDispatcher {
     }
     this.retryingRunIds.add(runId);
     try {
+      const assignment = this.store.listAssignments().find((entry) => entry.id === runId);
+      if (assignment) {
+        const process = await this.taskProcess(assignment.taskId);
+        if (process.assignment?.id !== assignment.id) {
+          throw new StoreError("conflict", "A newer assignment already exists for this task.");
+        }
+        if (assignment.status !== "failed" && assignment.status !== "interrupted") {
+          throw new StoreError("invalid", "Only failed or interrupted Worker runs can be retried.");
+        }
+        const worker = this.store.getAgent(assignment.workerAgentId);
+        const repository = this.store.getKnowledge(assignment.repositoryId);
+        if (!worker || !repository) {
+          throw new StoreError(
+            "not_found",
+            "The Worker's profile or repository is no longer available.",
+          );
+        }
+        const retried = await this.delegateFromTask(
+          assignment.taskId,
+          worker.handle,
+          repository.handle,
+        );
+        const data = await this.store.threadData(retried.threadId);
+        const run = data.runs.find((entry) => entry.id === retried.id);
+        if (!run) throw new StoreError("not_found", "The queued Worker run could not be loaded.");
+        return run;
+      }
       for (const thread of this.store.listThreads()) {
         const data = await this.store.threadData(thread.id);
         const previous = data.runs.find((run) => run.id === runId);
@@ -256,8 +285,8 @@ export class AgentDispatcher {
   }
 
   async waitForIdle(): Promise<void> {
-    while (this.queues.size > 0) {
-      await Promise.all([...this.queues.values()]);
+    while (this.queues.size > 0 || this.assignmentCompletions.size > 0) {
+      await Promise.all([...this.queues.values(), ...this.assignmentCompletions]);
     }
   }
 
@@ -469,156 +498,22 @@ export class AgentDispatcher {
     }
   }
 
-  // Manual delegation from Taskboard (without a Master run)
+  // Return once the durable assignment is queued; the shared lifecycle records completion/failure.
   async delegateFromTask(
     taskId: string,
     workerHandle: string,
     repositoryHandle: string,
   ): Promise<WorkAssignment> {
-    const task = this.store.getTask(taskId);
-    if (!task) throw new StoreError("not_found", "Task not found.");
-    if (!task.threadId) throw new StoreError("invalid", "Task must be linked to a thread.");
-    const thread = this.store.getThread(task.threadId);
-    if (!thread) throw new StoreError("not_found", "Thread not found.");
-    if (task.status === "done") {
-      throw new StoreError("conflict", "A completed task cannot be delegated again.");
-    }
-
-    // Check if already assigned
-    if (
-      this.store
-        .listAssignments(thread.workspaceId)
-        .some(
-          (assignment) =>
-            assignment.taskId === task.id &&
-            (assignment.status === "queued" || assignment.status === "running"),
-        )
-    ) {
-      throw new StoreError("conflict", "This task already has an active assignment.");
-    }
-
-    const worker = this.store.findAgentByHandle(workerHandle, thread.workspaceId);
-    if (worker?.kind !== "worker" || !worker.enabled || worker.archived) {
-      throw new StoreError("invalid", `@${workerHandle} is not an available Worker.`);
-    }
-
-    const knowledge = this.store.findKnowledgeByHandle(repositoryHandle, thread.workspaceId);
-    if (knowledge?.kind !== "repository") {
-      throw new StoreError("invalid", `#${repositoryHandle} is not a repository.`);
-    }
-    if (knowledge.status !== "ready") {
-      throw new StoreError(
-        "invalid",
-        `#${knowledge.handle} is not ready for delegation (status: ${knowledge.status}).`,
-      );
-    }
-
-    const location = this.repositories.assignmentLocation(thread.workspaceId, crypto.randomUUID());
-    const now = new Date().toISOString();
-    const id = crypto.randomUUID();
-
-    const assignment: WorkAssignment = {
-      id,
-      workspaceId: thread.workspaceId,
-      taskId: task.id,
-      threadId: thread.id,
-      masterRunId: "", // No master run for manual delegation
-      workerAgentId: worker.id,
-      repositoryId: knowledge.id,
-      status: "queued",
-      branch: location.branch,
-      worktreePath: location.worktreePath,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    const release = this.reserveAgent(worker.id);
-    if (!release) throw new StoreError("conflict", `@${worker.handle} is being deleted.`);
-
-    const controller = new AbortController();
-    this.runControllers.set(id, controller);
-
-    try {
-      await this.store.createAssignment(assignment);
-      await this.store.updateTask(task.id, { status: "in_progress", assigneeId: worker.id });
-
-      // Start the worker directly
-      this.busy.add(worker.id);
-      this.notifyThread(thread.id, true);
-
-      try {
-        await this.repositories.prepareAssignment(knowledge, location, controller.signal);
-        await this.store.updateAssignment(assignment.id, { status: "running" });
-
-        // Get or create a system trigger message
-        const trigger: Message = {
-          id: id,
-          threadId: thread.id,
-          sequence: 0,
-          author: { kind: "user", id: "local-user", name: "User" },
-          content: [
-            `**Manual delegation from Taskboard**`,
-            ``,
-            `Task: ${task.title}`,
-            task.description,
-            `Repository: #${knowledge.handle}`,
-            `Worktree: ${location.absolutePath}`,
-          ].join("\n\n"),
-          mentions: [{ agentId: worker.id, handle: worker.handle }],
-          knowledgeReferences: [{ knowledgeId: knowledge.id, handle: knowledge.handle }],
-          artifactIds: [],
-          createdAt: now,
-        };
-
-        const rawResponse = (
-          await this.runner.invoke(worker, {
-            runId: id,
-            thread,
-            trigger,
-            transcriptPath: this.store.transcriptPath(thread.id),
-            transcriptSnapshot: "",
-            knowledge: [{ item: knowledge, localPath: location.absolutePath }],
-            workingDirectory: location.absolutePath,
-            mode: "task",
-            signal: controller.signal,
-            activityHooks: {
-              status: () => {},
-              thinking: () => {},
-              text: () => {},
-              tool: async () => {},
-            },
-          })
-        ).trim();
-        const response = this.store.redactSecrets(rawResponse);
-
-        await this.store.createAgentMessage(thread.id, worker, response, trigger.id);
-        const verification = task.verificationCommand
-          ? await this.runTaskVerification(task, location, controller.signal)
-          : undefined;
-        await this.store.updateAssignment(assignment.id, {
-          status: "completed",
-          result: response.slice(0, 20_000),
-          ...(verification ?? {}),
-        });
-        await this.store.updateTask(task.id, {
-          status:
-            !task.verificationCommand || verification?.verificationExitCode === 0
-              ? "done"
-              : "blocked",
-        });
-        this.notifyThread(thread.id, true);
-
-        const result = await this.store.listAssignments();
-        const finalAssignment = result.find((a) => a.id === id);
-        if (!finalAssignment) throw new StoreError("not_found", "Assignment not found.");
-        return finalAssignment;
-      } finally {
-        this.busy.delete(worker.id);
-      }
-    } finally {
-      this.runControllers.delete(id);
-      release();
-    }
+    return new Promise<WorkAssignment>((resolve, reject) => {
+      const completion = this.assignWorker(
+        { taskId, workerHandle, repositoryHandle },
+        undefined,
+        resolve,
+      )
+        .catch(reject)
+        .finally(() => this.assignmentCompletions.delete(completion));
+      this.assignmentCompletions.add(completion);
+    });
   }
 
   private async delegateWork(
@@ -629,16 +524,30 @@ export class AgentDispatcher {
     input: { taskId: string; workerHandle: string; repositoryHandle: string },
   ): Promise<{ assignment: WorkAssignment; result: string }> {
     if (master.kind !== "master") throw new StoreError("invalid", "Only Masters can delegate.");
-    const thread = this.store.getThread(masterRun.threadId);
-    if (!thread) throw new StoreError("not_found", "Thread not found.");
+    return this.assignWorker(input, { masterRun, master, trigger, transcriptSnapshot });
+  }
+
+  private async assignWorker(
+    input: { taskId: string; workerHandle: string; repositoryHandle: string },
+    origin?: { masterRun: AgentRun; master: Agent; trigger: Message; transcriptSnapshot: string },
+    onQueued?: (assignment: WorkAssignment) => void,
+  ): Promise<{ assignment: WorkAssignment; result: string }> {
     const task = this.store.getTask(input.taskId);
-    if (!task || task.workspaceId !== thread.workspaceId || task.threadId !== thread.id) {
+    if (!task) throw new StoreError("not_found", "Task not found.");
+    if (!task.threadId) throw new StoreError("invalid", "Task must be linked to a thread.");
+    const thread = this.store.getThread(task.threadId);
+    if (!thread) throw new StoreError("not_found", "Thread not found.");
+    if (
+      task.workspaceId !== thread.workspaceId ||
+      (origin && origin.masterRun.threadId !== thread.id)
+    ) {
       throw new StoreError("invalid", "Delegation must use a task from this run's plan.");
     }
     if (task.status === "done") {
       throw new StoreError("conflict", "A completed task cannot be delegated again.");
     }
     if (
+      this.delegatingTaskIds.has(task.id) ||
       this.store
         .listAssignments(thread.workspaceId)
         .some(
@@ -665,6 +574,7 @@ export class AgentDispatcher {
     }
     const release = this.reserveAgent(worker.id);
     if (!release) throw new StoreError("conflict", `@${worker.handle} is being deleted.`);
+    this.delegatingTaskIds.add(task.id);
     const id = crypto.randomUUID();
     const controller = new AbortController();
     this.runControllers.set(id, controller);
@@ -673,7 +583,7 @@ export class AgentDispatcher {
     let workerRun: AgentRun = {
       id,
       threadId: thread.id,
-      triggerMessageId: trigger.id,
+      triggerMessageId: origin?.trigger.id ?? id,
       agentId: worker.id,
       attempt: 1,
       status: "queued",
@@ -685,7 +595,7 @@ export class AgentDispatcher {
       workspaceId: thread.workspaceId,
       taskId: task.id,
       threadId: thread.id,
-      masterRunId: masterRun.id,
+      masterRunId: origin?.masterRun.id ?? "",
       workerAgentId: worker.id,
       repositoryId: knowledge.id,
       status: "queued",
@@ -695,8 +605,22 @@ export class AgentDispatcher {
       updatedAt: now,
     };
     let workerRunPersisted = false;
+    let assignmentPersisted = false;
     try {
+      const trigger =
+        origin?.trigger ??
+        (await this.store.createUserMessage(
+          thread.id,
+          `@${worker.handle} implement task: ${task.title}\n\n${task.description}\n\nRepository: #${knowledge.handle}`,
+          [{ agentId: worker.id, handle: worker.handle }],
+          [],
+          [{ knowledgeId: knowledge.id, handle: knowledge.handle }],
+        ));
+      const transcriptSnapshot =
+        origin?.transcriptSnapshot ?? (await this.store.transcriptSnapshot(thread.id));
+      workerRun.triggerMessageId = trigger.id;
       assignment = await this.store.createAssignment(assignment);
+      assignmentPersisted = true;
       controller.signal.throwIfAborted();
       await this.store.updateTask(task.id, { status: "in_progress", assigneeId: worker.id });
       controller.signal.throwIfAborted();
@@ -714,7 +638,7 @@ export class AgentDispatcher {
         updatedAt: now,
       });
       this.notifyThread(thread.id, true);
-      const result = await this.enqueueDelegation(worker.id, async () => {
+      const completion = this.enqueueDelegation(worker.id, async () => {
         this.busy.add(worker.id);
         try {
           controller.signal.throwIfAborted();
@@ -734,7 +658,9 @@ export class AgentDispatcher {
             ...trigger,
             id: assignment.id,
             content: [
-              `Assigned by @${master.handle}.`,
+              origin
+                ? `Assigned by @${origin.master.handle}.`
+                : "Assigned by the local user from Taskboard.",
               `Task: ${task.title}`,
               task.description,
               `Repository: #${knowledge.handle}`,
@@ -783,59 +709,66 @@ export class AgentDispatcher {
           // Post the Worker's result to the thread
           await this.store.createAgentMessage(thread.id, worker, response, trigger.id);
 
+          const result = response;
           controller.signal.throwIfAborted();
+          this.updateActivity(workerRun, "tool", "Verifying the Worker result");
+          this.notifyThread(thread.id, true);
+          const verification = task.verificationCommand
+            ? await this.runTaskVerification(task, location, controller.signal)
+            : undefined;
+          const verificationPassed =
+            !task.verificationCommand || verification?.verificationExitCode === 0;
+          const summaryMessage = [
+            `## Worker @${worker.handle} ${verificationPassed ? "completed" : "finished with failed verification for"} task: **${task.title}**`,
+            "",
+            `> ${result.slice(0, 500)}${result.length > 500 ? "..." : ""}`,
+            "",
+            `**Branch:** \`${location.branch}\`  **Worktree:** \`${location.worktreePath}\``,
+            ...(task.verificationCommand
+              ? [
+                  "",
+                  `**Verification:** \`${task.verificationCommand}\``,
+                  verificationPassed
+                    ? "Exit code: 0"
+                    : `Exit code: ${verification?.verificationExitCode}`,
+                  ...(verification?.verificationOutput
+                    ? ["", "```text", verification.verificationOutput, "```"]
+                    : []),
+                ]
+              : []),
+          ].join("\n");
+          if (origin) {
+            await this.store.createAgentMessage(
+              thread.id,
+              origin.master,
+              summaryMessage,
+              trigger.id,
+            );
+          }
+          assignment = await this.store.updateAssignment(assignment.id, {
+            status: "completed",
+            result: result.slice(0, 20_000),
+            ...(verification ?? {}),
+          });
+          controller.signal.throwIfAborted();
+          await this.store.updateTask(task.id, {
+            status: verificationPassed ? "done" : "blocked",
+          });
+          controller.signal.throwIfAborted();
+          this.notifyThread(thread.id, true);
           workerRun = await this.store.updateRun({
             ...workerRun,
             status: "completed",
             updatedAt: new Date().toISOString(),
           });
-          controller.signal.throwIfAborted();
           this.liveRuns.set(workerRun.id, workerRun);
-          return response;
+          return { assignment, result };
         } finally {
           this.busy.delete(worker.id);
         }
       });
-      controller.signal.throwIfAborted();
-      this.updateActivity(workerRun, "tool", "Verifying the Worker result");
-      this.notifyThread(thread.id, true);
-      const verification = task.verificationCommand
-        ? await this.runTaskVerification(task, location, controller.signal)
-        : undefined;
-      const verificationPassed =
-        !task.verificationCommand || verification?.verificationExitCode === 0;
-      const summaryMessage = [
-        `## Worker @${worker.handle} ${verificationPassed ? "completed" : "finished with failed verification for"} task: **${task.title}**`,
-        "",
-        `> ${result.slice(0, 500)}${result.length > 500 ? "..." : ""}`,
-        "",
-        `**Branch:** \`${location.branch}\`  **Worktree:** \`${location.worktreePath}\``,
-        ...(task.verificationCommand
-          ? [
-              "",
-              `**Verification:** \`${task.verificationCommand}\``,
-              verificationPassed
-                ? "Exit code: 0"
-                : `Exit code: ${verification?.verificationExitCode}`,
-              ...(verification?.verificationOutput
-                ? ["", "```text", verification.verificationOutput, "```"]
-                : []),
-            ]
-          : []),
-      ].join("\n");
-      await this.store.createAgentMessage(thread.id, master, summaryMessage, trigger.id);
-      assignment = await this.store.updateAssignment(assignment.id, {
-        status: "completed",
-        result: result.slice(0, 20_000),
-        ...(verification ?? {}),
-      });
-      controller.signal.throwIfAborted();
-      await this.store.updateTask(task.id, {
-        status: verificationPassed ? "done" : "blocked",
-      });
-      controller.signal.throwIfAborted();
-      this.notifyThread(thread.id, true);
-      return { assignment, result };
+      onQueued?.(structuredClone(assignment));
+      return await completion;
     } catch (error) {
       const stopped = controller.signal.aborted || this.stoppingRunIds.has(id);
       const message = this.store.redactSecrets(
@@ -845,7 +778,7 @@ export class AgentDispatcher {
             ? error.message
             : "Worker assignment failed.",
       );
-      if (stopped) {
+      if (stopped && assignmentPersisted) {
         await this.persistStoppedAssignment(task, {
           ...assignment,
           id,
@@ -860,8 +793,21 @@ export class AgentDispatcher {
             updatedAt: new Date().toISOString(),
           })
           .catch(() => workerRun);
+        const threadData = await this.store.threadData(thread.id);
+        for (const toolCall of threadData.toolCalls.filter(
+          (entry) =>
+            entry.runId === id &&
+            ["waiting_approval", "waiting_input", "running"].includes(entry.status),
+        )) {
+          await this.store.updateToolCall({
+            ...toolCall,
+            status: "failed",
+            error: message.slice(0, 2_000),
+            updatedAt: new Date().toISOString(),
+          });
+        }
       }
-      if (!stopped) {
+      if (!stopped && assignmentPersisted) {
         await this.store
           .updateAssignment(id, { status: "failed", error: message.slice(0, 2_000) })
           .catch(() => undefined);
@@ -871,11 +817,11 @@ export class AgentDispatcher {
       }
       throw new StoreError("invalid", message);
     } finally {
+      this.delegatingTaskIds.delete(task.id);
       this.runControllers.delete(id);
       this.stoppingRunIds.delete(id);
       this.liveRuns.delete(id);
       this.liveActivities.delete(id);
-      this.busy.delete(worker.id);
       this.notifyThread(thread.id, true);
       release();
     }
