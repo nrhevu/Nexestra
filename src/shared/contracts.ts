@@ -846,3 +846,50 @@ export function handleFromName(name: string): string {
   const safe = ascii.length >= 2 ? ascii : `agent-${ascii || "new"}`;
   return safe.slice(0, 31);
 }
+
+export const THREAD_HISTORY_DEFAULT_LIMIT = 50;
+export const THREAD_HISTORY_MAX_LIMIT = 100;
+
+export const ThreadHistoryRequestSchema = z
+  .object({
+    workspaceId: z.string().trim().min(1),
+    limit: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(THREAD_HISTORY_MAX_LIMIT)
+      .default(THREAD_HISTORY_DEFAULT_LIMIT),
+    before: z.string().trim().min(1).max(200).optional(),
+    after: z.string().trim().min(1).max(200).optional(),
+    around: z.string().trim().min(1).max(200).optional(),
+  })
+  .refine(
+    (value) =>
+      [value.before, value.after, value.around].filter((id): id is string => id !== undefined)
+        .length <= 1,
+    { message: "Use at most one of before, after, or around." },
+  );
+export type ThreadHistoryRequest = z.infer<typeof ThreadHistoryRequestSchema>;
+
+export const ThreadHistoryPageSchema = z.object({
+  thread: ThreadSchema,
+  messages: z.array(MessageSchema),
+  artifacts: z.array(ArtifactSchema),
+  runs: z.array(RunSchema),
+  toolCalls: z.array(ToolCallSchema),
+  activeRuns: z.array(RunSchema),
+  page: z.object({
+    totalMessages: z.number().int().nonnegative(),
+    totalArtifacts: z.number().int().nonnegative(),
+    firstMessageIndex: z.number().int().nonnegative(),
+    lastMessageIndex: z.number().int().nonnegative(),
+    beforeCursor: z.string().nullable(),
+    afterCursor: z.string().nullable(),
+    targetMessageId: z.string().optional(),
+    targetFound: z.boolean().optional(),
+  }),
+});
+export type ThreadHistoryPage = z.infer<typeof ThreadHistoryPageSchema>;
+
+export const ThreadMetadataResponseSchema = ThreadSchema;
+export type ThreadMetadataResponse = Thread;
