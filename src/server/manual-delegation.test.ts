@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Agent, RuntimeStatus } from "../shared/contracts.js";
 import { createApp } from "./app.js";
 import { AgentDispatcher, ChatService } from "./dispatcher.js";
-import type { AssignmentRepositoryManager } from "./repository-manager.js";
+import type { AssignmentPreparation, AssignmentRepositoryManager } from "./repository-manager.js";
 import type { AgentInvocation, AgentRunner } from "./runtime.js";
 import { FileStore } from "./store.js";
 
@@ -16,14 +16,16 @@ const runtime: RuntimeStatus = {
     opencode: { installed: true, version: "test" },
   },
 };
+const TEST_BASE_COMMIT = "1".repeat(40);
 
 async function setup(invoke: AgentRunner["invoke"]) {
   const root = await mkdtemp(join(tmpdir(), "nexestra-manual-delegation-"));
   const store = await FileStore.open({ root, workspacePath: root });
   const runner: AgentRunner = { runtimeStatus: async () => runtime, invoke };
   const prepareAssignment = vi.fn<AssignmentRepositoryManager["prepareAssignment"]>(
-    async (_repository, location) => {
+    async (_repository, location): Promise<AssignmentPreparation | undefined> => {
       await mkdir(location.absolutePath, { recursive: true });
+      return { baseCommit: TEST_BASE_COMMIT };
     },
   );
   const repositories: AssignmentRepositoryManager = {
@@ -137,6 +139,22 @@ describe("manual Worker delegation", () => {
     ]);
     expect(store.getTask(task.id)?.status).toBe("done");
     expect(dispatcher.activeRuns()).toEqual([]);
+  });
+
+  it("persists the captured base commit before invoking the Worker", async () => {
+    const fixture = await setup(async (_agent, invocation) => {
+      const assignment = fixture.store
+        .listAssignments()
+        .find((entry) => entry.id === invocation.runId);
+      expect(assignment?.baseCommit).toBe(TEST_BASE_COMMIT);
+      return "Done.";
+    });
+    const { dispatcher, task, worker, repository, store } = fixture;
+    const queued = await dispatcher.delegateFromTask(task.id, worker.handle, repository.handle);
+    await dispatcher.waitForIdle();
+    const persisted = store.listAssignments().find((entry) => entry.id === queued.id);
+    expect(persisted?.baseCommit).toBe(TEST_BASE_COMMIT);
+    expect(store.getTask(task.id)?.status).toBe("done");
   });
 
   it("stops a queued assignment without preparing a worktree or invoking its Worker", async () => {

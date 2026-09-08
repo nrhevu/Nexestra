@@ -668,9 +668,16 @@ export class AgentDispatcher {
         try {
           controller.signal.throwIfAborted();
           this.updateActivity(workerRun, "thinking", "Preparing an isolated worktree");
-          await this.repositories.prepareAssignment(knowledge, location, controller.signal);
+          const prepared = await this.repositories.prepareAssignment(
+            knowledge,
+            location,
+            controller.signal,
+          );
           controller.signal.throwIfAborted();
-          assignment = await this.store.updateAssignment(assignment.id, { status: "running" });
+          assignment = await this.store.updateAssignment(assignment.id, {
+            status: "running",
+            ...(prepared?.baseCommit ? { baseCommit: prepared.baseCommit } : {}),
+          });
           workerRun = await this.store.updateRun({
             ...workerRun,
             status: "running",

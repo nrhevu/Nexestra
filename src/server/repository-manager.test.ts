@@ -38,7 +38,8 @@ describe("RepositoryManager", () => {
       source,
     });
     const location = manager.assignmentLocation(workspace.id, "assignment-1");
-    await manager.prepareAssignment(repository, location);
+    const prepared = await manager.prepareAssignment(repository, location);
+    expect(prepared.baseCommit).toMatch(/^[0-9a-f]{40}$/);
 
     expect(repository).toMatchObject({ status: "ready", defaultBranch: "main" });
     expect(location.branch).toBe("nexestra/assignment-1");
@@ -100,7 +101,8 @@ describe("RepositoryManager", () => {
       source,
     });
     const location = manager.assignmentLocation(workspace.id, "assignment-unmerged");
-    await manager.prepareAssignment(repository, location);
+    const prepared = await manager.prepareAssignment(repository, location);
+    expect(prepared.baseCommit).toMatch(/^[0-9a-f]{40}$/);
     await writeFile(join(location.absolutePath, "README.md"), "# Unmerged change\n");
     await execFileAsync("git", ["-C", location.absolutePath, "add", "README.md"]);
     await execFileAsync("git", [

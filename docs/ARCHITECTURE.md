@@ -186,8 +186,15 @@ Branches and worktrees are retained for inspection. Nexestra never merges or pus
 A finished assignment can be cleaned up explicitly from its process dialog. Cleanup uses Git's
 non-forced worktree removal, so dirty or untracked work is refused, records `worktreeCleanedAt`,
 and leaves the branch and durable run history intact.
-After the worktree is removed, the same dialog can delete the assignment branch. Branch cleanup uses
-Git's non-forced `branch -d`, records `branchDeletedAt`, and refuses unmerged branches.
+  After the worktree is removed, the same dialog can delete the assignment branch. Branch cleanup uses
+  Git's non-forced `branch -d`, records `branchDeletedAt`, and refuses unmerged branches.
+
+Worktree preparation captures the starting commit before the Worker runs. The process dialog exposes
+a read-only on-demand Git review that compares that base with the assigned branch and worktree:
+committed, staged, and unstaged summaries, a bounded unified diff, and untracked paths. It verifies
+repository/branch identity and path containment, refuses custom Git filters, and never merges,
+applies, resets, or cleans up. Older assignments without a recorded base are reported as `legacy`.
+See [ADR 0030](adr/0030-read-only-assignment-git-review.md).
 The process dialog can also retry the latest failed, interrupted, or verification-blocked
 assignment with its same Worker and repository. Retry creates a new assignment, branch, and worktree
 while preserving all historical assignment and run records.

@@ -10,13 +10,17 @@ export interface AssignmentLocation {
   absolutePath: string;
 }
 
+export interface AssignmentPreparation {
+  baseCommit: string;
+}
+
 export interface AssignmentRepositoryManager {
   assignmentLocation(workspaceId: string, assignmentId: string): AssignmentLocation;
   prepareAssignment(
     repository: KnowledgeRepository,
     location: AssignmentLocation,
     signal?: AbortSignal,
-  ): Promise<void>;
+  ): Promise<AssignmentPreparation | undefined>;
   cleanupAssignment(
     repository: KnowledgeRepository,
     location: AssignmentLocation,
@@ -97,7 +101,7 @@ export class RepositoryManager implements AssignmentRepositoryManager {
     repository: KnowledgeRepository,
     location: AssignmentLocation,
     signal?: AbortSignal,
-  ): Promise<void> {
+  ): Promise<AssignmentPreparation> {
     if (repository.status !== "ready") {
       throw new StoreError("conflict", `#${repository.handle} is not ready.`);
     }
@@ -130,6 +134,21 @@ export class RepositoryManager implements AssignmentRepositoryManager {
         result.stderr.trim() || result.stdout.trim() || "Could not create the worker worktree.",
       );
     }
+    const head = await runCommand(git, ["-C", location.absolutePath, "rev-parse", "HEAD"], {
+      cwd: location.absolutePath,
+      timeoutMs: 10_000,
+      maxOutputBytes: 1024 * 1024,
+      env: safeProcessEnv(this.env),
+      signal,
+    });
+    const baseCommit = head.stdout.trim();
+    if (head.exitCode !== 0 || !baseCommit) {
+      throw new StoreError(
+        "invalid",
+        head.stderr.trim() || "Could not capture the Worker starting commit.",
+      );
+    }
+    return { baseCommit };
   }
 
   async cleanupAssignment(

@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { Agent, RuntimeStatus, ThreadStreamEvent, ToolCall } from "../shared/contracts.js";
 import { AgentDispatcher, ChatService } from "./dispatcher.js";
-import type { AssignmentLocation, AssignmentRepositoryManager } from "./repository-manager.js";
+import type {
+  AssignmentLocation,
+  AssignmentPreparation,
+  AssignmentRepositoryManager,
+} from "./repository-manager.js";
 import type { AgentInvocation, AgentRunner } from "./runtime.js";
 import { FileStore, StoreError } from "./store.js";
 
@@ -211,8 +215,9 @@ class FakeAssignmentRepositories implements AssignmentRepositoryManager {
   async prepareAssignment(
     _repository: Parameters<AssignmentRepositoryManager["prepareAssignment"]>[0],
     location: AssignmentLocation,
-  ) {
+  ): Promise<AssignmentPreparation | undefined> {
     await mkdir(location.absolutePath, { recursive: true });
+    return undefined;
   }
 
   async cleanupAssignment() {}

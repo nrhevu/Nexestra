@@ -448,6 +448,7 @@ export const WorkAssignmentSchema = z.object({
   status: z.enum(["queued", "running", "completed", "failed", "interrupted"]),
   branch: z.string(),
   worktreePath: z.string(),
+  baseCommit: z.string().trim().min(1).optional(),
   result: z.string().max(20_000).optional(),
   error: z.string().max(2_000).optional(),
   verificationOutput: z.string().max(4_000).optional(),
@@ -458,6 +459,55 @@ export const WorkAssignmentSchema = z.object({
   updatedAt: z.string(),
 });
 export type WorkAssignment = z.infer<typeof WorkAssignmentSchema>;
+
+export type AssignmentGitReviewState =
+  | "pending"
+  | "available"
+  | "missing"
+  | "cleaned"
+  | "legacy"
+  | "unavailable"
+  | "unsafe";
+
+export interface GitFileSummary {
+  path: string;
+  insertions: number | null;
+  deletions: number | null;
+}
+
+export interface AssignmentGitTrackedSummary {
+  files: GitFileSummary[];
+  insertions: number;
+  deletions: number;
+  truncated: boolean;
+}
+
+export interface AssignmentGitPatch {
+  content: string;
+  truncated: boolean;
+  binaryPaths: string[];
+}
+
+export interface AssignmentGitReview {
+  assignment: WorkAssignment;
+  state: AssignmentGitReviewState;
+  reason?: string;
+  worktreePath?: string;
+  branch?: string;
+  baseCommit?: string;
+  headCommit?: string;
+  tracked?: {
+    baseToWorktree: AssignmentGitTrackedSummary;
+    committed: AssignmentGitTrackedSummary;
+    patch: AssignmentGitPatch;
+    staged: AssignmentGitTrackedSummary;
+    unstaged: AssignmentGitTrackedSummary;
+  };
+  untracked?: {
+    files: string[];
+    truncated: boolean;
+  };
+}
 
 export const DelegateTaskSchema = z.object({
   workerHandle: HandleSchema,

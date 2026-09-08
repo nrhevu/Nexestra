@@ -6,6 +6,7 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { ZodError } from "zod";
 import { type BootstrapData, DelegateTaskSchema, ToolAnswersSchema } from "../shared/contracts.js";
+import { reviewAssignmentGit } from "./assignment-review.js";
 import { workspaceActivity } from "./attention.js";
 import { ChatGptAuthManager } from "./auth.js";
 import { AgentDispatcher, ChatService } from "./dispatcher.js";
@@ -343,6 +344,10 @@ export function createApp(options: CreateAppOptions) {
     const worktreePath = assignmentWorktreePath(options.store, context.req.param("id"));
     await launchPath(worktreePath, true);
     return context.body(null, 204);
+  });
+
+  app.get("/api/assignments/:id/review", async (context) => {
+    return context.json(await reviewAssignmentGit(options.store, context.req.param("id")));
   });
 
   app.post("/api/assignments/:id/cleanup", async (context) => {

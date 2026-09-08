@@ -125,8 +125,13 @@ merged assignment branch can be deleted after its worktree is removed; Git refus
 branches. A
 task that was never delegated says so explicitly. The same detail view can edit every task field or
 permanently delete the task when no Worker assignment is active. While an assignment is queued or
-running, **Stop process** terminates its Codex/OpenCode process group, records the run and unfinished
-tools as interrupted, and returns the task to To do so it can be delegated again.
+  running, **Stop process** terminates its Codex/OpenCode process group, records the run and unfinished
+  tools as interrupted, and returns the task to To do so it can be delegated again.
+
+The process dialog can also render a read-only Git review snapshot on demand: the starting commit
+captured when the worktree was prepared, committed and dirty tracked changes, a bounded unified
+diff, and untracked files. Refresh takes a fresh snapshot; the review never merges, applies,
+resets, or cleans up.
 
 Manual delegation saves a user request with the selected Worker's mention before queuing work.
 The process dialog opens the queued assignment immediately, streams its progress, and keeps Stop

@@ -1126,6 +1126,7 @@ export class FileStore {
         | "verificationExitCode"
         | "worktreeCleanedAt"
         | "branchDeletedAt"
+        | "baseCommit"
       >
     >,
   ): Promise<WorkAssignment> {

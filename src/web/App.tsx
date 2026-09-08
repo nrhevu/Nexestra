@@ -59,6 +59,8 @@ import type {
   AgentRun,
   AgentView,
   Artifact,
+  AssignmentGitReview,
+  AssignmentGitTrackedSummary,
   AttentionItem,
   BootstrapData,
   KnowledgeItem,
@@ -3256,6 +3258,59 @@ function TaskProcessDialog({
   const assignmentId = assignment?.id;
   const assignmentThreadId = assignment?.threadId;
   const isActive = assignment?.status === "queued" || assignment?.status === "running";
+  const [gitReview, setGitReview] = useState<AssignmentGitReview>();
+  const [reviewing, setReviewing] = useState(false);
+  const [reviewError, setReviewError] = useState<string>();
+  const gitReviewRequest = useRef(0);
+  const loadGitReview = useCallback(async () => {
+    if (!assignmentId) return;
+    const requestId = ++gitReviewRequest.current;
+    setReviewing(true);
+    setReviewError(undefined);
+    try {
+      const next = await api<AssignmentGitReview>(
+        `/api/assignments/${encodeURIComponent(assignmentId)}/review`,
+      );
+      if (gitReviewRequest.current !== requestId) return;
+      setGitReview(next);
+    } catch (caught) {
+      if (gitReviewRequest.current !== requestId) return;
+      setReviewError(messageFrom(caught));
+    } finally {
+      if (gitReviewRequest.current === requestId) setReviewing(false);
+    }
+  }, [assignmentId]);
+  useEffect(() => {
+    if (!assignmentId) return;
+    gitReviewRequest.current += 1;
+    setGitReview(undefined);
+    setReviewing(false);
+    setReviewError(undefined);
+  }, [assignmentId]);
+  const gitSummaryRow = (label: string, summary: AssignmentGitTrackedSummary) => (
+    <div className="git-review-row">
+      <span>{label}</span>
+      <code>
+        {summary.files.length} {summary.files.length === 1 ? "file" : "files"}
+      </code>
+      <span>
+        +{summary.insertions} -{summary.deletions}
+      </span>
+      {summary.truncated && <small>list truncated</small>}
+      {summary.files.length > 0 && (
+        <ul className="git-review-files">
+          {summary.files.slice(0, 10).map((file) => (
+            <li key={file.path}>
+              <code>{file.path}</code>
+              <small>
+                {file.insertions === null ? "binary" : `+${file.insertions} -${file.deletions}`}
+              </small>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
   useEffect(() => {
     if (!isActive || !assignmentId || !assignmentThreadId) return;
     const refreshProcess = () => void loadProcess(true);
@@ -3621,6 +3676,87 @@ function TaskProcessDialog({
                   </button>
                 </div>
               </div>
+
+              <section className="task-process-git-review" aria-label="Git review">
+                <div className="git-review-header">
+                  <h3>Git review</h3>
+                  <button type="button" disabled={reviewing} onClick={() => void loadGitReview()}>
+                    {reviewing ? (
+                      <LoaderCircle className="spin" size={13} />
+                    ) : (
+                      <RefreshCw size={13} />
+                    )}
+                    {gitReview ? "Refresh" : "Review worker changes"}
+                  </button>
+                </div>
+                {reviewError && (
+                  <p className="form-error">
+                    <CircleAlert size={14} /> {reviewError}
+                  </p>
+                )}
+                {gitReview && (
+                  <div className="git-review-body">
+                    <p className="git-review-state">
+                      <span className={`review-state review-state-${gitReview.state}`}>
+                        {gitReview.state === "available" ? "Snapshot loaded" : gitReview.state}
+                      </span>
+                      {gitReview.reason && <small>{gitReview.reason}</small>}
+                    </p>
+                    {gitReview.state === "available" && gitReview.tracked && (
+                      <>
+                        <p className="git-review-commits">
+                          <span>Base</span>
+                          <code>{shortCommit(gitReview.baseCommit)}</code>
+                          <span>→</span>
+                          <span>HEAD</span>
+                          <code>{shortCommit(gitReview.headCommit)}</code>
+                        </p>
+                        {gitSummaryRow("Committed", gitReview.tracked.committed)}
+                        {gitSummaryRow("Staged", gitReview.tracked.staged)}
+                        {gitSummaryRow("Worktree dirty", gitReview.tracked.unstaged)}
+                        {gitSummaryRow("Base to worktree", gitReview.tracked.baseToWorktree)}
+                        {gitReview.untracked && (
+                          <div className="git-review-row">
+                            <span>Untracked</span>
+                            <code>
+                              {gitReview.untracked.files.length}{" "}
+                              {gitReview.untracked.files.length === 1 ? "file" : "files"}
+                            </code>
+                            {gitReview.untracked.truncated && <small>list truncated</small>}
+                            {gitReview.untracked.files.length > 0 && (
+                              <ul className="git-review-files">
+                                {gitReview.untracked.files.slice(0, 10).map((path) => (
+                                  <li key={path}>
+                                    <code>{path}</code>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        )}
+                        <details className="git-review-patch">
+                          <summary>
+                            Diff preview{" "}
+                            {gitReview.tracked.patch.truncated && <small>(truncated)</small>}
+                          </summary>
+                          {gitReview.tracked.patch.content ? (
+                            <pre>
+                              <code>{gitReview.tracked.patch.content}</code>
+                            </pre>
+                          ) : (
+                            <p>No text diff.</p>
+                          )}
+                          {gitReview.tracked.patch.binaryPaths.length > 0 && (
+                            <p className="git-review-binary">
+                              Binary files: {gitReview.tracked.patch.binaryPaths.join(", ")}
+                            </p>
+                          )}
+                        </details>
+                      </>
+                    )}
+                  </div>
+                )}
+              </section>
 
               {(process.assignments ?? []).length > 0 && (
                 <section className="task-process-history" aria-label="Assignment history">
@@ -5085,6 +5221,11 @@ function DeleteTaskDialog({
       </div>
     </Modal>
   );
+}
+
+function shortCommit(commit?: string): string {
+  if (!commit) return "—";
+  return commit.length > 12 ? `${commit.slice(0, 12)}…` : commit;
 }
 
 function SettingsDialog({

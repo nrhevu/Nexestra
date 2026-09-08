@@ -3601,3 +3601,119 @@ kbd {
     display: none;
   }
 }
+.task-process-git-review {
+  margin-top: 1rem;
+  border-top: 1px solid var(--border-color, rgba(127, 127, 127, 0.25));
+  padding-top: 0.75rem;
+}
+.git-review-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+.git-review-header h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+.git-review-header button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+}
+.git-review-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+.git-review-state {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0;
+  flex-wrap: wrap;
+}
+.review-state {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.12rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+}
+.review-state-available {
+  color: #1b873b;
+}
+.review-state-pending {
+  color: #8a6d00;
+}
+.review-state-missing,
+.review-state-cleaned {
+  color: #6b7280;
+}
+.review-state-legacy,
+.review-state-unavailable,
+.review-state-unsafe {
+  color: #b3261e;
+}
+.git-review-commits {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+}
+.git-review-row {
+  border: 1px solid var(--border-color, rgba(127, 127, 127, 0.25));
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.git-review-row > span:first-child {
+  font-weight: 600;
+}
+.git-review-row > small {
+  color: var(--muted-color, #9a9a9a);
+}
+.git-review-files {
+  width: 100%;
+  margin: 0.25rem 0 0;
+  padding-left: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.git-review-files li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.git-review-patch {
+  border: 1px solid var(--border-color, rgba(127, 127, 127, 0.25));
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+  max-width: 100%;
+}
+.git-review-patch summary {
+  cursor: pointer;
+}
+.git-review-patch pre {
+  max-height: 24rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0.5rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+.git-review-binary {
+  margin: 0.5rem 0 0;
+  font-size: 0.8rem;
+  color: var(--muted-color, #9a9a9a);
+}
