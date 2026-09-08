@@ -14,10 +14,12 @@ export function AttentionView({
   items,
   onThread,
   onTask,
+  onRun,
 }: {
   items: AttentionItem[];
   onThread: (id: string) => void;
   onTask: (id: string) => void;
+  onRun?: (threadId: string, runId: string) => void;
 }) {
   return (
     <div className="surface-view attention-view">
@@ -55,6 +57,15 @@ export function AttentionView({
                   aria-label={`Inspect task: ${item.title}`}
                 >
                   Inspect task <ArrowRight size={15} />
+                </button>
+              ) : item.threadId && item.runId && onRun ? (
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={() => onRun(item.threadId as string, item.runId as string)}
+                  aria-label={`Open run ${item.runId}: ${item.title}`}
+                >
+                  Open run <ArrowRight size={15} />
                 </button>
               ) : item.threadId ? (
                 <button
