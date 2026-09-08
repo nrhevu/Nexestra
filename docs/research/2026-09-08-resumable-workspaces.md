@@ -36,6 +36,28 @@ directly over HTTPS and read locally.
 The fourth item came from source inspection rather than competitor research. It is required to keep
 Nexestra's own serial-agent and canonical-transcript invariants true as Taskboard usage expands.
 
+## Integrated verification
+
+At integration commit `659533a`, `pnpm check` passed: lint, TypeScript, **218 tests in 16 files**, and
+both browser/server builds. Node 26 used the command-local `NODE_OPTIONS=--no-experimental-webstorage`
+compatibility flag for the jsdom test environment. No default test called a live provider.
+
+Browser checks used a disposable local store and fake Workers. They verified:
+
+- Manual delegation exposes live progress and Stop, rejects profile edits while a Worker is busy,
+  and retains interrupted run/tool history after Stop.
+- Renaming and reordering workspaces preserves the selected workspace and its active Worker.
+- Agent editing keeps credentials write-only; selecting then cancelling key removal retains the
+  saved credential while ordinary profile edits persist.
+- Drafts survive surface navigation, workspace switches, and reload. A successful send creates one
+  user note, clears only the sent draft, and does not resurrect that draft after reload.
+- A bare foreign thread URL selects its owning workspace. Switching workspaces on a surface,
+  returning to Threads, and reloading stays in the new workspace with its draft intact.
+
+Deterministic tests additionally cover storage denial, later edits during a pending send, delayed
+foreign-link responses, and Stop after the completed assignment becomes durable. Multi-file writes
+remain ordered writes rather than an atomic transaction, as documented in ADR 0028.
+
 ## Remaining candidates
 
 1. **Repository recovery and refresh:** recover a failed initial clone without deleting Knowledge,
