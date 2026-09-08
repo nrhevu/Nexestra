@@ -1540,7 +1540,10 @@ export class FileStore {
     uploads: UploadArtifactInput[],
   ): Promise<Message | undefined> {
     const receipt = this.submissionReceipts.get(receiptKey(threadId, requestIdHash));
-    if (!receipt) return undefined;
+    if (!receipt) {
+      await this.verifyTranscriptForSubmissionMiss(threadId);
+      return undefined;
+    }
     if (receipt.fingerprint !== fingerprint) {
       throw new StoreError(
         "conflict",
@@ -1551,6 +1554,59 @@ export class FileStore {
     await this.syncTranscriptDurability(threadId);
     await this.reconcileReplayMetadata(threadId);
     return message;
+  }
+
+  private async verifyTranscriptForSubmissionMiss(threadId: string): Promise<void> {
+    const index = this.historyIndexes.get(threadId);
+    let details: Awaited<ReturnType<typeof stat>> | undefined;
+    try {
+      details = await stat(this.transcriptPath(threadId), { bigint: true });
+    } catch (error) {
+      if (!isNodeError(error, "ENOENT")) {
+        throw new StoreError(
+          "conflict",
+          "The stored submission transcript is unavailable; restart Nexestra before retrying.",
+        );
+      }
+    }
+    if (!details) {
+      if (index === undefined) {
+        if (!this.state.threads.some((thread) => thread.id === threadId)) {
+          throw new StoreError("not_found", "Thread not found.");
+        }
+        return;
+      }
+      if (index.missing) return;
+      throw new StoreError(
+        "conflict",
+        "The stored submission transcript disappeared; restart Nexestra before retrying.",
+      );
+    }
+    if (index === undefined || index.missing) {
+      throw new StoreError(
+        "conflict",
+        "The stored submission transcript appeared outside the app; restart Nexestra before retrying.",
+      );
+    }
+    if (index.unreliable) {
+      throw new StoreError(
+        "conflict",
+        "The stored submission transcript is unreliable; restart Nexestra before retrying.",
+      );
+    }
+    if (index.identity) {
+      const outcome = await readTranscriptPageLines(
+        this.transcriptPath(threadId),
+        index.identity,
+        [],
+      );
+      if (outcome.status !== "ok") {
+        throw new StoreError(
+          "conflict",
+          "The stored submission transcript changed outside the app; restart Nexestra before retrying.",
+        );
+      }
+    }
   }
 
   private async syncTranscriptDurability(threadId: string): Promise<void> {
@@ -3989,7 +4045,15 @@ function upsertSubmissionReceipt(
 ): boolean {
   const key = receiptKey(threadId, envelope.requestIdHash);
   const existing = receipts.get(key);
-  if (existing && existing.fingerprint !== envelope.fingerprint) return false;
+  if (existing) {
+    const sameReceipt =
+      existing.fingerprint === envelope.fingerprint &&
+      existing.messageId === messageId &&
+      existing.sequence === sequence &&
+      existing.lineStart === lineStart &&
+      existing.lineEnd === lineEnd;
+    if (!sameReceipt) return false;
+  }
   receipts.set(key, {
     requestIdHash: envelope.requestIdHash,
     fingerprint: envelope.fingerprint,

@@ -1133,6 +1133,109 @@ describe("recoverable user submissions", () => {
     expect([...new Uint8Array(await readFile(restored))]).toEqual([...bytes]);
   });
 
+  it("refuses a new keyed message when the transcript receipt state is malformed", async () => {
+    const store = await openStore();
+    const thread = await needsThread(store);
+    await store.createUserMessage(thread.id, "first", []);
+    const lines = await transcriptLines(store, thread.id);
+    const first = JSON.parse(lines[0] ?? "{}") as Record<string, unknown>;
+    const malformed = {
+      ...first,
+      sequence: (first.sequence as number) + 1,
+      submission: { requestIdHash: "short" },
+    };
+    await appendFile(store.transcriptPath(thread.id), "\n" + JSON.stringify(malformed) + "\n");
+    const reopened = await FileStore.open({
+      root: store.root,
+      workspacePath: store.workspacePath,
+    });
+    const newRequest = crypto.randomUUID();
+    await expect(
+      reopened.createUserMessage(thread.id, "second keyed", [], [], [], newRequest),
+    ).rejects.toMatchObject({ code: "conflict" });
+    expect((await transcriptLines(reopened, thread.id)).length).toBe(2);
+  });
+
+  it("refuses a keyed delivery when restart finds a conflicting canonical receipt", async () => {
+    const store = await openStore();
+    const thread = await needsThread(store);
+    const requestId = crypto.randomUUID();
+    await store.createUserMessage(thread.id, "conflict receipt", [], [], [], requestId);
+    const lines = await transcriptLines(store, thread.id);
+    const line = lines.find((entry) => {
+      const parsed = JSON.parse(entry) as { type?: string };
+      return parsed.type === "message.created";
+    });
+    if (!line) throw new Error("expected message line");
+    const parsed = JSON.parse(line) as Record<string, unknown>;
+    const message = (parsed.message ?? {}) as Record<string, unknown>;
+    const duplicate = {
+      ...parsed,
+      sequence: (parsed.sequence as number) + 1,
+      message: {
+        ...message,
+        id: crypto.randomUUID(),
+        sequence: (parsed.sequence as number) + 1,
+      },
+    };
+    const serialized = JSON.stringify(duplicate);
+    expect(serialized).not.toBe(line);
+    await appendFile(
+      store.transcriptPath(thread.id),
+      String.fromCharCode(10) + serialized + String.fromCharCode(10),
+    );
+    const reopened = await FileStore.open({
+      root: store.root,
+      workspacePath: store.workspacePath,
+    });
+    await expect(
+      reopened.createUserMessage(thread.id, "conflict receipt", [], [], [], requestId),
+    ).rejects.toMatchObject({ code: "conflict" });
+    expect(reopened.getThread(thread.id)?.messageCount).toBe(2);
+  });
+
+  it("blocks a new keyed message after an external append until restart", async () => {
+    const store = await openStore();
+    const thread = await needsThread(store);
+    const first = await store.createUserMessage(thread.id, "cached", []);
+    const lines = await transcriptLines(store, thread.id);
+    const base = JSON.parse(lines[0] ?? "{}") as Record<string, unknown>;
+    const external = {
+      ...base,
+      sequence: (first.sequence as number) + 1,
+      message: {
+        ...((base as { message?: Record<string, unknown> }).message ?? {}),
+        id: crypto.randomUUID(),
+        sequence: (first.sequence as number) + 1,
+        content: "external appended",
+      },
+    };
+    await appendFile(store.transcriptPath(thread.id), JSON.stringify(external) + "\n");
+    const newRequest = crypto.randomUUID();
+    await expect(
+      store.createUserMessage(thread.id, "new keyed", [], [], [], newRequest),
+    ).rejects.toMatchObject({
+      code: "conflict",
+      message: expect.stringContaining("restart"),
+    });
+    expect(store.getThread(thread.id)?.messageCount).toBe(1);
+
+    const reopened = await FileStore.open({
+      root: store.root,
+      workspacePath: store.workspacePath,
+    });
+    const delivered = await reopened.createUserMessage(
+      thread.id,
+      "new keyed",
+      [],
+      [],
+      [],
+      newRequest,
+    );
+    expect(delivered.content).toBe("new keyed");
+    expect(reopened.getThread(thread.id)?.messageCount).toBe(3);
+  });
+
   it("rejects malformed request IDs before reading or writing", async () => {
     const store = await openStore();
     const thread = await needsThread(store);
