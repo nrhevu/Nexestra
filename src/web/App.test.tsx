@@ -11,6 +11,7 @@ import type {
   KnowledgeDocument,
   Thread,
   ThreadData,
+  ThreadHistoryPage,
   WorkspaceActivityData,
 } from "../shared/contracts.js";
 import { runAttentionItem } from "../shared/contracts.js";
@@ -105,8 +106,32 @@ function activityRun(thread: Thread, status: AgentRun["status"] = "running"): Ag
   };
 }
 
-function threadSnapshot(thread: Thread, runs: AgentRun[]): ThreadData {
-  return { thread, runs, messages: [], artifacts: [], toolCalls: [] };
+function historyUrl(thread: Pick<Thread, "id" | "workspaceId">, around?: string): string {
+  const query = new URLSearchParams({ workspaceId: thread.workspaceId, limit: "50" });
+  if (around) query.set("around", around);
+  return `/api/threads/${encodeURIComponent(thread.id)}/history?${query}`;
+}
+
+// These existing acceptance fixtures fit in one page. Pagination/race cases have separate fixtures.
+function historySnapshot(snapshot: ThreadData): ThreadHistoryPage {
+  return {
+    ...snapshot,
+    activeRuns: snapshot.runs.filter((run) =>
+      ["queued", "running", "waiting_approval", "waiting_input"].includes(run.status),
+    ),
+    page: {
+      totalMessages: snapshot.messages.length,
+      totalArtifacts: snapshot.artifacts.length,
+      firstMessageIndex: snapshot.messages.length ? 1 : 0,
+      lastMessageIndex: snapshot.messages.length,
+      beforeCursor: null,
+      afterCursor: null,
+    },
+  };
+}
+
+function threadSnapshot(thread: Thread, runs: AgentRun[]): ThreadHistoryPage {
+  return historySnapshot({ thread, runs, messages: [], artifacts: [], toolCalls: [] });
 }
 
 function installActivityTimers() {
@@ -227,15 +252,11 @@ describe("Activity-aware refresh", () => {
           activeRuns: [],
         });
       }
-      if (path === `/api/threads/${thread.id}`) {
+      if (path === historyUrl(thread)) {
         threadReads += 1;
-        return jsonResponse({
-          thread,
-          messages: [],
-          artifacts: [],
-          runs: [{ ...run, status: threadReads === 1 ? "running" : "completed" }],
-          toolCalls: [],
-        });
+        return jsonResponse(
+          threadSnapshot(thread, [{ ...run, status: threadReads === 1 ? "running" : "completed" }]),
+        );
       }
       return jsonResponse({ error: { message: "Not found" } }, 404);
     });
@@ -355,7 +376,8 @@ describe("Activity-aware refresh", () => {
             activeRuns: [run],
           });
         }
-        if (String(input) === `/api/threads/${thread.id}`) return jsonResponse(currentTranscript);
+        if (String(input) === historyUrl(thread))
+          return jsonResponse(historySnapshot(currentTranscript));
         return jsonResponse({ error: { message: "Not found" } }, 404);
       }),
     );
@@ -446,9 +468,9 @@ describe("Workspace attention supervision", () => {
           threads: [selected, background],
           activeRuns: [selectedRun, backgroundRun],
         });
-      if (path === `/api/threads/${selected.id}`)
+      if (path === historyUrl(selected))
         return jsonResponse(threadSnapshot(selected, [selectedRun]));
-      if (path === `/api/threads/${background.id}`)
+      if (path === historyUrl(background, waitingRun.triggerMessageId))
         return jsonResponse(threadSnapshot(background, [waitingRun]));
       if (path.startsWith("/api/activity"))
         return jsonResponse({
@@ -472,9 +494,7 @@ describe("Workspace attention supervision", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /Needs attention/ }));
     expect(await screen.findByText("Answer needed")).toBeVisible();
-    await userEvent.click(
-      screen.getByRole("button", { name: "Open thread: Planner in #research" }),
-    );
+    await userEvent.click(screen.getByRole("button", { name: "Open run: Planner in #research" }));
     await screen.findByRole("combobox", { name: "Message" });
     expect(window.location.pathname).toBe(`/threads/${background.id}`);
     expect(fetchMock.mock.calls.every(([, init]) => !init || !("method" in init))).toBe(true);
@@ -591,7 +611,7 @@ describe("Workspace attention supervision", () => {
               : { ...initial, activeRuns: [backgroundRun], attention: [taskAttention] },
           );
         }
-        if (path === `/api/threads/${selected.id}`) return jsonResponse(transcript);
+        if (path === historyUrl(selected)) return jsonResponse(historySnapshot(transcript));
         return jsonResponse({ error: { message: "Not found" } }, 404);
       }),
     );
@@ -746,7 +766,10 @@ describe("Workspace attention supervision", () => {
       await screen.findByRole("button", { name: "Switch to Product" });
       if (delayedKind === "thread") {
         await waitFor(() =>
-          expect(fetchMock).toHaveBeenCalledWith(`/api/threads/${oldThread.id}`, { headers: {} }),
+          expect(fetchMock).toHaveBeenCalledWith(historyUrl(oldThread), {
+            headers: {},
+            signal: expect.any(AbortSignal),
+          }),
         );
       } else {
         await timers.tick();
@@ -1118,25 +1141,26 @@ describe("Thread navigation", () => {
       name: "Second thread",
       slug: "second-thread",
     };
-    const transcript = (thread: typeof firstThread, content: string): ThreadData => ({
-      thread,
-      messages: [
-        {
-          id: `message-${thread.id}`,
-          threadId: thread.id,
-          sequence: 1,
-          author: { kind: "user", id: "local-user", name: "You" },
-          content,
-          mentions: [],
-          knowledgeReferences: [],
-          artifactIds: [],
-          createdAt: now,
-        },
-      ],
-      artifacts: [],
-      runs: [],
-      toolCalls: [],
-    });
+    const transcript = (thread: typeof firstThread, content: string): ThreadHistoryPage =>
+      historySnapshot({
+        thread,
+        messages: [
+          {
+            id: `message-${thread.id}`,
+            threadId: thread.id,
+            sequence: 1,
+            author: { kind: "user", id: "local-user", name: "You" },
+            content,
+            mentions: [],
+            knowledgeReferences: [],
+            artifactIds: [],
+            createdAt: now,
+          },
+        ],
+        artifacts: [],
+        runs: [],
+        toolCalls: [],
+      });
     let firstReads = 0;
     let resolveOlderReload: (response: Response) => void = () => undefined;
     let resolveSecond: (response: Response) => void = () => undefined;
@@ -1154,13 +1178,13 @@ describe("Thread navigation", () => {
       if (path === `/api/threads/${firstThread.id}/messages` && init?.method === "POST") {
         return jsonResponse({ message: {}, runs: [] }, 201);
       }
-      if (path === `/api/threads/${firstThread.id}`) {
+      if (path === historyUrl(firstThread)) {
         firstReads += 1;
         return firstReads === 1
           ? jsonResponse(transcript(firstThread, "First transcript"))
           : olderReload;
       }
-      if (path === `/api/threads/${secondThread.id}`) return secondLoad;
+      if (path === historyUrl(secondThread)) return secondLoad;
       return jsonResponse({ error: { message: "Not found" } }, 404);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -1203,10 +1227,10 @@ describe("Last thread per workspace", () => {
         if (path === "/api/bootstrap") {
           return jsonResponse({ ...bootstrapData, threads: [first, second] });
         }
-        if (path === `/api/threads/${first.id}`) {
+        if (path === historyUrl(first)) {
           return jsonResponse(threadSnapshot(first, []));
         }
-        if (path === `/api/threads/${second.id}`) {
+        if (path === historyUrl(second)) {
           return jsonResponse(threadSnapshot(second, []));
         }
         return jsonResponse({ error: { message: "Not found" } }, 404);
@@ -1245,7 +1269,7 @@ describe("Last thread per workspace", () => {
         if (path === "/api/bootstrap") {
           return jsonResponse({ ...bootstrapData, threads: [first, second] });
         }
-        if (path === `/api/threads/${second.id}`) {
+        if (path === historyUrl(second)) {
           return jsonResponse(threadSnapshot(second, []));
         }
         return jsonResponse({ error: { message: "Not found" } }, 404);
@@ -1272,7 +1296,7 @@ describe("Last thread per workspace", () => {
         if (path === "/api/bootstrap") {
           return jsonResponse({ ...bootstrapData, threads: [first, second] });
         }
-        if (path === `/api/threads/${second.id}`) {
+        if (path === historyUrl(second)) {
           return jsonResponse(threadSnapshot(second, []));
         }
         return jsonResponse({ error: { message: "Not found" } }, 404);
@@ -1311,7 +1335,11 @@ describe("Last thread per workspace", () => {
             threads: [deep],
           });
         }
-        if (path === `/api/threads/${deep.id}`) {
+        if (path === `/api/threads/${deep.id}/metadata`) {
+          deepReads += 1;
+          return jsonResponse(deep);
+        }
+        if (path === historyUrl(deep)) {
           deepReads += 1;
           return jsonResponse(threadSnapshot(deep, []));
         }
@@ -1358,8 +1386,10 @@ describe("Last thread per workspace", () => {
             threads: [deep],
           });
         }
-        if (path === `/api/threads/${local.id}`) return jsonResponse(threadSnapshot(local, []));
-        if (path === `/api/threads/${deep.id}`) return jsonResponse(threadSnapshot(deep, []));
+        if (path === `/api/threads/${local.id}/metadata`) return jsonResponse(local);
+        if (path === `/api/threads/${deep.id}/metadata`) return jsonResponse(deep);
+        if (path === historyUrl(local)) return jsonResponse(threadSnapshot(local, []));
+        if (path === historyUrl(deep)) return jsonResponse(threadSnapshot(deep, []));
         return jsonResponse({ error: { message: "Not found" } }, 404);
       }),
     );
@@ -1430,10 +1460,13 @@ describe("Last thread per workspace", () => {
             attention: [],
           });
         }
-        if (path === `/api/threads/${deep.id}`) {
+        if (path === `/api/threads/${deep.id}/metadata`) {
           lookups += 1;
-          // The lookup body is a one-shot stream; the transcript load needs a fresh response.
-          return lookups === 1 ? pending.promise : jsonResponse(threadSnapshot(deep, []));
+          return pending.promise;
+        }
+        if (path === historyUrl(deep)) {
+          lookups += 1;
+          return jsonResponse(threadSnapshot(deep, []));
         }
         return jsonResponse({ error: { message: "Not found" } }, 404);
       }),
@@ -1451,7 +1484,7 @@ describe("Last thread per workspace", () => {
     expect(lookups).toBe(1);
 
     await act(async () => {
-      pending.resolve(jsonResponse(threadSnapshot(deep, [])));
+      pending.resolve(jsonResponse(deep));
     });
     await act(async () => {});
     await screen.findByRole("heading", { name: "# notes" });
@@ -1491,9 +1524,9 @@ describe("Last thread per workspace", () => {
             threads: [analytics],
           });
         }
-        if (path === `/api/threads/${deep.id}`) return pending.promise;
-        if (path === `/api/threads/${local.id}`) return jsonResponse(threadSnapshot(local, []));
-        if (path === `/api/threads/${analytics.id}`) {
+        if (path === `/api/threads/${deep.id}/metadata`) return pending.promise;
+        if (path === historyUrl(local)) return jsonResponse(threadSnapshot(local, []));
+        if (path === historyUrl(analytics)) {
           return jsonResponse(threadSnapshot(analytics, []));
         }
         return jsonResponse({ error: { message: "Not found" } }, 404);
@@ -1507,7 +1540,7 @@ describe("Last thread per workspace", () => {
     expect(window.location.pathname).toBe(`/threads/${analytics.id}`);
 
     await act(async () => {
-      pending.resolve(jsonResponse(threadSnapshot(deep, [])));
+      pending.resolve(jsonResponse(deep));
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(window.location.pathname).toBe(`/threads/${analytics.id}`);
@@ -1547,7 +1580,7 @@ describe("Last thread per workspace", () => {
             threads: [product],
           });
         }
-        if (path === `/api/threads/${product.id}`) {
+        if (path === historyUrl(product)) {
           return jsonResponse(threadSnapshot(product, []));
         }
         return jsonResponse({ error: { message: "Not found" } }, 404);
@@ -1610,11 +1643,11 @@ describe("Workspace switch during send", () => {
       if (path === `/api/threads/${first.id}/messages` && init?.method === "POST") {
         return pending.promise;
       }
-      if (path === `/api/threads/${first.id}`) {
+      if (path === historyUrl(first)) {
         oldThreadReads += 1;
         return jsonResponse(threadSnapshot(first, []));
       }
-      if (path === `/api/threads/${second.id}`) {
+      if (path === historyUrl(second)) {
         return jsonResponse(threadSnapshot(second, []));
       }
       return jsonResponse({ error: { message: "Not found" } }, 404);
@@ -2040,8 +2073,8 @@ describe("Knowledge surface", () => {
         if (path === "/api/bootstrap") {
           return jsonResponse({ ...bootstrapData, threads: [thread], knowledge: [repository] });
         }
-        if (path === `/api/threads/${thread.id}`) {
-          return jsonResponse({ thread, messages: [], artifacts: [], runs: [], toolCalls: [] });
+        if (path === historyUrl(thread)) {
+          return jsonResponse(threadSnapshot(thread, []));
         }
         return jsonResponse({ error: { message: "Not found" } }, 404);
       }),
@@ -2708,7 +2741,7 @@ describe("Master harness", () => {
       if (path === "/api/bootstrap") {
         return jsonResponse({ ...bootstrapData, agents: [masterAgent], threads: [thread] });
       }
-      if (path === `/api/threads/${thread.id}`) return jsonResponse(transcript);
+      if (path === historyUrl(thread)) return jsonResponse(historySnapshot(transcript));
       if (path === "/api/tool-calls/tool-tools/approve" && init?.method === "POST") {
         return new Response(null, { status: 204 });
       }
@@ -2922,7 +2955,7 @@ describe("Agent deletion", () => {
         if (path === "/api/bootstrap") {
           return jsonResponse({ ...bootstrapData, threads: [thread] });
         }
-        if (path === `/api/threads/${thread.id}`) return jsonResponse(transcript);
+        if (path === historyUrl(thread)) return jsonResponse(historySnapshot(transcript));
         return jsonResponse({ error: { message: "Not found" } }, 404);
       }),
     );
@@ -2965,8 +2998,8 @@ describe("Agent deletion", () => {
       if (path === "/api/bootstrap") {
         return jsonResponse({ ...bootstrapData, threads: [thread] });
       }
-      if (path === `/api/threads/${thread.id}` && !init?.method) {
-        return jsonResponse(emptyTranscript);
+      if (path === historyUrl(thread) && !init?.method) {
+        return jsonResponse(historySnapshot(emptyTranscript));
       }
       if (path === `/api/threads/${thread.id}/messages` && init?.method === "POST") {
         return jsonResponse({ message: {}, runs: [] }, 201);
@@ -3022,7 +3055,7 @@ describe("Thread composer", () => {
         if (path === "/api/bootstrap") {
           return jsonResponse({ ...bootstrapData, agents: [workerAgent], threads: [thread] });
         }
-        if (path === `/api/threads/${thread.id}`) return jsonResponse(transcript);
+        if (path === historyUrl(thread)) return jsonResponse(historySnapshot(transcript));
         return jsonResponse({ error: { message: "Not found" } }, 404);
       }),
     );
@@ -3123,8 +3156,8 @@ describe("Thread composer", () => {
         if (path === "/api/bootstrap") {
           return jsonResponse({ ...bootstrapData, threads: [first, second] });
         }
-        if (path === `/api/threads/${first.id}`) return jsonResponse(transcriptOf(first));
-        if (path === `/api/threads/${second.id}`) return jsonResponse(transcriptOf(second));
+        if (path === historyUrl(first)) return jsonResponse(transcriptOf(first));
+        if (path === historyUrl(second)) return jsonResponse(transcriptOf(second));
         return jsonResponse({ error: { message: "Not found" } }, 404);
       }),
     );
@@ -3181,7 +3214,7 @@ describe("Thread composer", () => {
           threads: [sharedInProduct],
         });
       }
-      if (path === `/api/threads/${shared.id}`) {
+      if (path === historyUrl(activeThread)) {
         return jsonResponse(threadSnapshot(activeThread, []));
       }
       return jsonResponse({ error: { message: "Not found" } }, 404);
@@ -3227,7 +3260,7 @@ describe("Thread composer", () => {
         if (path === "/api/bootstrap") {
           return jsonResponse({ ...bootstrapData, threads: [thread] });
         }
-        if (path === `/api/threads/${thread.id}`) return jsonResponse(threadSnapshot(thread, []));
+        if (path === historyUrl(thread)) return jsonResponse(threadSnapshot(thread, []));
         return jsonResponse({ error: { message: "Not found" } }, 404);
       }),
     );
@@ -3255,7 +3288,7 @@ describe("Thread composer", () => {
         if (path === "/api/bootstrap") {
           return jsonResponse({ ...bootstrapData, threads: [thread] });
         }
-        if (path === `/api/threads/${thread.id}`) return jsonResponse(threadSnapshot(thread, []));
+        if (path === historyUrl(thread)) return jsonResponse(threadSnapshot(thread, []));
         return jsonResponse({ error: { message: "Not found" } }, 404);
       }),
     );
@@ -3281,7 +3314,7 @@ describe("Thread composer", () => {
         if (path === `/api/threads/${thread.id}/messages` && init?.method === "POST") {
           return jsonResponse({ error: { message: "Unavailable" } }, 503);
         }
-        if (path === `/api/threads/${thread.id}`) return jsonResponse(threadSnapshot(thread, []));
+        if (path === historyUrl(thread)) return jsonResponse(threadSnapshot(thread, []));
         return jsonResponse({ error: { message: "Not found" } }, 404);
       }),
     );
@@ -3312,7 +3345,7 @@ describe("Thread composer", () => {
       if (path === `/api/threads/${thread.id}/messages` && init?.method === "POST") {
         return jsonResponse({ message: {}, runs: [] }, 201);
       }
-      if (path === `/api/threads/${thread.id}`) return jsonResponse(threadSnapshot(thread, []));
+      if (path === historyUrl(thread)) return jsonResponse(threadSnapshot(thread, []));
       return jsonResponse({ error: { message: "Not found" } }, 404);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -3331,7 +3364,7 @@ describe("Thread composer", () => {
         if (String(input).startsWith("/api/bootstrap")) {
           return jsonResponse({ ...bootstrapData, threads: [thread] });
         }
-        if (String(input) === `/api/threads/${thread.id}`) {
+        if (String(input) === historyUrl(thread)) {
           return jsonResponse(threadSnapshot(thread, []));
         }
         return jsonResponse({ error: { message: "Not found" } }, 404);
@@ -3358,7 +3391,7 @@ describe("Thread composer", () => {
         if (path === `/api/threads/${thread.id}/messages` && init?.method === "POST") {
           return pending.promise;
         }
-        if (path === `/api/threads/${thread.id}`) return jsonResponse(threadSnapshot(thread, []));
+        if (path === historyUrl(thread)) return jsonResponse(threadSnapshot(thread, []));
         return jsonResponse({ error: { message: "Not found" } }, 404);
       }),
     );
@@ -3395,7 +3428,7 @@ describe("Thread composer", () => {
         posted.push(JSON.parse(String(init?.body)));
         return pending.promise;
       }
-      if (path === `/api/threads/${thread.id}`) {
+      if (path === historyUrl(thread)) {
         threadReads += 1;
         return jsonResponse(threadSnapshot(thread, []));
       }
@@ -3449,8 +3482,8 @@ describe("Thread artifacts", () => {
       if (path === "/api/bootstrap") {
         return jsonResponse({ ...bootstrapData, threads: [thread] });
       }
-      if (path === `/api/threads/${thread.id}` && !init?.method) {
-        return jsonResponse(transcript);
+      if (path === historyUrl(thread) && !init?.method) {
+        return jsonResponse(historySnapshot(transcript));
       }
       if (path === `/api/threads/${thread.id}/messages` && init?.method === "POST") {
         return jsonResponse({ message: {}, runs: [] }, 201);
@@ -3553,6 +3586,7 @@ describe("Thread artifacts", () => {
         if (path === "/api/bootstrap") {
           return jsonResponse({ ...bootstrapData, threads: [thread] });
         }
+        if (path === historyUrl(thread)) return jsonResponse(historySnapshot(transcript));
         if (path === `/api/threads/${thread.id}`) return jsonResponse(transcript);
         return jsonResponse({ error: { message: "Not found" } }, 404);
       }),
@@ -3560,7 +3594,7 @@ describe("Thread artifacts", () => {
     render(<App />);
 
     await user.click(await screen.findByRole("button", { name: /Files & links/ }));
-    expect(screen.getByAltText("diagram.png")).toBeInTheDocument();
+    expect(await screen.findByAltText("diagram.png")).toBeInTheDocument();
     expect(screen.getByText("brief.md")).toBeInTheDocument();
     expect(screen.getByText("https://example.com/spec")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Links" }));
@@ -3586,10 +3620,10 @@ describe("Thread archive lifecycle", () => {
         if (path === "/api/bootstrap") {
           return jsonResponse({ ...bootstrapData, threads: [active, archived] });
         }
-        if (path === "/api/threads/thread-active") {
+        if (path === historyUrl(active)) {
           return jsonResponse(threadSnapshot(active, []));
         }
-        if (path === "/api/threads/thread-archived") {
+        if (path === historyUrl(archived)) {
           return jsonResponse(threadSnapshot(archived, []));
         }
         return jsonResponse({ error: { message: "Not found" } }, 404);
@@ -3662,8 +3696,8 @@ describe("Thread archive lifecycle", () => {
         });
       }
       if (path === `/api/threads/${local.id}/archive`) return pendingArchive.promise;
-      if (path === `/api/threads/${local.id}`) return jsonResponse(threadSnapshot(local, []));
-      if (path === `/api/threads/${product.id}`) {
+      if (path === historyUrl(local)) return jsonResponse(threadSnapshot(local, []));
+      if (path === historyUrl(product)) {
         return jsonResponse(threadSnapshot(product, []));
       }
       return jsonResponse({ error: { message: "Not found" } }, 404);
