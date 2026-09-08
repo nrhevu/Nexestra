@@ -53,6 +53,9 @@ not features promised by the cited tools.
   existing assignments, including staged, unstaged and untracked files, remain unchanged.
 - Keep credentials out of branch-list results, saved metadata and error messages. Use the existing
   process environment allowlist, closed stdin, noninteractive Git and bounded output/time.
+  The shared HTTP error boundary also redacts stored credentials from validation, store and
+  unexpected error messages; unexpected errors are logged as redacted text instead of raw Error
+  objects with potentially sensitive stack or cause fields.
 - Cover loading, empty, partial, manual-entry, failure and stale states in the UI. Cancel or ignore
   old requests when the repository or workspace changes. Verify keyboard and light/dark themes.
 

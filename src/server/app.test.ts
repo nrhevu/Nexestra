@@ -4,11 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import type { Agent, RuntimeStatus } from "../shared/contracts.js";
 import { createApp } from "./app.js";
 import type { AssignmentRepositoryManager } from "./repository-manager.js";
 import type { AgentInvocation, AgentRunner } from "./runtime.js";
-import { FileStore, PREVIEW_BUDGET_BYTES } from "./store.js";
+import { FileStore, PREVIEW_BUDGET_BYTES, StoreError } from "./store.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -1442,6 +1443,57 @@ describe("HTTP message search", () => {
     });
     expect(matches[0]).not.toHaveProperty("content");
     expect(runner.invocations).toBe(0);
+  });
+
+  it.each([
+    { kind: "internal", status: 500, code: "internal_error" },
+    { kind: "store", status: 409, code: "conflict" },
+    { kind: "validation", status: 400, code: "invalid_request" },
+  ])("redacts stored credentials from $kind HTTP errors and logs", async (scenario) => {
+    const secret = "fixture-http-boundary-secret";
+    await store.createAgent({
+      kind: "master",
+      name: "Error Gateway",
+      handle: "error-gateway",
+      provider: {
+        type: "custom",
+        name: "Error Gateway",
+        baseUrl: "https://gateway.example/v1",
+        model: "model-a",
+        protocol: "openai-chat",
+        apiKey: secret,
+      },
+    });
+    const message = `Could not use source ${secret}.`;
+    const error =
+      scenario.kind === "validation"
+        ? z
+            .string()
+            .refine(() => false, { message })
+            .safeParse("fixture").error
+        : scenario.kind === "store"
+          ? new StoreError("conflict", message)
+          : new Error(message, { cause: { credential: secret } });
+    const getKnowledge = vi.spyOn(store, "getKnowledge").mockImplementation(() => {
+      throw error;
+    });
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const response = await app.request("/api/knowledge/error-fixture");
+      expect(response.status).toBe(scenario.status);
+      expect(await response.json()).toEqual({
+        error: { code: scenario.code, message: "Could not use source [REDACTED]." },
+      });
+      for (const value of log.mock.calls.flat()) {
+        expect(typeof value).toBe("string");
+        expect(value).not.toContain(secret);
+      }
+      if (scenario.kind === "internal") expect(log).toHaveBeenCalled();
+      expect(runner.invocations).toBe(0);
+    } finally {
+      getKnowledge.mockRestore();
+      log.mockRestore();
+    }
   });
 
   it("redacts stored credentials from query echo over HTTP", async () => {

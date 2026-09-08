@@ -571,7 +571,7 @@ export function createApp(options: CreateAppOptions) {
         {
           error: {
             code: "invalid_request",
-            message: error.issues[0]?.message ?? "Invalid data.",
+            message: options.store.redactSecrets(error.issues[0]?.message ?? "Invalid data."),
           },
         },
         400,
@@ -579,13 +579,15 @@ export function createApp(options: CreateAppOptions) {
     }
     if (error instanceof StoreError) {
       const status = error.code === "not_found" ? 404 : error.code === "conflict" ? 409 : 400;
-      return context.json({ error: { code: error.code, message: error.message } }, status);
+      return context.json(
+        { error: { code: error.code, message: options.store.redactSecrets(error.message) } },
+        status,
+      );
     }
-    console.error(error);
-    return context.json(
-      { error: { code: "internal_error", message: error.message || "Server error." } },
-      500,
-    );
+    const message = options.store.redactSecrets(error.message || "Server error.");
+    // Log only redacted text: Error objects can expose secrets through stack or cause fields.
+    console.error(options.store.redactSecrets(error.stack ?? message));
+    return context.json({ error: { code: "internal_error", message } }, 500);
   });
 
   if (options.productionAssets) {
