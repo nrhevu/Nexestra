@@ -417,13 +417,13 @@ kbd {
   width: 3px;
   height: 25px;
   border-radius: 0 3px 3px 0;
-  background: #fff;
+  background: var(--accent);
   content: "";
 }
 .workspace-add {
   margin-top: 2px;
   border-style: dashed;
-  color: #cdbcd0;
+  color: var(--sidebar-text);
 }
 
 .sidebar {
@@ -505,13 +505,13 @@ kbd {
   height: 32px;
   margin: 11px 10px 15px;
   padding: 0 10px;
-  border: 1px solid rgba(255, 255, 255, 0.13);
+  border: 1px solid var(--sidebar-border);
   border-radius: 6px;
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #bbaabd;
-  background: rgba(0, 0, 0, 0.12);
+  color: var(--sidebar-text);
+  background: var(--primary-nav-bg);
   font-size: 11px;
 }
 .section-label {
@@ -523,7 +523,7 @@ kbd {
   font-size: 12px;
   font-weight: 750;
   letter-spacing: 0.02em;
-  color: #eee4ef;
+  color: var(--sidebar-text);
 }
 .section-label button {
   margin-left: auto;
@@ -535,7 +535,7 @@ kbd {
 }
 .count {
   margin-left: auto;
-  color: #b9a8bb;
+  color: var(--muted);
   font-size: 11px;
 }
 .sidebar-list {
@@ -548,7 +548,7 @@ kbd {
   border-radius: 6px;
   padding: 0 11px;
   background: transparent;
-  color: #c9b9cb;
+  color: var(--sidebar-text);
   display: flex;
   align-items: center;
   gap: 9px;
@@ -557,12 +557,16 @@ kbd {
   cursor: pointer;
 }
 .sidebar-row:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
+  background: var(--theme-toggle-bg);
+  color: var(--text);
 }
 .sidebar-row.selected {
-  background: #6a2c70;
-  color: #fff;
+  background: var(--active-nav-bg);
+  color: var(--text);
+}
+.sidebar-row.selected .count {
+  color: inherit;
+  opacity: 0.8;
 }
 .row-label {
   min-width: 0;
@@ -584,7 +588,7 @@ kbd {
 }
 .sidebar-rule {
   height: 1px;
-  background: rgba(255, 255, 255, 0.09);
+  background: var(--sidebar-border);
   margin: 16px 14px;
 }
 .presence-row {
@@ -596,11 +600,11 @@ kbd {
   display: flex;
   align-items: center;
   gap: 10px;
-  color: #cbbdcd;
+  color: var(--sidebar-text);
   font-size: 12px;
 }
 .presence-row:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--theme-toggle-bg);
 }
 .presence-row i {
   width: 7px;
@@ -625,12 +629,12 @@ kbd {
   padding: 0;
   border: 0;
   background: transparent;
-  color: #c29bd0;
+  color: var(--accent);
   font-size: 11px;
 }
 .sidebar-kicker {
   margin: 17px 19px 8px;
-  color: #a994ab;
+  color: var(--muted);
   font-size: 10px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
