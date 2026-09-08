@@ -30,8 +30,8 @@ previous revision bytes untouched.
 
 New user messages are pinned at persistence: every Knowledge reference is resolved to the current
 document revision, and a legacy document is captured lazily at that moment by copying its existing
-  root `document` bytes into its first immutable revision, timestamped at capture time while the
-  item’s original `createdAt` stays unchanged. The legacy capture metadata is
+root `document` bytes into its first immutable revision, timestamped at capture time while the
+item’s original `createdAt` stays unchanged. The legacy capture metadata is
 published to state before the first transcript event that references it, so a delayed invocation or
 a restart after a failed message write still sees the pinned revision. Old messages are never
 rewritten. If a legacy item was never pinned before the first replacement, replacement performs the
@@ -74,8 +74,9 @@ rewriting history.
 - History is stored as full copies of each upload, not deltas, and is bounded only by explicit
   user deletion and the configured upload caps.
 - Revision metadata (`createdAt`, file name, media type, size, sha256, optional
-  `restoredFromId`) can drift if local on-disk bytes are modified, but downloads verify sha256 and
-  return `invalid` rather than serving corrupted bytes.
+  `restoredFromId`) can drift if local on-disk bytes are modified, but both current-version and
+  historical-version downloads verify sha256 and return `invalid` for corrupted revisions.
+  Legacy documents without captured history have no stored checksum to verify yet.
 
 ## Validation
 
@@ -84,8 +85,11 @@ durable legacy capture when a message state write fails after the transcript app
 restore provenance, stale/foreign/missing revision rejection, and replacement rollback on state-write
 failure with unchanged in-memory and on-disk current bytes. Dispatcher tests prove that a queued
 invocation and a retried failed run keep the message’s pinned revision after a replacement. HTTP
-tests cover replace, revision list/download, restore, stale conflicts, and pre-buffering upload
-rejection. App tests cover the replace/restore UI, error states, and pending guards.
+tests cover replace, revision list/download, restore, stale conflicts, pre-buffering upload
+rejection, and corrupted revision rejection through both download routes. An integration test
+proves that a rejected message on an archived thread cannot capture legacy document bytes or change
+state, transcripts, or artifact directories; restoring the thread allows the same reference to be
+pinned. App tests cover the replace/restore UI, error states, and pending guards.
 
 ## Status
 

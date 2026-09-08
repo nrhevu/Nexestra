@@ -201,6 +201,11 @@ describe("Knowledge document revisions", () => {
     expect(
       within(details).getByRole("button", { name: "Current architecture-v2.md" }),
     ).toBeDisabled();
+    const history = within(details).getByRole("region", {
+      name: "Version history list",
+    });
+    expect(within(history).getByRole("button", { name: "Restore architecture.md" })).toBeVisible();
+    expect(within(history).queryByLabelText("Replacement file")).not.toBeInTheDocument();
     expect(
       fetchMock.mock.calls.filter(
         ([input]) => String(input) === `/api/knowledge/${doc.id}/revisions`,

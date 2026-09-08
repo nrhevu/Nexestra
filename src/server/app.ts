@@ -217,7 +217,9 @@ export function createApp(options: CreateAppOptions) {
     if (item?.kind !== "document") {
       throw new StoreError("not_found", "Knowledge document not found.");
     }
-    const bytes = await readFile(options.store.knowledgePath(item));
+    const bytes = item.currentRevisionId
+      ? (await options.store.documentRevisionContent(item.id, item.currentRevisionId)).bytes
+      : await readFile(options.store.knowledgePath(item));
     return new Response(new Uint8Array(bytes), {
       headers: {
         "cache-control": "private, no-store",

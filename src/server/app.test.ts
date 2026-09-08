@@ -460,6 +460,29 @@ describe("HTTP app", () => {
     );
   });
 
+  it("refuses corrupted document bytes through both current and revision downloads", async () => {
+    const item = await store.createKnowledgeDocument(
+      { name: "Release guide", handle: "release-guide", description: "" },
+      {
+        name: "release.md",
+        mediaType: "text/markdown",
+        bytes: new TextEncoder().encode("Release on Friday."),
+      },
+    );
+    await writeFile(store.knowledgePath(item), "Unexpected local changes.");
+
+    for (const path of [
+      `/api/knowledge/${item.id}/content`,
+      `/api/knowledge/${item.id}/revisions/${item.currentRevisionId}/content`,
+    ]) {
+      const response = await app.request(path);
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: "invalid", message: "Document revision content is corrupted." },
+      });
+    }
+  });
+
   it("rejects replacement uploads with too many files before buffering", async () => {
     const createForm = new FormData();
     createForm.append("name", "Notes");

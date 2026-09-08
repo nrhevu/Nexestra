@@ -3203,12 +3203,18 @@ kbd {
   line-height: 1.45;
 }
 .revision-panel {
-  min-height: 0;
-  max-height: 300px;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+.revision-list {
+  min-height: 0;
+  max-height: 280px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overscroll-behavior: contain;
 }
 .revision-row {
   display: grid;

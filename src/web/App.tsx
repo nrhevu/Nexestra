@@ -4298,7 +4298,7 @@ function RenameThreadDialog({
           }
         }}
       >
-        <Field label="Thread name" hint="Rename keeps the thread ID and transcript path">
+        <Field label="Thread name" hint="Your messages, files, and links stay available.">
           <input
             value={name}
             onChange={(event) => setName(event.target.value)}
@@ -5073,49 +5073,51 @@ function KnowledgeDetailDialog({
                   records the current file as its first version.
                 </p>
               )}
-              {revisions?.revisions.map((revision) => {
-                const current = revision.id === revisions.currentRevisionId;
-                return (
-                  <div className="revision-row" key={revision.id}>
-                    <History size={15} />
-                    <div className="revision-meta">
-                      <strong>{revision.fileName}</strong>
-                      <small>
-                        {formatDateTime(revision.createdAt)} · {formatBytes(revision.size)}
-                      </small>
-                      {revision.restoredFromId && <small>Restored from a prior version</small>}
+              <section className="revision-list" aria-label="Version history list">
+                {revisions?.revisions.map((revision) => {
+                  const current = revision.id === revisions.currentRevisionId;
+                  return (
+                    <div className="revision-row" key={revision.id}>
+                      <History size={15} />
+                      <div className="revision-meta">
+                        <strong>{revision.fileName}</strong>
+                        <small>
+                          {formatDateTime(revision.createdAt)} · {formatBytes(revision.size)}
+                        </small>
+                        {revision.restoredFromId && <small>Restored from a prior version</small>}
+                      </div>
+                      <a
+                        href={`/api/knowledge/${encodeURIComponent(item.id)}/revisions/${encodeURIComponent(revision.id)}/content`}
+                        download
+                        aria-label={`Download ${revision.fileName}`}
+                      >
+                        <Download size={14} />
+                      </a>
+                      <button
+                        type="button"
+                        disabled={current || replacing || restoringRevisionId !== undefined}
+                        aria-label={
+                          current ? `Current ${revision.fileName}` : `Restore ${revision.fileName}`
+                        }
+                        onClick={() => restoreRevision(revision.id)}
+                      >
+                        {restoringRevisionId === revision.id ? (
+                          <LoaderCircle className="spin" size={14} />
+                        ) : current ? (
+                          <Check size={14} />
+                        ) : (
+                          <RotateCcw size={14} />
+                        )}
+                        {current
+                          ? "Current"
+                          : restoringRevisionId === revision.id
+                            ? "Restoring…"
+                            : "Restore"}
+                      </button>
                     </div>
-                    <a
-                      href={`/api/knowledge/${encodeURIComponent(item.id)}/revisions/${encodeURIComponent(revision.id)}/content`}
-                      download
-                      aria-label={`Download ${revision.fileName}`}
-                    >
-                      <Download size={14} />
-                    </a>
-                    <button
-                      type="button"
-                      disabled={current || replacing || restoringRevisionId !== undefined}
-                      aria-label={
-                        current ? `Current ${revision.fileName}` : `Restore ${revision.fileName}`
-                      }
-                      onClick={() => restoreRevision(revision.id)}
-                    >
-                      {restoringRevisionId === revision.id ? (
-                        <LoaderCircle className="spin" size={14} />
-                      ) : current ? (
-                        <Check size={14} />
-                      ) : (
-                        <RotateCcw size={14} />
-                      )}
-                      {current
-                        ? "Current"
-                        : restoringRevisionId === revision.id
-                          ? "Restoring…"
-                          : "Restore"}
-                    </button>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </section>
               {restoreError && (
                 <p className="form-error">
                   <CircleAlert size={14} />
