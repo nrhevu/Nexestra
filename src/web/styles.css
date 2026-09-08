@@ -2897,7 +2897,7 @@ kbd {
   min-height: 67px;
   padding: 15px 18px;
   border-bottom: 1px solid var(--border-soft);
-  background: rgba(30, 32, 38, 0.96);
+  background: var(--modal-bg);
   display: flex;
   align-items: center;
   justify-content: space-between;

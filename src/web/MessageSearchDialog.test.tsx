@@ -3,13 +3,10 @@
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Thread } from "../shared/contracts.js";
-import {
-  MessageSearchDialog,
-  type MessageSearchHit,
-  type MessageSearchResponse,
-} from "./MessageSearchDialog.js";
+import type { MessageSearchHit, MessageSearchResponse, Thread } from "../shared/contracts.js";
+import { MessageSearchDialog } from "./MessageSearchDialog.js";
 
 const now = "2026-09-09T00:00:00.000Z";
 
@@ -60,6 +57,19 @@ function searchResponse(overrides: Partial<MessageSearchResponse> = {}): Message
     matchesFound: 0,
     complete: true,
     nextOffset: null,
+    diagnostics: {
+      threadsScanned: 0,
+      linesRead: 0,
+      bytesRead: 0,
+      messageEventsSeen: 0,
+      malformedLines: 0,
+      tornTailLines: 0,
+      oversizedLines: 0,
+      missingFiles: 0,
+      unreadableFiles: 0,
+      scanLimited: false,
+      scanLimit: null,
+    },
     ...overrides,
   };
 }
@@ -86,6 +96,46 @@ afterEach(() => {
 });
 
 describe("MessageSearchDialog", () => {
+  it("finishes an initial search under the application's StrictMode lifecycle", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(searchResponse({ matches: [hit()], matchesFound: 1 })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <StrictMode>
+        <MessageSearchDialog
+          workspaceId="ws-1"
+          threads={[]}
+          initialQuery="wire"
+          onClose={vi.fn()}
+          onOpenMessage={vi.fn()}
+        />
+      </StrictMode>,
+    );
+    expect(await screen.findByRole("button", { name: /Old log/ })).toBeVisible();
+    expect(screen.queryByText("Searching messages…")).not.toBeInTheDocument();
+  });
+
+  it("reports when a complete scan has more matches than can be retrieved", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(searchResponse({ matches: [hit()], matchesFound: 10_151 }))),
+    );
+    render(
+      <MessageSearchDialog
+        workspaceId="ws-1"
+        threads={[]}
+        initialQuery="wire"
+        onClose={vi.fn()}
+        onOpenMessage={vi.fn()}
+      />,
+    );
+    expect(
+      await screen.findByText("Showing 1 of 10151 matches. Try a more specific search."),
+    ).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+  });
+
   it("is an accessible modal that focuses the query and closes on Escape", async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();

@@ -1,6 +1,12 @@
 import { LoaderCircle, Search, X } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import type { Thread } from "../shared/contracts.js";
+import type {
+  MessageSearchArchivedFilter,
+  MessageSearchAuthor,
+  MessageSearchHit,
+  MessageSearchResponse,
+  Thread,
+} from "../shared/contracts.js";
 import { api } from "./api.js";
 import "./MessageSearchDialog.css";
 
@@ -10,43 +16,6 @@ export interface MessageSearchDialogProps {
   initialQuery?: string;
   onClose: () => void;
   onOpenMessage: (threadId: string, messageId: string) => void;
-}
-
-export type MessageSearchArchivedFilter = "all" | "active" | "archived";
-
-interface MessageSearchAuthor {
-  kind: "user" | "agent" | "system";
-  id: string;
-  name: string;
-  handle?: string;
-}
-
-export interface MessageSearchHit {
-  messageId: string;
-  sequence: number;
-  thread: {
-    id: string;
-    name: string;
-    slug: string;
-    archived: boolean;
-  };
-  author: MessageSearchAuthor;
-  createdAt: string;
-  snippet: string;
-}
-
-export interface MessageSearchResponse {
-  query: {
-    term: string;
-    workspaceId: string;
-    threadId: string | null;
-    archived: MessageSearchArchivedFilter;
-  };
-  matches: MessageSearchHit[];
-  matchesFound: number;
-  complete: boolean;
-  nextOffset: number | null;
-  diagnostics?: unknown;
 }
 
 interface SearchSnapshot {
@@ -66,7 +35,7 @@ type SearchPhase = "idle" | "loading" | "ready" | "error";
 const PAGE_SIZE = 50;
 
 function authorName(author: MessageSearchAuthor): string {
-  return author.handle ? `${author.name} (${author.handle})` : author.name;
+  return author.kind === "agent" ? `${author.name} (${author.handle})` : author.name;
 }
 
 function formatTime(value: string): string {
@@ -257,6 +226,7 @@ export function MessageSearchDialog({
 
   useEffect(
     () => () => {
+      didAutoSearchRef.current = false;
       requestRef.current += 1;
       controllerRef.current?.abort();
     },
@@ -408,6 +378,12 @@ export function MessageSearchDialog({
           {partial && (
             <p className="message-search-partial">
               Results may be incomplete. Try narrowing the search to a thread.
+            </p>
+          )}
+
+          {meta?.complete && meta.nextOffset === null && results.length < meta.matchesFound && (
+            <p className="message-search-partial">
+              Showing {results.length} of {meta.matchesFound} matches. Try a more specific search.
             </p>
           )}
 
