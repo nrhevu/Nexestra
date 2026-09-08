@@ -3020,6 +3020,9 @@ describe("Agent deletion", () => {
       );
       expect(JSON.parse(String(request?.[1]?.body))).toEqual({
         content: "Keep a note for @former-planner",
+        requestId: expect.stringMatching(
+          /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/,
+        ),
       });
     });
     expect(screen.queryByText("Unknown @former-planner.")).not.toBeInTheDocument();
@@ -3447,7 +3450,14 @@ describe("Thread composer", () => {
       pending.resolve(jsonResponse({ message: {}, runs: [] }, 201));
     });
     await waitFor(() => expect(threadReads).toBe(2));
-    expect(posted).toEqual([{ content: "First revision" }]);
+    expect(posted).toEqual([
+      {
+        content: "First revision",
+        requestId: expect.stringMatching(
+          /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/,
+        ),
+      },
+    ]);
     expect(composer).toHaveValue("First revision Second");
     expect(window.localStorage.getItem(`nexestra.draft.${workspace.id}:${thread.id}`)).toBe(
       "First revision Second",
