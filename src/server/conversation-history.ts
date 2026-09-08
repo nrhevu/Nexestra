@@ -36,7 +36,8 @@ export interface TranscriptFileIdentity {
   device: bigint;
   ino: bigint;
   size: number;
-  mtimeMs: number;
+  mtimeNs: bigint;
+  ctimeNs: bigint;
 }
 
 export interface TranscriptHistoryIndex {
@@ -272,6 +273,8 @@ export async function scanTranscriptHistoryFile(
         if (text === null) {
           outcome.invalidUtf8Lines += 1;
           callbacks.onLineStatus?.("invalid_utf8");
+        } else if (text.trim().length === 0) {
+          // Match readEvents: blank/whitespace lines are ignored, not corruption.
         } else {
           try {
             const parsedResult = callbacks.onLine(text, lineStart, lineEnd);
@@ -462,14 +465,21 @@ export async function readTranscriptPageLines(
 }
 
 function identitiesMatch(
-  stat: { dev: bigint; ino: bigint; size: bigint | number; mtimeMs: bigint | number },
+  stat: {
+    dev: bigint;
+    ino: bigint;
+    size: bigint | number;
+    mtimeNs: bigint;
+    ctimeNs: bigint;
+  },
   expected: TranscriptFileIdentity,
 ): boolean {
   return (
     stat.dev === expected.device &&
     stat.ino === expected.ino &&
     Number(stat.size) === expected.size &&
-    Number(stat.mtimeMs) === expected.mtimeMs
+    stat.mtimeNs === expected.mtimeNs &&
+    stat.ctimeNs === expected.ctimeNs
   );
 }
 
@@ -477,13 +487,15 @@ export function transcriptFileIdentityOf(stat: {
   dev: bigint;
   ino: bigint;
   size: bigint | number;
-  mtimeMs: bigint | number;
+  mtimeNs: bigint;
+  ctimeNs: bigint;
 }): TranscriptFileIdentity {
   return {
     device: stat.dev,
     ino: stat.ino,
     size: Number(stat.size),
-    mtimeMs: Number(stat.mtimeMs),
+    mtimeNs: stat.mtimeNs,
+    ctimeNs: stat.ctimeNs,
   };
 }
 

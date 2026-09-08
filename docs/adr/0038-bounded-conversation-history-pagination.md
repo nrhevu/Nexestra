@@ -29,7 +29,7 @@ on a target message without reading the whole file per request.
 - Keep the legacy full `GET /api/threads/:id` and export endpoints unchanged;
   the UI may still request full data explicitly for Files/links/export.
 - Prime an in-memory byte-offset index (`src/server/conversation-history.ts`)
-  for every thread during `FileStore.open`, reusing the startup full scan.
+  for every thread during `FileStore.open`, as an additional startup pass; startup already performs other full passes (tail repair, summary repair, interrupted-run recovery), so this is deliberately not a single-scan optimization.
   Messages and artifacts are ordered by sequence; run and tool events keep only
   the latest state per run/toolCall, selected by highest sequence then last
   physical offset. The index retains only short IDs, sequence numbers, and byte
@@ -43,7 +43,7 @@ on a target message without reading the whole file per request.
   inside the store write-queue barrier, so an own concurrent append cannot be
   misclassified as an external change. The opened handle is fstat-verified
   before and after the reads against the captured identity (device, inode, size,
-  mtime).
+  mtimeNs, ctimeNs).
 - External truncation, replacement, or in-place edit while the process is open
   returns an explicit 409 with restart/reload guidance instead of a silent
   fallback full-read or a falsely complete page. External editing while running
@@ -54,7 +54,7 @@ on a target message without reading the whole file per request.
 - Page limit: 1-100 messages, default 50.
 - Per event line: 1 MiB; per page: 8 MiB total decoded line bytes. Pages that
   would exceed either fail explicitly rather than silently omitting content.
-- Startup cost remains a full scan of every transcript once per process;
+- Startup performs multiple full passes over every transcript (tail repair, summary repair, history-index priming, interrupted-run recovery);
   per-request cost is bounded by the page limits above.
 - The transcript itself is never copied, indexed to disk, or mutated by these
   endpoints, and no provider is invoked.
@@ -84,7 +84,11 @@ on a target message without reading the whole file per request.
 - First append to a startup-empty thread, concurrent page+append serialization,
   external-edit 409, workspace isolation, unknown anchors, around fallback,
   malformed/oversized/invalid-UTF-8/torn/unknown fixture classification, and
-  credential redaction.
+  credential redaction, empty-thread before/after/around semantics, externally
+  created missing-file conflicts, blank/whitespace-line fixtures, same-size
+  rewrite detection via mtimeNs/ctimeNs, physically out-of-order latest run/tool
+  state, page-byte-budget rejection, restart no-rescan, and recovered durable
+  appends after state-write failure.
 - HTTP metadata with no transcript I/O, foreign-thread resolution, and
   thread-scoped dispatcher `activeRuns`.
 
@@ -92,7 +96,12 @@ on a target message without reading the whole file per request.
 
 - External transcript edits while the process is running are rejected with 409;
   they require restart/reload.
-- Index memory is `O(record count)` and startup scans all transcripts once.
+- Index memory is `O(record count)` and startup performs multiple full passes.
+  File identity (device/inode/size/mtimeNs/ctimeNs) is an honest change
+  detector, not cryptographic proof: same-size rewrites with a restored
+  millisecond mtime are detected through nanosecond and ctime differences in
+  practice, but a determined external editor that restores all metadata can
+  still defeat it; external edits while running are unsupported.
 - A page that exceeds byte/event budgets fails explicitly; the UI should narrow
   the page or use the legacy full endpoint for export-style access.
 

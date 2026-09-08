@@ -2034,29 +2034,60 @@ export class FileStore {
     return this.withWrite(async () => {
       const index =
         this.historyIndexes.get(threadId) ?? (await this.primeTranscriptIndex(threadId));
+      const mode: HistoryAnchorMode = input.before
+        ? "before"
+        : input.after
+          ? "after"
+          : input.around
+            ? "around"
+            : "latest";
+      const anchor = input.before ?? input.after ?? input.around;
       if (index.missing) {
-        if (thread.messageCount === 0 && thread.lastMessageAt === null) {
-          return ThreadHistoryPageSchema.parse({
-            thread: this.redactedThread(thread),
-            messages: [],
-            artifacts: [],
-            runs: [],
-            toolCalls: [],
-            activeRuns: activeRuns.map((run) => this.redactedRun(run)),
-            page: {
-              totalMessages: 0,
-              totalArtifacts: 0,
-              firstMessageIndex: 0,
-              lastMessageIndex: 0,
-              beforeCursor: null,
-              afterCursor: null,
-            },
-          });
+        const emptyThread = thread.messageCount === 0 && thread.lastMessageAt === null;
+        if (mode === "before" || mode === "after") {
+          throw new StoreError("invalid", "Unknown message anchor in this thread.");
         }
-        throw new StoreError(
-          "conflict",
-          "Transcript file is missing; restart Nexestra before requesting history.",
-        );
+        if (!emptyThread) {
+          throw new StoreError(
+            "conflict",
+            "Transcript file is missing; restart Nexestra before requesting history.",
+          );
+        }
+        let transcriptExists = false;
+        try {
+          await stat(this.transcriptPath(threadId));
+          transcriptExists = true;
+        } catch (error) {
+          if (!isNodeError(error, "ENOENT")) {
+            throw new StoreError(
+              "conflict",
+              "Transcript status is unavailable; restart Nexestra before requesting history.",
+            );
+          }
+        }
+        if (transcriptExists) {
+          throw new StoreError(
+            "conflict",
+            "Transcript appeared outside the app; restart Nexestra before requesting history.",
+          );
+        }
+        return ThreadHistoryPageSchema.parse({
+          thread: this.redactedThread(thread),
+          messages: [],
+          artifacts: [],
+          runs: [],
+          toolCalls: [],
+          activeRuns: activeRuns.map((run) => this.redactedRun(run)),
+          page: {
+            totalMessages: 0,
+            totalArtifacts: 0,
+            firstMessageIndex: 0,
+            lastMessageIndex: 0,
+            beforeCursor: null,
+            afterCursor: null,
+            ...(mode === "around" ? { targetMessageId: anchor, targetFound: false } : {}),
+          },
+        });
       }
       if (index.unreliable) {
         throw new StoreError(
@@ -2070,14 +2101,6 @@ export class FileStore {
           "Transcript identity is unavailable; restart Nexestra before requesting history.",
         );
       }
-      const mode: HistoryAnchorMode = input.before
-        ? "before"
-        : input.after
-          ? "after"
-          : input.around
-            ? "around"
-            : "latest";
-      const anchor = input.before ?? input.after ?? input.around;
       const result = planHistoryPage(index, mode, anchor, input.limit);
       if (!result.ok) {
         throw new StoreError("invalid", result.reason ?? "Unknown message anchor.");

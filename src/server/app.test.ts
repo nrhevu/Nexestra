@@ -1610,6 +1610,22 @@ describe("conversation history HTTP routes", () => {
       `/api/threads/${thread.id}/history?workspaceId=${foreign.id}`,
     );
     expect(foreignHistory.status).toBe(404);
+    const fresh = await store.createThread({ name: "Fresh history" });
+    const emptyBefore = await app.request(
+      `/api/threads/${fresh.id}/history?workspaceId=${workspace.id}&before=missing-anchor`,
+    );
+    expect(emptyBefore.status).toBe(400);
+    const emptyAfter = await app.request(
+      `/api/threads/${fresh.id}/history?workspaceId=${workspace.id}&after=missing-anchor`,
+    );
+    expect(emptyAfter.status).toBe(400);
+    const emptyAround = await app.request(
+      `/api/threads/${fresh.id}/history?workspaceId=${workspace.id}&around=missing-anchor`,
+    );
+    expect(emptyAround.status).toBe(200);
+    await expect(emptyAround.json()).resolves.toMatchObject({
+      page: { totalMessages: 0, targetMessageId: "missing-anchor", targetFound: false },
+    });
     const missingMetadata = await app.request("/api/threads/missing/metadata");
     expect(missingMetadata.status).toBe(404);
   });
