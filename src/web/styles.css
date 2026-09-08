@@ -351,7 +351,7 @@ kbd {
 
 .app-rail {
   grid-row: 2;
-  background: var(--plum-950);
+  background: var(--app-rail-bg);
   border-right: 1px solid var(--topbar-border);
   padding: 12px 7px 10px;
   display: flex;
