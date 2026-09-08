@@ -372,8 +372,14 @@ export const MessageSchema = z.object({
 });
 export type Message = z.infer<typeof MessageSchema>;
 
+export const MessageRequestIdSchema = z
+  .string()
+  .uuid()
+  .transform((value) => value.toLowerCase());
+
 export const CreateMessageSchema = z.object({
   content: z.string().trim().max(40_000),
+  requestId: MessageRequestIdSchema.optional(),
 });
 
 export const MESSAGE_SEARCH_QUERY_MAX_LENGTH = 200;
