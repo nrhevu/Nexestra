@@ -10,6 +10,7 @@ import {
   DelegateTaskSchema,
   MessageSearchRequestSchema,
   SelectRepositorySourceBranchSchema,
+  ThreadHistoryRequestSchema,
   ToolAnswersSchema,
 } from "../shared/contracts.js";
 import { reviewAssignmentGit } from "./assignment-review.js";
@@ -331,6 +332,29 @@ export function createApp(options: CreateAppOptions) {
   app.get("/api/search/messages", async (context) => {
     const query = MessageSearchRequestSchema.parse(context.req.query());
     return context.json(await options.store.searchMessages(query));
+  });
+
+  app.get("/api/threads/:id/history", async (context) => {
+    const threadId = context.req.param("id");
+    const input = ThreadHistoryRequestSchema.parse(context.req.query());
+    const thread = options.store.getThread(threadId);
+    if (!thread || thread.workspaceId !== input.workspaceId) {
+      throw new StoreError("not_found", "Thread not found in this workspace.");
+    }
+    const activeRuns = dispatcher
+      .activeRuns(thread.workspaceId)
+      .filter((run) => run.threadId === threadId);
+    return context.json(
+      await options.store.historyPage(input.workspaceId, threadId, input, activeRuns),
+    );
+  });
+
+  app.get("/api/threads/:id/metadata", (context) => {
+    const threadId = context.req.param("id");
+    const thread = options.store.getThread(threadId);
+    if (!thread) throw new StoreError("not_found", "Thread not found.");
+    const redact = (value: string) => options.store.redactSecrets(value);
+    return context.json({ ...thread, name: redact(thread.name), slug: redact(thread.slug) });
   });
 
   app.get("/api/threads/:id", async (context) => {

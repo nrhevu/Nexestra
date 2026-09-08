@@ -61,6 +61,9 @@ import {
   TaskSchema,
   type Thread,
   type ThreadData,
+  type ThreadHistoryPage,
+  ThreadHistoryPageSchema,
+  type ThreadHistoryRequest,
   ThreadSchema,
   type ToolCall,
   ToolCallSchema,
@@ -74,6 +77,21 @@ import {
   type Workspace,
   WorkspaceSchema,
 } from "../shared/contracts.js";
+
+import {
+  addTranscriptHistoryEntry,
+  emptyTranscriptHistoryIndex,
+  HISTORY_MAX_EVENT_BYTES,
+  HISTORY_MAX_PAGE_BYTES,
+  type HistoryAnchorMode,
+  planHistoryPage,
+  type RawTranscriptEvent,
+  readTranscriptPageLines,
+  scanTranscriptHistoryFile,
+  type TranscriptHistoryIndex,
+  transcriptFileIdentityOf,
+  transcriptHistoryEntry,
+} from "./conversation-history.js";
 
 const StateSchema = z.object({
   version: z.literal(7),
@@ -218,6 +236,7 @@ export class FileStore {
   private credentials: Record<string, string>;
   private writeQueue: Promise<void> = Promise.resolve();
   private readonly sequenceByThread = new Map<string, number>();
+  private readonly historyIndexes = new Map<string, TranscriptHistoryIndex>();
 
   private constructor(
     paths: {
@@ -270,6 +289,7 @@ export class FileStore {
     });
     const store = new FileStore(paths, state, { ...credentialDocument.credentials });
     await store.repairTranscriptTails();
+    await store.primeTranscriptIndexes();
     await store.repairThreadSummaries();
     await store.recoverInterruptedRuns();
     await store.recoverInterruptedRepositories();
@@ -1489,11 +1509,13 @@ export class FileStore {
     return this.withWrite(async () => {
       this.requireThread(run.threadId);
       const sequence = await this.nextSequence(run.threadId);
-      await appendSynced(this.transcriptPath(run.threadId), {
+      const event = {
         type: "run.updated",
         sequence,
         run,
-      } satisfies TranscriptEvent);
+      } satisfies TranscriptEvent;
+      const appended = await appendSynced(this.transcriptPath(run.threadId), event);
+      await this.extendTranscriptIndex(run.threadId, appended.baseOffset, [event]);
       this.sequenceByThread.set(run.threadId, sequence);
       return structuredClone(run);
     });
@@ -1504,11 +1526,13 @@ export class FileStore {
     return this.withWrite(async () => {
       this.requireThread(toolCall.threadId);
       const sequence = await this.nextSequence(toolCall.threadId);
-      await appendSynced(this.transcriptPath(toolCall.threadId), {
+      const event = {
         type: "tool.updated",
         sequence,
         toolCall,
-      } satisfies TranscriptEvent);
+      } satisfies TranscriptEvent;
+      const appended = await appendSynced(this.transcriptPath(toolCall.threadId), event);
+      await this.extendTranscriptIndex(toolCall.threadId, appended.baseOffset, [event]);
       this.sequenceByThread.set(toolCall.threadId, sequence);
       return structuredClone(toolCall);
     });
@@ -1814,7 +1838,7 @@ export class FileStore {
           await writePrivateFile(file, draft.bytes);
           writtenUploads.push(file);
         }
-        await appendManySynced(this.transcriptPath(threadId), [
+        const events = [
           { type: "message.created", sequence: messageSequence, message: persistedMessage },
           ...artifacts.map(
             (artifact): TranscriptEvent => ({
@@ -1823,7 +1847,9 @@ export class FileStore {
               artifact,
             }),
           ),
-        ]);
+        ] satisfies TranscriptEvent[];
+        const appended = await appendManySynced(this.transcriptPath(threadId), events);
+        await this.extendTranscriptIndex(threadId, appended.baseOffset, events);
       } catch (error) {
         await Promise.all(writtenUploads.map((file) => unlink(file).catch(() => undefined)));
         throw error;
@@ -1995,6 +2021,328 @@ export class FileStore {
     return events.sort((left, right) => left.sequence - right.sequence);
   }
 
+  async historyPage(
+    workspaceId: string,
+    threadId: string,
+    input: ThreadHistoryRequest,
+    activeRuns: AgentRun[] = [],
+  ): Promise<ThreadHistoryPage> {
+    const thread = this.requireThread(threadId);
+    if (thread.workspaceId !== workspaceId) {
+      throw new StoreError("not_found", "Thread not found in this workspace.");
+    }
+    return this.withWrite(async () => {
+      const index =
+        this.historyIndexes.get(threadId) ?? (await this.primeTranscriptIndex(threadId));
+      if (index.missing) {
+        if (thread.messageCount === 0 && thread.lastMessageAt === null) {
+          return ThreadHistoryPageSchema.parse({
+            thread: this.redactedThread(thread),
+            messages: [],
+            artifacts: [],
+            runs: [],
+            toolCalls: [],
+            activeRuns: activeRuns.map((run) => this.redactedRun(run)),
+            page: {
+              totalMessages: 0,
+              totalArtifacts: 0,
+              firstMessageIndex: 0,
+              lastMessageIndex: 0,
+              beforeCursor: null,
+              afterCursor: null,
+            },
+          });
+        }
+        throw new StoreError(
+          "conflict",
+          "Transcript file is missing; restart Nexestra before requesting history.",
+        );
+      }
+      if (index.unreliable) {
+        throw new StoreError(
+          "conflict",
+          "Transcript contains malformed or oversized lines; restart Nexestra before requesting history.",
+        );
+      }
+      if (!index.identity) {
+        throw new StoreError(
+          "conflict",
+          "Transcript identity is unavailable; restart Nexestra before requesting history.",
+        );
+      }
+      const mode: HistoryAnchorMode = input.before
+        ? "before"
+        : input.after
+          ? "after"
+          : input.around
+            ? "around"
+            : "latest";
+      const anchor = input.before ?? input.after ?? input.around;
+      const result = planHistoryPage(index, mode, anchor, input.limit);
+      if (!result.ok) {
+        throw new StoreError("invalid", result.reason ?? "Unknown message anchor.");
+      }
+      const plan = result.plan;
+      const selected = [
+        ...plan.messageEntries,
+        ...plan.artifactEntries,
+        ...plan.runEntries,
+        ...plan.toolEntries,
+      ];
+      const pageBytes = selected.reduce((total, entry) => total + entry.lineBytes, 0);
+      if (
+        selected.some((entry) => entry.lineBytes > HISTORY_MAX_EVENT_BYTES) ||
+        pageBytes > HISTORY_MAX_PAGE_BYTES
+      ) {
+        throw new StoreError(
+          "invalid",
+          "History page exceeds the event/page byte budget; narrow the page and retry.",
+        );
+      }
+      const outcome = await readTranscriptPageLines(
+        this.transcriptPath(threadId),
+        index.identity,
+        selected,
+      );
+      if (outcome.status !== "ok") {
+        throw new StoreError(
+          "conflict",
+          "Transcript changed or became unavailable outside the app; restart Nexestra before requesting history.",
+        );
+      }
+      const messages = new Map<string, Message>();
+      const artifacts = new Map<string, Artifact>();
+      const runs = new Map<string, AgentRun>();
+      const toolCalls = new Map<string, ToolCall>();
+      for (let i = 0; i < selected.length; i += 1) {
+        const entry = selected[i];
+        if (!entry)
+          throw new StoreError("conflict", "History index is inconsistent; restart Nexestra.");
+        const line = outcome.lines[i];
+        let event: TranscriptEvent | undefined;
+        try {
+          event = parseTranscriptEvent(stripTrailingNewline(line ?? ""));
+        } catch {
+          throw new StoreError("conflict", "History index is inconsistent; restart Nexestra.");
+        }
+        if (
+          !event ||
+          (entry.kind === "message" && event.type !== "message.created") ||
+          (entry.kind === "artifact" && event.type !== "artifact.created") ||
+          (entry.kind === "run" && event.type !== "run.updated") ||
+          (entry.kind === "tool" && event.type !== "tool.updated")
+        ) {
+          throw new StoreError("conflict", "History index is inconsistent; restart Nexestra.");
+        }
+        if (event.type === "message.created") messages.set(event.message.id, event.message);
+        if (event.type === "artifact.created") artifacts.set(event.artifact.id, event.artifact);
+        if (event.type === "run.updated") runs.set(event.run.id, event.run);
+        if (event.type === "tool.updated") toolCalls.set(event.toolCall.id, event.toolCall);
+      }
+      const pageMessages = plan.messageEntries
+        .map((entry) => messages.get(entry.id))
+        .filter((message): message is Message => message !== undefined);
+      const pageArtifacts = plan.artifactEntries
+        .map((entry) => artifacts.get(entry.id))
+        .filter((artifact): artifact is Artifact => artifact !== undefined);
+      const pageRuns = plan.runEntries
+        .map((entry) => runs.get(entry.id))
+        .filter((run): run is AgentRun => run !== undefined);
+      const pageToolCalls = plan.toolEntries
+        .map((entry) => toolCalls.get(entry.id))
+        .filter((toolCall): toolCall is ToolCall => toolCall !== undefined);
+      if (
+        pageMessages.length !== plan.messageEntries.length ||
+        pageArtifacts.length !== plan.artifactEntries.length ||
+        pageRuns.length !== plan.runEntries.length ||
+        pageToolCalls.length !== plan.toolEntries.length
+      ) {
+        throw new StoreError("conflict", "History index is inconsistent; restart Nexestra.");
+      }
+      return ThreadHistoryPageSchema.parse({
+        thread: this.redactedThread(thread),
+        messages: pageMessages.map((message) => this.redactedMessage(message)),
+        artifacts: pageArtifacts.map((artifact) => this.redactedArtifact(artifact)),
+        runs: pageRuns.map((run) => this.redactedRun(run)),
+        toolCalls: pageToolCalls.map((toolCall) => this.redactedToolCall(toolCall)),
+        activeRuns: activeRuns.map((run) => this.redactedRun(run)),
+        page: {
+          totalMessages: index.messages.length,
+          totalArtifacts: index.artifacts.length,
+          firstMessageIndex: plan.firstMessageIndex,
+          lastMessageIndex: plan.lastMessageIndex,
+          beforeCursor: plan.beforeCursor,
+          afterCursor: plan.afterCursor,
+          ...(plan.targetMessageId ? { targetMessageId: plan.targetMessageId } : {}),
+          ...(plan.targetFound !== undefined ? { targetFound: plan.targetFound } : {}),
+        },
+      });
+    });
+  }
+
+  private async primeTranscriptIndexes(): Promise<void> {
+    for (const thread of this.state.threads) {
+      await this.primeTranscriptIndex(thread.id);
+    }
+  }
+
+  private async primeTranscriptIndex(threadId: string): Promise<TranscriptHistoryIndex> {
+    const index = emptyTranscriptHistoryIndex(threadId);
+    const file = this.transcriptPath(threadId);
+    const outcome = await scanTranscriptHistoryFile(file, {
+      maxLineBytes: HISTORY_MAX_EVENT_BYTES,
+      onLine: (line, lineStart, lineEnd) => {
+        let raw: RawTranscriptEvent;
+        try {
+          raw = JSON.parse(line) as RawTranscriptEvent;
+        } catch {
+          return { status: "malformed" };
+        }
+        let event: TranscriptEvent | undefined;
+        try {
+          event = parseTranscriptEvent(line);
+        } catch {
+          return { status: "malformed" };
+        }
+        if (!event) return { status: "unknown" };
+        const entry = transcriptHistoryEntry(event.sequence, raw, lineStart, lineEnd);
+        if (!entry) return { status: "unknown" };
+        addTranscriptHistoryEntry(index, entry);
+        return { status: "event", raw };
+      },
+    });
+    index.messages.sort((left, right) => left.sequence - right.sequence);
+    index.artifacts.sort((left, right) => left.sequence - right.sequence);
+    if (outcome.status === "missing") {
+      index.missing = true;
+      this.historyIndexes.set(threadId, index);
+      return index;
+    }
+    index.malformedLines = outcome.malformedLines;
+    index.oversizedLines = outcome.oversizedLines;
+    index.invalidUtf8Lines = outcome.invalidUtf8Lines;
+    index.tornTailLines = outcome.tornTailLines;
+    index.unknownEventLines = outcome.unknownEventLines;
+    index.unreliable =
+      outcome.status === "unreadable" ||
+      outcome.malformedLines > 0 ||
+      outcome.oversizedLines > 0 ||
+      outcome.invalidUtf8Lines > 0 ||
+      outcome.tornTailLines > 0;
+    if (outcome.status === "ok") {
+      try {
+        const info = await stat(file, { bigint: true });
+        index.identity = transcriptFileIdentityOf(info);
+      } catch {
+        index.unreliable = true;
+      }
+    }
+    this.historyIndexes.set(threadId, index);
+    return index;
+  }
+
+  private async extendTranscriptIndex(
+    threadId: string,
+    baseOffset: number,
+    events: TranscriptEvent[],
+  ): Promise<void> {
+    const index = this.historyIndexes.get(threadId);
+    if (!index || index.unreliable) return;
+    let offset = baseOffset;
+    for (const event of events) {
+      const line = JSON.stringify(event);
+      const lineBytes = Buffer.byteLength(line, "utf8") + 1;
+      let raw: RawTranscriptEvent;
+      try {
+        raw = JSON.parse(line) as RawTranscriptEvent;
+      } catch {
+        index.unreliable = true;
+        return;
+      }
+      const entry = transcriptHistoryEntry(event.sequence, raw, offset, offset + lineBytes);
+      if (entry) addTranscriptHistoryEntry(index, entry);
+      offset += lineBytes;
+    }
+    try {
+      const info = await stat(this.transcriptPath(threadId), { bigint: true });
+      index.identity = transcriptFileIdentityOf(info);
+      index.missing = false;
+    } catch {
+      index.unreliable = true;
+    }
+  }
+
+  private redactedThread(thread: Thread): Thread {
+    return {
+      ...thread,
+      name: this.redactSecrets(thread.name),
+      slug: this.redactSecrets(thread.slug),
+    };
+  }
+
+  private redactHandleValue(value: string): string {
+    const redacted = this.redactSecrets(value);
+    return redacted === value ? value : "redacted";
+  }
+
+  private redactedMessage(message: Message): Message {
+    const copy = structuredClone(message);
+    copy.content = this.redactSecrets(copy.content);
+    copy.author = { ...copy.author, name: this.redactSecrets(copy.author.name) };
+    if (copy.author.kind === "agent") {
+      copy.author.handle = this.redactHandleValue(copy.author.handle);
+    }
+    copy.mentions = copy.mentions.map((mention) => ({
+      ...mention,
+      handle: this.redactHandleValue(mention.handle),
+    }));
+    copy.knowledgeReferences = copy.knowledgeReferences.map((reference) => ({
+      ...reference,
+      handle: this.redactHandleValue(reference.handle),
+    }));
+    return copy;
+  }
+
+  private redactedArtifact(artifact: Artifact): Artifact {
+    const copy = structuredClone(artifact);
+    copy.name = this.redactSecrets(copy.name).slice(0, 255);
+    if (copy.mediaType !== undefined)
+      copy.mediaType = this.redactSecrets(copy.mediaType).slice(0, 160);
+    if (copy.url !== undefined) copy.url = this.redactSecrets(copy.url).slice(0, 4_096);
+    if (copy.path !== undefined) copy.path = this.redactSecrets(copy.path).slice(0, 1_024);
+    return copy;
+  }
+
+  private redactedRun(run: AgentRun): AgentRun {
+    const copy = structuredClone(run);
+    if (copy.error !== undefined) copy.error = this.redactSecrets(copy.error).slice(0, 2_000);
+    return copy;
+  }
+
+  private redactedToolCall(toolCall: ToolCall): ToolCall {
+    const copy = structuredClone(toolCall);
+    copy.input = this.redactSecrets(copy.input).slice(0, 4_000);
+    if (copy.questions) {
+      copy.questions = copy.questions.map((question) => ({
+        ...question,
+        header: this.redactSecrets(question.header).slice(0, 30),
+        question: this.redactSecrets(question.question).slice(0, 500),
+        options: question.options.map((option) => ({
+          ...option,
+          label: this.redactSecrets(option.label).slice(0, 100),
+          description: this.redactSecrets(option.description).slice(0, 300),
+        })),
+      }));
+    }
+    if (copy.answers) {
+      copy.answers = copy.answers.map((group) =>
+        group.map((value) => this.redactSecrets(value).slice(0, 500)),
+      );
+    }
+    if (copy.summary !== undefined) copy.summary = this.redactSecrets(copy.summary).slice(0, 500);
+    if (copy.error !== undefined) copy.error = this.redactSecrets(copy.error).slice(0, 2_000);
+    return copy;
+  }
   private async repairTranscriptTails(): Promise<void> {
     for (const thread of this.state.threads) {
       await repairTranscriptTail(this.transcriptPath(thread.id));
@@ -2891,6 +3239,10 @@ async function scanTranscriptFile(
   });
 }
 
+function stripTrailingNewline(line: string): string {
+  return line.endsWith("\n") ? line.slice(0, -1) : line;
+}
+
 function isStorageId(value: string): boolean {
   return /^[a-zA-Z0-9_-]{1,200}$/.test(value);
 }
@@ -2952,16 +3304,25 @@ async function repairTranscriptTail(file: string): Promise<void> {
   }
 }
 
-async function appendSynced(file: string, event: TranscriptEvent): Promise<void> {
-  await appendManySynced(file, [event]);
+async function appendSynced(
+  file: string,
+  event: TranscriptEvent,
+): Promise<{ baseOffset: number; endOffset: number }> {
+  return appendManySynced(file, [event]);
 }
 
-async function appendManySynced(file: string, events: TranscriptEvent[]): Promise<void> {
+async function appendManySynced(
+  file: string,
+  events: TranscriptEvent[],
+): Promise<{ baseOffset: number; endOffset: number }> {
   await mkdir(dirname(file), { recursive: true, mode: 0o700 });
   const handle = await open(file, "a", 0o600);
   try {
+    const before = (await handle.stat()).size;
     await handle.appendFile(`${events.map((event) => JSON.stringify(event)).join("\n")}\n`, "utf8");
     await handle.sync();
+    const after = (await handle.stat()).size;
+    return { baseOffset: before, endOffset: after };
   } finally {
     await handle.close();
   }

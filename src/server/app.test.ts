@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import type { Agent, RuntimeStatus } from "../shared/contracts.js";
+import type { Agent, AgentRun, RuntimeStatus } from "../shared/contracts.js";
 import { createApp } from "./app.js";
 import type { AssignmentRepositoryManager } from "./repository-manager.js";
 import type { AgentInvocation, AgentRunner } from "./runtime.js";
@@ -1523,5 +1523,94 @@ describe("HTTP message search", () => {
     expect((body.query as { term: string }).term).toBe("[REDACTED]");
     expect(JSON.stringify(body)).not.toContain(secret);
     expect(runner.invocations).toBe(0);
+  });
+});
+describe("conversation history HTTP routes", () => {
+  let store: FileStore;
+  let runner: FakeRunner;
+  let app: ReturnType<typeof createApp>;
+
+  beforeEach(async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-history-http-"));
+    store = await FileStore.open({ root, workspacePath: root });
+    runner = new FakeRunner();
+    app = createApp({ store, runner });
+  });
+
+  it("returns thread-scoped activeRuns and foreign metadata without reading transcripts", async () => {
+    const [workspace] = store.listWorkspaces();
+    const thread = store.listThreads(workspace?.id ?? "")[0];
+    if (!workspace || !thread) throw new Error("expected seeded workspace");
+    const message = await store.createUserMessage(thread.id, "hello history", []);
+    const otherThread = await store.createThread({ name: "Other" });
+    const otherMessage = await store.createUserMessage(otherThread.id, "other history", []);
+    const now = new Date().toISOString();
+    const runHere = {
+      id: "run-history-here",
+      threadId: thread.id,
+      triggerMessageId: message.id,
+      agentId: "agent-history",
+      attempt: 1,
+      status: "running" as const,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const runElsewhere = {
+      ...runHere,
+      id: "run-history-elsewhere",
+      threadId: otherThread.id,
+      triggerMessageId: otherMessage.id,
+    };
+    const liveRuns = (app.dispatcher as unknown as { liveRuns: Map<string, AgentRun> }).liveRuns;
+    liveRuns.set(runHere.id, runHere);
+    liveRuns.set(runElsewhere.id, runElsewhere);
+    const response = await app.request(
+      `/api/threads/${thread.id}/history?workspaceId=${workspace.id}&limit=10`,
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      messages: { id: string }[];
+      activeRuns: { id: string }[];
+    };
+    expect(body.messages.map((entry) => entry.id)).toEqual([message.id]);
+    expect(body.activeRuns.map((entry) => entry.id)).toEqual([runHere.id]);
+
+    const transcriptPathSpy = vi.spyOn(store, "transcriptPath");
+    const metadata = await app.request(`/api/threads/${otherThread.id}/metadata`);
+    expect(metadata.status).toBe(200);
+    await expect(metadata.json()).resolves.toMatchObject({
+      id: otherThread.id,
+      workspaceId: otherThread.workspaceId,
+    });
+    expect(transcriptPathSpy).not.toHaveBeenCalled();
+  });
+
+  it("validates history and metadata query semantics over HTTP", async () => {
+    const [workspace] = store.listWorkspaces();
+    const thread = store.listThreads(workspace?.id ?? "")[0];
+    if (!workspace || !thread) throw new Error("expected seeded workspace");
+    const message = await store.createUserMessage(thread.id, "anchor me", []);
+    const foreign = await store.createWorkspace({ name: "Foreign" });
+    const multiple = await app.request(
+      `/api/threads/${thread.id}/history?workspaceId=${workspace.id}&before=${message.id}&after=${message.id}`,
+    );
+    expect(multiple.status).toBe(400);
+    const unknownBefore = await app.request(
+      `/api/threads/${thread.id}/history?workspaceId=${workspace.id}&before=unknown-anchor`,
+    );
+    expect(unknownBefore.status).toBe(400);
+    const unknownAround = await app.request(
+      `/api/threads/${thread.id}/history?workspaceId=${workspace.id}&around=unknown-anchor`,
+    );
+    expect(unknownAround.status).toBe(200);
+    await expect(unknownAround.json()).resolves.toMatchObject({
+      page: { targetMessageId: "unknown-anchor", targetFound: false },
+    });
+    const foreignHistory = await app.request(
+      `/api/threads/${thread.id}/history?workspaceId=${foreign.id}`,
+    );
+    expect(foreignHistory.status).toBe(404);
+    const missingMetadata = await app.request("/api/threads/missing/metadata");
+    expect(missingMetadata.status).toBe(404);
   });
 });
