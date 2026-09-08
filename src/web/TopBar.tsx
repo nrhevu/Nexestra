@@ -1,4 +1,4 @@
-import { Moon, Search, Sun } from "lucide-react";
+import { MessageSquareText, Moon, Search, Sun } from "lucide-react";
 import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import type { BootstrapData } from "../shared/contracts.js";
 import "./TopBar.css";
@@ -13,6 +13,7 @@ export interface TopBarProps {
   onSurface: (surface: TopBarSurface) => void;
   onTask: (id: string) => void;
   onKnowledge: (id: string) => void;
+  onSearchMessages: (query: string) => void;
   onSettings: () => void;
 }
 
@@ -33,6 +34,7 @@ export function TopBar(props: TopBarProps) {
   useEffect(() => {
     const onShortcut = (event: globalThis.KeyboardEvent) => {
       if (event.key.toLowerCase() !== "k" || (!event.metaKey && !event.ctrlKey)) return;
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
       event.preventDefault();
       searchRef.current?.focus();
       searchRef.current?.select();
@@ -81,6 +83,12 @@ export function TopBar(props: TopBarProps) {
           label: "Go to Knowledge",
           description: "Manage your documents and repositories",
           action: () => props.onSurface("knowledge"),
+        },
+        {
+          id: "command:search-messages",
+          label: "Search messages",
+          description: "Find text in active and archived conversations",
+          action: () => props.onSearchMessages(""),
         },
         {
           id: "command:settings",
@@ -233,6 +241,19 @@ export function TopBar(props: TopBarProps) {
         )}
       </div>
       <div className="topbar-actions">
+        <button
+          className="message-search-launch"
+          type="button"
+          aria-label="Search messages"
+          title="Search message content"
+          onClick={() => {
+            setOpen(false);
+            props.onSearchMessages(isCommand ? "" : queryText.trim());
+          }}
+        >
+          <MessageSquareText size={16} />
+          <span>Messages</span>
+        </button>
         <button
           className="theme-toggle"
           type="button"

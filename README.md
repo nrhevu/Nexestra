@@ -25,6 +25,12 @@ Press **Cmd/Ctrl+K** to focus search, use **↑/↓** to select a result, **Ente
 **Escape** to dismiss suggestions. Task and knowledge results open the exact item. Start a query
 with `/` to find commands, including opening Needs attention.
 
+Choose **Messages** beside search, or the `/search messages` command, to find a remembered phrase
+in the current workspace's transcripts. Narrow by thread or active/archived status. Results show a
+snippet, author, time, and the current thread name; selecting one opens and focuses that message.
+The message URL survives reloads and thread renames. **Show latest** returns to the newest messages.
+Search is case-insensitive literal text; partial results are labeled when the scan cannot finish.
+
 Composer drafts are stored per workspace and thread, so switching threads or reloading the tab
 restores what you were typing. Thread rows show a **Draft** badge while a draft exists, and the
 Threads entry returns to the last thread you had open in that workspace. Drafts stay browser-only;

@@ -842,6 +842,33 @@ kbd {
 .message:hover {
   background: var(--message-hover);
 }
+.message-target {
+  background: var(--live-run-bg);
+  box-shadow: inset 3px 0 var(--accent);
+  scroll-margin-block: 24px;
+}
+.message-target:focus {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+.message-target-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 22px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12px;
+}
+.message-target-notice button {
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 9px;
+  color: var(--text);
+}
 .message-meta {
   display: flex;
   align-items: center;

@@ -35,3 +35,4 @@
 | [0031](0031-thread-rename-and-archive.md) | Accepted | Rename threads and archive or restore them without changing canonical history |
 | [0032](0032-revision-history.md) | Accepted | Keep immutable Knowledge document revisions and pin new message references |
 | [0033](0033-explicit-repository-source-refresh.md) | Accepted | Refresh the recorded source branch for future Worker assignments without changing existing worktrees |
+| [0035](0035-message-deep-links.md) | Accepted | Open stable message links with focused, workspace-aware conversation navigation |

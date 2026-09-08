@@ -75,6 +75,7 @@ function makeProps(overrides: Partial<TopBarProps> = {}): TopBarProps {
     onSurface: vi.fn(),
     onTask: vi.fn(),
     onKnowledge: vi.fn(),
+    onSearchMessages: vi.fn(),
     onSettings: vi.fn(),
     ...overrides,
   };
@@ -219,6 +220,23 @@ describe("Global search", () => {
     expect(props.onSurface).toHaveBeenCalledExactlyOnceWith("attention");
   });
 
+  it("opens message search with the entered phrase and supports a search command", async () => {
+    const user = userEvent.setup();
+    const props = makeProps();
+    render(<TopBar {...props} />);
+    const input = screen.getByRole("combobox");
+    await user.type(input, "  Ship on Friday  ");
+    await user.click(screen.getByRole("button", { name: "Search messages" }));
+    expect(props.onSearchMessages).toHaveBeenCalledExactlyOnceWith("Ship on Friday");
+    expect(input).toHaveAttribute("aria-expanded", "false");
+
+    await user.clear(input);
+    await user.type(input, "/search messages");
+    await user.keyboard("{Enter}");
+    expect(props.onSearchMessages).toHaveBeenLastCalledWith("");
+    expect(input).toHaveValue("");
+  });
+
   it("allows Tab to leave search and does not execute Enter during text composition", async () => {
     const user = userEvent.setup();
     const props = makeProps();
@@ -229,11 +247,28 @@ describe("Global search", () => {
     expect(props.onThread).not.toHaveBeenCalled();
 
     await user.tab();
-    const toggle = screen.getByRole("button", { name: "Switch to light theme" });
-    expect(toggle).toHaveFocus();
+    const searchMessages = screen.getByRole("button", { name: "Search messages" });
+    expect(searchMessages).toHaveFocus();
     expect(input).toHaveAttribute("aria-expanded", "false");
     view.rerender(<TopBar {...props} data={{ ...props.data, threads: [secondThread] }} />);
-    expect(toggle).toHaveFocus();
+    expect(searchMessages).toHaveFocus();
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  it("keeps the global shortcut from moving focus outside an open modal", async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <TopBar {...makeProps()} />
+        <section role="dialog" aria-modal="true" aria-label="Find messages">
+          <input aria-label="Message phrase" />
+        </section>
+      </>,
+    );
+    const phrase = screen.getByRole("textbox", { name: "Message phrase" });
+    await user.click(phrase);
+    await user.keyboard("{Control>}k{/Control}");
+    expect(phrase).toHaveFocus();
+    expect(screen.getByRole("combobox")).toHaveAttribute("aria-expanded", "false");
   });
 });

@@ -40,13 +40,28 @@ directly over HTTPS and read locally. No external search service or provider is 
   scan bytes, line size and results; missing/unreadable files must not leak filesystem paths.
 - Any budget or read error that prevents complete results must be visible in the response and UI.
   A partial scan must never be presented as proof that no messages match.
-- The eventual UI needs loading/error/partial states, stale-response protection when query or
-  workspace changes, and navigation to the matched message in active or archived conversations.
+- The UI needs loading/error/partial states, stale-response protection when query or workspace
+  changes, and navigation to the matched message in active or archived conversations.
 
 ## Work status
 
-The server contract, scanner, HTTP endpoint, fixtures, acceptance tests and ADR 0034 are delegated to
-the isolated `codex/transcript-search` branch. The exact response contract and continuation policy
-are being reviewed before UI integration. This feature is not yet part of the verified application.
+The Messages dialog and exact-message navigation are integrated on the dedicated feature branch.
+The dialog keeps focus during background refresh, clears stale results when a filter changes,
+deduplicates overlapping result pages, and labels partial scans without promising completeness.
+Links open `/threads/<id>?message=<id>`, focus the requested message, and preserve archived threads'
+read-only state. The same result can be selected again after switching to Files & links.
 
-UI implementation, integrated tests and browser verification remain required after the server slice.
+The server scanner, endpoint, fixtures, acceptance tests and ADR 0034 remain under verification in
+the isolated `codex/transcript-search` branch. Integrated API/type verification, the complete check
+suite, and real-browser verification remain required before claiming this feature is complete.
+
+## Deliberate limits
+
+- Search is a case-insensitive literal substring, without regex, fuzzy ranking, sender/date syntax,
+  or the query language of the reference product.
+- Each page scans canonical files again; a live conversation can shift offsets between requests.
+  The dialog removes duplicate hits, but this is not a snapshot-stable cursor.
+- Opening a result still loads and renders the full thread. Bounded search does not solve the
+  separate long-conversation rendering and history pagination problem.
+- Search does not scan attachment bytes or Knowledge content. Knowledge text preview is a separate
+  explicit read operation, with its own integrity and size checks.

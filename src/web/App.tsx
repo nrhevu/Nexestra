@@ -90,6 +90,7 @@ import {
 import { AttentionView } from "./AttentionView.js";
 import { ApiError, api } from "./api.js";
 import { ConversationState, readBrowserValue, writeBrowserValue } from "./conversationState.js";
+import { MessageSearchDialog } from "./MessageSearchDialog.js";
 import { TopBar, type TopBarSurface } from "./TopBar.js";
 
 const RichMessage = lazy(() => import("./RichMessage.js"));
@@ -102,6 +103,7 @@ interface RouteState {
   view: PrimaryView;
   surface: Surface;
   threadId?: string;
+  messageTarget?: { id: string };
 }
 
 interface LoginSession {
@@ -132,6 +134,12 @@ export function App() {
   const [agentToDelete, setAgentToDelete] = useState<AgentView>();
   const [agentToEdit, setAgentToEdit] = useState<AgentView>();
   const [threadToRename, setThreadToRename] = useState<Thread>();
+  const [messageSearch, setMessageSearch] = useState<{
+    query: string;
+    request: number;
+    generation: number;
+  }>();
+  const messageSearchRequestRef = useRef(0);
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     return readBrowserValue("nexestra.theme") === "light" ? "light" : "dark";
   });
@@ -372,6 +380,7 @@ export function App() {
     setKnowledgeToDelete(undefined);
     setAgentToDelete(undefined);
     setThreadToRename(undefined);
+    setMessageSearch(undefined);
     setError(undefined);
     setNotice(undefined);
   }, []);
@@ -614,6 +623,15 @@ export function App() {
 
   const openThread = (threadId: string) =>
     navigate(`/threads/${threadId}`, { view: "threads", surface: route.surface, threadId });
+  const openMessage = (threadId: string, messageId: string) => {
+    setMessageSearch(undefined);
+    navigate(`/threads/${encodeURIComponent(threadId)}?message=${encodeURIComponent(messageId)}`, {
+      view: "threads",
+      surface: routeRef.current.surface,
+      threadId,
+      messageTarget: { id: messageId },
+    });
+  };
   const openSurface = (surface: Surface) =>
     navigate(`/surfaces/${surface}`, { view: "surfaces", surface });
 
@@ -626,7 +644,11 @@ export function App() {
       const threadId = conversations.resolveThread(next.workspace.id, activeThreads(next.threads));
       if (threadId) {
         const previousThreadId = routeRef.current.threadId;
-        navigate(`/threads/${threadId}`, { ...routeRef.current, view: "threads", threadId });
+        navigate(`/threads/${threadId}`, {
+          view: "threads",
+          surface: routeRef.current.surface,
+          threadId,
+        });
         if (threadId === previousThreadId) void loadThread(threadId);
       } else {
         navigate("/threads", { view: "threads", surface: routeRef.current.surface });
@@ -824,6 +846,14 @@ export function App() {
         onSurface={openSurface}
         onSettings={() => setModal("settings")}
         onTask={(id) => void inspectTask(id)}
+        onSearchMessages={(query) => {
+          if (data.workspace.id !== workspaceIdRef.current) return;
+          setMessageSearch({
+            query,
+            request: ++messageSearchRequestRef.current,
+            generation: workspaceGenerationRef.current,
+          });
+        }}
         onKnowledge={(id) => {
           const item = data.knowledge.find((entry) => entry.id === id);
           if (item) openKnowledgeDetail(item);
@@ -875,6 +905,10 @@ export function App() {
               data={data}
               threadData={visibleThreadData}
               runActivities={deferredRunActivities}
+              messageTarget={route.messageTarget}
+              onClearMessageTarget={() => {
+                if (route.threadId) openThread(route.threadId);
+              }}
               draft={
                 route.threadId ? conversations.draft(data.workspace.id, route.threadId).text : ""
               }
@@ -1180,6 +1214,24 @@ export function App() {
           onDelete={(item) => {
             closeKnowledgeDetail();
             setKnowledgeToDelete(item);
+          }}
+        />
+      )}
+      {messageSearch && (
+        <MessageSearchDialog
+          key={`${data.workspace.id}:${messageSearch.request}`}
+          workspaceId={data.workspace.id}
+          threads={data.threads}
+          initialQuery={messageSearch.query}
+          onClose={() => setMessageSearch(undefined)}
+          onOpenMessage={(threadId, messageId) => {
+            if (
+              data.workspace.id !== workspaceIdRef.current ||
+              messageSearch.generation !== workspaceGenerationRef.current ||
+              messageSearch.request !== messageSearchRequestRef.current
+            )
+              return;
+            openMessage(threadId, messageId);
           }}
         />
       )}
@@ -1599,6 +1651,8 @@ function ThreadView(props: {
   data: BootstrapData;
   threadData?: ThreadData;
   runActivities: RunActivity[];
+  messageTarget?: { id: string };
+  onClearMessageTarget: () => void;
   draft: string;
   draftSaved: boolean;
   onDraftChange: (value: string) => void;
@@ -1626,6 +1680,10 @@ function ThreadView(props: {
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const addFileButtonRef = useRef<HTMLButtonElement>(null);
   const pendingSelectionRef = useRef<{ start: number; end: number } | null>(null);
+
+  useEffect(() => {
+    if (props.messageTarget) setActiveTab("messages");
+  }, [props.messageTarget]);
 
   useEffect(() => {
     const selection = pendingSelectionRef.current;
@@ -1940,6 +1998,18 @@ function ThreadView(props: {
           )}
         </button>
       </div>
+      {activeTab === "messages" && props.messageTarget && (
+        <div className="message-target-notice">
+          <span role="status">
+            {props.threadData.messages.some((message) => message.id === props.messageTarget?.id)
+              ? "Viewing a linked message."
+              : "The linked message is not available in this thread."}
+          </span>
+          <button type="button" onClick={props.onClearMessageTarget}>
+            Show latest
+          </button>
+        </div>
+      )}
       {activeTab === "messages" ? (
         <ThreadTranscript
           thread={thread}
@@ -1954,6 +2024,7 @@ function ThreadView(props: {
           onToolDecision={props.onToolDecision}
           onToolResponse={props.onToolResponse}
           readOnly={archived}
+          messageTarget={props.messageTarget}
         />
       ) : (
         <ThreadArtifacts
@@ -2314,6 +2385,7 @@ const ThreadTranscript = memo(function ThreadTranscript({
   onToolDecision,
   onToolResponse,
   readOnly,
+  messageTarget,
 }: {
   thread: Thread;
   messages: Message[];
@@ -2327,8 +2399,18 @@ const ThreadTranscript = memo(function ThreadTranscript({
   onToolDecision: (toolCallId: string, approved: boolean) => Promise<void>;
   onToolResponse: (toolCallId: string, answers: string[][]) => Promise<void>;
   readOnly: boolean;
+  messageTarget?: { id: string };
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const targetRef = useRef<HTMLElement>(null);
+  const targetAvailable = Boolean(
+    messageTarget && messages.some((message) => message.id === messageTarget.id),
+  );
+  useEffect(() => {
+    if (!messageTarget || !targetAvailable || !targetRef.current) return;
+    targetRef.current.scrollIntoView?.({ block: "center" });
+    targetRef.current.focus({ preventScroll: true });
+  }, [messageTarget, targetAvailable]);
   const agentsById = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
   const currentAgentHandles = useMemo(() => agents.map((agent) => agent.handle), [agents]);
   const knownAgentHandles = useMemo(() => new Set(currentAgentHandles), [currentAgentHandles]);
@@ -2376,9 +2458,9 @@ const ThreadTranscript = memo(function ThreadTranscript({
     )
     .join(",")}`;
   useEffect(() => {
-    if (!transcriptVersion) return;
+    if (!transcriptVersion || messageTarget) return;
     bottomRef.current?.scrollIntoView?.({ block: "end" });
-  }, [transcriptVersion]);
+  }, [transcriptVersion, messageTarget]);
 
   return (
     <div className="message-scroll">
@@ -2396,7 +2478,13 @@ const ThreadTranscript = memo(function ThreadTranscript({
         </div>
       )}
       {messages.map((message) => (
-        <div key={message.id}>
+        <section
+          key={message.id}
+          ref={message.id === messageTarget?.id ? targetRef : undefined}
+          className={message.id === messageTarget?.id ? "message-target" : undefined}
+          aria-label={message.id === messageTarget?.id ? "Selected message" : undefined}
+          tabIndex={message.id === messageTarget?.id ? -1 : undefined}
+        >
           <MessageRow
             message={message}
             artifacts={artifactsByMessage.get(message.id) ?? []}
@@ -2427,7 +2515,7 @@ const ThreadTranscript = memo(function ThreadTranscript({
               readOnly={readOnly}
             />
           ))}
-        </div>
+        </section>
       ))}
       <div ref={bottomRef} />
     </div>
@@ -6202,5 +6290,13 @@ function routeFromLocation(): RouteState {
         : "agents";
     return { view: "surfaces", surface };
   }
-  return { view: "threads", surface: "agents", ...(parts[1] ? { threadId: parts[1] } : {}) };
+  const messageId = new URLSearchParams(window.location.search).get("message");
+  return {
+    view: "threads",
+    surface: "agents",
+    ...(parts[1] ? { threadId: parts[1] } : {}),
+    ...(parts[1] && messageId && messageId.length <= 200
+      ? { messageTarget: { id: messageId } }
+      : {}),
+  };
 }

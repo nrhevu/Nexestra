@@ -58,6 +58,15 @@ Global search uses an editable combobox with keyboard selection and an `aria-act
 listbox. It searches the current bootstrap data. Thread results navigate to the thread, while task
 and knowledge results open their existing detail dialogs directly.
 
+A separate Messages dialog sends explicit phrase/thread/archive filters to the local transcript
+search endpoint. Editing a filter clears old results and aborts pending requests; workspace changes
+invalidate the dialog. A fresh modal request preserves the current focus across background metadata
+updates. Complete result pages are deduplicated by thread/message identity; partial scans offer no
+continuation. Search results navigate to `/threads/<id>?message=<id>`, which resolves foreign
+workspace links, opens Messages, and focuses the matching group. Automatic bottom scrolling stays
+paused until **Show latest** clears the target. Archived conversations remain read-only. See
+[ADR 0035](adr/0035-message-deep-links.md).
+
 Draft text, the theme, and the saved workspace are the only browser-persisted UI state. An
 App-owned `ConversationState` keeps drafts under `nexestra.draft.<workspaceId>:<threadId>`, reads
 only on first access, and clears only the sent revision after a successful send; the empty value is a tombstone that also retires legacy thread-only keys. The sidebar shows a **Draft**
