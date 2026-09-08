@@ -5,6 +5,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
+  Artifact,
   BootstrapData,
   Message,
   Thread,
@@ -62,6 +63,10 @@ function uploadFile(name: string): File {
   return new File(["diagram"], name, { type: "image/png" });
 }
 
+async function fileText(file: File): Promise<string> {
+  return new TextDecoder().decode(await file.arrayBuffer());
+}
+
 const bootstrapData: BootstrapData = {
   workspaces: [workspace],
   workspace,
@@ -83,14 +88,23 @@ const bootstrapData: BootstrapData = {
   dataPath: "/workspace/.nexestra",
 };
 
-function historySnapshot(thread: Thread, messages: Message[]): ThreadHistoryPage {
-  const data: ThreadData = { thread, runs: [], messages, artifacts: [], toolCalls: [] };
+function historySnapshot(
+  thread: Thread,
+  messages: Message[],
+  artifacts: Artifact[],
+): ThreadHistoryPage {
+  const updatedThread: Thread = {
+    ...thread,
+    messageCount: messages.length,
+    lastMessageAt: messages.length > 0 ? now : null,
+  };
+  const data: ThreadData = { thread: updatedThread, runs: [], messages, artifacts, toolCalls: [] };
   return {
     ...data,
     activeRuns: [],
     page: {
       totalMessages: messages.length,
-      totalArtifacts: 0,
+      totalArtifacts: artifacts.length,
       firstMessageIndex: messages.length ? 1 : 0,
       lastMessageIndex: messages.length,
       beforeCursor: null,
@@ -107,6 +121,7 @@ function takePost(posts: FormData[], index: number): FormData {
 
 function fakeServer(thread: Thread) {
   const savedMessages: Message[] = [];
+  const savedArtifacts: Artifact[] = [];
   const posts: FormData[] = [];
   let bootstrapFetches = 0;
   let historyFetches = 0;
@@ -114,7 +129,7 @@ function fakeServer(thread: Thread) {
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
-      if (path === "/api/bootstrap") {
+      if (path === "/api/bootstrap" || path === `/api/bootstrap?workspaceId=${workspace.id}`) {
         bootstrapFetches += 1;
         const messageCount = savedMessages.length;
         return jsonResponse({
@@ -130,12 +145,13 @@ function fakeServer(thread: Thread) {
       }
       if (path === historyUrl(thread)) {
         historyFetches += 1;
-        return jsonResponse(historySnapshot(thread, [...savedMessages]));
+        return jsonResponse(historySnapshot(thread, [...savedMessages], [...savedArtifacts]));
       }
       if (path === `/api/threads/${thread.id}/messages` && init?.method === "POST") {
         const form = init.body as FormData;
         posts.push(form);
         if (savedMessages.length === 0) {
+          const file = form.get("files") as File;
           savedMessages.push({
             id: "saved-message-1",
             threadId: thread.id,
@@ -144,18 +160,31 @@ function fakeServer(thread: Thread) {
             content: String(form.get("content")),
             mentions: [],
             knowledgeReferences: [],
-            artifactIds: [],
+            artifactIds: ["artifact-resume-1"],
+            createdAt: now,
+          });
+          savedArtifacts.push({
+            id: "artifact-resume-1",
+            threadId: thread.id,
+            messageId: "saved-message-1",
+            sequence: 1,
+            kind: "file",
+            source: "upload",
+            name: file.name,
+            mediaType: file.type,
+            size: file.size,
             createdAt: now,
           });
           return jsonResponse({ error: { message: "Unavailable" } }, 503);
         }
-        return jsonResponse({ message: savedMessages[0], runs: [] }, 201);
+        return jsonResponse({ message: savedMessages[0], runs: [], replayed: true }, 200);
       }
       return jsonResponse({ error: { message: "Not found" } }, 404);
     }),
   );
   return {
     savedMessages,
+    savedArtifacts,
     posts,
     bootstrapFetches: () => bootstrapFetches,
     historyFetches: () => historyFetches,
@@ -191,9 +220,9 @@ describe("resume pending submission", () => {
     expect(screen.getByRole("button", { name: "Remove diagram.png" })).toBeInTheDocument();
 
     window.dispatchEvent(new Event("focus"));
-    expect(await screen.findByText("Resume me")).toBeVisible();
-    expect(server.bootstrapFetches()).toBeGreaterThanOrEqual(2);
+    await waitFor(() => expect(server.bootstrapFetches()).toBeGreaterThanOrEqual(2));
     expect(server.historyFetches()).toBeGreaterThanOrEqual(2);
+    expect(await screen.findByText("Resume me", { selector: "article.message" })).toBeVisible();
 
     expect(server.posts).toHaveLength(1);
     expect(
@@ -204,7 +233,7 @@ describe("resume pending submission", () => {
     expect(screen.getByRole("button", { name: "Remove diagram.png" })).toBeInTheDocument();
   });
 
-  it("explicit retry after focus revalidation replays the same request identity and file once", async () => {
+  it("explicit retry replays the same request identity and file bytes after resume revalidation", async () => {
     const user = userEvent.setup();
     const thread = threadRow("thread-resume-retry", "general");
     window.history.replaceState({}, "", `/threads/${thread.id}`);
@@ -216,21 +245,39 @@ describe("resume pending submission", () => {
     await user.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(server.posts).toHaveLength(1));
     expect(await screen.findByText("Unavailable")).toBeVisible();
+    const savedRequestId = String(takePost(server.posts, 0).get("requestId"));
+    const firstFile = takePost(server.posts, 0).get("files") as File;
 
     window.dispatchEvent(new Event("focus"));
+    await waitFor(() => expect(server.bootstrapFetches()).toBeGreaterThanOrEqual(2));
+    expect(server.historyFetches()).toBeGreaterThanOrEqual(2);
+    expect(await screen.findByText("Resume me", { selector: "article.message" })).toBeVisible();
+    expect(server.posts).toHaveLength(1);
+    expect(composer).toHaveValue("Resume me");
+    expect(screen.getByRole("button", { name: "Remove diagram.png" })).toBeInTheDocument();
+    expect(
+      JSON.parse(window.localStorage.getItem(pendingKey(workspace.id, thread.id)) as string)
+        .requestId,
+    ).toBe(savedRequestId);
+
     await user.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(server.posts).toHaveLength(2));
     const first = takePost(server.posts, 0);
     const second = takePost(server.posts, 1);
     expect(String(second.get("requestId"))).toBe(String(first.get("requestId")));
     expect(String(second.get("content"))).toBe("Resume me");
-    expect((second.get("files") as File).name).toBe("diagram.png");
+    const secondFile = second.get("files") as File;
+    expect(secondFile.name).toBe(firstFile.name);
+    expect(secondFile.type).toBe(firstFile.type);
+    expect(secondFile.size).toBe(firstFile.size);
+    expect(await fileText(secondFile)).toBe(await fileText(firstFile));
     expect(server.savedMessages).toHaveLength(1);
+    expect(server.savedArtifacts).toHaveLength(1);
 
     await waitFor(() =>
       expect(window.localStorage.getItem(pendingKey(workspace.id, thread.id))).toBeNull(),
     );
     expect(composer).toHaveValue("");
-    expect(screen.getAllByText("Resume me")).toHaveLength(1);
+    expect(screen.getAllByText("Resume me", { selector: "article.message" })).toHaveLength(1);
   });
 });
