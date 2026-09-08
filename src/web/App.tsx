@@ -48,6 +48,7 @@ import {
 } from "lucide-react";
 import {
   type FormEvent,
+  Fragment,
   type KeyboardEvent,
   lazy,
   memo,
@@ -76,6 +77,8 @@ import type {
   TaskProcessData,
   Thread,
   ThreadData,
+  ThreadHistoryPage,
+  ThreadMetadataResponse,
   ThreadStreamEvent,
   ToolCall,
   WorkAssignment,
@@ -87,6 +90,7 @@ import {
   extractMentionHandles,
   handleFromName,
   runAttentionItem,
+  THREAD_HISTORY_DEFAULT_LIMIT,
 } from "../shared/contracts.js";
 import { AttentionView } from "./AttentionView.js";
 import { ApiError, api } from "./api.js";
@@ -112,6 +116,19 @@ interface RouteState {
   messageTarget?: { id: string };
 }
 
+type HistoryWindowKind = "latest" | "around" | "before" | "after";
+
+interface HistoryIntent {
+  threadId: string;
+  kind: HistoryWindowKind;
+  messageId?: string;
+}
+
+interface HistoryFocusTarget {
+  messageId: string;
+  block: "start" | "end";
+}
+
 interface LoginSession {
   id: string;
   status: "running" | "completed" | "failed" | "cancelled";
@@ -124,7 +141,15 @@ export function App() {
   const [conversations] = useState(() => new ConversationState());
   const [, setDraftRevision] = useState(0);
   const [data, setData] = useState<BootstrapData>();
-  const [threadData, setThreadData] = useState<ThreadData>();
+  const [historyPage, setHistoryPage] = useState<ThreadHistoryPage>();
+  const [historyWindow, setHistoryWindow] = useState<HistoryIntent>();
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string>();
+  const [historyFocusTarget, setHistoryFocusTarget] = useState<HistoryFocusTarget>();
+  const [latestScrollRequest, setLatestScrollRequest] = useState(0);
+  const [fullThreadData, setFullThreadData] = useState<ThreadData>();
+  const [fullThreadLoading, setFullThreadLoading] = useState(false);
+  const [fullThreadError, setFullThreadError] = useState<string>();
   const [runActivities, setRunActivities] = useState<RunActivity[]>([]);
   const [modal, setModal] = useState<ModalName>(null);
   const [notice, setNotice] = useState<string>();
@@ -153,7 +178,14 @@ export function App() {
   const workspaceIdRef = useRef<string | undefined>(
     readBrowserValue("nexestra.workspaceId") ?? undefined,
   );
-  const latestThreadRequestRef = useRef(0);
+  const historyRequestRef = useRef(0);
+  const historyAbortRef = useRef<AbortController | null>(null);
+  const historyIntentRef = useRef<HistoryIntent | undefined>(undefined);
+  const historyPageRef = useRef<ThreadHistoryPage | undefined>(undefined);
+  const routeLoadSuppressedRef = useRef(false);
+  const fullThreadRequestRef = useRef(0);
+  const fullThreadAbortRef = useRef<AbortController | null>(null);
+  const fullThreadCacheRef = useRef(new Map<string, ThreadData>());
   const latestTaskInspectionRequestRef = useRef(0);
   const latestForeignLookupRequestRef = useRef(0);
   const foreignLookupThreadRef = useRef<string | undefined>(undefined);
@@ -209,7 +241,7 @@ export function App() {
       nextRoute.view !== routeRef.current.view ||
       nextRoute.threadId !== routeRef.current.threadId
     ) {
-      latestThreadRequestRef.current += 1;
+      historyRequestRef.current += 1;
     }
     routeRef.current = nextRoute;
     window.history[replace ? "replaceState" : "pushState"]({}, "", nextPath);
@@ -281,8 +313,8 @@ export function App() {
     [updateData],
   );
 
-  const loadThread = useCallback(
-    async (threadId: string, quiet = false) => {
+  const loadHistoryPage = useCallback(
+    async (threadId: string, intent: HistoryIntent, quiet = false) => {
       const generation = workspaceGenerationRef.current;
       const workspaceId = workspaceIdRef.current;
       const isCurrent = () =>
@@ -291,21 +323,46 @@ export function App() {
         routeRef.current.threadId === threadId &&
         dataRef.current?.workspace.id === workspaceId;
       if (!isCurrent()) return undefined;
-      const requestId = ++latestThreadRequestRef.current;
+      const requestId = ++historyRequestRef.current;
+      historyIntentRef.current = intent;
+      historyAbortRef.current?.abort();
+      const controller = new AbortController();
+      historyAbortRef.current = controller;
+      setHistoryLoading(true);
+      setHistoryError(undefined);
+      const params = new URLSearchParams({ workspaceId: workspaceId ?? "" });
+      params.set("limit", String(THREAD_HISTORY_DEFAULT_LIMIT));
+      if (intent.kind === "around" && intent.messageId) params.set("around", intent.messageId);
+      else if (intent.kind === "before" && intent.messageId) params.set("before", intent.messageId);
+      else if (intent.kind === "after" && intent.messageId) params.set("after", intent.messageId);
       try {
-        const next = await api<ThreadData>(`/api/threads/${encodeURIComponent(threadId)}`);
+        const next = await api<ThreadHistoryPage>(
+          `/api/threads/${encodeURIComponent(threadId)}/history?${params.toString()}`,
+          { signal: controller.signal },
+        );
         if (
           !isCurrent() ||
-          requestId !== latestThreadRequestRef.current ||
+          requestId !== historyRequestRef.current ||
+          next.thread.id !== threadId ||
           next.thread.workspaceId !== workspaceId
         )
           return undefined;
-        setThreadData(next);
+        historyPageRef.current = next;
+        historyIntentRef.current = intent;
+        setHistoryWindow(intent);
+        setHistoryPage(next);
+        if (!quiet && intent.kind === "before") {
+          const message = next.messages.at(-1);
+          if (message) setHistoryFocusTarget({ messageId: message.id, block: "end" });
+        } else if (!quiet && intent.kind === "after") {
+          const message = next.messages[0];
+          if (message) setHistoryFocusTarget({ messageId: message.id, block: "start" });
+        }
         const current = dataRef.current;
         if (current) {
           const activeRuns = [
             ...current.activeRuns.filter((run) => run.threadId !== threadId),
-            ...next.runs.filter(isActiveRun),
+            ...next.activeRuns.filter(isActiveRun),
           ];
           const activeIds = new Set(activeRuns.map((run) => run.id));
           const runDisappeared = current.activeRuns.some((run) => !activeIds.has(run.id));
@@ -313,7 +370,7 @@ export function App() {
             ...current.attention.filter(
               (item) => !isRunAttention(item) || item.threadId !== threadId,
             ),
-            ...next.runs.flatMap((run) => {
+            ...next.activeRuns.flatMap((run) => {
               const agent = current.agents.find((entry) => entry.id === run.agentId);
               const item = runAttentionItem(run, agent?.name ?? "Agent", next.thread.name);
               return item ? [item] : [];
@@ -334,20 +391,148 @@ export function App() {
         if (!quiet) setError(undefined);
         return next;
       } catch (caught) {
-        if (isCurrent() && requestId === latestThreadRequestRef.current && !quiet) {
-          setError(messageFrom(caught));
+        if (isCurrent() && requestId === historyRequestRef.current && !quiet) {
+          if (!controller.signal.aborted) setHistoryError(messageFrom(caught));
         }
         return undefined;
+      } finally {
+        if (historyAbortRef.current === controller) historyAbortRef.current = null;
+        if (requestId === historyRequestRef.current) setHistoryLoading(false);
       }
     },
     [refresh, updateData],
   );
 
+  const currentHistoryIntent = useCallback((): HistoryIntent | undefined => {
+    const threadId = routeRef.current.threadId;
+    if (!threadId) return undefined;
+    const intent = historyIntentRef.current;
+    return intent?.threadId === threadId ? intent : { threadId, kind: "latest" };
+  }, []);
+
+  const clearMessageTargetPreservingThread = useCallback(() => {
+    const threadId = routeRef.current.threadId;
+    if (!threadId || !routeRef.current.messageTarget) return false;
+    routeLoadSuppressedRef.current = true;
+    const nextRoute: RouteState = {
+      view: "threads",
+      surface: routeRef.current.surface,
+      threadId,
+    };
+    routeRef.current = nextRoute;
+    window.history.replaceState({}, "", `/threads/${encodeURIComponent(threadId)}`);
+    setRoute(nextRoute);
+    return true;
+  }, []);
+
+  const goOlder = useCallback(() => {
+    const threadId = routeRef.current.threadId;
+    const page = historyPageRef.current;
+    if (!threadId || !page?.page.beforeCursor) return;
+    clearMessageTargetPreservingThread();
+    void loadHistoryPage(threadId, {
+      threadId,
+      kind: "before",
+      messageId: page.page.beforeCursor,
+    });
+  }, [clearMessageTargetPreservingThread, loadHistoryPage]);
+
+  const goNewer = useCallback(() => {
+    const threadId = routeRef.current.threadId;
+    const page = historyPageRef.current;
+    if (!threadId || !page?.page.afterCursor) return;
+    clearMessageTargetPreservingThread();
+    void loadHistoryPage(threadId, {
+      threadId,
+      kind: "after",
+      messageId: page.page.afterCursor,
+    });
+  }, [clearMessageTargetPreservingThread, loadHistoryPage]);
+
+  const showLatest = useCallback(() => {
+    const threadId = routeRef.current.threadId;
+    if (!threadId) return;
+    if (routeRef.current.messageTarget) routeLoadSuppressedRef.current = true;
+    navigate(`/threads/${encodeURIComponent(threadId)}`, {
+      view: "threads",
+      surface: routeRef.current.surface,
+      threadId,
+    });
+    setHistoryFocusTarget(undefined);
+    setLatestScrollRequest((revision) => revision + 1);
+    void loadHistoryPage(threadId, { threadId, kind: "latest" });
+  }, [loadHistoryPage, navigate]);
+
+  const retryHistory = useCallback(() => {
+    const threadId = routeRef.current.threadId;
+    if (!threadId) return;
+    const intent = historyIntentRef.current ?? {
+      threadId,
+      kind: routeRef.current.messageTarget ? ("around" as const) : ("latest" as const),
+      messageId: routeRef.current.messageTarget?.id,
+    };
+    void loadHistoryPage(threadId, intent);
+  }, [loadHistoryPage]);
+
+  const openArtifacts = useCallback(() => {
+    const threadId = routeRef.current.threadId;
+    if (!threadId) return;
+    const generation = workspaceGenerationRef.current;
+    const workspaceId = workspaceIdRef.current;
+    if (!dataRef.current || dataRef.current.workspace.id !== workspaceId) return;
+    const cached = fullThreadCacheRef.current.get(threadId);
+    if (cached && cached.artifacts.length === (historyPageRef.current?.page.totalArtifacts ?? 0)) {
+      setFullThreadData(cached);
+      setFullThreadLoading(false);
+      setFullThreadError(undefined);
+      return;
+    }
+    const requestId = ++fullThreadRequestRef.current;
+    fullThreadAbortRef.current?.abort();
+    const controller = new AbortController();
+    fullThreadAbortRef.current = controller;
+    setFullThreadLoading(true);
+    setFullThreadError(undefined);
+    void (async () => {
+      try {
+        const full = await api<ThreadData>(`/api/threads/${encodeURIComponent(threadId)}`, {
+          signal: controller.signal,
+        });
+        if (
+          requestId !== fullThreadRequestRef.current ||
+          generation !== workspaceGenerationRef.current ||
+          routeRef.current.view !== "threads" ||
+          routeRef.current.threadId !== threadId ||
+          full.thread.workspaceId !== workspaceId
+        )
+          return;
+        fullThreadCacheRef.current.clear();
+        fullThreadCacheRef.current.set(threadId, full);
+        setFullThreadData(full);
+        setFullThreadLoading(false);
+        setFullThreadError(undefined);
+      } catch (caught) {
+        if (
+          requestId !== fullThreadRequestRef.current ||
+          generation !== workspaceGenerationRef.current ||
+          routeRef.current.threadId !== threadId
+        )
+          return;
+        setFullThreadError(messageFrom(caught));
+        setFullThreadLoading(false);
+      }
+    })();
+  }, []);
+
+  const handleHistoryFocusHandled = useCallback(() => {
+    setHistoryFocusTarget(undefined);
+  }, []);
+
   useEffect(() => {
     void refresh();
     return () => {
       workspaceGenerationRef.current += 1;
-      latestThreadRequestRef.current += 1;
+      historyRequestRef.current += 1;
     };
   }, [refresh]);
 
@@ -358,7 +543,7 @@ export function App() {
         nextRoute.view !== routeRef.current.view ||
         nextRoute.threadId !== routeRef.current.threadId
       ) {
-        latestThreadRequestRef.current += 1;
+        historyRequestRef.current += 1;
       }
       routeRef.current = nextRoute;
       setRoute(nextRoute);
@@ -369,12 +554,25 @@ export function App() {
 
   const beginWorkspaceSwitch = useCallback((workspaceId: string) => {
     workspaceGenerationRef.current += 1;
-    latestThreadRequestRef.current += 1;
+    historyRequestRef.current += 1;
+    historyAbortRef.current?.abort();
+    historyAbortRef.current = null;
+    fullThreadRequestRef.current += 1;
+    fullThreadAbortRef.current?.abort();
+    fullThreadAbortRef.current = null;
+    routeLoadSuppressedRef.current = false;
     latestForeignLookupRequestRef.current += 1;
     foreignLookupThreadRef.current = undefined;
     workspaceIdRef.current = workspaceId;
     threadActivityRevisionRef.current = undefined;
-    setThreadData(undefined);
+    setHistoryPage(undefined);
+    setHistoryWindow(undefined);
+    setHistoryLoading(false);
+    setHistoryError(undefined);
+    setHistoryFocusTarget(undefined);
+    setFullThreadData(undefined);
+    setFullThreadLoading(false);
+    setFullThreadError(undefined);
     setRunActivities([]);
     setModal(null);
     setTaskToInspect(undefined);
@@ -431,19 +629,21 @@ export function App() {
     foreignLookupThreadRef.current = threadId;
     void (async () => {
       try {
-        const next = await api<ThreadData>(`/api/threads/${encodeURIComponent(threadId)}`);
+        const next = await api<ThreadMetadataResponse>(
+          `/api/threads/${encodeURIComponent(threadId)}/metadata`,
+        );
         if (
           requestId !== latestForeignLookupRequestRef.current ||
           generation !== workspaceGenerationRef.current ||
           routeRef.current.view !== "threads" ||
           routeRef.current.threadId !== threadId ||
-          next.thread.id !== threadId
+          next.id !== threadId
         )
           return;
-        const targetWorkspace = next.thread.workspaceId;
+        const targetWorkspace = next.workspaceId;
         if (targetWorkspace === workspaceIdRef.current) {
           void refresh(true, targetWorkspace);
-          void loadThread(threadId);
+          void loadHistoryPage(threadId, { threadId, kind: "latest" });
           return;
         }
         beginWorkspaceSwitch(targetWorkspace);
@@ -489,7 +689,7 @@ export function App() {
     beginWorkspaceSwitch,
     conversations,
     data,
-    loadThread,
+    loadHistoryPage,
     navigate,
     refresh,
     route.threadId,
@@ -498,21 +698,32 @@ export function App() {
   ]);
   useEffect(() => {
     if (route.view !== "threads" || !route.threadId || !routeThreadExists) return;
+    if (routeLoadSuppressedRef.current) {
+      routeLoadSuppressedRef.current = false;
+      return;
+    }
     setRunActivities([]);
-    void loadThread(route.threadId);
-  }, [loadThread, route.threadId, route.view, routeThreadExists]);
+    setHistoryPage(undefined);
+    setHistoryError(undefined);
+    setHistoryFocusTarget(undefined);
+    setFullThreadData(undefined);
+    const intent: HistoryIntent = route.messageTarget
+      ? { threadId: route.threadId, kind: "around", messageId: route.messageTarget.id }
+      : { threadId: route.threadId, kind: "latest" };
+    void loadHistoryPage(route.threadId, intent);
+  }, [loadHistoryPage, route.messageTarget, route.threadId, route.view, routeThreadExists]);
 
-  const hasActiveThreadRuns = threadData?.runs.some(isActiveRun);
+  const hasActiveThreadRuns = historyPage?.activeRuns.some(isActiveRun);
   const isWatchingActiveThread = Boolean(
     hasActiveThreadRuns &&
       data?.workspace.id === workspaceIdRef.current &&
       route.view === "threads" &&
       route.threadId &&
-      route.threadId === threadData?.thread.id,
+      route.threadId === historyPage?.thread.id,
   );
   const supportsThreadStreaming = typeof window.EventSource === "function";
   const isPollingActiveThread = isWatchingActiveThread && !supportsThreadStreaming;
-  const visibleThreadData = route.threadId === threadData?.thread.id ? threadData : undefined;
+  const visibleThreadData = route.threadId === historyPage?.thread.id ? historyPage : undefined;
   useEffect(() => {
     if (!isPollingActiveThread || !route.threadId) return;
     const threadId = route.threadId;
@@ -520,12 +731,16 @@ export function App() {
     const timer = window.setInterval(() => {
       if (requestInFlight) return;
       requestInFlight = true;
-      void loadThread(threadId, true).finally(() => {
+      void loadHistoryPage(
+        threadId,
+        currentHistoryIntent() ?? { threadId, kind: "latest" },
+        true,
+      ).finally(() => {
         requestInFlight = false;
       });
     }, 1_000);
     return () => window.clearInterval(timer);
-  }, [isPollingActiveThread, loadThread, route.threadId]);
+  }, [currentHistoryIntent, isPollingActiveThread, loadHistoryPage, route.threadId]);
 
   useEffect(() => {
     if (!isWatchingActiveThread || !supportsThreadStreaming || !route.threadId) return;
@@ -542,7 +757,11 @@ export function App() {
         return;
       }
       requestInFlight = true;
-      void loadThread(threadId, true).finally(() => {
+      void loadHistoryPage(
+        threadId,
+        currentHistoryIntent() ?? { threadId, kind: "latest" },
+        true,
+      ).finally(() => {
         requestInFlight = false;
         if (refreshQueued) {
           refreshQueued = false;
@@ -566,7 +785,13 @@ export function App() {
       source.removeEventListener("thread", onThreadEvent);
       source.close();
     };
-  }, [isWatchingActiveThread, loadThread, route.threadId, supportsThreadStreaming]);
+  }, [
+    currentHistoryIntent,
+    isWatchingActiveThread,
+    loadHistoryPage,
+    route.threadId,
+    supportsThreadStreaming,
+  ]);
 
   // The selected thread has its own durable reload and stream. Other active threads
   // still need metadata supervision while that stream is open.
@@ -655,7 +880,9 @@ export function App() {
           surface: routeRef.current.surface,
           threadId,
         });
-        if (threadId === previousThreadId) void loadThread(threadId);
+        if (threadId === previousThreadId) {
+          void loadHistoryPage(threadId, { threadId, kind: "latest" });
+        }
       } else {
         navigate("/threads", { view: "threads", surface: routeRef.current.surface });
       }
@@ -693,7 +920,13 @@ export function App() {
       if (generation !== workspaceGenerationRef.current) return;
       await refresh();
       if (generation !== workspaceGenerationRef.current) return;
-      if (routeRef.current.threadId === threadId) await loadThread(threadId, true);
+      if (routeRef.current.threadId === threadId) {
+        await loadHistoryPage(
+          threadId,
+          currentHistoryIntent() ?? { threadId, kind: "latest" },
+          true,
+        );
+      }
       if (generation !== workspaceGenerationRef.current) return;
       setThreadToRename((current) => (current?.id === threadId ? undefined : current));
       flash("Thread renamed.");
@@ -714,7 +947,13 @@ export function App() {
       if (generation !== workspaceGenerationRef.current) return;
       await refresh();
       if (generation !== workspaceGenerationRef.current) return;
-      if (routeRef.current.threadId === threadId) await loadThread(threadId, true);
+      if (routeRef.current.threadId === threadId) {
+        await loadHistoryPage(
+          threadId,
+          currentHistoryIntent() ?? { threadId, kind: "latest" },
+          true,
+        );
+      }
       if (generation !== workspaceGenerationRef.current) return;
       flash("Thread archived.");
     } catch (caught) {
@@ -732,7 +971,13 @@ export function App() {
       if (generation !== workspaceGenerationRef.current) return;
       await refresh();
       if (generation !== workspaceGenerationRef.current) return;
-      if (routeRef.current.threadId === threadId) await loadThread(threadId, true);
+      if (routeRef.current.threadId === threadId) {
+        await loadHistoryPage(
+          threadId,
+          currentHistoryIntent() ?? { threadId, kind: "latest" },
+          true,
+        );
+      }
       if (generation !== workspaceGenerationRef.current) return;
       flash("Thread restored.");
     } catch (caught) {
@@ -819,7 +1064,13 @@ export function App() {
       await operation();
       if (generation !== workspaceGenerationRef.current) return;
       await refresh();
-      if (route.threadId) await loadThread(route.threadId, true);
+      if (route.threadId) {
+        await loadHistoryPage(
+          route.threadId,
+          currentHistoryIntent() ?? { threadId: route.threadId, kind: "latest" },
+          true,
+        );
+      }
       flash(success);
     } catch (caught) {
       setError(messageFrom(caught));
@@ -910,6 +1161,28 @@ export function App() {
               key={route.threadId}
               data={data}
               threadData={visibleThreadData}
+              history={{
+                intent: historyWindow,
+                totalMessages: historyPage?.page.totalMessages ?? 0,
+                totalArtifacts: historyPage?.page.totalArtifacts ?? 0,
+                firstMessageIndex: historyPage?.page.firstMessageIndex ?? 0,
+                lastMessageIndex: historyPage?.page.lastMessageIndex ?? 0,
+                beforeCursor: historyPage?.page.beforeCursor ?? null,
+                afterCursor: historyPage?.page.afterCursor ?? null,
+                loading: historyLoading,
+                error: historyError,
+                onOlder: goOlder,
+                onNewer: goNewer,
+                onShowLatest: showLatest,
+                onRetryHistory: retryHistory,
+              }}
+              historyFocusTarget={historyFocusTarget}
+              onHistoryFocusHandled={handleHistoryFocusHandled}
+              scrollToLatestRequest={latestScrollRequest}
+              fullThreadData={fullThreadData}
+              fullThreadLoading={fullThreadLoading}
+              fullThreadError={fullThreadError}
+              onOpenArtifacts={openArtifacts}
               runActivities={deferredRunActivities}
               messageTarget={route.messageTarget}
               onClearMessageTarget={() => {
@@ -945,7 +1218,19 @@ export function App() {
                   setDraftRevision((revision) => revision + 1);
                 }
                 if (generation !== workspaceGenerationRef.current) return;
-                await Promise.all([refresh(true), loadThread(threadId)]);
+                if (routeRef.current.messageTarget) {
+                  routeLoadSuppressedRef.current = true;
+                  navigate(`/threads/${encodeURIComponent(threadId)}`, {
+                    view: "threads",
+                    surface: routeRef.current.surface,
+                    threadId,
+                  });
+                }
+                setLatestScrollRequest((revision) => revision + 1);
+                await Promise.all([
+                  refresh(true),
+                  loadHistoryPage(threadId, { threadId, kind: "latest" }),
+                ]);
               }}
               onRequestRename={setThreadToRename}
               onArchive={archiveThread}
@@ -961,14 +1246,26 @@ export function App() {
                   method: "POST",
                   body: "{}",
                 });
-                if (route.threadId) await loadThread(route.threadId, true);
+                if (route.threadId) {
+                  await loadHistoryPage(
+                    route.threadId,
+                    currentHistoryIntent() ?? { threadId: route.threadId, kind: "latest" },
+                    true,
+                  );
+                }
               }}
               onToolResponse={async (toolCallId, answers) => {
                 await api(`/api/tool-calls/${toolCallId}/respond`, {
                   method: "POST",
                   body: JSON.stringify({ answers }),
                 });
-                if (route.threadId) await loadThread(route.threadId, true);
+                if (route.threadId) {
+                  await loadHistoryPage(
+                    route.threadId,
+                    currentHistoryIntent() ?? { threadId: route.threadId, kind: "latest" },
+                    true,
+                  );
+                }
               }}
             />
           ) : (
@@ -978,6 +1275,13 @@ export function App() {
           <AttentionView
             items={data.attention}
             onThread={openThread}
+            onRun={(threadId, runId) => {
+              const run = data.activeRuns.find(
+                (entry) => entry.id === runId && entry.threadId === threadId,
+              );
+              if (run) openMessage(threadId, run.triggerMessageId);
+              else openThread(threadId);
+            }}
             onTask={(id) => void inspectTask(id)}
           />
         ) : route.surface === "agents" ? (
@@ -1306,7 +1610,13 @@ export function App() {
               document.querySelector<HTMLButtonElement>("[data-create-agent]")?.focus();
             }, 0);
             await refresh(true);
-            if (route.threadId) await loadThread(route.threadId, true);
+            if (route.threadId) {
+              await loadHistoryPage(
+                route.threadId,
+                currentHistoryIntent() ?? { threadId: route.threadId, kind: "latest" },
+                true,
+              );
+            }
           }}
         />
       )}
@@ -1655,7 +1965,29 @@ function ComposerFormatButton(props: { label: string; onClick: () => void; child
 
 function ThreadView(props: {
   data: BootstrapData;
-  threadData?: ThreadData;
+  threadData?: ThreadHistoryPage;
+  history: {
+    intent?: HistoryIntent;
+    totalMessages: number;
+    totalArtifacts: number;
+    firstMessageIndex: number;
+    lastMessageIndex: number;
+    beforeCursor: string | null;
+    afterCursor: string | null;
+    loading: boolean;
+    error?: string;
+    onOlder: () => void;
+    onNewer: () => void;
+    onShowLatest: () => void;
+    onRetryHistory: () => void;
+  };
+  historyFocusTarget?: HistoryFocusTarget;
+  onHistoryFocusHandled: () => void;
+  scrollToLatestRequest: number;
+  fullThreadData?: ThreadData;
+  fullThreadLoading: boolean;
+  fullThreadError?: string;
+  onOpenArtifacts: () => void;
   runActivities: RunActivity[];
   messageTarget?: { id: string };
   onClearMessageTarget: () => void;
@@ -1939,7 +2271,7 @@ function ThreadView(props: {
     );
   }
   const archived = thread.archived;
-  const hasActiveRuns = props.threadData.runs.some(isActiveRun);
+  const hasActiveRuns = props.threadData.activeRuns.some(isActiveRun);
   return (
     <div className="thread-view">
       <header className="workspace-header">
@@ -1999,21 +2331,59 @@ function ThreadView(props: {
           onClick={() => setActiveTab("artifacts")}
         >
           <Paperclip size={15} /> Files &amp; links
-          {props.threadData.artifacts.length > 0 && (
-            <em className="thread-tab-count">{props.threadData.artifacts.length}</em>
+          {props.history.totalArtifacts > 0 && (
+            <em className="thread-tab-count">{props.history.totalArtifacts}</em>
           )}
         </button>
       </div>
+      {activeTab === "messages" && (
+        <div className="thread-history-bar">
+          <button
+            type="button"
+            disabled={!props.history.beforeCursor}
+            onClick={props.history.onOlder}
+          >
+            <ArrowUp size={14} />
+            Older messages
+          </button>
+          <span className="thread-history-range" aria-live="polite">
+            {props.history.totalMessages === 0
+              ? "No messages yet"
+              : `Messages ${props.history.firstMessageIndex}–${props.history.lastMessageIndex} of ${props.history.totalMessages}`}
+          </span>
+          {props.history.loading && <LoaderCircle className="spin" size={14} />}
+          <button
+            type="button"
+            disabled={!props.history.afterCursor}
+            onClick={props.history.onNewer}
+          >
+            Newer messages
+            <ArrowDown size={14} />
+          </button>
+          <button
+            type="button"
+            disabled={props.history.intent?.kind === "latest"}
+            onClick={props.history.onShowLatest}
+          >
+            Show latest
+          </button>
+        </div>
+      )}
+      {activeTab === "messages" && props.history.error && (
+        <div className="thread-history-error" role="alert">
+          <span>{props.history.error}</span>
+          <button type="button" onClick={props.history.onRetryHistory}>
+            Try again
+          </button>
+        </div>
+      )}
       {activeTab === "messages" && props.messageTarget && (
         <div className="message-target-notice">
           <span role="status">
-            {props.threadData.messages.some((message) => message.id === props.messageTarget?.id)
+            {props.threadData.page.targetFound === true
               ? "Viewing a linked message."
               : "The linked message is not available in this thread."}
           </span>
-          <button type="button" onClick={props.onClearMessageTarget}>
-            Show latest
-          </button>
         </div>
       )}
       {activeTab === "messages" ? (
@@ -2031,12 +2401,21 @@ function ThreadView(props: {
           onToolResponse={props.onToolResponse}
           readOnly={archived}
           messageTarget={props.messageTarget}
+          historyWindowKind={props.history.intent?.kind ?? "latest"}
+          historyFocusTarget={props.historyFocusTarget}
+          onHistoryFocusHandled={props.onHistoryFocusHandled}
+          scrollToLatestRequest={props.scrollToLatestRequest}
         />
       ) : (
-        <ThreadArtifacts
+        <ArtifactPanel
           thread={thread}
-          artifacts={props.threadData.artifacts}
-          messages={props.threadData.messages}
+          totalCount={props.history.totalArtifacts}
+          fullData={
+            props.fullThreadData?.thread.id === thread.id ? props.fullThreadData : undefined
+          }
+          loading={props.fullThreadLoading}
+          error={props.fullThreadError}
+          onOpen={props.onOpenArtifacts}
         />
       )}
       {activeTab === "messages" && !archived && (
@@ -2378,6 +2757,29 @@ function ThreadView(props: {
   );
 }
 
+function dayKey(value: string): string {
+  const date = new Date(value);
+  return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
+}
+
+function dayLabel(value: string): string {
+  const now = new Date();
+  const date = new Date(value);
+  const sameDay = (left: Date, right: Date) =>
+    left.getFullYear() === right.getFullYear() &&
+    left.getMonth() === right.getMonth() &&
+    left.getDate() === right.getDate();
+  if (sameDay(date, now)) return "Today";
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (sameDay(date, yesterday)) return "Yesterday";
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  }).format(date);
+}
+
 const ThreadTranscript = memo(function ThreadTranscript({
   thread,
   messages,
@@ -2392,6 +2794,10 @@ const ThreadTranscript = memo(function ThreadTranscript({
   onToolResponse,
   readOnly,
   messageTarget,
+  historyWindowKind,
+  historyFocusTarget,
+  onHistoryFocusHandled,
+  scrollToLatestRequest,
 }: {
   thread: Thread;
   messages: Message[];
@@ -2406,17 +2812,99 @@ const ThreadTranscript = memo(function ThreadTranscript({
   onToolResponse: (toolCallId: string, answers: string[][]) => Promise<void>;
   readOnly: boolean;
   messageTarget?: { id: string };
+  historyWindowKind: HistoryWindowKind;
+  historyFocusTarget?: HistoryFocusTarget;
+  onHistoryFocusHandled: () => void;
+  scrollToLatestRequest: number;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const targetRef = useRef<HTMLElement>(null);
+  const messageElementsRef = useRef(new Map<string, HTMLElement>());
+  const consumedScrollRequestRef = useRef(0);
+  const [nearBottom, setNearBottom] = useState(true);
+  useEffect(() => {
+    const node = scrollRef.current;
+    if (!node) return;
+    const update = () => {
+      setNearBottom(node.scrollHeight - node.scrollTop - node.clientHeight < 120);
+    };
+    update();
+    node.addEventListener("scroll", update, { passive: true });
+    return () => node.removeEventListener("scroll", update);
+  }, []);
   const targetAvailable = Boolean(
     messageTarget && messages.some((message) => message.id === messageTarget.id),
   );
   useEffect(() => {
     if (!messageTarget || !targetAvailable || !targetRef.current) return;
-    targetRef.current.scrollIntoView?.({ block: "center" });
-    targetRef.current.focus({ preventScroll: true });
+    const node = targetRef.current;
+    const scrollContainer = node.closest(".message-scroll") as HTMLElement | null;
+    const center = () => {
+      const containerRect = scrollContainer?.getBoundingClientRect();
+      const nodeRect = node.getBoundingClientRect();
+      if (!scrollContainer || !containerRect || containerRect.height <= 0) {
+        return undefined;
+      }
+      const offset =
+        nodeRect.top - containerRect.top - (containerRect.height - nodeRect.height) / 2;
+      if (Math.abs(offset) > 1) {
+        scrollContainer.scrollTop += offset;
+        return scrollContainer.scrollTop;
+      }
+      return undefined;
+    };
+    node.scrollIntoView?.({ block: "center" });
+    node.focus({ preventScroll: true });
+    if (typeof requestAnimationFrame !== "function") return;
+    let cancelled = false;
+    let frames = 0;
+    let stableFrames = 0;
+    let previousHeight = node.getBoundingClientRect().height;
+    const stopForUserInput = () => {
+      cancelled = true;
+    };
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key))
+        cancelled = true;
+    };
+    scrollContainer?.addEventListener("wheel", stopForUserInput, { passive: true });
+    scrollContainer?.addEventListener("touchstart", stopForUserInput, { passive: true });
+    scrollContainer?.addEventListener("pointerdown", stopForUserInput);
+    scrollContainer?.addEventListener("keydown", onKeyDown);
+    const stabilize = () => {
+      if (cancelled || frames >= 180) return;
+      frames += 1;
+      const height = node.getBoundingClientRect().height;
+      const heightChanged = Math.abs(height - previousHeight) > 1;
+      previousHeight = height;
+      const applied = center();
+      const markdownReady = !node.querySelector(".message-markdown-fallback");
+      if (markdownReady && !heightChanged && applied === undefined) {
+        stableFrames += 1;
+        if (stableFrames >= 2) return;
+      } else {
+        stableFrames = 0;
+      }
+      requestAnimationFrame(stabilize);
+    };
+    requestAnimationFrame(stabilize);
+    return () => {
+      cancelled = true;
+      scrollContainer?.removeEventListener("wheel", stopForUserInput);
+      scrollContainer?.removeEventListener("touchstart", stopForUserInput);
+      scrollContainer?.removeEventListener("pointerdown", stopForUserInput);
+      scrollContainer?.removeEventListener("keydown", onKeyDown);
+    };
   }, [messageTarget, targetAvailable]);
+  useEffect(() => {
+    if (!historyFocusTarget) return;
+    const node = messageElementsRef.current.get(historyFocusTarget.messageId);
+    if (!node) return;
+    node.scrollIntoView?.({ block: historyFocusTarget.block });
+    node.focus({ preventScroll: true });
+    onHistoryFocusHandled();
+  }, [historyFocusTarget, onHistoryFocusHandled]);
   const agentsById = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
   const currentAgentHandles = useMemo(() => agents.map((agent) => agent.handle), [agents]);
   const knownAgentHandles = useMemo(() => new Set(currentAgentHandles), [currentAgentHandles]);
@@ -2455,21 +2943,41 @@ const ThreadTranscript = memo(function ThreadTranscript({
     () => new Map(runActivities.map((activity) => [activity.runId, activity])),
     [runActivities],
   );
-  const transcriptVersion = `${messages.length}:${artifacts.length}:${runs
-    .map((run) => `${run.id}-${run.status}`)
-    .join(",")}:${toolCalls.map((call) => `${call.id}-${call.status}`).join(",")}:${runActivities
-    .map(
-      (activity) =>
-        `${activity.runId}-${activity.updatedAt}-${activity.thinking.length}-${activity.text.length}`,
-    )
-    .join(",")}`;
+  const lastMessage = messages.at(-1);
+  const transcriptVersion =
+    messages.length +
+    ":" +
+    artifacts.length +
+    ":" +
+    (lastMessage ? `${lastMessage.id}-${lastMessage.sequence}` : "") +
+    ":" +
+    runs.map((run) => `${run.id}-${run.status}`).join(",") +
+    ":" +
+    toolCalls.map((call) => `${call.id}-${call.status}`).join(",") +
+    ":" +
+    runActivities
+      .map(
+        (activity) =>
+          activity.runId +
+          "-" +
+          activity.updatedAt +
+          "-" +
+          activity.thinking.length +
+          "-" +
+          activity.text.length,
+      )
+      .join(",");
   useEffect(() => {
-    if (!transcriptVersion || messageTarget) return;
-    bottomRef.current?.scrollIntoView?.({ block: "end" });
-  }, [transcriptVersion, messageTarget]);
+    if (!transcriptVersion || messageTarget || historyWindowKind !== "latest") return;
+    const forced = scrollToLatestRequest > consumedScrollRequestRef.current;
+    if (forced) consumedScrollRequestRef.current = scrollToLatestRequest;
+    if (forced || nearBottom) {
+      bottomRef.current?.scrollIntoView?.({ block: "end" });
+    }
+  }, [historyWindowKind, messageTarget, nearBottom, scrollToLatestRequest, transcriptVersion]);
 
   return (
-    <div className="message-scroll">
+    <div className="message-scroll" ref={scrollRef}>
       <div className="thread-intro">
         <span className="channel-badge">#</span>
         <h2>{thread.name}</h2>
@@ -2478,51 +2986,62 @@ const ThreadTranscript = memo(function ThreadTranscript({
           <mark>@agent</mark> when you want an agent to reply.
         </p>
       </div>
-      {messages.length > 0 && (
-        <div className="date-divider">
-          <span>Today</span>
-        </div>
-      )}
-      {messages.map((message) => (
-        <section
-          key={message.id}
-          ref={message.id === messageTarget?.id ? targetRef : undefined}
-          className={message.id === messageTarget?.id ? "message-target" : undefined}
-          aria-label={message.id === messageTarget?.id ? "Selected message" : undefined}
-          tabIndex={message.id === messageTarget?.id ? -1 : undefined}
-        >
-          <MessageRow
-            message={message}
-            artifacts={artifactsByMessage.get(message.id) ?? []}
-            knownHandles={
-              new Set([
-                ...currentAgentHandles,
-                ...message.mentions.map((mention) => mention.handle),
-                ...(message.author.kind === "agent" ? [message.author.handle] : []),
-              ])
-            }
-            knownKnowledgeHandles={knownKnowledgeHandles}
-            agent={message.author.kind === "agent" ? agentsById.get(message.author.id) : undefined}
-          />
-          {(runsByTrigger.get(message.id) ?? []).map((run) => (
-            <RunRow
-              key={run.id}
-              run={run}
-              agent={agentsById.get(run.agentId)}
-              historicalHandle={
-                message.mentions.find((mention) => mention.agentId === run.agentId)?.handle
-              }
-              onRetry={onRetry}
-              toolCalls={toolCallsByRun.get(run.id) ?? []}
-              activity={activitiesByRun.get(run.id)}
-              knownHandles={knownAgentHandles}
-              onToolDecision={onToolDecision}
-              onToolResponse={onToolResponse}
-              readOnly={readOnly}
-            />
-          ))}
-        </section>
-      ))}
+      {messages.map((message, index) => {
+        const previous = messages[index - 1];
+        const showDivider = !previous || dayKey(previous.createdAt) !== dayKey(message.createdAt);
+        return (
+          <Fragment key={message.id}>
+            {showDivider && (
+              <div className="date-divider">
+                <span>{dayLabel(message.createdAt)}</span>
+              </div>
+            )}
+            <section
+              ref={(node) => {
+                if (node) messageElementsRef.current.set(message.id, node);
+                else messageElementsRef.current.delete(message.id);
+                if (message.id === messageTarget?.id) targetRef.current = node;
+              }}
+              className={message.id === messageTarget?.id ? "message-target" : undefined}
+              aria-label={message.id === messageTarget?.id ? "Selected message" : undefined}
+              tabIndex={-1}
+            >
+              <MessageRow
+                message={message}
+                artifacts={artifactsByMessage.get(message.id) ?? []}
+                knownHandles={
+                  new Set([
+                    ...currentAgentHandles,
+                    ...message.mentions.map((mention) => mention.handle),
+                    ...(message.author.kind === "agent" ? [message.author.handle] : []),
+                  ])
+                }
+                knownKnowledgeHandles={knownKnowledgeHandles}
+                agent={
+                  message.author.kind === "agent" ? agentsById.get(message.author.id) : undefined
+                }
+              />
+              {(runsByTrigger.get(message.id) ?? []).map((run) => (
+                <RunRow
+                  key={run.id}
+                  run={run}
+                  agent={agentsById.get(run.agentId)}
+                  historicalHandle={
+                    message.mentions.find((mention) => mention.agentId === run.agentId)?.handle
+                  }
+                  onRetry={onRetry}
+                  toolCalls={toolCallsByRun.get(run.id) ?? []}
+                  activity={activitiesByRun.get(run.id)}
+                  knownHandles={knownAgentHandles}
+                  onToolDecision={onToolDecision}
+                  onToolResponse={onToolResponse}
+                  readOnly={readOnly}
+                />
+              ))}
+            </section>
+          </Fragment>
+        );
+      })}
       <div ref={bottomRef} />
     </div>
   );
@@ -2763,6 +3282,63 @@ function ThreadArtifacts({
         </>
       )}
     </section>
+  );
+}
+
+function ArtifactPanel({
+  thread,
+  totalCount,
+  fullData,
+  loading,
+  error,
+  onOpen,
+}: {
+  thread: Thread;
+  totalCount: number;
+  fullData?: ThreadData;
+  loading: boolean;
+  error?: string;
+  onOpen: () => void;
+}) {
+  const lastRequestedCountRef = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (!fullData) {
+      lastRequestedCountRef.current = undefined;
+      onOpen();
+      return;
+    }
+    if (lastRequestedCountRef.current !== totalCount && fullData.artifacts.length !== totalCount) {
+      lastRequestedCountRef.current = totalCount;
+      onOpen();
+    }
+  }, [fullData, totalCount, onOpen]);
+  if (!fullData) {
+    return (
+      <div className="artifact-empty">
+        <Paperclip size={24} />
+        {loading ? (
+          <>
+            <strong>Loading files &amp; links…</strong>
+            <LoaderCircle className="spin" size={18} />
+          </>
+        ) : error ? (
+          <>
+            <strong>Could not load files &amp; links</strong>
+            <p>{error}</p>
+            <button type="button" onClick={onOpen}>
+              Try again
+            </button>
+          </>
+        ) : (
+          <strong>
+            {totalCount === 0 ? "No files or links yet" : `${totalCount} files & links`}
+          </strong>
+        )}
+      </div>
+    );
+  }
+  return (
+    <ThreadArtifacts thread={thread} artifacts={fullData.artifacts} messages={fullData.messages} />
   );
 }
 

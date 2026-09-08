@@ -873,6 +873,66 @@ kbd {
   padding: 5px 9px;
   color: var(--text);
 }
+.thread-history-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 8px 18px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--panel);
+  font-size: 12px;
+}
+.thread-history-bar button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 9px;
+  color: var(--text);
+  background: var(--input-bg);
+  cursor: pointer;
+}
+.thread-history-bar button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.thread-history-range {
+  color: var(--muted);
+  white-space: nowrap;
+}
+.thread-history-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 9px 18px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--danger-bg);
+  color: var(--text);
+  font-size: 12px;
+}
+.thread-history-error button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 9px;
+  color: var(--text);
+}
+.artifacts-loading {
+  min-height: 260px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.artifact-empty button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 10px;
+  color: var(--text);
+  background: var(--input-bg);
+  cursor: pointer;
+}
 .message-meta {
   display: flex;
   align-items: center;
@@ -891,7 +951,7 @@ kbd {
 }
 .message-markdown {
   max-width: 900px;
-  color: #d9d6dc;
+  color: var(--text);
   font-size: 14px;
   line-height: 1.55;
   overflow-wrap: anywhere;
@@ -899,7 +959,7 @@ kbd {
 .message-markdown-fallback {
   margin: 1px 0 0;
   max-width: 900px;
-  color: #d9d6dc;
+  color: var(--text);
   font-size: 14px;
   line-height: 1.55;
   white-space: pre-wrap;
@@ -3712,6 +3772,9 @@ kbd {
 }
 .spin {
   animation: spin 0.8s linear infinite;
+}
+.thread-history-bar .spin {
+  color: var(--muted);
 }
 @keyframes spin {
   to {

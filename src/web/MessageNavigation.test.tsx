@@ -4,7 +4,14 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { BootstrapData, Message, Thread, ThreadData } from "../shared/contracts.js";
+import type {
+  BootstrapData,
+  Message,
+  Thread,
+  ThreadData,
+  ThreadHistoryPage,
+} from "../shared/contracts.js";
+import { THREAD_HISTORY_DEFAULT_LIMIT } from "../shared/contracts.js";
 import { App } from "./App.js";
 
 const now = "2026-09-09T00:00:00.000Z";
@@ -84,7 +91,67 @@ afterEach(() => {
   }
 });
 
+function historyPageFor(snapshot: ThreadData, params: URLSearchParams): ThreadHistoryPage {
+  const limit = Number(params.get("limit") ?? THREAD_HISTORY_DEFAULT_LIMIT);
+  const all = [...snapshot.messages].sort((left, right) => left.sequence - right.sequence);
+  const total = all.length;
+  let start = Math.max(0, total - limit);
+  let end = total;
+  let targetMessageId: string | undefined;
+  let targetFound: boolean | undefined;
+  const before = params.get("before");
+  const after = params.get("after");
+  const around = params.get("around");
+  if (before) {
+    const index = all.findIndex((message) => message.id === before);
+    start = Math.max(0, index - limit);
+    end = index;
+  } else if (after) {
+    const index = all.findIndex((message) => message.id === after);
+    start = Math.min(total, index + 1);
+    end = Math.min(total, start + limit);
+  } else if (around) {
+    const index = all.findIndex((message) => message.id === around);
+    if (index === -1) {
+      targetMessageId = around;
+      targetFound = false;
+    } else {
+      targetMessageId = around;
+      targetFound = true;
+      start = Math.max(
+        0,
+        Math.min(index - Math.floor((limit - 1) / 2), Math.max(0, total - limit)),
+      );
+      end = Math.min(total, start + limit);
+    }
+  }
+  const pageMessages = all.slice(start, end);
+  const pageIds = new Set(pageMessages.map((message) => message.id));
+  return {
+    thread: snapshot.thread,
+    messages: pageMessages,
+    artifacts: snapshot.artifacts.filter((artifact) => pageIds.has(artifact.messageId)),
+    runs: snapshot.runs,
+    toolCalls: snapshot.toolCalls ?? [],
+    activeRuns: snapshot.runs,
+    page: {
+      totalMessages: total,
+      totalArtifacts: snapshot.artifacts.length,
+      firstMessageIndex: start + 1,
+      lastMessageIndex: end,
+      beforeCursor: start > 0 ? (pageMessages[0]?.id ?? null) : null,
+      afterCursor: end < total ? (pageMessages.at(-1)?.id ?? null) : null,
+      ...(targetMessageId === undefined ? {} : { targetMessageId, targetFound }),
+    },
+  };
+}
+
 function mockWorkspace(selectedThread = thread, searchMessage?: Message) {
+  const threadsById = new Map([
+    [thread.id, thread],
+    [otherThread.id, otherThread],
+    [selectedThread.id, selectedThread],
+  ]);
   return vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
@@ -130,9 +197,31 @@ function mockWorkspace(selectedThread = thread, searchMessage?: Message) {
               : [foreign ? otherThread : thread],
         });
       }
-      const requestedThread =
-        path === `/api/threads/${selectedThread.id}` ? selectedThread : thread;
-      if (path === `/api/threads/${requestedThread.id}`) {
+      const notFound = () => Response.json({ error: { message: "Not found" } }, { status: 404 });
+      const historyMatch = path.match(/^\/api\/threads\/([^/]+)\/history(?=$|[?/])/);
+      if (historyMatch) {
+        const requestedThread = threadsById.get(decodeURIComponent(historyMatch[1] ?? ""));
+        if (!requestedThread) return notFound();
+        const snapshot: ThreadData = {
+          thread: requestedThread,
+          messages: messages.map((message) => ({ ...message, threadId: requestedThread.id })),
+          artifacts: [],
+          runs: [],
+          toolCalls: [],
+        };
+        return Response.json(
+          historyPageFor(snapshot, new URL(path, "http://localhost").searchParams),
+        );
+      }
+      const metadataMatch = path.match(/^\/api\/threads\/([^/]+)\/metadata/);
+      if (metadataMatch) {
+        const requestedThread = threadsById.get(decodeURIComponent(metadataMatch[1] ?? ""));
+        return requestedThread ? Response.json(requestedThread) : notFound();
+      }
+      const fullMatch = path.match(/^\/api\/threads\/([^/]+)$/);
+      if (fullMatch) {
+        const requestedThread = threadsById.get(decodeURIComponent(fullMatch[1] ?? ""));
+        if (!requestedThread) return notFound();
         const snapshot: ThreadData = {
           thread: requestedThread,
           messages: messages.map((message) => ({ ...message, threadId: requestedThread.id })),
@@ -142,7 +231,7 @@ function mockWorkspace(selectedThread = thread, searchMessage?: Message) {
         };
         return Response.json(snapshot);
       }
-      return Response.json({ error: { message: "Not found" } }, { status: 404 });
+      return notFound();
     }),
   );
 }
@@ -213,7 +302,7 @@ describe("Message navigation", () => {
     window.history.replaceState({}, "", `/threads/${thread.id}?message=message-1`);
     render(<App />);
     await screen.findByRole("region", { name: "Selected message" });
-    await user.click(screen.getByRole("button", { name: "Show latest" }));
+    await user.click(screen.getAllByRole("button", { name: "Show latest" })[0] as Element);
 
     expect(window.location.search).toBe("");
     expect(screen.queryByRole("region", { name: "Selected message" })).not.toBeInTheDocument();
@@ -236,7 +325,7 @@ describe("Message navigation", () => {
     await screen.findByText("The linked message is not available in this thread.");
     expect(screen.queryByRole("region", { name: "Selected message" })).not.toBeInTheDocument();
     expect(screen.getByText("Latest note")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Show latest" }));
+    await user.click(screen.getAllByRole("button", { name: "Show latest" })[0] as Element);
     expect(window.location.search).toBe("");
     expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "end" });
   });
