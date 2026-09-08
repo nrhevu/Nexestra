@@ -400,7 +400,8 @@ export function createApp(options: CreateAppOptions) {
   app.post("/api/threads/:id/messages", async (context) => {
     const contentType = context.req.header("content-type") ?? "";
     if (!contentType.toLowerCase().startsWith("multipart/form-data")) {
-      return context.json(await chat.send(context.req.param("id"), await context.req.json()), 201);
+      const result = await chat.send(context.req.param("id"), await context.req.json());
+      return context.json(result, result.replayed ? 200 : 201);
     }
     const body = await context.req.parseBody({
       all: true,
@@ -418,7 +419,9 @@ export function createApp(options: CreateAppOptions) {
         bytes: new Uint8Array(await file.arrayBuffer()),
       })),
     );
-    return context.json(await chat.send(context.req.param("id"), { content }, uploads), 201);
+    const raw = body.requestId === undefined ? { content } : { content, requestId: body.requestId };
+    const result = await chat.send(context.req.param("id"), raw, uploads);
+    return context.json(result, result.replayed ? 200 : 201);
   });
 
   app.get("/api/threads/:threadId/artifacts/:artifactId/content", async (context) => {

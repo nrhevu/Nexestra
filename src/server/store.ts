@@ -3571,7 +3571,7 @@ function hashBytes(bytes: Uint8Array): string {
 }
 
 function receiptKey(threadId: string, requestIdHash: string): string {
-  return threadId + ":" + requestIdHash;
+  return `${threadId}:${requestIdHash}`;
 }
 
 function normalizeRequestId(requestId: string): string {
@@ -3624,7 +3624,7 @@ export function keyedUploadStorageId(
         bytesHash,
     )
     .digest("hex");
-  return "sub-" + digest.slice(0, 40);
+  return `sub-${digest.slice(0, 40)}`;
 }
 
 function prepareSubmissionUploadIds(

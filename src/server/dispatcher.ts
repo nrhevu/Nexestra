@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   type Agent,
   type AgentRun,
@@ -400,6 +401,30 @@ export class AgentDispatcher {
     while (this.queues.size > 0 || this.assignmentCompletions.size > 0) {
       await Promise.all([...this.queues.values(), ...this.assignmentCompletions]);
     }
+  }
+
+  liveRunExists(runId: string): boolean {
+    return this.liveRuns.has(runId);
+  }
+
+  reconcileQueuedRun(run: AgentRun, agent: Agent, trigger: Message): boolean {
+    if (run.status !== "queued" || this.liveRuns.has(run.id)) return false;
+    const thread = this.store.getThread(run.threadId);
+    if (!thread || thread.archived || agent.archived || !agent.enabled) return false;
+    this.liveRuns.set(run.id, run);
+    this.liveActivities.set(run.id, {
+      runId: run.id,
+      threadId: run.threadId,
+      agentId: run.agentId,
+      stage: "queued",
+      thinking: "",
+      text: "",
+      detail: "Waiting in the queue",
+      updatedAt: run.updatedAt,
+    });
+    this.notifyThread(run.threadId, true);
+    this.enqueueRun(run, agent, trigger);
+    return true;
   }
 
   private enqueueRun(run: AgentRun, agent: Agent, trigger: Message): void {
@@ -1152,7 +1177,47 @@ export class AgentDispatcher {
   }
 }
 
+type SubmissionLock = {
+  fingerprint: string;
+  promise: Promise<void>;
+};
+
+function submissionUploadKey(upload: {
+  name: string;
+  mediaType: string;
+  size: number;
+  sha256: string;
+}): string {
+  return `${upload.name}\u0000${upload.mediaType}\u0000${upload.size}\u0000${upload.sha256}`;
+}
+
+function submissionPayloadHash(
+  threadId: string,
+  content: string,
+  uploads: UploadArtifactInput[],
+): string {
+  const canonicalUploads = [...uploads]
+    .map((upload) => ({
+      name: upload.name,
+      mediaType: upload.mediaType ?? "",
+      size: upload.bytes.byteLength,
+      sha256: createHash("sha256").update(upload.bytes).digest("hex"),
+    }))
+    .sort((left, right) => submissionUploadKey(left).localeCompare(submissionUploadKey(right)));
+  return createHash("sha256")
+    .update(JSON.stringify({ threadId, content, uploads: canonicalUploads }))
+    .digest("hex");
+}
+
+export type SendMessageResult = {
+  message: Message;
+  runs: AgentRun[];
+  replayed?: boolean;
+};
+
 export class ChatService {
+  private readonly submissionLocks = new Map<string, SubmissionLock>();
+
   constructor(
     private readonly store: FileStore,
     private readonly dispatcher: AgentDispatcher,
@@ -1162,54 +1227,193 @@ export class ChatService {
     threadId: string,
     rawInput: unknown,
     uploads: UploadArtifactInput[] = [],
-  ): Promise<{ message: Message; runs: AgentRun[] }> {
-    const { content } = CreateMessageSchema.parse(rawInput);
+  ): Promise<SendMessageResult> {
+    const { content, requestId } = CreateMessageSchema.parse(rawInput);
     if (!content && uploads.length === 0) {
       throw new StoreError("invalid", "Write a message or attach at least one file.");
     }
     const thread = this.store.getThread(threadId);
     if (!thread) throw new StoreError("not_found", "Thread not found.");
-    if (thread.archived) {
-      throw new StoreError(
-        "conflict",
-        "Archived threads are read-only. Restore the thread before sending messages.",
-      );
-    }
+    if (!requestId) return this.sendUnkeyed(threadId, content, uploads);
+    return this.withSubmissionLock(
+      threadId,
+      requestId,
+      submissionPayloadHash(threadId, content, uploads),
+      async () => {
+        const existing = await this.store.lookupUserSubmission(
+          threadId,
+          content,
+          uploads,
+          requestId,
+        );
+        if (existing) {
+          const currentThread = this.store.getThread(threadId);
+          if (!currentThread) throw new StoreError("not_found", "Thread not found.");
+          const release = currentThread.archived
+            ? () => undefined
+            : this.dispatcher.reserveThreadWrite(threadId);
+          try {
+            const runs = await this.ensureDispatchForMessage(
+              threadId,
+              existing,
+              !currentThread.archived,
+            );
+            return { message: existing, runs, replayed: true };
+          } finally {
+            release();
+          }
+        }
+        return this.sendNewKeyed(threadId, content, uploads, requestId);
+      },
+    );
+  }
+
+  private async sendUnkeyed(
+    threadId: string,
+    content: string,
+    uploads: UploadArtifactInput[],
+  ): Promise<SendMessageResult> {
+    const thread = this.store.getThread(threadId);
+    if (!thread) throw new StoreError("not_found", "Thread not found.");
     const releaseThreadWrite = this.dispatcher.reserveThreadWrite(threadId);
     const releases: (() => void)[] = [];
     try {
-      const agents: Agent[] = [];
-      const knowledgeReferences = extractKnowledgeHandles(content).flatMap((handle) => {
-        const item = this.store.findKnowledgeByHandle(handle, thread.workspaceId);
-        return item ? [{ knowledgeId: item.id, handle: item.handle }] : [];
-      });
-      for (const handle of extractMentionHandles(content)) {
-        const agent = this.store.findAgentByHandle(handle, thread.workspaceId);
-        if (!agent) continue;
-        const release = this.dispatcher.reserveAgent(agent.id);
-        if (!release) {
-          for (const releaseReservedAgent of releases) releaseReservedAgent();
-          throw new StoreError(
-            "conflict",
-            `@${agent.handle} is being updated or deleted. Try again.`,
-          );
-        }
-        agents.push(agent);
-        releases.push(release);
-      }
+      const agents = this.resolveAgents(thread, content, releases);
       const mentions = agents.map((agent) => ({ agentId: agent.id, handle: agent.handle }));
       const message = await this.store.createUserMessage(
         threadId,
         content,
         mentions,
         uploads,
-        knowledgeReferences,
+        this.resolveKnowledgeReferences(thread, content),
       );
       const runs = await this.dispatcher.enqueue(message, agents);
       return { message, runs };
     } finally {
       releaseThreadWrite();
       for (const release of releases) release();
+    }
+  }
+
+  private async sendNewKeyed(
+    threadId: string,
+    content: string,
+    uploads: UploadArtifactInput[],
+    requestId: string,
+  ): Promise<SendMessageResult> {
+    const thread = this.store.getThread(threadId);
+    if (!thread) throw new StoreError("not_found", "Thread not found.");
+    const releaseThreadWrite = this.dispatcher.reserveThreadWrite(threadId);
+    const releases: (() => void)[] = [];
+    try {
+      const agents = this.resolveAgents(thread, content, releases);
+      const mentions = agents.map((agent) => ({ agentId: agent.id, handle: agent.handle }));
+      const message = await this.store.createUserMessage(
+        threadId,
+        content,
+        mentions,
+        uploads,
+        this.resolveKnowledgeReferences(thread, content),
+        requestId,
+      );
+      const runs = await this.dispatcher.enqueue(message, agents);
+      return { message, runs };
+    } finally {
+      releaseThreadWrite();
+      for (const release of releases) release();
+    }
+  }
+
+  private resolveAgents(thread: Thread, content: string, releases: (() => void)[]): Agent[] {
+    const agents: Agent[] = [];
+    for (const handle of extractMentionHandles(content)) {
+      const agent = this.store.findAgentByHandle(handle, thread.workspaceId);
+      if (!agent) continue;
+      const release = this.dispatcher.reserveAgent(agent.id);
+      if (!release) {
+        for (const releaseReservedAgent of releases) releaseReservedAgent();
+        throw new StoreError(
+          "conflict",
+          `@${agent.handle} is being updated or deleted. Try again.`,
+        );
+      }
+      agents.push(agent);
+      releases.push(release);
+    }
+    return agents;
+  }
+
+  private resolveKnowledgeReferences(
+    thread: Thread,
+    content: string,
+  ): Message["knowledgeReferences"] {
+    return extractKnowledgeHandles(content).flatMap((handle) => {
+      const item = this.store.findKnowledgeByHandle(handle, thread.workspaceId);
+      return item ? [{ knowledgeId: item.id, handle: item.handle }] : [];
+    });
+  }
+
+  private async ensureDispatchForMessage(
+    threadId: string,
+    message: Message,
+    allowDispatch: boolean,
+  ): Promise<AgentRun[]> {
+    const data = await this.store.threadData(threadId);
+    const runsForMessage = data.runs.filter((run) => run.triggerMessageId === message.id);
+    if (!allowDispatch || data.thread.archived) return runsForMessage;
+    for (const run of runsForMessage) {
+      if (run.status !== "queued" || this.dispatcher.liveRunExists(run.id)) continue;
+      const agent = this.store.getAgent(run.agentId);
+      if (!agent || agent.archived || !agent.enabled) continue;
+      this.dispatcher.reconcileQueuedRun(run, agent, message);
+    }
+    const alreadyDispatched = new Set(runsForMessage.map((run) => run.agentId));
+    const newlyQueued: AgentRun[] = [];
+    for (const mention of message.mentions) {
+      if (alreadyDispatched.has(mention.agentId)) continue;
+      const agent = this.store.getAgent(mention.agentId);
+      if (!agent || agent.archived || !agent.enabled) continue;
+      const [run] = await this.dispatcher.enqueue(message, [agent]);
+      if (run) newlyQueued.push(run);
+    }
+    return [...runsForMessage, ...newlyQueued];
+  }
+
+  private async withSubmissionLock<T>(
+    threadId: string,
+    requestId: string,
+    fingerprint: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const key = `${threadId}:${requestId}`;
+    for (;;) {
+      const entry = this.submissionLocks.get(key);
+      if (entry) {
+        if (entry.fingerprint !== fingerprint) {
+          throw new StoreError(
+            "conflict",
+            "This submission key was already used with different content or attachments.",
+          );
+        }
+        try {
+          await entry.promise;
+        } catch {
+          // The previous holder failed; loop again so durable state is re-checked.
+        }
+        continue;
+      }
+      let release: () => void = () => undefined;
+      const promise = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const lock: SubmissionLock = { fingerprint, promise };
+      this.submissionLocks.set(key, lock);
+      try {
+        return await operation();
+      } finally {
+        if (this.submissionLocks.get(key) === lock) this.submissionLocks.delete(key);
+        release();
+      }
     }
   }
 }
