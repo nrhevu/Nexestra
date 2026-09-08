@@ -33,6 +33,34 @@ class FakeRunner implements AgentRunner {
   }
 }
 
+class GatedRunner implements AgentRunner {
+  readonly invocations: { agent: Agent; invocation: AgentInvocation }[] = [];
+  private started = false;
+  private readonly startedWaiters: (() => void)[] = [];
+  private readonly releaseWaiters: (() => void)[] = [];
+
+  async runtimeStatus() {
+    return readyRuntime;
+  }
+
+  nextInvocationStarted(): Promise<void> {
+    if (this.started) return Promise.resolve();
+    return new Promise((resolve) => this.startedWaiters.push(resolve));
+  }
+
+  release(): void {
+    for (const resolve of this.releaseWaiters.splice(0)) resolve();
+  }
+
+  async invoke(agent: Agent, invocation: AgentInvocation) {
+    this.invocations.push({ agent, invocation });
+    this.started = true;
+    for (const resolve of this.startedWaiters.splice(0)) resolve();
+    await new Promise<void>((resolve) => this.releaseWaiters.push(resolve));
+    return `reply from @${agent.handle}`;
+  }
+}
+
 class ConcurrentApprovalRunner implements AgentRunner {
   readonly resolved: string[] = [];
 
@@ -424,6 +452,106 @@ describe("mention dispatch", () => {
       first.message.id,
       second.message.id,
     ]);
+  });
+
+  it("pins a queued invocation to the document revision at message persistence", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-dispatch-gated-pin-"));
+    const store = await FileStore.open({ root, workspacePath: root });
+    const runner = new GatedRunner();
+    const dispatcher = new AgentDispatcher(store, runner);
+    const chat = new ChatService(store, dispatcher);
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    await store.createAgent({
+      kind: "worker",
+      name: "Codex",
+      handle: "codex",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    const item = await store.createKnowledgeDocument(
+      { name: "Document", handle: "doc", description: "" },
+      {
+        name: "doc.md",
+        mediaType: "text/markdown",
+        bytes: new TextEncoder().encode("# v1"),
+      },
+    );
+    const sent = chat.send(thread.id, { content: "@codex read #doc" });
+    await runner.nextInvocationStarted();
+    await store.replaceKnowledgeDocument(
+      item.id,
+      { expectedRevisionId: item.currentRevisionId },
+      {
+        name: "doc-v2.md",
+        mediaType: "text/markdown",
+        bytes: new TextEncoder().encode("# v2"),
+      },
+    );
+    runner.release();
+    await Promise.all([sent, dispatcher.waitForIdle()]);
+    const invocation = runner.invocations[0]?.invocation;
+    expect(invocation?.knowledge).toEqual([expect.objectContaining({ content: "# v1" })]);
+  });
+
+  it("keeps the pinned revision when a failed run is retried after replacement", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-dispatch-gated-pin-"));
+    const store = await FileStore.open({ root, workspacePath: root });
+    const runner = new GatedRunner();
+    const dispatcher = new AgentDispatcher(store, runner);
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const agent = await store.createAgent({
+      kind: "worker",
+      name: "Codex",
+      handle: "codex",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    const item = await store.createKnowledgeDocument(
+      { name: "Document", handle: "doc", description: "" },
+      {
+        name: "doc.md",
+        mediaType: "text/markdown",
+        bytes: new TextEncoder().encode("# v1"),
+      },
+    );
+    const trigger = await store.createUserMessage(
+      thread.id,
+      "@codex retry #doc",
+      [{ agentId: agent.id, handle: agent.handle }],
+      [],
+      [{ knowledgeId: item.id, handle: item.handle }],
+    );
+    const now = new Date().toISOString();
+    const failed = await store.updateRun({
+      id: crypto.randomUUID(),
+      threadId: thread.id,
+      triggerMessageId: trigger.id,
+      agentId: agent.id,
+      attempt: 1,
+      status: "failed",
+      error: "test failure",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await store.replaceKnowledgeDocument(
+      item.id,
+      { expectedRevisionId: item.currentRevisionId },
+      {
+        name: "doc-v2.md",
+        mediaType: "text/markdown",
+        bytes: new TextEncoder().encode("# v2"),
+      },
+    );
+    const retried = dispatcher.retry(failed.id);
+    await runner.nextInvocationStarted();
+    const invocation = runner.invocations[0]?.invocation;
+    expect(invocation?.knowledge).toEqual([expect.objectContaining({ content: "# v1" })]);
+    runner.release();
+    await Promise.all([retried, dispatcher.waitForIdle()]);
   });
 
   it("records a clear failure for a disabled mentioned agent", async () => {

@@ -52,6 +52,21 @@ export const KnowledgeDocumentSchema = KnowledgeBaseSchema.extend({
   mediaType: z.string(),
   size: z.number().int().nonnegative(),
   storagePath: z.string(),
+  revisions: z
+    .array(
+      z.object({
+        id: z.string(),
+        createdAt: z.string(),
+        fileName: z.string(),
+        mediaType: z.string(),
+        size: z.number().int().nonnegative(),
+        storagePath: z.string(),
+        sha256: z.string(),
+        restoredFromId: z.string().optional(),
+      }),
+    )
+    .default([]),
+  currentRevisionId: z.string().optional(),
 });
 
 export const KnowledgeRepositorySchema = KnowledgeBaseSchema.extend({
@@ -84,6 +99,14 @@ export const CreateKnowledgeDocumentSchema = z.object({
   name: z.string().trim().min(1).max(120),
   handle: KnowledgeHandleSchema,
   description: z.string().trim().max(1_000).default(""),
+});
+
+export const ReplaceKnowledgeDocumentSchema = z.object({
+  expectedRevisionId: z.string().trim().min(1),
+});
+
+export const RestoreKnowledgeDocumentRevisionSchema = z.object({
+  expectedRevisionId: z.string().trim().min(1),
 });
 
 export const CreateKnowledgeRepositorySchema = z.object({
@@ -252,8 +275,28 @@ export const MentionSchema = z.object({
 export const KnowledgeReferenceSchema = z.object({
   knowledgeId: z.string(),
   handle: KnowledgeHandleSchema,
+  revisionId: z.string().optional(),
 });
 export type KnowledgeReference = z.infer<typeof KnowledgeReferenceSchema>;
+
+export const KnowledgeDocumentRevisionsSchema = z.object({
+  currentRevisionId: z.string().optional(),
+  revisions: z
+    .array(
+      z.object({
+        id: z.string(),
+        createdAt: z.string(),
+        fileName: z.string(),
+        mediaType: z.string(),
+        size: z.number().int().nonnegative(),
+        storagePath: z.string(),
+        sha256: z.string(),
+        restoredFromId: z.string().optional(),
+      }),
+    )
+    .default([]),
+});
+export type KnowledgeDocumentRevisions = z.infer<typeof KnowledgeDocumentRevisionsSchema>;
 
 export const MessageAuthorSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("user"), id: z.literal("local-user"), name: z.string() }),

@@ -371,6 +371,118 @@ describe("HTTP app", () => {
     expect((await app.request(`/api/knowledge/${item.id}`)).status).toBe(404);
   });
 
+  it("replaces and restores knowledge documents while keeping revision history", async () => {
+    const createForm = new FormData();
+    createForm.append("name", "Architecture guide");
+    createForm.append("handle", "architecture");
+    createForm.append("description", "");
+    createForm.append(
+      "file",
+      new File(["# Architecture v1\n"], "architecture.md", { type: "text/markdown" }),
+    );
+    const created = await app.request("/api/knowledge/documents", {
+      method: "POST",
+      body: createForm,
+    });
+    expect(created.status).toBe(201);
+    const item = (await created.json()) as {
+      id: string;
+      currentRevisionId: string;
+      revisions: { id: string }[];
+    };
+    expect(item.revisions).toHaveLength(1);
+    const firstRevisionId = item.currentRevisionId;
+
+    const replaceForm = new FormData();
+    replaceForm.append("expectedRevisionId", firstRevisionId);
+    replaceForm.append(
+      "file",
+      new File(["# Architecture v2\n"], "architecture-v2.md", { type: "text/markdown" }),
+    );
+    const replacedResponse = await app.request(`/api/knowledge/${item.id}/document`, {
+      method: "PUT",
+      body: replaceForm,
+    });
+    expect(replacedResponse.status).toBe(200);
+    const replaced = (await replacedResponse.json()) as {
+      currentRevisionId: string;
+      fileName: string;
+      revisions: { id: string }[];
+    };
+    expect(replaced.fileName).toBe("architecture-v2.md");
+    expect(replaced.currentRevisionId).not.toBe(firstRevisionId);
+    expect(replaced.revisions).toHaveLength(2);
+
+    const revisions = await app.request(`/api/knowledge/${item.id}/revisions`);
+    expect(revisions.status).toBe(200);
+    await expect(revisions.json()).resolves.toMatchObject({
+      currentRevisionId: replaced.currentRevisionId,
+      revisions: [{ id: replaced.currentRevisionId }, { id: firstRevisionId }],
+    });
+    const oldContent = await app.request(
+      `/api/knowledge/${item.id}/revisions/${firstRevisionId}/content`,
+    );
+    expect(oldContent.status).toBe(200);
+    expect(oldContent.headers.get("x-content-type-options")).toBe("nosniff");
+    await expect(oldContent.text()).resolves.toBe("# Architecture v1\n");
+    const currentContent = await app.request(`/api/knowledge/${item.id}/content`);
+    expect(await currentContent.text()).toBe("# Architecture v2\n");
+
+    const restoredResponse = await app.request(
+      `/api/knowledge/${item.id}/revisions/${firstRevisionId}/restore`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ expectedRevisionId: replaced.currentRevisionId }),
+      },
+    );
+    expect(restoredResponse.status).toBe(200);
+    const restored = (await restoredResponse.json()) as {
+      currentRevisionId: string;
+      revisions: { restoredFromId?: string }[];
+    };
+    expect(restored.currentRevisionId).not.toBe(replaced.currentRevisionId);
+    expect(restored.revisions).toHaveLength(3);
+    expect(restored.revisions.at(-1)?.restoredFromId).toBe(firstRevisionId);
+    const restoredContent = await app.request(`/api/knowledge/${item.id}/content`);
+    expect(await restoredContent.text()).toBe("# Architecture v1\n");
+
+    const staleForm = new FormData();
+    staleForm.append("expectedRevisionId", replaced.currentRevisionId);
+    staleForm.append("file", new File(["# Stale\n"], "stale.md", { type: "text/markdown" }));
+    const stale = await app.request(`/api/knowledge/${item.id}/document`, {
+      method: "PUT",
+      body: staleForm,
+    });
+    expect(stale.status).toBe(409);
+    expect((await app.request(`/api/knowledge/${item.id}/revisions/missing/content`)).status).toBe(
+      404,
+    );
+  });
+
+  it("rejects replacement uploads with too many files before buffering", async () => {
+    const createForm = new FormData();
+    createForm.append("name", "Notes");
+    createForm.append("handle", "notes");
+    createForm.append("description", "");
+    createForm.append("file", new File(["one"], "one.md", { type: "text/markdown" }));
+    const created = await app.request("/api/knowledge/documents", {
+      method: "POST",
+      body: createForm,
+    });
+    expect(created.status).toBe(201);
+    const item = (await created.json()) as { id: string; currentRevisionId: string };
+    const form = new FormData();
+    form.append("expectedRevisionId", item.currentRevisionId);
+    form.append("file", new File(["one"], "one.md", { type: "text/markdown" }));
+    form.append("file", new File(["two"], "two.md", { type: "text/markdown" }));
+    const rejected = await app.request(`/api/knowledge/${item.id}/document`, {
+      method: "PUT",
+      body: form,
+    });
+    expect(rejected.status).toBe(400);
+  });
+
   it("creates, reads, updates, and deletes a Taskboard task", async () => {
     const created = await app.request("/api/tasks", {
       method: "POST",

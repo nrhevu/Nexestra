@@ -698,6 +698,339 @@ describe("FileStore", () => {
     ).rejects.toBeInstanceOf(StoreError);
   });
 
+  it("pins document references at persistence and resolves original bytes after replacement", async () => {
+    const store = await openStore();
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const item = await store.createKnowledgeDocument(
+      {
+        name: "Architecture guide",
+        handle: "architecture",
+        description: "",
+      },
+      {
+        name: "architecture.md",
+        mediaType: "text/markdown",
+        bytes: new TextEncoder().encode("# Architecture v1"),
+      },
+    );
+    const oldMessage = await store.createUserMessage(
+      thread.id,
+      "Use #architecture for this change.",
+      [],
+      [],
+      [{ knowledgeId: item.id, handle: item.handle }],
+    );
+    expect(oldMessage.knowledgeReferences[0]?.revisionId).toBe(item.currentRevisionId);
+    const replaced = await store.replaceKnowledgeDocument(
+      item.id,
+      { expectedRevisionId: item.currentRevisionId },
+      {
+        name: "architecture-v2.md",
+        mediaType: "text/markdown",
+        bytes: new TextEncoder().encode("# Architecture v2"),
+      },
+    );
+    if (replaced.kind !== "document") throw new Error("expected document");
+    expect(replaced.currentRevisionId).not.toBe(item.currentRevisionId);
+    expect(replaced.revisions).toHaveLength(2);
+    expect(await readFile(store.knowledgePath(replaced), "utf8")).toBe("# Architecture v2");
+    expect(await store.agentKnowledge(oldMessage)).toEqual([
+      expect.objectContaining({
+        item: expect.objectContaining({
+          fileName: "architecture.md",
+          storagePath: expect.stringContaining("/revisions/"),
+        }),
+        content: "# Architecture v1",
+      }),
+    ]);
+    const newMessage = await store.createUserMessage(
+      thread.id,
+      "Use the latest #architecture now.",
+      [],
+      [],
+      [{ knowledgeId: item.id, handle: item.handle }],
+    );
+    expect(newMessage.knowledgeReferences[0]?.revisionId).toBe(replaced.currentRevisionId);
+    await expect(store.agentKnowledge(newMessage)).resolves.toEqual([
+      expect.objectContaining({ content: "# Architecture v2" }),
+    ]);
+  });
+
+  it("restores a prior document revision as a new current version", async () => {
+    const store = await openStore();
+    const item = await store.createKnowledgeDocument(
+      {
+        name: "Architecture guide",
+        handle: "architecture",
+        description: "",
+      },
+      {
+        name: "architecture.md",
+        mediaType: "text/markdown",
+        bytes: new TextEncoder().encode("# Architecture v1"),
+      },
+    );
+    const firstRevisionId = item.currentRevisionId;
+    const replaced = await store.replaceKnowledgeDocument(
+      item.id,
+      { expectedRevisionId: firstRevisionId },
+      {
+        name: "architecture-v2.md",
+        mediaType: "text/markdown",
+        bytes: new TextEncoder().encode("# Architecture v2"),
+      },
+    );
+    if (replaced.kind !== "document") throw new Error("expected document");
+    if (!firstRevisionId) throw new Error("expected first revision");
+    const restored = await store.restoreKnowledgeDocumentRevision(item.id, firstRevisionId, {
+      expectedRevisionId: replaced.currentRevisionId,
+    });
+    if (restored.kind !== "document") throw new Error("expected document");
+    expect(restored.currentRevisionId).not.toBe(firstRevisionId);
+    expect(restored.revisions).toHaveLength(3);
+    expect(restored.revisions.at(-1)?.restoredFromId).toBe(firstRevisionId);
+    expect(restored.fileName).toBe("architecture.md");
+    expect(await readFile(store.knowledgePath(restored), "utf8")).toBe("# Architecture v1");
+    const oldBytes = await store.documentRevisionContent(item.id, firstRevisionId);
+    expect(new TextDecoder().decode(oldBytes.bytes)).toBe("# Architecture v1");
+  });
+
+  it("captures a legacy document when a new message pins it and keeps provenance after replacement", async () => {
+    const store = await openStore();
+    const item = await store.createKnowledgeDocument(
+      {
+        name: "Legacy notes",
+        handle: "legacy-notes",
+        description: "",
+      },
+      {
+        name: "legacy.md",
+        mediaType: "text/markdown",
+        bytes: new TextEncoder().encode("# Legacy original"),
+      },
+    );
+    const internal = store as unknown as { state: { knowledge: Array<Record<string, unknown>> } };
+    const legacyRoot = store.knowledgePath(item);
+    internal.state.knowledge = internal.state.knowledge.map((entry) =>
+      entry.id === item.id ? { ...entry, revisions: [], currentRevisionId: undefined } : entry,
+    );
+    const before = await store.createUserMessage(
+      store.listThreads()[0]?.id ?? "",
+      "Use #legacy-notes",
+      [],
+      [],
+      [{ knowledgeId: item.id, handle: item.handle }],
+    );
+    expect(before.knowledgeReferences[0]?.revisionId).toBeTruthy();
+    const captured = store.getKnowledge(item.id);
+    if (captured?.kind !== "document") throw new Error("expected document");
+    expect(captured.revisions).toHaveLength(1);
+    expect(captured.storagePath).toContain("/revisions/");
+    const replaced = await store.replaceKnowledgeDocument(
+      item.id,
+      { expectedRevisionId: before.knowledgeReferences[0]?.revisionId ?? "" },
+      {
+        name: "legacy-v2.md",
+        mediaType: "text/markdown",
+        bytes: new TextEncoder().encode("# Legacy v2"),
+      },
+    );
+    if (replaced.kind !== "document") throw new Error("expected document");
+    expect(replaced.revisions).toHaveLength(2);
+    expect(replaced.createdAt).toBe(item.createdAt);
+    expect(replaced.revisions[0]).toMatchObject({
+      fileName: "legacy.md",
+      createdAt: before.createdAt,
+    });
+    expect(await store.documentRevisionContent(item.id, replaced.revisions[0]?.id ?? "")).toEqual(
+      expect.objectContaining({
+        bytes: expect.any(Uint8Array),
+      }),
+    );
+    const legacyContent = await store.documentRevisionContent(
+      item.id,
+      replaced.revisions[0]?.id ?? "",
+    );
+    expect(new TextDecoder().decode(legacyContent.bytes)).toBe("# Legacy original");
+    await expect(store.agentKnowledge(before)).resolves.toEqual([
+      expect.objectContaining({ content: "# Legacy original" }),
+    ]);
+    expect(await readFile(legacyRoot, "utf8")).toBe("# Legacy original");
+  });
+
+  it("keeps a legacy capture published when message state write fails after transcript append", async () => {
+    const store = await openStore();
+    const item = await store.createKnowledgeDocument(
+      { name: "Legacy notes", handle: "legacy-notes", description: "" },
+      {
+        name: "legacy.md",
+        mediaType: "text/markdown",
+        bytes: new TextEncoder().encode("# Legacy original"),
+      },
+    );
+    const internal = store as unknown as {
+      state: { knowledge: Array<Record<string, unknown>> };
+      writeState: (state?: unknown) => Promise<void>;
+    };
+    internal.state.knowledge = internal.state.knowledge.map((entry) =>
+      entry.id === item.id ? { ...entry, revisions: [], currentRevisionId: undefined } : entry,
+    );
+    let writeCount = 0;
+    const originalWrite = internal.writeState.bind(store);
+    internal.writeState = async (state) => {
+      writeCount += 1;
+      if (writeCount === 2) throw new Error("simulated message state write failure");
+      return originalWrite(state);
+    };
+    await expect(
+      store.createUserMessage(
+        store.listThreads()[0]?.id ?? "",
+        "Use #legacy-notes",
+        [],
+        [],
+        [{ knowledgeId: item.id, handle: item.handle }],
+      ),
+    ).rejects.toThrow("simulated message state write failure");
+
+    const reopened = await FileStore.open({ root: store.root, workspacePath: store.workspacePath });
+    const data = await reopened.threadData(store.listThreads()[0]?.id ?? "");
+    const message = data.messages.find(
+      (entry) => entry.author.kind === "user" && entry.knowledgeReferences.length > 0,
+    );
+    if (!message) throw new Error("expected pinned message after reopen");
+    expect(message.knowledgeReferences[0]?.revisionId).toBeTruthy();
+    const captured = reopened.getKnowledge(item.id);
+    if (captured?.kind !== "document") throw new Error("expected captured document");
+    expect(captured.revisions).toHaveLength(1);
+    expect(captured.currentRevisionId).toBe(message.knowledgeReferences[0]?.revisionId);
+    await expect(reopened.agentKnowledge(message)).resolves.toEqual([
+      expect.objectContaining({ content: "# Legacy original" }),
+    ]);
+
+    const replaced = await reopened.replaceKnowledgeDocument(
+      item.id,
+      { expectedRevisionId: captured.currentRevisionId },
+      {
+        name: "legacy-v2.md",
+        mediaType: "text/markdown",
+        bytes: new TextEncoder().encode("# Legacy v2"),
+      },
+    );
+    if (replaced.kind !== "document") throw new Error("expected replaced document");
+    await expect(reopened.agentKnowledge(message)).resolves.toEqual([
+      expect.objectContaining({ content: "# Legacy original" }),
+    ]);
+  });
+  it("rejects stale or foreign document revision mutations and missing revisions", async () => {
+    const store = await openStore();
+    const item = await store.createKnowledgeDocument(
+      {
+        name: "Architecture guide",
+        handle: "architecture",
+        description: "",
+      },
+      {
+        name: "architecture.md",
+        mediaType: "text/markdown",
+        bytes: new TextEncoder().encode("# Architecture v1"),
+      },
+    );
+    const other = await store.createKnowledgeDocument(
+      {
+        name: "Other notes",
+        handle: "other",
+        description: "",
+      },
+      {
+        name: "other.md",
+        mediaType: "text/markdown",
+        bytes: new TextEncoder().encode("# Other"),
+      },
+    );
+    await expect(store.documentRevisionContent(item.id, "missing-revision")).rejects.toMatchObject({
+      code: "not_found",
+    });
+    await expect(
+      store.restoreKnowledgeDocumentRevision(item.id, "missing-revision", {
+        expectedRevisionId: item.currentRevisionId,
+      }),
+    ).rejects.toMatchObject({ code: "not_found" });
+    await expect(
+      store.replaceKnowledgeDocument(
+        item.id,
+        { expectedRevisionId: "stale" },
+        {
+          name: "stale.md",
+          mediaType: "text/markdown",
+          bytes: new TextEncoder().encode("# Stale"),
+        },
+      ),
+    ).rejects.toMatchObject({ code: "conflict" });
+    await expect(
+      store.restoreKnowledgeDocumentRevision(item.id, other.revisions[0]?.id ?? "", {
+        expectedRevisionId: item.currentRevisionId,
+      }),
+    ).rejects.toMatchObject({ code: "not_found" });
+    const repository = await store.createKnowledgeRepository({
+      name: "Repository",
+      handle: "repo",
+      description: "",
+      source: "/tmp/source",
+    });
+    await expect(
+      store.replaceKnowledgeDocument(
+        repository.id,
+        { expectedRevisionId: "legacy" },
+        { name: "repo.txt", mediaType: "text/plain", bytes: new Uint8Array([1]) },
+      ),
+    ).rejects.toMatchObject({ code: "not_found" });
+  });
+
+  it("rolls back a document replacement when the state write fails", async () => {
+    const store = await openStore();
+    const item = await store.createKnowledgeDocument(
+      {
+        name: "Architecture guide",
+        handle: "architecture",
+        description: "",
+      },
+      {
+        name: "architecture.md",
+        mediaType: "text/markdown",
+        bytes: new TextEncoder().encode("# Architecture v1"),
+      },
+    );
+    const internal = store as unknown as { writeState: (state?: unknown) => Promise<void> };
+    const originalWrite = internal.writeState.bind(store);
+    internal.writeState = async () => {
+      throw new Error("simulated state write failure");
+    };
+    try {
+      await expect(
+        store.replaceKnowledgeDocument(
+          item.id,
+          { expectedRevisionId: item.currentRevisionId },
+          {
+            name: "architecture-v2.md",
+            mediaType: "text/markdown",
+            bytes: new TextEncoder().encode("# Architecture v2"),
+          },
+        ),
+      ).rejects.toThrow("simulated state write failure");
+    } finally {
+      internal.writeState = originalWrite;
+    }
+    expect(store.getKnowledge(item.id)).toMatchObject({
+      fileName: "architecture.md",
+      currentRevisionId: item.currentRevisionId,
+      storagePath: item.storagePath,
+    });
+    expect(await readFile(store.knowledgePath(item), "utf8")).toBe("# Architecture v1");
+    const revisionDirectory = dirname(item.storagePath);
+    expect(await readdir(join(store.root, revisionDirectory))).toEqual([item.currentRevisionId]);
+  });
+
   it("rejects duplicate handles case-insensitively", async () => {
     const store = await openStore();
     await store.createAgent({

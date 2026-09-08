@@ -8,6 +8,7 @@ import type {
   AgentRun,
   AgentView,
   BootstrapData,
+  KnowledgeDocument,
   Thread,
   ThreadData,
   WorkspaceActivityData,
@@ -1658,6 +1659,19 @@ describe("Knowledge surface", () => {
       mediaType: "text/markdown",
       size: 128,
       storagePath: "workspaces/workspace-nexestra/knowledge/knowledge-architecture/document",
+      revisions: [
+        {
+          id: "rev-1",
+          createdAt: now,
+          fileName: "architecture.md",
+          mediaType: "text/markdown",
+          size: 128,
+          storagePath:
+            "workspaces/workspace-nexestra/knowledge/knowledge-architecture/revisions/rev-1",
+          sha256: "abc",
+        },
+      ],
+      currentRevisionId: "rev-1",
       createdAt: now,
       updatedAt: now,
     };
@@ -1670,6 +1684,12 @@ describe("Knowledge surface", () => {
       }
       if (path === `/api/knowledge/${knowledge.id}` && init?.method === "PATCH") {
         return jsonResponse({ ...knowledge, name: "System architecture" });
+      }
+      if (path === `/api/knowledge/${knowledge.id}/revisions`) {
+        return jsonResponse({
+          currentRevisionId: knowledge.currentRevisionId,
+          revisions: [...knowledge.revisions].reverse(),
+        });
       }
       return jsonResponse({ error: { message: "Not found" } }, 404);
     });
@@ -1741,6 +1761,8 @@ describe("Knowledge surface", () => {
       mediaType: "text/markdown",
       size: 32,
       storagePath: "workspaces/workspace-nexestra/knowledge/knowledge-notes/document",
+      revisions: [],
+      currentRevisionId: undefined,
       createdAt: now,
       updatedAt: now,
     };
@@ -1751,6 +1773,9 @@ describe("Knowledge surface", () => {
       }
       if (path === `/api/knowledge/${knowledge.id}` && init?.method === "DELETE") {
         return new Response(null, { status: 204 });
+      }
+      if (path === `/api/knowledge/${knowledge.id}/revisions`) {
+        return jsonResponse({ currentRevisionId: undefined, revisions: [] });
       }
       return jsonResponse({ error: { message: "Not found" } }, 404);
     });
@@ -1773,6 +1798,208 @@ describe("Knowledge surface", () => {
         ),
       ).toBe(true);
     });
+  });
+
+  it("replaces a document file and restores a prior version from the detail view", async () => {
+    window.history.replaceState({}, "", "/surfaces/knowledge");
+    const later = "2026-09-03T14:00:00.000Z";
+    const revisionOne = {
+      id: "rev-1",
+      createdAt: now,
+      fileName: "architecture.md",
+      mediaType: "text/markdown",
+      size: 17,
+      storagePath: "workspaces/workspace-nexestra/knowledge/knowledge-architecture/revisions/rev-1",
+      sha256: "old-hash",
+    };
+    const revisionTwo = {
+      id: "rev-2",
+      createdAt: later,
+      fileName: "architecture-v2.md",
+      mediaType: "text/markdown",
+      size: 17,
+      storagePath: "workspaces/workspace-nexestra/knowledge/knowledge-architecture/revisions/rev-2",
+      sha256: "new-hash",
+    };
+    let current: KnowledgeDocument = {
+      id: "knowledge-architecture",
+      workspaceId: workspace.id,
+      kind: "document" as const,
+      name: "Architecture guide",
+      handle: "architecture",
+      description: "",
+      fileName: revisionTwo.fileName,
+      mediaType: revisionTwo.mediaType,
+      size: revisionTwo.size,
+      storagePath: "workspaces/workspace-nexestra/knowledge/knowledge-architecture/document",
+      revisions: [revisionOne, revisionTwo],
+      currentRevisionId: "rev-2",
+      createdAt: now,
+      updatedAt: later,
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap"))
+        return jsonResponse({ ...bootstrapData, knowledge: [current] });
+      if (path === `/api/knowledge/${current.id}/revisions`) {
+        return jsonResponse({
+          currentRevisionId: current.currentRevisionId,
+          revisions: [...current.revisions].reverse(),
+        });
+      }
+      if (path === `/api/knowledge/${current.id}/document` && init?.method === "PUT") {
+        const form = init.body as FormData;
+        expect(form.get("expectedRevisionId")).toBe("rev-2");
+        const file = form.get("file") as File;
+        current = {
+          ...current,
+          fileName: file.name,
+          mediaType: file.type,
+          size: file.size,
+          currentRevisionId: "rev-3",
+          revisions: [
+            ...current.revisions,
+            {
+              id: "rev-3",
+              createdAt: later,
+              fileName: file.name,
+              mediaType: file.type,
+              size: file.size,
+              storagePath:
+                "workspaces/workspace-nexestra/knowledge/knowledge-architecture/revisions/rev-3",
+              sha256: "replacement-hash",
+            },
+          ],
+          updatedAt: later,
+        };
+        return jsonResponse(current);
+      }
+      if (path.endsWith("/revisions/rev-1/restore") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as { expectedRevisionId: string };
+        expect(body.expectedRevisionId).toBe("rev-3");
+        current = {
+          ...current,
+          fileName: revisionOne.fileName,
+          mediaType: revisionOne.mediaType,
+          size: revisionOne.size,
+          currentRevisionId: "rev-4",
+          revisions: [
+            ...current.revisions,
+            {
+              id: "rev-4",
+              createdAt: later,
+              fileName: revisionOne.fileName,
+              mediaType: revisionOne.mediaType,
+              size: revisionOne.size,
+              storagePath:
+                "workspaces/workspace-nexestra/knowledge/knowledge-architecture/revisions/rev-4",
+              sha256: revisionOne.sha256,
+              restoredFromId: "rev-1",
+            },
+          ],
+          updatedAt: later,
+        };
+        return jsonResponse(current);
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(
+      await screen.findByRole("button", { name: `View details for ${current.name}` }),
+    );
+    const details = screen.getByRole("dialog", { name: current.name });
+    expect(await within(details).findByText("Version history")).toBeVisible();
+    expect(
+      within(details).getByRole("link", { name: `Download ${revisionTwo.fileName}` }),
+    ).toHaveAttribute("href", `/api/knowledge/${current.id}/revisions/${revisionTwo.id}/content`);
+    const replacementInput = within(details).getByLabelText("Replacement file");
+    await user.upload(
+      replacementInput,
+      new File(["# Architecture v3"], "architecture-v3.md", { type: "text/markdown" }),
+    );
+    await user.click(within(details).getByRole("button", { name: "Replace" }));
+    await within(details).findByRole("button", { name: "Current architecture-v3.md" });
+
+    await user.click(
+      within(details).getByRole("button", { name: `Restore ${revisionOne.fileName}` }),
+    );
+    await within(details).findByRole("button", { name: `Current ${revisionOne.fileName}` });
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, request]) =>
+          String(input).endsWith("/revisions/rev-1/restore") && request?.method === "POST",
+      ),
+    ).toBe(true);
+  });
+
+  it("shows a replace error when the document changed before the request", async () => {
+    window.history.replaceState({}, "", "/surfaces/knowledge");
+    const knowledge = {
+      id: "knowledge-architecture",
+      workspaceId: workspace.id,
+      kind: "document" as const,
+      name: "Architecture guide",
+      handle: "architecture",
+      description: "",
+      fileName: "architecture.md",
+      mediaType: "text/markdown",
+      size: 17,
+      storagePath: "workspaces/workspace-nexestra/knowledge/knowledge-architecture/document",
+      revisions: [
+        {
+          id: "rev-1",
+          createdAt: now,
+          fileName: "architecture.md",
+          mediaType: "text/markdown",
+          size: 17,
+          storagePath:
+            "workspaces/workspace-nexestra/knowledge/knowledge-architecture/revisions/rev-1",
+          sha256: "old-hash",
+        },
+      ],
+      currentRevisionId: "rev-1",
+      createdAt: now,
+      updatedAt: now,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path.startsWith("/api/bootstrap"))
+          return jsonResponse({ ...bootstrapData, knowledge: [knowledge] });
+        if (path === `/api/knowledge/${knowledge.id}/revisions`) {
+          return jsonResponse({
+            currentRevisionId: knowledge.currentRevisionId,
+            revisions: [...knowledge.revisions].reverse(),
+          });
+        }
+        if (path === `/api/knowledge/${knowledge.id}/document` && init?.method === "PUT") {
+          return jsonResponse(
+            { error: { code: "conflict", message: "This document changed since it was loaded." } },
+            409,
+          );
+        }
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(
+      await screen.findByRole("button", { name: `View details for ${knowledge.name}` }),
+    );
+    const details = screen.getByRole("dialog", { name: knowledge.name });
+    await within(details).findByText("Version history");
+    await user.upload(
+      within(details).getByLabelText("Replacement file"),
+      new File(["# Architecture v2"], "architecture-v2.md", { type: "text/markdown" }),
+    );
+    await user.click(within(details).getByRole("button", { name: "Replace" }));
+    expect(
+      await within(details).findByText("This document changed since it was loaded."),
+    ).toBeVisible();
   });
 
   it("offers workspace knowledge when the composer receives a #reference", async () => {

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import {
   access,
@@ -28,6 +29,9 @@ import {
   CreateTaskSchema,
   CreateThreadSchema,
   CreateWorkspaceSchema,
+  type KnowledgeDocument,
+  type KnowledgeDocumentRevisions,
+  KnowledgeDocumentSchema,
   type KnowledgeItem,
   KnowledgeItemSchema,
   type KnowledgeReference,
@@ -35,6 +39,8 @@ import {
   type Message,
   MessageSchema,
   ReorderWorkspacesSchema,
+  ReplaceKnowledgeDocumentSchema,
+  RestoreKnowledgeDocumentRevisionSchema,
   RunSchema,
   type Task,
   TaskSchema,
@@ -114,6 +120,8 @@ const VersionFourStateSchema = z.object({
 });
 
 type PersistedState = z.infer<typeof StateSchema>;
+
+type DocumentRevision = KnowledgeDocument["revisions"][number];
 
 const CredentialSchema = z.object({
   version: z.literal(1),
@@ -441,7 +449,7 @@ export class FileStore {
   async createKnowledgeDocument(
     rawInput: unknown,
     upload: UploadArtifactInput,
-  ): Promise<KnowledgeItem> {
+  ): Promise<KnowledgeDocument> {
     const input = CreateKnowledgeDocumentSchema.parse(rawInput);
     validateUploads([upload]);
     return this.withWrite(async () => {
@@ -449,8 +457,9 @@ export class FileStore {
       this.requireAvailableKnowledgeHandle(workspaceId, input.handle);
       const id = crypto.randomUUID();
       const now = new Date().toISOString();
-      const storagePath = join("workspaces", workspaceId, "knowledge", id, "document");
-      const item = KnowledgeItemSchema.parse({
+      const revisionId = crypto.randomUUID();
+      const storagePath = join("workspaces", workspaceId, "knowledge", id, "revisions", revisionId);
+      const item = KnowledgeDocumentSchema.parse({
         id,
         workspaceId,
         kind: "document",
@@ -461,6 +470,18 @@ export class FileStore {
         mediaType: normaliseMediaType(upload.mediaType) || inferMediaType(upload.name),
         size: upload.bytes.byteLength,
         storagePath,
+        revisions: [
+          {
+            id: revisionId,
+            createdAt: now,
+            fileName: normaliseArtifactName(upload.name),
+            mediaType: normaliseMediaType(upload.mediaType) || inferMediaType(upload.name),
+            size: upload.bytes.byteLength,
+            storagePath,
+            sha256: hashBytes(upload.bytes),
+          },
+        ],
+        currentRevisionId: revisionId,
         createdAt: now,
         updatedAt: now,
       });
@@ -476,6 +497,163 @@ export class FileStore {
       }
       return structuredClone(item);
     });
+  }
+
+  async replaceKnowledgeDocument(
+    id: string,
+    rawInput: unknown,
+    upload: UploadArtifactInput,
+  ): Promise<KnowledgeItem> {
+    const input = ReplaceKnowledgeDocumentSchema.parse(rawInput);
+    validateUploads([upload]);
+    return this.withWrite(async () => {
+      const index = this.state.knowledge.findIndex((item) => item.id === id);
+      const current = this.state.knowledge[index];
+      if (current?.kind !== "document") {
+        throw new StoreError("not_found", "Knowledge document not found.");
+      }
+      this.requireExpectedDocumentRevision(current, input.expectedRevisionId);
+      const now = new Date().toISOString();
+      const nextState = structuredClone(this.state);
+      const createdPaths: string[] = [];
+      let baseDocument = nextState.knowledge[index];
+      if (baseDocument?.kind !== "document") {
+        throw new StoreError("not_found", "Knowledge document not found.");
+      }
+      if (baseDocument.revisions.length === 0) {
+        baseDocument = await this.captureLegacyDocumentRevision(
+          nextState,
+          index,
+          now,
+          createdPaths,
+        );
+      }
+      const uploadRevision = this.newDocumentRevision(
+        baseDocument.workspaceId,
+        baseDocument.id,
+        {
+          name: upload.name,
+          mediaType: upload.mediaType,
+          bytes: upload.bytes,
+        },
+        now,
+      );
+      await writePrivateFile(this.managedPath(uploadRevision.storagePath), upload.bytes);
+      const updated = KnowledgeDocumentSchema.parse({
+        ...baseDocument,
+        fileName: uploadRevision.fileName,
+        mediaType: uploadRevision.mediaType,
+        size: uploadRevision.size,
+        storagePath: uploadRevision.storagePath,
+        revisions: [...baseDocument.revisions, uploadRevision],
+        currentRevisionId: uploadRevision.id,
+        updatedAt: now,
+      });
+      try {
+        nextState.knowledge[index] = updated;
+        await this.writeState(nextState);
+      } catch (error) {
+        await unlink(this.managedPath(uploadRevision.storagePath)).catch(() => undefined);
+        for (const created of createdPaths) {
+          await unlink(created).catch(() => undefined);
+        }
+        throw error;
+      }
+      this.state = nextState;
+      return structuredClone(updated);
+    });
+  }
+
+  async restoreKnowledgeDocumentRevision(
+    id: string,
+    revisionId: string,
+    rawInput: unknown,
+  ): Promise<KnowledgeItem> {
+    const input = RestoreKnowledgeDocumentRevisionSchema.parse(rawInput);
+    return this.withWrite(async () => {
+      const index = this.state.knowledge.findIndex((item) => item.id === id);
+      const current = this.state.knowledge[index];
+      if (current?.kind !== "document") {
+        throw new StoreError("not_found", "Knowledge document not found.");
+      }
+      this.requireExpectedDocumentRevision(current, input.expectedRevisionId);
+      const nextState = structuredClone(this.state);
+      const nextItem = nextState.knowledge[index];
+      if (nextItem?.kind !== "document") {
+        throw new StoreError("not_found", "Knowledge document not found.");
+      }
+      const source = nextItem.revisions.find((revision) => revision.id === revisionId);
+      if (!source) {
+        throw new StoreError("not_found", "Document revision not found.");
+      }
+      const sourceFile = this.managedPath(source.storagePath);
+      const bytes = await readFile(sourceFile);
+      if (hashBytes(bytes) !== source.sha256) {
+        throw new StoreError("invalid", "Document revision content is corrupted.");
+      }
+      const now = new Date().toISOString();
+      const restored = this.newDocumentRevision(
+        nextItem.workspaceId,
+        nextItem.id,
+        {
+          name: source.fileName,
+          mediaType: source.mediaType,
+          bytes,
+        },
+        now,
+        source.id,
+      );
+      await writePrivateFile(this.managedPath(restored.storagePath), bytes);
+      const updated = KnowledgeDocumentSchema.parse({
+        ...nextItem,
+        fileName: restored.fileName,
+        mediaType: restored.mediaType,
+        size: restored.size,
+        storagePath: restored.storagePath,
+        revisions: [...nextItem.revisions, restored],
+        currentRevisionId: restored.id,
+        updatedAt: now,
+      });
+      try {
+        nextState.knowledge[index] = updated;
+        await this.writeState(nextState);
+      } catch (error) {
+        await unlink(this.managedPath(restored.storagePath)).catch(() => undefined);
+        throw error;
+      }
+      this.state = nextState;
+      return structuredClone(updated);
+    });
+  }
+
+  async listKnowledgeDocumentRevisions(id: string): Promise<KnowledgeDocumentRevisions> {
+    const item = this.getKnowledge(id);
+    if (item?.kind !== "document") {
+      throw new StoreError("not_found", "Knowledge document not found.");
+    }
+    return {
+      currentRevisionId: item.currentRevisionId,
+      revisions: structuredClone([...item.revisions].reverse()),
+    };
+  }
+
+  async documentRevisionContent(
+    id: string,
+    revisionId: string,
+  ): Promise<{ revision: DocumentRevision; bytes: Uint8Array<ArrayBuffer> }> {
+    const item = this.getKnowledge(id);
+    if (item?.kind !== "document") {
+      throw new StoreError("not_found", "Knowledge document not found.");
+    }
+    const revision = item.revisions.find((entry) => entry.id === revisionId);
+    if (!revision) {
+      throw new StoreError("not_found", "Document revision not found.");
+    }
+    const bytes = await readFile(this.managedPath(revision.storagePath));
+    if (hashBytes(bytes) !== revision.sha256) {
+      throw new StoreError("invalid", "Document revision content is corrupted.");
+    }
+    return { revision: structuredClone(revision), bytes: Uint8Array.from(bytes) };
   }
 
   async createKnowledgeRepository(rawInput: unknown): Promise<KnowledgeRepository> {
@@ -612,7 +790,7 @@ export class FileStore {
           "Wait for active Worker assignments to finish before deleting this repository.",
         );
       }
-      const itemRoot = dirname(this.knowledgePath(item));
+      const itemRoot = this.knowledgeStorageRoot(item);
       const tombstone = `${itemRoot}.deleting-${crypto.randomUUID()}`;
       let storageDetached = false;
       if (assignments.length === 0) {
@@ -637,8 +815,131 @@ export class FileStore {
     });
   }
 
+  private requireExpectedDocumentRevision(
+    item: KnowledgeDocument,
+    expectedRevisionId: string,
+  ): void {
+    if (item.currentRevisionId) {
+      if (item.currentRevisionId !== expectedRevisionId) {
+        throw new StoreError(
+          "conflict",
+          "This document changed since it was loaded. Reload and try again.",
+        );
+      }
+      return;
+    }
+    if (expectedRevisionId !== "legacy") {
+      throw new StoreError(
+        "conflict",
+        "This document has no recorded version history yet. Reload and try again.",
+      );
+    }
+  }
+
+  private async captureLegacyDocumentRevision(
+    state: PersistedState,
+    index: number,
+    now: string,
+    createdPaths: string[],
+  ): Promise<KnowledgeDocument> {
+    const current = state.knowledge[index];
+    if (current?.kind !== "document") {
+      throw new StoreError("not_found", "Knowledge document not found.");
+    }
+    const bytes = await readFile(this.knowledgePath(current));
+    const id = crypto.randomUUID();
+    const storagePath = join(
+      "workspaces",
+      current.workspaceId,
+      "knowledge",
+      current.id,
+      "revisions",
+      id,
+    );
+    const file = this.managedPath(storagePath);
+    await writePrivateFile(file, bytes);
+    createdPaths.push(file);
+    const legacyRevision = {
+      id,
+      createdAt: now,
+      fileName: current.fileName,
+      mediaType: current.mediaType,
+      size: current.size,
+      storagePath,
+      sha256: hashBytes(bytes),
+    } satisfies DocumentRevision;
+    const item = KnowledgeDocumentSchema.parse({
+      ...current,
+      revisions: [legacyRevision],
+      currentRevisionId: id,
+      storagePath,
+      updatedAt: now,
+    });
+    state.knowledge[index] = item;
+    return item;
+  }
+
+  private newDocumentRevision(
+    workspaceId: string,
+    documentId: string,
+    upload: UploadArtifactInput,
+    createdAt: string,
+    restoredFromId?: string,
+  ): DocumentRevision {
+    const id = crypto.randomUUID();
+    return {
+      id,
+      createdAt,
+      fileName: normaliseArtifactName(upload.name),
+      mediaType: normaliseMediaType(upload.mediaType) || inferMediaType(upload.name),
+      size: upload.bytes.byteLength,
+      storagePath: join("workspaces", workspaceId, "knowledge", documentId, "revisions", id),
+      sha256: hashBytes(upload.bytes),
+      ...(restoredFromId ? { restoredFromId } : {}),
+    };
+  }
+
+  private async pinKnowledgeReferences(
+    state: PersistedState,
+    message: Message,
+  ): Promise<{ message: Message; createdPaths: string[] }> {
+    const createdPaths: string[] = [];
+    const references: KnowledgeReference[] = [];
+    for (const reference of message.knowledgeReferences) {
+      const index = state.knowledge.findIndex((item) => item.id === reference.knowledgeId);
+      const item = state.knowledge[index];
+      if (item?.kind !== "document") {
+        references.push(reference);
+        continue;
+      }
+      if (item.currentRevisionId) {
+        references.push({ ...reference, revisionId: item.currentRevisionId });
+        continue;
+      }
+      const captured = await this.captureLegacyDocumentRevision(
+        state,
+        index,
+        message.createdAt,
+        createdPaths,
+      );
+      references.push({ ...reference, revisionId: captured.currentRevisionId });
+    }
+    return {
+      message: MessageSchema.parse({ ...message, knowledgeReferences: references }),
+      createdPaths,
+    };
+  }
+
   knowledgePath(item: KnowledgeItem): string {
     return this.managedPath(item.storagePath);
+  }
+
+  private knowledgeStorageRoot(item: KnowledgeItem): string {
+    const relative =
+      item.kind === "repository"
+        ? join("workspaces", item.workspaceId, "repositories", item.id)
+        : join("workspaces", item.workspaceId, "knowledge", item.id);
+    return this.managedPath(relative);
   }
 
   async agentKnowledge(message: Message): Promise<AgentKnowledgeItem[]> {
@@ -646,6 +947,30 @@ export class FileStore {
     for (const reference of message.knowledgeReferences) {
       const item = this.getKnowledge(reference.knowledgeId);
       if (!item) continue;
+      if (item.kind === "document" && reference.revisionId) {
+        const revision = item.revisions.find((entry) => entry.id === reference.revisionId);
+        if (!revision) continue;
+        const revisionItem = KnowledgeItemSchema.parse({
+          ...item,
+          fileName: revision.fileName,
+          mediaType: revision.mediaType,
+          size: revision.size,
+          storagePath: revision.storagePath,
+          updatedAt: revision.createdAt,
+        });
+        const localPath = this.managedPath(revision.storagePath);
+        if (isTextMediaType(revision.mediaType)) {
+          const bytes = await readFile(localPath);
+          if (hashBytes(bytes) !== revision.sha256) {
+            throw new StoreError("invalid", "Document revision content is corrupted.");
+          }
+          const content = new TextDecoder().decode(bytes).slice(0, 512 * 1024);
+          result.push({ item: revisionItem, localPath, content });
+        } else {
+          result.push({ item: revisionItem, localPath });
+        }
+        continue;
+      }
       const localPath = this.knowledgePath(item);
       if (item.kind === "document" && isTextMediaType(item.mediaType)) {
         const content = (await readFile(localPath, "utf8")).slice(0, 512 * 1024);
@@ -1185,17 +1510,39 @@ export class FileStore {
     uploads: UploadArtifactInput[] = [],
   ): Promise<Message> {
     return this.withWrite(async () => {
-      const thread = this.requireThread(threadId);
+      const threadIndex = this.state.threads.findIndex((thread) => thread.id === threadId);
+      if (threadIndex === -1) throw new StoreError("not_found", "Thread not found.");
       const artifactDrafts = await this.createArtifactDrafts(input, uploads);
       const messageSequence = await this.nextSequence(threadId);
       const artifacts = artifactDrafts.map((draft, index) =>
         ArtifactSchema.parse({ ...draft, sequence: messageSequence + index + 1 }),
       );
-      const message = MessageSchema.parse({
+      const baseMessage = MessageSchema.parse({
         ...input,
         artifactIds: artifacts.map((artifact) => artifact.id),
         sequence: messageSequence,
       });
+      const nextState = structuredClone(this.state);
+      let persistedMessage = baseMessage;
+      let createdRevisionPaths: string[] = [];
+      if (input.author.kind === "user") {
+        const pinned = await this.pinKnowledgeReferences(nextState, baseMessage);
+        persistedMessage = pinned.message;
+        createdRevisionPaths = pinned.createdPaths;
+      }
+      if (createdRevisionPaths.length > 0) {
+        try {
+          await this.writeState(nextState);
+        } catch (error) {
+          await Promise.all(
+            createdRevisionPaths.map((file) => unlink(file).catch(() => undefined)),
+          );
+          throw error;
+        }
+        this.state = nextState;
+      }
+      const thread = nextState.threads[threadIndex];
+      if (!thread) throw new StoreError("not_found", "Thread not found.");
       const writtenUploads: string[] = [];
       try {
         for (const draft of artifactDrafts) {
@@ -1205,7 +1552,7 @@ export class FileStore {
           writtenUploads.push(file);
         }
         await appendManySynced(this.transcriptPath(threadId), [
-          { type: "message.created", sequence: messageSequence, message },
+          { type: "message.created", sequence: messageSequence, message: persistedMessage },
           ...artifacts.map(
             (artifact): TranscriptEvent => ({
               type: "artifact.created",
@@ -1220,10 +1567,11 @@ export class FileStore {
       }
       this.sequenceByThread.set(threadId, artifacts.at(-1)?.sequence ?? messageSequence);
       thread.messageCount += 1;
-      thread.lastMessageAt = message.createdAt;
-      thread.updatedAt = message.createdAt;
-      await this.writeState();
-      return structuredClone(message);
+      thread.lastMessageAt = persistedMessage.createdAt;
+      thread.updatedAt = persistedMessage.createdAt;
+      await this.writeState(nextState);
+      this.state = nextState;
+      return structuredClone(persistedMessage);
     });
   }
 
@@ -1913,6 +2261,10 @@ async function writePrivateFile(file: string, bytes: Uint8Array): Promise<void> 
   } finally {
     await handle.close();
   }
+}
+
+function hashBytes(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
 async function writeJsonAtomic(file: string, value: unknown, mode: number): Promise<void> {

@@ -125,7 +125,12 @@ export function createApp(options: CreateAppOptions) {
   });
 
   app.post("/api/knowledge/documents", async (context) => {
-    const body = await context.req.parseBody({ all: true });
+    const body = await context.req.parseBody({
+      all: true,
+      maxFiles: MAX_UPLOAD_FILES,
+      maxFileSize: MAX_UPLOAD_BYTES,
+      maxSize: MAX_UPLOAD_TOTAL_BYTES,
+    });
     const files = toFiles(body.file);
     if (files.length !== 1) {
       throw new StoreError("invalid", "Choose exactly one knowledge document.");
@@ -148,6 +153,33 @@ export function createApp(options: CreateAppOptions) {
         },
       ),
       201,
+    );
+  });
+
+  app.put("/api/knowledge/:id/document", async (context) => {
+    const body = await context.req.parseBody({
+      all: true,
+      maxFiles: 1,
+      maxFileSize: MAX_UPLOAD_BYTES,
+      maxSize: MAX_UPLOAD_TOTAL_BYTES,
+    });
+    const files = toFiles(body.file);
+    if (files.length !== 1) {
+      throw new StoreError("invalid", "Choose exactly one replacement document.");
+    }
+    validateFileHeaders(files);
+    const file = files[0];
+    if (!file) throw new StoreError("invalid", "Replacement document is missing.");
+    return context.json(
+      await options.store.replaceKnowledgeDocument(
+        context.req.param("id"),
+        { expectedRevisionId: stringField(body.expectedRevisionId) },
+        {
+          name: file.name,
+          mediaType: file.type,
+          bytes: new Uint8Array(await file.arrayBuffer()),
+        },
+      ),
     );
   });
 
@@ -194,6 +226,37 @@ export function createApp(options: CreateAppOptions) {
         "x-content-type-options": "nosniff",
       },
     });
+  });
+
+  app.get("/api/knowledge/:id/revisions", async (context) => {
+    return context.json(
+      await options.store.listKnowledgeDocumentRevisions(context.req.param("id")),
+    );
+  });
+
+  app.get("/api/knowledge/:id/revisions/:revisionId/content", async (context) => {
+    const { revision, bytes } = await options.store.documentRevisionContent(
+      context.req.param("id"),
+      context.req.param("revisionId"),
+    );
+    return new Response(new Blob([bytes]), {
+      headers: {
+        "cache-control": "private, no-store",
+        "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(revision.fileName)}`,
+        "content-type": "application/octet-stream",
+        "x-content-type-options": "nosniff",
+      },
+    });
+  });
+
+  app.post("/api/knowledge/:id/revisions/:revisionId/restore", async (context) => {
+    return context.json(
+      await options.store.restoreKnowledgeDocumentRevision(
+        context.req.param("id"),
+        context.req.param("revisionId"),
+        await context.req.json(),
+      ),
+    );
   });
 
   app.patch("/api/agents/:id", async (context) => {
@@ -267,7 +330,12 @@ export function createApp(options: CreateAppOptions) {
     if (!contentType.toLowerCase().startsWith("multipart/form-data")) {
       return context.json(await chat.send(context.req.param("id"), await context.req.json()), 201);
     }
-    const body = await context.req.parseBody({ all: true });
+    const body = await context.req.parseBody({
+      all: true,
+      maxFiles: MAX_UPLOAD_FILES,
+      maxFileSize: MAX_UPLOAD_BYTES,
+      maxSize: MAX_UPLOAD_TOTAL_BYTES,
+    });
     const content = typeof body.content === "string" ? body.content : "";
     const files = toFiles(body.files);
     validateFileHeaders(files);

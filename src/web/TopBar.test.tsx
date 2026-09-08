@@ -47,6 +47,7 @@ const document: KnowledgeItem = {
   mediaType: "text/markdown",
   size: 12,
   storagePath: "knowledge/guide/document",
+  revisions: [],
   createdAt: now,
   updatedAt: now,
 };

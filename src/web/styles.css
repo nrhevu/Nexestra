@@ -3202,6 +3202,85 @@ kbd {
   font-size: 10px;
   line-height: 1.45;
 }
+.revision-panel {
+  min-height: 0;
+  max-height: 300px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.revision-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.revision-row > svg {
+  flex: none;
+  color: var(--quiet);
+}
+.revision-meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.revision-meta strong {
+  color: #d9d5dd;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.revision-meta small {
+  color: var(--quiet);
+  font-size: 10px;
+  line-height: 1.4;
+}
+.revision-row > a,
+.revision-row > button {
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid #43464e;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: #c8c5cb;
+  font-size: 11px;
+  line-height: 1;
+}
+.revision-row > a:hover,
+.revision-row > button:not(:disabled):hover {
+  background: #2a2d34;
+  color: #efeaf0;
+}
+.revision-row > button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.replace-file {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.replace-file small {
+  color: var(--quiet);
+  font-size: 10px;
+  line-height: 1.45;
+}
+.replace-file input[type="file"] {
+  color-scheme: dark;
+  font-size: 11px;
+}
+.replace-file .primary-button {
+  align-self: flex-start;
+}
 .secondary-button {
   height: 34px;
   padding: 0 13px;

@@ -16,6 +16,7 @@ import {
   ExternalLink,
   FileText,
   GitBranch,
+  History,
   Image as ImageIcon,
   Italic,
   Link as LinkIcon,
@@ -28,6 +29,7 @@ import {
   Plus,
   Quote,
   RefreshCw,
+  RotateCcw,
   Search,
   SendHorizontal,
   Settings,
@@ -38,6 +40,7 @@ import {
   TerminalSquare,
   Trash2,
   Unplug,
+  Upload,
   UsersRound,
   X,
 } from "lucide-react";
@@ -63,6 +66,7 @@ import type {
   AssignmentGitTrackedSummary,
   AttentionItem,
   BootstrapData,
+  KnowledgeDocumentRevisions,
   KnowledgeItem,
   Message,
   RunActivity,
@@ -1078,8 +1082,8 @@ export function App() {
                 : current,
             );
             if (knowledgeInspectRef.current?.id === item.id) {
-              if (notice) flash(notice);
               setKnowledgeToInspect(item);
+              if (notice) flash(notice);
             }
           }}
           onDelete={(item) => {
@@ -4719,6 +4723,73 @@ function KnowledgeDetailDialog({
   const [retryError, setRetryError] = useState<string>();
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string>();
+  const [revisions, setRevisions] = useState<KnowledgeDocumentRevisions>();
+  const [revisionsError, setRevisionsError] = useState<string>();
+  const [replacementFile, setReplacementFile] = useState<File>();
+  const [replacing, setReplacing] = useState(false);
+  const [replaceError, setReplaceError] = useState<string>();
+  const [restoringRevisionId, setRestoringRevisionId] = useState<string>();
+  const [restoreError, setRestoreError] = useState<string>();
+  const documentItem = item.kind === "document" ? item : undefined;
+  useEffect(() => {
+    if (!documentItem) return;
+    let cancelled = false;
+    setRevisions(undefined);
+    setRevisionsError(undefined);
+    api<KnowledgeDocumentRevisions>(`/api/knowledge/${encodeURIComponent(item.id)}/revisions`)
+      .then((value) => {
+        if (!cancelled) setRevisions(value);
+      })
+      .catch((caught) => {
+        if (!cancelled) setRevisionsError(messageFrom(caught));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [documentItem, item.id, documentItem?.currentRevisionId, documentItem?.updatedAt]);
+  const replaceDocument = async () => {
+    if (!documentItem) return;
+    if (!replacementFile) {
+      setReplaceError("Choose a replacement file.");
+      return;
+    }
+    setReplacing(true);
+    setReplaceError(undefined);
+    const body = new FormData();
+    body.append("expectedRevisionId", documentItem?.currentRevisionId ?? "legacy");
+    body.append("file", replacementFile);
+    try {
+      const updated = await api<KnowledgeItem>(
+        `/api/knowledge/${encodeURIComponent(item.id)}/document`,
+        { method: "PUT", body },
+      );
+      setReplacementFile(undefined);
+      onChanged(updated, generation, "Document replaced.");
+    } catch (caught) {
+      setReplaceError(messageFrom(caught));
+    } finally {
+      setReplacing(false);
+    }
+  };
+  const restoreRevision = async (revisionId: string) => {
+    if (!documentItem) return;
+    setRestoringRevisionId(revisionId);
+    setRestoreError(undefined);
+    try {
+      const updated = await api<KnowledgeItem>(
+        `/api/knowledge/${encodeURIComponent(item.id)}/revisions/${encodeURIComponent(revisionId)}/restore`,
+        {
+          method: "POST",
+          body: JSON.stringify({ expectedRevisionId: documentItem?.currentRevisionId ?? "legacy" }),
+        },
+      );
+      onChanged(updated, generation, "Document restored.");
+    } catch (caught) {
+      setRestoreError(messageFrom(caught));
+    } finally {
+      setRestoringRevisionId(undefined);
+    }
+  };
   return (
     <Modal title={item.name} eyebrow="KNOWLEDGE DETAILS" onClose={onClose}>
       <div className="resource-details">
@@ -4747,6 +4818,97 @@ function KnowledgeDetailDialog({
             <div>
               <span>Media type</span>
               <strong>{item.mediaType}</strong>
+            </div>
+            <div className="revision-panel resource-details-wide">
+              <span>Version history</span>
+              {revisionsError && (
+                <p className="form-error">
+                  <CircleAlert size={14} />
+                  {revisionsError}
+                </p>
+              )}
+              {!revisions && !revisionsError && (
+                <p className="muted-text">Loading version history…</p>
+              )}
+              {revisions && revisions.revisions.length === 0 && (
+                <p className="muted-text">
+                  No prior version history is recorded for this document. Replacing the file now
+                  records the current file as its first version.
+                </p>
+              )}
+              {revisions?.revisions.map((revision) => {
+                const current = revision.id === revisions.currentRevisionId;
+                return (
+                  <div className="revision-row" key={revision.id}>
+                    <History size={15} />
+                    <div className="revision-meta">
+                      <strong>{revision.fileName}</strong>
+                      <small>
+                        {formatDateTime(revision.createdAt)} · {formatBytes(revision.size)}
+                      </small>
+                      {revision.restoredFromId && <small>Restored from a prior version</small>}
+                    </div>
+                    <a
+                      href={`/api/knowledge/${encodeURIComponent(item.id)}/revisions/${encodeURIComponent(revision.id)}/content`}
+                      download
+                      aria-label={`Download ${revision.fileName}`}
+                    >
+                      <Download size={14} />
+                    </a>
+                    <button
+                      type="button"
+                      disabled={current || replacing || restoringRevisionId !== undefined}
+                      aria-label={
+                        current ? `Current ${revision.fileName}` : `Restore ${revision.fileName}`
+                      }
+                      onClick={() => restoreRevision(revision.id)}
+                    >
+                      {restoringRevisionId === revision.id ? (
+                        <LoaderCircle className="spin" size={14} />
+                      ) : current ? (
+                        <Check size={14} />
+                      ) : (
+                        <RotateCcw size={14} />
+                      )}
+                      {current
+                        ? "Current"
+                        : restoringRevisionId === revision.id
+                          ? "Restoring…"
+                          : "Restore"}
+                    </button>
+                  </div>
+                );
+              })}
+              {restoreError && (
+                <p className="form-error">
+                  <CircleAlert size={14} />
+                  {restoreError}
+                </p>
+              )}
+              <div className="replace-file">
+                <strong>Replace file</strong>
+                <small>The current file stays downloadable while a new version is published.</small>
+                <input
+                  type="file"
+                  aria-label="Replacement file"
+                  onChange={(event) => setReplacementFile(event.target.files?.[0])}
+                />
+                {replaceError && (
+                  <p className="form-error">
+                    <CircleAlert size={14} />
+                    {replaceError}
+                  </p>
+                )}
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={replacing || restoringRevisionId !== undefined}
+                  onClick={replaceDocument}
+                >
+                  {replacing ? <LoaderCircle className="spin" size={14} /> : <Upload size={14} />}
+                  {replacing ? "Replacing…" : "Replace"}
+                </button>
+              </div>
             </div>
           </>
         ) : (
@@ -4962,7 +5124,7 @@ function EditKnowledgeDialog({
           <code>{item.kind === "document" ? item.fileName : item.source}</code>
           <small>
             {item.kind === "document"
-              ? "Delete and upload a new item to replace the file contents."
+              ? "Use Replace file in the detail view to change contents while keeping version history."
               : "Delete and clone a new item to change the repository source."}
           </small>
         </div>
@@ -5007,6 +5169,12 @@ function DeleteKnowledgeDialog({
             <p>
               The managed clone and historical worktrees will be retained so completed Worker runs
               remain inspectable.
+            </p>
+          )}
+          {item.kind === "document" && (
+            <p>
+              This permanently removes the current file and every recorded version of it from local
+              storage.
             </p>
           )}
         </div>
