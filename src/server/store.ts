@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, createReadStream } from "node:fs";
 import {
   access,
   chmod,
@@ -36,8 +36,20 @@ import {
   KnowledgeItemSchema,
   type KnowledgeReference,
   type KnowledgeRepository,
+  MESSAGE_SEARCH_MAX_OFFSET,
+  MESSAGE_SEARCH_QUERY_MAX_LENGTH,
+  MESSAGE_SEARCH_SNIPPET_MAX_CHARS,
   type Message,
   MessageSchema,
+  type MessageSearchAuthor,
+  MessageSearchAuthorSchema,
+  type MessageSearchDiagnostics,
+  type MessageSearchHit,
+  MessageSearchHitSchema,
+  type MessageSearchRequest,
+  MessageSearchRequestSchema,
+  type MessageSearchResponse,
+  MessageSearchResponseSchema,
   RenameThreadSchema,
   ReorderWorkspacesSchema,
   ReplaceKnowledgeDocumentSchema,
@@ -138,6 +150,18 @@ type TranscriptEvent =
 export const MAX_UPLOAD_FILES = 10;
 export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 export const MAX_UPLOAD_TOTAL_BYTES = 50 * 1024 * 1024;
+
+export interface MessageSearchBudgets {
+  maxScanBytes: number;
+  maxScanLines: number;
+  maxLineBytes: number;
+}
+
+export const MESSAGE_SEARCH_DEFAULT_BUDGETS: MessageSearchBudgets = {
+  maxScanBytes: 50 * 1024 * 1024,
+  maxScanLines: 200_000,
+  maxLineBytes: 1 * 1024 * 1024,
+};
 
 export interface UploadArtifactInput {
   name: string;
@@ -351,6 +375,35 @@ export class FileStore {
 
   transcriptPath(threadId: string): string {
     return join(this.threadDirectory, `${threadId}.jsonl`);
+  }
+  async searchMessages(
+    rawInput: unknown,
+    budgets: Partial<MessageSearchBudgets> = {},
+  ): Promise<MessageSearchResponse> {
+    const input = MessageSearchRequestSchema.parse(rawInput);
+    const workspace = this.getWorkspace(input.workspaceId);
+    if (!workspace) throw new StoreError("not_found", "Workspace not found.");
+    let threads = this.listThreads(input.workspaceId).sort(
+      (left, right) =>
+        right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id),
+    );
+    if (input.threadId) {
+      const thread = threads.find((entry) => entry.id === input.threadId);
+      if (!thread) {
+        throw new StoreError("not_found", "Thread not found in this workspace.");
+      }
+      threads = [thread];
+    }
+    threads = threads.filter((thread) =>
+      input.archived === "all" ? true : thread.archived === (input.archived === "archived"),
+    );
+    const mergedBudgets = { ...MESSAGE_SEARCH_DEFAULT_BUDGETS, ...budgets };
+    const scanner = new MessageSearchScanner(this, input, mergedBudgets);
+    for (const thread of threads) {
+      await scanner.scanThread(thread);
+      if (scanner.isScanLimited()) break;
+    }
+    return scanner.response(input);
   }
 
   async artifactContent(
@@ -2270,6 +2323,327 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+type TranscriptFileScanStatus = "complete" | "missing" | "unreadable" | "limited";
+
+interface TranscriptFileScanOutcome {
+  status: TranscriptFileScanStatus;
+  limitedBy?: "bytes" | "lines";
+  bytesRead: number;
+  lineCount: number;
+}
+
+class MessageSearchScanner {
+  private readonly budgets: MessageSearchBudgets;
+  private readonly term: string;
+  private readonly windowSize: number;
+  private readonly matches: MessageSearchHit[] = [];
+  private matchesFound = 0;
+  private linesRead = 0;
+  private bytesRead = 0;
+  private messageEventsSeen = 0;
+  private malformedLines = 0;
+  private tornTailLines = 0;
+  private oversizedLines = 0;
+  private missingFiles = 0;
+  private unreadableFiles = 0;
+  private threadsScanned = 0;
+  private scanLimited = false;
+  private scanLimit: MessageSearchDiagnostics["scanLimit"] = null;
+  private complete = true;
+
+  constructor(
+    private readonly store: FileStore,
+    private readonly input: MessageSearchRequest,
+    budgets: MessageSearchBudgets,
+  ) {
+    this.budgets = budgets;
+    this.term = input.q.toLowerCase();
+    this.windowSize = input.offset + input.limit;
+  }
+
+  async scanThread(thread: Thread): Promise<void> {
+    this.threadsScanned += 1;
+    const emptyExpected = thread.messageCount === 0 && thread.lastMessageAt === null;
+    const outcome = await scanTranscriptFile(
+      this.store.transcriptPath(thread.id),
+      Math.max(0, this.budgets.maxScanBytes - this.bytesRead),
+      Math.max(0, this.budgets.maxScanLines - this.linesRead),
+      this.budgets.maxLineBytes,
+      (line) => this.handleLine(thread, line),
+      () => this.handleOversizedLine(),
+      (oversized) => this.handleTornTail(oversized),
+    );
+    this.bytesRead += outcome.bytesRead;
+    this.linesRead += outcome.lineCount;
+    if (outcome.status === "missing") {
+      if (emptyExpected) return;
+      this.missingFiles += 1;
+      this.complete = false;
+      this.scanLimit ??= "missing_file";
+    } else if (outcome.status === "unreadable") {
+      this.unreadableFiles += 1;
+      this.complete = false;
+      this.scanLimit ??= "unreadable_file";
+    } else if (outcome.status === "limited") {
+      this.scanLimited = true;
+      this.complete = false;
+      if (outcome.limitedBy) this.scanLimit ??= outcome.limitedBy;
+    }
+  }
+
+  isScanLimited(): boolean {
+    return this.scanLimited;
+  }
+
+  response(input: MessageSearchRequest): MessageSearchResponse {
+    const complete = this.complete && !this.scanLimited;
+    const pageEnd = input.offset + input.limit;
+    const nextOffset =
+      complete && this.matchesFound > pageEnd && pageEnd <= MESSAGE_SEARCH_MAX_OFFSET
+        ? pageEnd
+        : null;
+    const diagnostics: MessageSearchDiagnostics = {
+      threadsScanned: this.threadsScanned,
+      linesRead: this.linesRead,
+      bytesRead: this.bytesRead,
+      messageEventsSeen: this.messageEventsSeen,
+      malformedLines: this.malformedLines,
+      tornTailLines: this.tornTailLines,
+      oversizedLines: this.oversizedLines,
+      missingFiles: this.missingFiles,
+      unreadableFiles: this.unreadableFiles,
+      scanLimited: this.scanLimited,
+      scanLimit: this.scanLimit,
+    };
+    return MessageSearchResponseSchema.parse({
+      query: {
+        term: this.redactedTerm(),
+        workspaceId: input.workspaceId,
+        threadId: input.threadId ?? null,
+        archived: input.archived,
+      },
+      matches: this.matches.slice(input.offset, pageEnd),
+      matchesFound: this.matchesFound,
+      complete,
+      nextOffset,
+      diagnostics,
+    });
+  }
+
+  private redactedTerm(): string {
+    const redacted = this.store.redactSecrets(this.input.q);
+    return redacted.length > MESSAGE_SEARCH_QUERY_MAX_LENGTH
+      ? redacted.slice(0, MESSAGE_SEARCH_QUERY_MAX_LENGTH)
+      : redacted;
+  }
+
+  private handleLine(thread: Thread, line: string): void {
+    if (!line.trim()) return;
+    let event: TranscriptEvent | undefined;
+    try {
+      event = parseTranscriptEvent(line);
+    } catch {
+      this.malformedLines += 1;
+      this.complete = false;
+      return;
+    }
+    if (event?.type !== "message.created") return;
+    this.messageEventsSeen += 1;
+    const content = this.store.redactSecrets(event.message.content);
+    if (!content.toLowerCase().includes(this.term)) return;
+    const snippet = searchSnippet(content, this.term);
+    const threadSummary = {
+      id: thread.id,
+      name: this.store.redactSecrets(thread.name),
+      slug: this.store.redactSecrets(thread.slug),
+      archived: thread.archived,
+    };
+    let hit: MessageSearchHit;
+    try {
+      const author: MessageSearchAuthor = MessageSearchAuthorSchema.parse({
+        ...event.message.author,
+        name: this.store.redactSecrets(event.message.author.name),
+        ...(event.message.author.kind === "agent"
+          ? { handle: this.store.redactSecrets(event.message.author.handle) }
+          : {}),
+      });
+      hit = MessageSearchHitSchema.parse({
+        messageId: event.message.id,
+        sequence: event.message.sequence,
+        thread: threadSummary,
+        author,
+        createdAt: event.message.createdAt,
+        snippet,
+      });
+    } catch {
+      // Never let a display/redaction parse failure escape the stream callback;
+      // treat the rest of the scan as partial rather than crashing the request.
+      this.complete = false;
+      return;
+    }
+    this.insertMatch(hit);
+  }
+
+  private handleOversizedLine(): void {
+    this.oversizedLines += 1;
+    this.complete = false;
+  }
+
+  private handleTornTail(oversized: boolean): void {
+    this.tornTailLines += 1;
+    if (oversized) this.oversizedLines += 1;
+    this.complete = false;
+  }
+
+  private insertMatch(hit: MessageSearchHit): void {
+    this.matchesFound += 1;
+    if (this.matches.length >= this.windowSize) {
+      const last = this.matches[this.matches.length - 1];
+      if (last && compareSearchHits(hit, last) >= 0) return;
+      this.matches.pop();
+    }
+    const index = searchHitLowerBound(this.matches, hit);
+    this.matches.splice(index, 0, hit);
+  }
+}
+
+function compareSearchHits(left: MessageSearchHit, right: MessageSearchHit): number {
+  const byTime = right.createdAt.localeCompare(left.createdAt);
+  if (byTime !== 0) return byTime;
+  const bySequence = right.sequence - left.sequence;
+  if (bySequence !== 0) return bySequence;
+  return left.messageId.localeCompare(right.messageId);
+}
+
+function searchHitLowerBound(hits: MessageSearchHit[], target: MessageSearchHit): number {
+  let low = 0;
+  let high = hits.length;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    const candidate = hits[mid];
+    if (candidate && compareSearchHits(candidate, target) < 0) low = mid + 1;
+    else high = mid;
+  }
+  return low;
+}
+
+function searchSnippet(content: string, term: string): string {
+  const index = content.toLowerCase().indexOf(term);
+  let snippet: string;
+  if (index < 0) {
+    snippet = content.slice(0, MESSAGE_SEARCH_SNIPPET_MAX_CHARS);
+  } else {
+    const contextBefore = Math.floor((MESSAGE_SEARCH_SNIPPET_MAX_CHARS - term.length) / 2);
+    const contextAfter = MESSAGE_SEARCH_SNIPPET_MAX_CHARS - term.length - contextBefore;
+    const start = Math.max(0, index - contextBefore);
+    const end = Math.min(content.length, index + term.length + contextAfter);
+    snippet = content.slice(start, end);
+    if (start > 0) snippet = `\u2026${snippet}`;
+    if (end < content.length) snippet = `${snippet}\u2026`;
+    if (snippet.length > MESSAGE_SEARCH_SNIPPET_MAX_CHARS) {
+      snippet = snippet.slice(0, MESSAGE_SEARCH_SNIPPET_MAX_CHARS);
+    }
+  }
+  // Copy into a fresh string so a small snippet never keeps the whole line alive.
+  return Buffer.from(snippet, "utf8").toString("utf8");
+}
+
+async function scanTranscriptFile(
+  file: string,
+  maxBytes: number,
+  maxLines: number,
+  maxLineBytes: number,
+  onLine: (line: string) => void,
+  onOversizedLine: () => void,
+  onTornTail: (oversized: boolean) => void,
+): Promise<TranscriptFileScanOutcome> {
+  return new Promise((resolve) => {
+    let bytesRead = 0;
+    let lineCount = 0;
+    let carry: Buffer | null = null;
+    let carryLength = 0;
+    let oversized = false;
+    let lastByte = -1;
+    let settled = false;
+    const buffer = () => {
+      if (carry === null) carry = Buffer.allocUnsafe(maxLineBytes);
+      return carry;
+    };
+    const finish = (result: TranscriptFileScanOutcome): void => {
+      if (settled) return;
+      settled = true;
+      stream.destroy();
+      resolve(result);
+    };
+    const stream = createReadStream(file, { highWaterMark: 64 * 1024 });
+    stream.on("error", (error) => {
+      if (isNodeError(error, "ENOENT")) {
+        finish({ status: "missing", bytesRead, lineCount });
+      } else {
+        finish({ status: "unreadable", bytesRead, lineCount });
+      }
+    });
+    stream.on("data", (chunk: Buffer) => {
+      bytesRead += chunk.byteLength;
+      if (bytesRead > maxBytes) {
+        finish({ status: "limited", limitedBy: "bytes", bytesRead, lineCount });
+        return;
+      }
+      let start = 0;
+      while (start < chunk.byteLength) {
+        const newlineIndex = chunk.indexOf(0x0a, start);
+        if (newlineIndex === -1) {
+          const remaining = chunk.subarray(start);
+          if (!oversized) {
+            const space = maxLineBytes - carryLength;
+            if (remaining.byteLength > space) {
+              remaining.copy(buffer(), carryLength, 0, space);
+              carryLength = maxLineBytes;
+              oversized = true;
+            } else {
+              remaining.copy(buffer(), carryLength);
+              carryLength += remaining.byteLength;
+            }
+          }
+          break;
+        }
+        const segment = chunk.subarray(start, newlineIndex);
+        let isOversized = oversized;
+        if (!isOversized) {
+          const space = maxLineBytes - carryLength;
+          if (segment.byteLength > space) {
+            segment.copy(buffer(), carryLength, 0, space);
+            carryLength = maxLineBytes;
+            isOversized = true;
+          } else {
+            segment.copy(buffer(), carryLength);
+            carryLength += segment.byteLength;
+          }
+        }
+        lineCount += 1;
+        if (lineCount > maxLines) {
+          finish({ status: "limited", limitedBy: "lines", bytesRead, lineCount });
+          return;
+        }
+        if (isOversized) onOversizedLine();
+        else onLine(buffer().toString("utf8", 0, carryLength));
+        carryLength = 0;
+        oversized = false;
+        lastByte = 0x0a;
+        start = newlineIndex + 1;
+      }
+      lastByte = chunk[chunk.byteLength - 1] ?? -1;
+    });
+    stream.on("end", () => {
+      if (settled) return;
+      if (lastByte !== 0x0a && (carryLength > 0 || oversized)) {
+        onTornTail(oversized || carryLength >= maxLineBytes);
+      }
+      finish({ status: "complete", bytesRead, lineCount });
+    });
+  });
 }
 
 function isStorageId(value: string): boolean {

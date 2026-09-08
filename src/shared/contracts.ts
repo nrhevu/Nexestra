@@ -333,6 +333,89 @@ export const CreateMessageSchema = z.object({
   content: z.string().trim().max(40_000),
 });
 
+export const MESSAGE_SEARCH_QUERY_MAX_LENGTH = 200;
+export const MESSAGE_SEARCH_MAX_OFFSET = 10_000;
+
+export const MESSAGE_SEARCH_SNIPPET_MAX_CHARS = 300;
+
+export const MessageSearchArchivedFilterSchema = z.enum(["all", "active", "archived"]);
+export type MessageSearchArchivedFilter = z.infer<typeof MessageSearchArchivedFilterSchema>;
+
+export const MessageSearchRequestSchema = z.object({
+  workspaceId: z.string().trim().min(1),
+  q: z.string().trim().min(1).max(MESSAGE_SEARCH_QUERY_MAX_LENGTH),
+  threadId: z.string().trim().min(1).optional(),
+  archived: MessageSearchArchivedFilterSchema.default("all"),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  offset: z.coerce.number().int().min(0).max(MESSAGE_SEARCH_MAX_OFFSET).default(0),
+});
+export type MessageSearchRequest = z.infer<typeof MessageSearchRequestSchema>;
+
+export const MessageSearchDiagnosticsSchema = z.object({
+  threadsScanned: z.number().int().nonnegative(),
+  linesRead: z.number().int().nonnegative(),
+  bytesRead: z.number().int().nonnegative(),
+  messageEventsSeen: z.number().int().nonnegative(),
+  malformedLines: z.number().int().nonnegative(),
+  tornTailLines: z.number().int().nonnegative(),
+  oversizedLines: z.number().int().nonnegative(),
+  missingFiles: z.number().int().nonnegative(),
+  unreadableFiles: z.number().int().nonnegative(),
+  scanLimited: z.boolean(),
+  scanLimit: z
+    .enum(["bytes", "lines", "per_line", "threads", "missing_file", "unreadable_file"])
+    .nullable(),
+});
+export type MessageSearchDiagnostics = z.infer<typeof MessageSearchDiagnosticsSchema>;
+
+// Search echo schema: accepts redacted display fields without re-validating
+// against handle/name constraints (a credential in a handle becomes
+// "[REDACTED]" which must not fail parsing inside the stream callback).
+export const MessageSearchAuthorSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("user"), id: z.literal("local-user"), name: z.string().max(512) }),
+  z.object({
+    kind: z.literal("agent"),
+    id: z.string().max(200),
+    name: z.string().max(512),
+    handle: z.string().max(512),
+  }),
+  z.object({ kind: z.literal("system"), id: z.literal("system"), name: z.string().max(512) }),
+]);
+export type MessageSearchAuthor = z.infer<typeof MessageSearchAuthorSchema>;
+
+export const MessageSearchHitSchema = z.object({
+  messageId: z.string().min(1).max(200),
+  sequence: z.number().int().positive(),
+  thread: z.object({
+    id: z.string().min(1).max(200),
+    name: z.string().min(1).max(512),
+    slug: z.string().min(1).max(512),
+    archived: z.boolean(),
+  }),
+  author: MessageSearchAuthorSchema,
+  createdAt: z.string().datetime({ offset: true }).max(40),
+  snippet: z.string().max(MESSAGE_SEARCH_SNIPPET_MAX_CHARS),
+});
+export type MessageSearchHit = z.infer<typeof MessageSearchHitSchema>;
+
+export const MessageSearchResponseSchema = z.object({
+  query: z.object({
+    // Echoed term is redacted and clipped; it never contains a stored credential.
+    term: z.string().trim().min(1).max(MESSAGE_SEARCH_QUERY_MAX_LENGTH),
+    workspaceId: z.string(),
+    threadId: z.string().nullable(),
+    archived: MessageSearchArchivedFilterSchema,
+  }),
+  matches: z.array(MessageSearchHitSchema),
+  // Observed matches inside the scanned region; not a global total when complete is false.
+  matchesFound: z.number().int().nonnegative(),
+  complete: z.boolean(),
+  // Present only when complete is true and more matches remain after this page.
+  nextOffset: z.number().int().min(1).nullable(),
+  diagnostics: MessageSearchDiagnosticsSchema,
+});
+export type MessageSearchResponse = z.infer<typeof MessageSearchResponseSchema>;
+
 const ArtifactUrlSchema = z
   .string()
   .url()

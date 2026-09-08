@@ -1283,3 +1283,104 @@ describe("HTTP app", () => {
     expect(missing.status).toBe(404);
   });
 });
+
+describe("HTTP message search", () => {
+  let store: FileStore;
+  let runner: FakeRunner;
+  let app: ReturnType<typeof createApp>;
+
+  beforeEach(async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-search-app-"));
+    store = await FileStore.open({ root, workspacePath: root });
+    runner = new FakeRunner();
+    app = createApp({ store, runner });
+  });
+
+  it("validates search query filters and scopes to the workspace", async () => {
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected workspace");
+    const other = await store.createWorkspace({ name: "Other" });
+    const otherThread = store.listThreads(other.id)[0];
+    if (!otherThread) throw new Error("expected thread");
+
+    const unknownWorkspace = await app.request("/api/search/messages?workspaceId=missing&q=needle");
+    expect(unknownWorkspace.status).toBe(404);
+
+    const foreignThread = await app.request(
+      `/api/search/messages?workspaceId=${workspace.id}&q=needle&threadId=${otherThread.id}`,
+    );
+    expect(foreignThread.status).toBe(404);
+
+    const badFilter = await app.request(
+      `/api/search/messages?workspaceId=${workspace.id}&q=needle&archived=unknown`,
+    );
+    expect(badFilter.status).toBe(400);
+
+    const missingQuery = await app.request(`/api/search/messages?workspaceId=${workspace.id}`);
+    expect(missingQuery.status).toBe(400);
+
+    const longQuery = await app.request(
+      `/api/search/messages?workspaceId=${workspace.id}&q=${"a".repeat(201)}`,
+    );
+    expect(longQuery.status).toBe(400);
+
+    const highOffset = await app.request(
+      `/api/search/messages?workspaceId=${workspace.id}&q=needle&offset=10001`,
+    );
+    expect(highOffset.status).toBe(400);
+  });
+
+  it("returns bounded search hits without invoking providers", async () => {
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected workspace");
+    const thread = store.listThreads(workspace.id)[0];
+    if (!thread) throw new Error("expected thread");
+    const message = await store.createUserMessage(thread.id, "needle phrase", []);
+
+    const response = await app.request(`/api/search/messages?workspaceId=${workspace.id}&q=phrase`);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      query: { term: "phrase", workspaceId: workspace.id, threadId: null, archived: "all" },
+      complete: true,
+      matchesFound: 1,
+      nextOffset: null,
+    });
+    const matches = body.matches as Array<Record<string, unknown>>;
+    expect(matches[0]).toMatchObject({
+      messageId: message.id,
+      thread: { id: thread.id, archived: false },
+    });
+    expect(matches[0]).not.toHaveProperty("content");
+    expect(runner.invocations).toBe(0);
+  });
+
+  it("redacts stored credentials from query echo over HTTP", async () => {
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected workspace");
+    const secret = "sk-http-secret-123";
+    await store.createAgent({
+      kind: "master",
+      name: "Http Gateway",
+      handle: "http-gateway",
+      description: "",
+      instructions: "",
+      provider: {
+        type: "custom",
+        name: "Http Gateway",
+        baseUrl: "https://gateway.example/v1",
+        model: "model-a",
+        protocol: "openai-chat",
+        apiKey: secret,
+      },
+    });
+    const response = await app.request(
+      `/api/search/messages?workspaceId=${workspace.id}&q=${encodeURIComponent(secret)}`,
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect((body.query as { term: string }).term).toBe("[REDACTED]");
+    expect(JSON.stringify(body)).not.toContain(secret);
+    expect(runner.invocations).toBe(0);
+  });
+});

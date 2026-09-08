@@ -5,7 +5,12 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { ZodError } from "zod";
-import { type BootstrapData, DelegateTaskSchema, ToolAnswersSchema } from "../shared/contracts.js";
+import {
+  type BootstrapData,
+  DelegateTaskSchema,
+  MessageSearchRequestSchema,
+  ToolAnswersSchema,
+} from "../shared/contracts.js";
 import { reviewAssignmentGit } from "./assignment-review.js";
 import { workspaceActivity } from "./attention.js";
 import { ChatGptAuthManager } from "./auth.js";
@@ -299,6 +304,11 @@ export function createApp(options: CreateAppOptions) {
 
   app.post("/api/threads/:id/restore", async (context) => {
     return context.json(await options.store.restoreThread(context.req.param("id")));
+  });
+
+  app.get("/api/search/messages", async (context) => {
+    const query = MessageSearchRequestSchema.parse(context.req.query());
+    return context.json(await options.store.searchMessages(query));
   });
 
   app.get("/api/threads/:id", async (context) => {

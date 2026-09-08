@@ -1,4 +1,4 @@
-import { appendFile, mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -1589,5 +1589,436 @@ describe("FileStore agent profile updates", () => {
     }
     expect(store.getKnowledge(repository.id)).toMatchObject({ status: "cloning" });
     expect(store.getKnowledge(repository.id)).not.toHaveProperty("error");
+  });
+});
+
+describe("FileStore transcript search", () => {
+  it("searches active and archived messages, keeps rename identity, and honors filters", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected default workspace");
+    const general = store.listThreads(workspace.id)[0];
+    if (!general) throw new Error("expected general thread");
+    const generalMessage = await store.createUserMessage(general.id, "alpha phrase in general", []);
+    await store.renameThread(general.id, { name: "Research Log" });
+    await store.archiveThread(general.id);
+    const activeThread = await store.createThread({ name: "Active Notes" });
+    const activeMessage = await store.createUserMessage(activeThread.id, "alpha phrase active", []);
+
+    const all = await store.searchMessages({ workspaceId: workspace.id, q: "alpha phrase" });
+    expect(all.complete).toBe(true);
+    expect(all.matchesFound).toBe(2);
+    expect(all.matches.map((hit) => hit.messageId).sort()).toEqual(
+      [generalMessage.id, activeMessage.id].sort(),
+    );
+    expect(all.matches.find((hit) => hit.thread.id === general.id)).toMatchObject({
+      messageId: generalMessage.id,
+      thread: { id: general.id, name: "Research Log", archived: true },
+    });
+
+    const active = await store.searchMessages({
+      workspaceId: workspace.id,
+      q: "alpha",
+      archived: "active",
+    });
+    expect(active.matches).toHaveLength(1);
+    expect(active.matches[0]?.thread.id).toBe(activeThread.id);
+
+    const archived = await store.searchMessages({
+      workspaceId: workspace.id,
+      q: "alpha",
+      archived: "archived",
+    });
+    expect(archived.matches).toHaveLength(1);
+    expect(archived.matches[0]?.thread.id).toBe(general.id);
+
+    const scoped = await store.searchMessages({
+      workspaceId: workspace.id,
+      q: "alpha",
+      threadId: general.id,
+    });
+    expect(scoped.matches).toHaveLength(1);
+    expect(scoped.matches[0]?.thread.id).toBe(general.id);
+    for (const hit of all.matches) expect(hit).not.toHaveProperty("content");
+  });
+
+  it("isolates workspaces and rejects foreign thread filters", async () => {
+    const store = await openStore();
+    const [first] = store.listWorkspaces();
+    if (!first) throw new Error("expected workspace");
+    const second = await store.createWorkspace({ name: "Second" });
+    const firstThread = store.listThreads(first.id)[0];
+    const secondThread = store.listThreads(second.id)[0];
+    if (!firstThread || !secondThread) throw new Error("expected threads");
+    const firstMessage = await store.createUserMessage(firstThread.id, "same needle", []);
+    await store.createUserMessage(secondThread.id, "same needle", []);
+
+    const result = await store.searchMessages({ workspaceId: first.id, q: "needle" });
+    expect(result.matches).toHaveLength(1);
+    expect(result.matches[0]?.messageId).toBe(firstMessage.id);
+
+    await expect(
+      store.searchMessages({ workspaceId: first.id, q: "needle", threadId: secondThread.id }),
+    ).rejects.toMatchObject({ code: "not_found" });
+  });
+
+  it("matches case-insensitively and returns bounded context snippets", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected workspace");
+    const thread = store.listThreads(workspace.id)[0];
+    if (!thread) throw new Error("expected thread");
+    const content =
+      "Start " +
+      "padding text ".repeat(80) +
+      "The Phrase In Question lives here." +
+      " trailing ".repeat(80) +
+      "End";
+    const message = await store.createUserMessage(thread.id, content, []);
+    const result = await store.searchMessages({ workspaceId: workspace.id, q: "pHRASE iN" });
+
+    expect(result.complete).toBe(true);
+    expect(result.matches).toHaveLength(1);
+    expect(result.matches[0]?.messageId).toBe(message.id);
+    expect(result.matches[0]?.snippet.toLowerCase()).toContain("phrase in");
+    expect(result.matches[0]?.snippet.length).toBeLessThanOrEqual(300);
+    expect(result.matches[0]?.snippet).toContain("\u2026");
+  });
+
+  it("counts malformed, oversized, and torn lines as partial without hiding valid matches", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected workspace");
+    const thread = store.listThreads(workspace.id)[0];
+    if (!thread) throw new Error("expected thread");
+    const message = await store.createUserMessage(thread.id, "valid needle", []);
+    const file = store.transcriptPath(thread.id);
+    await appendFile(file, "{definitely not json}\n");
+    await appendFile(file, `${"x".repeat(1_100_000)}\n`);
+    await appendFile(file, '{"sequence":999,"type":"run.updated"');
+
+    const result = await store.searchMessages({ workspaceId: workspace.id, q: "needle" });
+    expect(result.complete).toBe(false);
+    expect(result.matches).toHaveLength(1);
+    expect(result.matches[0]?.messageId).toBe(message.id);
+    expect(result.diagnostics).toMatchObject({
+      malformedLines: 1,
+      oversizedLines: 1,
+      tornTailLines: 1,
+      scanLimited: false,
+    });
+  });
+
+  it("reports partial scans without pagination and pages only complete scans", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected workspace");
+    const thread = store.listThreads(workspace.id)[0];
+    if (!thread) throw new Error("expected thread");
+    for (let index = 0; index < 3; index += 1) {
+      await store.createUserMessage(thread.id, `hit ${index}`, []);
+    }
+
+    const partial = await store.searchMessages(
+      { workspaceId: workspace.id, q: "hit" },
+      { maxScanLines: 1 },
+    );
+    expect(partial.complete).toBe(false);
+    expect(partial.diagnostics.scanLimited).toBe(true);
+    expect(partial.diagnostics.scanLimit).toBe("lines");
+    expect(partial.matchesFound).toBeLessThan(3);
+    expect(partial.nextOffset).toBeNull();
+
+    const bytesPartial = await store.searchMessages(
+      { workspaceId: workspace.id, q: "hit" },
+      { maxScanBytes: 40 },
+    );
+    expect(bytesPartial.complete).toBe(false);
+    expect(bytesPartial.diagnostics.scanLimit).toBe("bytes");
+    expect(bytesPartial.nextOffset).toBeNull();
+
+    const first = await store.searchMessages({ workspaceId: workspace.id, q: "hit", limit: 2 });
+    expect(first.complete).toBe(true);
+    expect(first.matches).toHaveLength(2);
+    expect(first.matchesFound).toBe(3);
+    expect(first.nextOffset).toBe(2);
+
+    const second = await store.searchMessages({
+      workspaceId: workspace.id,
+      q: "hit",
+      limit: 2,
+      offset: 2,
+    });
+    expect(second.complete).toBe(true);
+    expect(second.matches).toHaveLength(1);
+    expect(second.nextOffset).toBeNull();
+  });
+
+  it("keeps searches complete for never-used threads that have no transcript yet", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected workspace");
+    await store.createThread({ name: "Unused" });
+    const result = await store.searchMessages({ workspaceId: workspace.id, q: "anything" });
+    expect(result.complete).toBe(true);
+    expect(result.diagnostics.missingFiles).toBe(0);
+    expect(result.matches).toHaveLength(0);
+  });
+
+  it("reports missing and unreadable transcripts as partial without leaking paths", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected workspace");
+    const alpha = store.listThreads(workspace.id)[0];
+    if (!alpha) throw new Error("expected thread");
+    const beta = await store.createThread({ name: "Beta" });
+    const alphaMessage = await store.createUserMessage(alpha.id, "needle alpha", []);
+    const betaMessage = await store.createUserMessage(beta.id, "needle beta", []);
+    await rm(store.transcriptPath(alpha.id));
+
+    const missing = await store.searchMessages({ workspaceId: workspace.id, q: "needle" });
+    expect(missing.complete).toBe(false);
+    expect(missing.diagnostics.missingFiles).toBe(1);
+    expect(missing.diagnostics.scanLimit).toBe("missing_file");
+    expect(missing.matches.some((hit) => hit.messageId === alphaMessage.id)).toBe(false);
+    expect(missing.matches.map((hit) => hit.thread.id)).toContain(beta.id);
+    expect(JSON.stringify(missing)).not.toContain(store.root);
+
+    const unreadableStore = await openStore();
+    const [secondWorkspace] = unreadableStore.listWorkspaces();
+    if (!secondWorkspace) throw new Error("expected workspace");
+    const unreadableThread = unreadableStore.listThreads(secondWorkspace.id)[0];
+    if (!unreadableThread) throw new Error("expected thread");
+    await unreadableStore.createUserMessage(unreadableThread.id, "needle", []);
+    await rm(unreadableStore.transcriptPath(unreadableThread.id));
+    await mkdir(unreadableStore.transcriptPath(unreadableThread.id));
+
+    const unreadable = await unreadableStore.searchMessages({
+      workspaceId: secondWorkspace.id,
+      q: "needle",
+    });
+    expect(unreadable.complete).toBe(false);
+    expect(unreadable.diagnostics.unreadableFiles).toBe(1);
+    expect(unreadable.diagnostics.scanLimit).toBe("unreadable_file");
+    expect(JSON.stringify(unreadable)).not.toContain(unreadableStore.root);
+    expect(betaMessage.id).toBeTruthy();
+  });
+
+  it("keeps transcripts and state bytes unchanged across searches", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected workspace");
+    const thread = store.listThreads(workspace.id)[0];
+    if (!thread) throw new Error("expected thread");
+    await store.createUserMessage(thread.id, "needle before", []);
+    await appendFile(store.transcriptPath(thread.id), "{malformed}\n");
+    const transcriptBefore = await readFile(store.transcriptPath(thread.id));
+    const stateBefore = await readFile(store.stateFile);
+
+    await store.searchMessages({ workspaceId: workspace.id, q: "needle" });
+    await store.searchMessages({ workspaceId: workspace.id, q: "malformed" });
+
+    expect(await readFile(store.transcriptPath(thread.id))).toEqual(transcriptBefore);
+    expect(await readFile(store.stateFile)).toEqual(stateBefore);
+  });
+
+  it("redacts credentials from query echo, snippets, and response metadata", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected workspace");
+    const secret = "sk-hunter2-secret";
+    const agent = await store.createAgent({
+      kind: "master",
+      name: `${secret} bot`,
+      handle: "secret-bot",
+      description: "",
+      instructions: "",
+      provider: {
+        type: "custom",
+        name: "Secret Gateway",
+        baseUrl: "https://gateway.example/v1",
+        model: "model-a",
+        protocol: "openai-chat",
+        apiKey: secret,
+      },
+    });
+    const thread = store.listThreads(workspace.id)[0];
+    if (!thread) throw new Error("expected thread");
+    await store.renameThread(thread.id, { name: `${secret} notes` });
+    await store.createUserMessage(thread.id, `the ${secret} lives near needle`, []);
+    const trigger = await store.createUserMessage(thread.id, "trigger", []);
+    await store.createAgentMessage(thread.id, agent, "needle reply", trigger.id);
+
+    const byNeedle = await store.searchMessages({ workspaceId: workspace.id, q: "needle" });
+    expect(byNeedle.matches.length).toBeGreaterThan(0);
+    expect(JSON.stringify(byNeedle)).not.toContain(secret);
+
+    const bySecret = await store.searchMessages({ workspaceId: workspace.id, q: secret });
+    expect(bySecret.matchesFound).toBe(0);
+    expect(bySecret.query.term).not.toContain(secret);
+    expect(bySecret.query.term).toBe("[REDACTED]");
+    expect(JSON.stringify(bySecret)).not.toContain(secret);
+  });
+
+  it("clips redacted query echo when redaction expands past the max", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected workspace");
+    const secret = "abcdefgh";
+    await store.createAgent({
+      kind: "master",
+      name: "Clip",
+      handle: "clip",
+      description: "",
+      instructions: "",
+      provider: {
+        type: "custom",
+        name: "Clip Gateway",
+        baseUrl: "https://gateway.example/v1",
+        model: "model-a",
+        protocol: "openai-chat",
+        apiKey: secret,
+      },
+    });
+    const result = await store.searchMessages({
+      workspaceId: workspace.id,
+      q: secret.repeat(21),
+    });
+    expect(result.query.term.length).toBe(200);
+    expect(result.query.term).not.toContain(secret);
+  });
+
+  it("redacts an agent handle that coincides with a stored credential without failing", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected workspace");
+    const secret = "abcdefgh";
+    const agent = await store.createAgent({
+      kind: "master",
+      name: "Handle Overlap",
+      handle: secret,
+      description: "",
+      instructions: "",
+      provider: {
+        type: "custom",
+        name: "Overlap Gateway",
+        baseUrl: "https://gateway.example/v1",
+        model: "model-a",
+        protocol: "openai-chat",
+        apiKey: secret,
+      },
+    });
+    const thread = store.listThreads(workspace.id)[0];
+    if (!thread) throw new Error("expected thread");
+    const trigger = await store.createUserMessage(thread.id, "trigger", []);
+    const reply = await store.createAgentMessage(thread.id, agent, "needle handle", trigger.id);
+
+    const result = await store.searchMessages({ workspaceId: workspace.id, q: "needle" });
+    expect(result.complete).toBe(true);
+    const hit = result.matches.find((entry) => entry.messageId === reply.id);
+    expect(hit?.author).toMatchObject({ kind: "agent", handle: "[REDACTED]" });
+    expect(JSON.stringify(result)).not.toContain(secret);
+  });
+
+  it("marks partial when hits carry unusable metadata instead of failing the scan", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected workspace");
+    const thread = store.listThreads(workspace.id)[0];
+    if (!thread) throw new Error("expected thread");
+    const good = await store.createUserMessage(thread.id, "needle good", []);
+    const now = "2026-01-01T00:00:00.000Z";
+    const badTime = {
+      id: "bad-time",
+      threadId: thread.id,
+      sequence: 2,
+      author: { kind: "user" as const, id: "local-user" as const, name: "You" },
+      content: "needle bad time",
+      mentions: [],
+      knowledgeReferences: [],
+      artifactIds: [],
+      createdAt: "not-a-timestamp",
+    };
+    const bigName = {
+      id: "big-name",
+      threadId: thread.id,
+      sequence: 3,
+      author: {
+        kind: "agent" as const,
+        id: "big-agent",
+        name: "n".repeat(600),
+        handle: "big-agent",
+      },
+      content: "needle big name",
+      mentions: [],
+      knowledgeReferences: [],
+      artifactIds: [],
+      createdAt: now,
+    };
+    await appendFile(
+      store.transcriptPath(thread.id),
+      JSON.stringify({ type: "message.created", sequence: 2, message: badTime }) +
+        "\n" +
+        JSON.stringify({ type: "message.created", sequence: 3, message: bigName }) +
+        "\n",
+    );
+
+    const result = await store.searchMessages({ workspaceId: workspace.id, q: "needle" });
+    expect(result.complete).toBe(false);
+    expect(result.matches.map((hit) => hit.messageId)).toContain(good.id);
+    expect(result.matches.some((hit) => hit.messageId === "bad-time")).toBe(false);
+    expect(result.matches.some((hit) => hit.messageId === "big-name")).toBe(false);
+  });
+
+  it("never returns a nextOffset beyond the accepted request cap", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected workspace");
+    const thread = store.listThreads(workspace.id)[0];
+    if (!thread) throw new Error("expected thread");
+    const count = 10_150;
+    const lines: string[] = [];
+    for (let index = 1; index <= count; index += 1) {
+      lines.push(
+        JSON.stringify({
+          type: "message.created",
+          sequence: index,
+          message: {
+            id: `raw-${String(index).padStart(5, "0")}`,
+            threadId: thread.id,
+            sequence: index,
+            author: { kind: "user", id: "local-user", name: "Bulk" },
+            content: "match needle",
+            mentions: [],
+            knowledgeReferences: [],
+            artifactIds: [],
+            createdAt: new Date(Date.UTC(2026, 0, 1) + index * 1000).toISOString(),
+          },
+        }),
+      );
+    }
+    await writeFile(store.transcriptPath(thread.id), `${lines.join("\n")}\n`);
+
+    const nearCap = await store.searchMessages({
+      workspaceId: workspace.id,
+      q: "needle",
+      limit: 100,
+      offset: 9_900,
+    });
+    expect(nearCap.complete).toBe(true);
+    expect(nearCap.matches).toHaveLength(100);
+    expect(nearCap.matchesFound).toBe(count);
+    expect(nearCap.nextOffset).toBe(10_000);
+
+    const atCap = await store.searchMessages({
+      workspaceId: workspace.id,
+      q: "needle",
+      limit: 100,
+      offset: 10_000,
+    });
+    expect(atCap.complete).toBe(true);
+    expect(atCap.matches).toHaveLength(100);
+    expect(atCap.matchesFound).toBe(count);
+    expect(atCap.nextOffset).toBeNull();
   });
 });
