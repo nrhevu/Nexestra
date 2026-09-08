@@ -100,7 +100,10 @@ Git paths are also accepted. URLs containing embedded credentials are rejected. 
 card to inspect its details, edit its name, `#handle`, and description, download a stored document,
 or permanently delete it. A repository whose clone failed can be retried from its detail dialog with
 **Retry clone**; the record keeps its id, `#handle`, source, and creation time while the clone is
-re-created safely. Replacing document bytes or a repository source uses delete-and-create.
+re-created safely. A ready repository offers **Refresh source** to fetch its recorded default branch
+for future Worker assignments. The detail view shows the selected commit and refresh time. Existing
+Worker worktrees and edits stay intact; a failed refresh keeps the previous starting point usable.
+Replacing document bytes or a repository source uses delete-and-create.
 
 Workers run in read-only discussion mode. For an implementation request, a custom-provider Master
 must call `plan` to create durable Taskboard tasks and then call `delegate` for each task it assigns.

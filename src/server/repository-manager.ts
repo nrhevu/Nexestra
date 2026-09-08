@@ -36,6 +36,7 @@ export interface AssignmentRepositoryManager {
 export interface RepositoryManagerDeps {
   beforeClone?: (staging: string, source: string) => Promise<void>;
   beforePublish?: (staging: string, destination: string) => Promise<void>;
+  beforeFetch?: () => Promise<void>;
 }
 
 export class RepositoryManager implements AssignmentRepositoryManager {
@@ -70,7 +71,7 @@ export class RepositoryManager implements AssignmentRepositoryManager {
 
   async retryRepository(repositoryId: string): Promise<KnowledgeRepository> {
     this.assertRetryable(this.requireRepository(repositoryId));
-    return this.withRepositoryRetryLock(repositoryId, async () => {
+    return this.withRepositoryOperationLock(repositoryId, async () => {
       const repository = this.requireRepository(repositoryId);
       this.assertRetryable(repository);
       const destination = this.store.knowledgePath(repository);
@@ -118,14 +119,148 @@ export class RepositoryManager implements AssignmentRepositoryManager {
     });
   }
 
-  private async withRepositoryRetryLock<T>(
+  async refreshRepository(repositoryId: string): Promise<KnowledgeRepository> {
+    return this.withRepositoryOperationLock(repositoryId, async () => {
+      const repository = this.requireRepository(repositoryId);
+      if (repository.status !== "ready") {
+        throw new StoreError(
+          "conflict",
+          `#${repository.handle} must be ready before refreshing its source.`,
+        );
+      }
+      if (repository.refreshing) {
+        throw new StoreError("conflict", "A source refresh is already running for this item.");
+      }
+      if (!repository.defaultBranch) {
+        throw new StoreError("conflict", "This clone has no recorded default branch to refresh.");
+      }
+      await this.store.updateKnowledgeRepository(repositoryId, {
+        status: "ready",
+        refreshing: true,
+        refreshError: undefined,
+      });
+      try {
+        const git = await this.git();
+        const destination = this.store.knowledgePath(repository);
+        if (!(await this.isSafeStagingSource(repository, destination, git))) {
+          throw new StoreError(
+            "conflict",
+            "The managed clone no longer matches this repository's source or storage path.",
+          );
+        }
+        const sourceRef = `refs/heads/${repository.defaultBranch}`;
+        const checkedRef = await this.runRefreshGit(git, destination, [
+          "check-ref-format",
+          sourceRef,
+        ]);
+        if (checkedRef.exitCode !== 0)
+          throw new StoreError("invalid", "The recorded default branch is invalid.");
+        const common = await this.runRefreshGit(git, destination, [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir",
+        ]);
+        const commonPath =
+          common.exitCode === 0
+            ? await realpath(common.stdout.trim()).catch(() => undefined)
+            : undefined;
+        if (!commonPath || commonPath !== (await realpath(join(destination, ".git")))) {
+          throw new StoreError(
+            "conflict",
+            "The managed clone points to another repository's Git directory.",
+          );
+        }
+        // Each fetch owns a fresh ref. Publishing metadata selects it; older refs retain
+        // the last good commit if a write fails or another assignment is preparing.
+        const snapshotRef = `refs/nexestra/source-refresh/${crypto.randomUUID()}`;
+        await this.deps.beforeFetch?.();
+        const fetched = await this.runRefreshGit(
+          git,
+          destination,
+          [
+            "fetch",
+            "--atomic",
+            "--no-tags",
+            "--no-prune",
+            "--no-recurse-submodules",
+            "--no-auto-maintenance",
+            "--no-write-fetch-head",
+            "--refmap=",
+            "--",
+            repository.source,
+            `${sourceRef}:${snapshotRef}`,
+          ],
+          5 * 60_000,
+        );
+        if (fetched.exitCode !== 0) {
+          throw new Error(
+            fetched.stderr.trim() || fetched.stdout.trim() || "Git source refresh failed.",
+          );
+        }
+        const head = await this.runRefreshGit(git, destination, [
+          "rev-parse",
+          "--verify",
+          `${snapshotRef}^{commit}`,
+        ]);
+        const sourceCommit = head.stdout.trim();
+        if (head.exitCode !== 0 || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(sourceCommit)) {
+          throw new Error("The refreshed source did not resolve to a commit.");
+        }
+        return await this.store.updateKnowledgeRepository(repositoryId, {
+          status: "ready",
+          refreshing: false,
+          refreshError: undefined,
+          sourceCommit,
+          sourceRef,
+          refreshedAt: new Date().toISOString(),
+        });
+      } catch (error) {
+        return await this.store.updateKnowledgeRepository(repositoryId, {
+          status: "ready",
+          refreshing: false,
+          refreshError: this.store
+            .redactSecrets(error instanceof Error ? error.message : "Git source refresh failed.")
+            .slice(0, 2_000),
+        });
+      }
+    });
+  }
+
+  private runRefreshGit(git: string, destination: string, args: string[], timeoutMs = 10_000) {
+    return runCommand(
+      git,
+      [
+        "-C",
+        destination,
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "fetch.writeCommitGraph=false",
+        "-c",
+        "gc.auto=0",
+        "-c",
+        "protocol.ext.allow=never",
+        ...args,
+      ],
+      {
+        cwd: destination,
+        timeoutMs,
+        maxOutputBytes: 2 * 1024 * 1024,
+        env: { ...safeProcessEnv(this.env), GIT_TERMINAL_PROMPT: "0" },
+      },
+    );
+  }
+
+  private async withRepositoryOperationLock<T>(
     repositoryId: string,
     operation: () => Promise<T>,
   ): Promise<T> {
     if (this.retryLocks.has(repositoryId)) {
       throw new StoreError(
         "conflict",
-        "Another repository clone is already running for this item.",
+        "Another repository operation is already running for this item.",
       );
     }
     let release: () => void = () => undefined;
@@ -309,6 +444,7 @@ export class RepositoryManager implements AssignmentRepositoryManager {
     location: AssignmentLocation,
     signal?: AbortSignal,
   ): Promise<AssignmentPreparation> {
+    repository = this.requireRepository(repository.id);
     if (repository.status !== "ready") {
       throw new StoreError("conflict", `#${repository.handle} is not ready.`);
     }
@@ -325,7 +461,7 @@ export class RepositoryManager implements AssignmentRepositoryManager {
         "-b",
         location.branch,
         location.absolutePath,
-        "HEAD",
+        repository.sourceCommit ?? "HEAD",
       ],
       {
         cwd: repositoryPath,

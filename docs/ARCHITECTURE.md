@@ -180,6 +180,13 @@ adds a corrective turn and keeps the tool loop active.
 
 Each repository is cloned once under the owning workspace. Every assignment creates a unique
 `nexestra/<assignment-id>` branch and a Git worktree under the same managed workspace tree. The
+ready repository detail view can explicitly refresh its recorded default branch into a new private
+Git ref and publish a `sourceCommit` for future worktree preparations. A preparation selects the
+latest published commit when it starts; before the first refresh it uses clone HEAD. Fetch preserves
+the clone's checkout and index, origin refs, and existing assignments. Refresh failure retains the
+last usable selection and `ready` status. A persisted `refreshing` flag guards edit/delete and is
+recovered at restart; known errors are redacted. See
+[ADR 0033](adr/0033-explicit-repository-source-refresh.md). The
 dispatcher reuses the normal per-agent queue, so one Worker remains serial while different Workers
 can execute concurrently. A delegated Worker receives task mode, the worktree as its process cwd,
 the shared transcript snapshot, and the selected repository as knowledge. Success marks the
@@ -330,8 +337,11 @@ credentials.
   ChatGPT OAuth Masters run through Codex CLI and do not yet receive this bridge.
 - Assignment branches can be deleted only when Git confirms they are merged; merge and push are not
   yet exposed. Finished worktrees can be removed explicitly, but dirty or untracked work is refused.
-  Repository fetch/pull is not yet exposed. A failed repository clone can be retried explicitly,
-  but refresh/pull of a ready clone is deferred.
+  A ready repository can explicitly fetch its recorded default branch for future Worker assignments;
+  pull/merge and selecting a different source branch are not exposed. Private refresh refs are retained
+  without automatic pruning. Branch deletion still uses Git's non-forced merged check against its
+  upstream or the clone HEAD, so even an unchanged branch from a refreshed source can require the
+  clone's integration branch to be advanced manually before Git allows deletion.
 - Knowledge metadata can be edited, but replacing stored document bytes or a repository source
   requires deleting and creating the item again.
 - A crash during cloning can leave a `source.retrying-*` staging directory. It is preserved for

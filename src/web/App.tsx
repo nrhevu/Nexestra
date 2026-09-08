@@ -1054,6 +1054,7 @@ export function App() {
       )}
       {knowledgeToInspect && (
         <KnowledgeDetailDialog
+          key={knowledgeToInspect.id}
           item={knowledgeToInspect}
           generation={workspaceGenerationRef.current}
           onClose={closeKnowledgeDetail}
@@ -1061,7 +1062,11 @@ export function App() {
             closeKnowledgeDetail();
             setKnowledgeToEdit(item);
           }}
-          onRetried={(item, retryGeneration) => {
+          onChanged={(item, operationGeneration, notice) => {
+            const stillCurrent =
+              item.workspaceId === workspaceIdRef.current &&
+              operationGeneration === workspaceGenerationRef.current;
+            if (!stillCurrent) return;
             updateData((current) =>
               current && item.workspaceId === current.workspace.id
                 ? {
@@ -1072,14 +1077,8 @@ export function App() {
                   }
                 : current,
             );
-            const stillCurrent =
-              item.workspaceId === workspaceIdRef.current &&
-              retryGeneration === workspaceGenerationRef.current;
-            if (!stillCurrent) return;
-            if (item.kind === "repository" && item.status === "ready") {
-              flash("Repository recovered.");
-            }
             if (knowledgeInspectRef.current?.id === item.id) {
+              if (notice) flash(notice);
               setKnowledgeToInspect(item);
             }
           }}
@@ -4707,17 +4706,19 @@ function KnowledgeDetailDialog({
   onClose,
   onEdit,
   onDelete,
-  onRetried,
+  onChanged,
 }: {
   item: KnowledgeItem;
   generation: number;
   onClose: () => void;
   onEdit: (item: KnowledgeItem) => void;
   onDelete: (item: KnowledgeItem) => void;
-  onRetried: (item: KnowledgeItem, generation: number) => void;
+  onChanged: (item: KnowledgeItem, generation: number, notice?: string) => void;
 }) {
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string>();
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string>();
   return (
     <Modal title={item.name} eyebrow="KNOWLEDGE DETAILS" onClose={onClose}>
       <div className="resource-details">
@@ -4762,6 +4763,23 @@ function KnowledgeDetailDialog({
               <span>Default branch</span>
               <strong>{item.defaultBranch ?? "Unknown"}</strong>
             </div>
+            <div className="resource-details-wide">
+              <span>Starting point for new Workers</span>
+              <code>{item.sourceCommit ?? "Current clone HEAD"}</code>
+              <p>
+                {item.refreshedAt
+                  ? `Refreshed ${formatDateTime(item.refreshedAt)} from ${item.sourceRef}.`
+                  : "Refresh source to fetch the latest default branch for future assignments."}{" "}
+                Existing Worker branches and worktrees keep their changes.
+              </p>
+            </div>
+            {(refreshError || item.refreshError) && (
+              <div className="resource-details-wide resource-details-error" role="alert">
+                <span>Source refresh failed</span>
+                <p>{refreshError || item.refreshError}</p>
+                <p>The previous starting point is still selected.</p>
+              </div>
+            )}
             {item.error && (
               <div className="resource-details-wide resource-details-error">
                 <span>Error</span>
@@ -4800,7 +4818,13 @@ function KnowledgeDetailDialog({
                   `/api/knowledge/repositories/${encodeURIComponent(item.id)}/retry`,
                   { method: "POST" },
                 );
-                onRetried(updated, retryGeneration);
+                onChanged(
+                  updated,
+                  retryGeneration,
+                  updated.kind === "repository" && updated.status === "ready"
+                    ? "Repository recovered."
+                    : undefined,
+                );
               } catch (caught) {
                 setRetryError(messageFrom(caught));
               } finally {
@@ -4810,6 +4834,44 @@ function KnowledgeDetailDialog({
           >
             {retrying ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}
             {retrying ? "Retrying…" : "Retry clone"}
+          </button>
+        )}
+        {item.kind === "repository" && item.status === "ready" && (
+          <button
+            type="button"
+            disabled={refreshing || item.refreshing || !item.defaultBranch}
+            title={
+              !item.defaultBranch ? "No default branch was recorded for this clone." : undefined
+            }
+            onClick={async () => {
+              setRefreshing(true);
+              setRefreshError(undefined);
+              const operationGeneration = generation;
+              try {
+                const updated = await api<KnowledgeItem>(
+                  `/api/knowledge/repositories/${encodeURIComponent(item.id)}/refresh`,
+                  { method: "POST" },
+                );
+                onChanged(
+                  updated,
+                  operationGeneration,
+                  updated.kind === "repository" && !updated.refreshError
+                    ? "Repository source refreshed."
+                    : undefined,
+                );
+              } catch (caught) {
+                setRefreshError(messageFrom(caught));
+              } finally {
+                setRefreshing(false);
+              }
+            }}
+          >
+            {refreshing || item.refreshing ? (
+              <LoaderCircle className="spin" size={14} />
+            ) : (
+              <RefreshCw size={14} />
+            )}
+            {refreshing || item.refreshing ? "Refreshing source…" : "Refresh source"}
           </button>
         )}
         {item.kind === "document" && (

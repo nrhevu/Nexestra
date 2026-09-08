@@ -10,3 +10,5 @@
    workspace management, and canonical manual delegation.
 7. [Repository recovery and review research](research/2026-09-08-repository-recovery-review.md):
    clone recovery, stable assignment comparisons, Git execution boundaries, and next candidates.
+8. [Lifecycle, history, and source refresh research](research/2026-09-08-lifecycle-history-source-refresh.md):
+   reversible thread archival, immutable document revisions, and refreshed Worker starting commits.

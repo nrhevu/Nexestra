@@ -59,6 +59,14 @@ export const KnowledgeRepositorySchema = KnowledgeBaseSchema.extend({
   source: z.string(),
   storagePath: z.string(),
   defaultBranch: z.string().optional(),
+  sourceCommit: z
+    .string()
+    .regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/)
+    .optional(),
+  sourceRef: z.string().optional(),
+  refreshedAt: z.string().optional(),
+  refreshing: z.boolean().optional(),
+  refreshError: z.string().optional(),
   status: z.enum(["cloning", "ready", "failed"]),
   error: z.string().optional(),
 });

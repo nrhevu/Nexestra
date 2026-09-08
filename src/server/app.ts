@@ -159,6 +159,10 @@ export function createApp(options: CreateAppOptions) {
     return context.json(await defaultRepositories.retryRepository(context.req.param("id")));
   });
 
+  app.post("/api/knowledge/repositories/:id/refresh", async (context) => {
+    return context.json(await defaultRepositories.refreshRepository(context.req.param("id")));
+  });
+
   app.get("/api/knowledge/:id", (context) => {
     const item = options.store.getKnowledge(context.req.param("id"));
     if (!item) throw new StoreError("not_found", "Knowledge item not found.");

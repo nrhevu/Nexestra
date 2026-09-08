@@ -508,7 +508,18 @@ export class FileStore {
   async updateKnowledgeRepository(
     id: string,
     update: Pick<KnowledgeRepository, "status"> &
-      Partial<Pick<KnowledgeRepository, "defaultBranch" | "error">>,
+      Partial<
+        Pick<
+          KnowledgeRepository,
+          | "defaultBranch"
+          | "error"
+          | "sourceCommit"
+          | "sourceRef"
+          | "refreshedAt"
+          | "refreshing"
+          | "refreshError"
+        >
+      >,
   ): Promise<KnowledgeRepository> {
     return this.withWrite(async () => {
       const index = this.state.knowledge.findIndex((item) => item.id === id);
@@ -522,8 +533,10 @@ export class FileStore {
         updatedAt: new Date().toISOString(),
       });
       if (next.kind !== "repository") throw new Error("Expected repository knowledge.");
-      this.state.knowledge[index] = next;
-      await this.writeState();
+      const nextState = structuredClone(this.state);
+      nextState.knowledge[index] = next;
+      await this.writeState(nextState);
+      this.state = nextState;
       return structuredClone(next);
     });
   }
@@ -539,6 +552,12 @@ export class FileStore {
         throw new StoreError(
           "conflict",
           "Wait for the repository clone to finish before editing this item.",
+        );
+      }
+      if (current.kind === "repository" && current.refreshing) {
+        throw new StoreError(
+          "conflict",
+          "Wait for the source refresh to finish before editing this item.",
         );
       }
       if (
@@ -572,6 +591,12 @@ export class FileStore {
         throw new StoreError(
           "conflict",
           "Wait for the repository clone to finish before deleting it.",
+        );
+      }
+      if (item.kind === "repository" && item.refreshing) {
+        throw new StoreError(
+          "conflict",
+          "Wait for the source refresh to finish before deleting this item.",
         );
       }
       const assignments = nextState.assignments.filter(
@@ -1431,7 +1456,7 @@ export class FileStore {
 
   private async recoverInterruptedRepositories(): Promise<void> {
     const interrupted = this.state.knowledge.filter(
-      (item) => item.kind === "repository" && item.status === "cloning",
+      (item) => item.kind === "repository" && (item.status === "cloning" || item.refreshing),
     );
     if (interrupted.length === 0) return;
     await this.withWrite(async () => {
@@ -1442,7 +1467,19 @@ export class FileStore {
         if (item.kind !== "repository") continue;
         const index = nextState.knowledge.findIndex((entry) => entry.id === item.id);
         const current = nextState.knowledge[index];
-        if (current?.kind !== "repository" || current.status !== "cloning") continue;
+        if (current?.kind !== "repository") continue;
+        if (current.refreshing) {
+          nextState.knowledge[index] = KnowledgeItemSchema.parse({
+            ...current,
+            refreshing: false,
+            refreshError:
+              "The source refresh was interrupted by a server restart. The previous starting commit is still selected.",
+            updatedAt: now,
+          });
+          changed = true;
+          continue;
+        }
+        if (current.status !== "cloning") continue;
         const state = await inspectRepositoryDestinationKind(this.knowledgePath(current));
         const error =
           state === "git"
