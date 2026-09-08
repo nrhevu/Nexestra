@@ -96,6 +96,27 @@ afterEach(() => {
 });
 
 describe("MessageSearchDialog", () => {
+  it("keeps an empty partial scan distinct from a complete no-match result", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(searchResponse({ complete: false }))),
+    );
+    render(
+      <MessageSearchDialog
+        workspaceId="ws-1"
+        threads={[]}
+        initialQuery="wire"
+        onClose={vi.fn()}
+        onOpenMessage={vi.fn()}
+      />,
+    );
+    expect(
+      await screen.findByText(/No matching messages found in the scanned portion/),
+    ).toBeVisible();
+    expect(screen.getAllByText(/Results may be incomplete/)).toHaveLength(1);
+    expect(screen.queryByText("No messages matched your search.")).not.toBeInTheDocument();
+  });
+
   it("finishes an initial search under the application's StrictMode lifecycle", async () => {
     const fetchMock = vi.fn(async () =>
       jsonResponse(searchResponse({ matches: [hit()], matchesFound: 1 })),

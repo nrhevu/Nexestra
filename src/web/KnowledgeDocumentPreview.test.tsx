@@ -115,7 +115,7 @@ describe("KnowledgeDocumentPreview", () => {
 
     expect(
       screen.getByText(
-        "Choose Preview current or a version below to read this file as plain text.",
+        "Choose Preview current or use Preview in Version history to read this file as plain text.",
       ),
     ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Preview current" }));
@@ -133,6 +133,9 @@ describe("KnowledgeDocumentPreview", () => {
     expect(
       screen.getByRole("link", { name: "Download previewed architecture-v2.md" }),
     ).toHaveAttribute("href", `/api/knowledge/${document.id}/revisions/rev-2/content`);
+    await user.tab();
+    await user.tab();
+    expect(screen.getByRole("region", { name: "Preview text" })).toHaveFocus();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -283,7 +286,7 @@ describe("KnowledgeDocumentPreview", () => {
     expect(screen.queryByText("# Architecture v1")).not.toBeInTheDocument();
     expect(
       screen.getByText(
-        "Choose Preview current or a version below to read this file as plain text.",
+        "Choose Preview current or use Preview in Version history to read this file as plain text.",
       ),
     ).toBeVisible();
   });

@@ -38,3 +38,17 @@ that may be opened in other tools and are not trusted as app markup.
 
 None blocking. Syntax highlighting, search-in-preview, and richer file-type rendering are possible
 follow-ups but would each need their own bounded reader and ADR.
+
+## Integrated browser verification
+
+The feature was checked in the native browser against the same isolated, provider-free fixture as
+[transcript search](2026-09-09-transcript-search.md). The current release guide showed its new text
+and immutable version download; selecting the prior version showed the old text and that version's
+download URL. The prior file contained literal script markup and Markdown remote-image syntax:
+they remained text nodes, with zero embedded images, scripts or iframes in the preview.
+
+The PDF fixture returned an unsupported-format message with its immutable version download. The
+large text fixture returned exactly 131,072 source characters and the 128 KiB truncation notice.
+The reading region was reachable by keyboard; PageDown moved its scroll position from 0 to 198px.
+Both the metadata and every document version kept their original hashes after these reads.
+The root's final combined check result is recorded in the transcript search report.

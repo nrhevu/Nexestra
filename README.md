@@ -119,6 +119,10 @@ a new current version while keeping the item's identity. New messages pin the ve
 send time, including the first new reference to an older stored document. A stale replacement or
 restore is rejected so another window's edit is preserved. Permanent Knowledge deletion removes its
 versions; changing a repository source still uses delete-and-create.
+Use **Preview current** or a version's **Preview** button to read document text before downloading
+or restoring it. The preview shows up to the first 128 KiB of source text, verifies stored revision
+checksums and provides a download for that version. Text remains plain text, including Markdown
+and HTML; unsupported files have a download fallback. Previewing does not create or change versions.
 
 Workers run in read-only discussion mode. For an implementation request, a custom-provider Master
 must call `plan` to create durable Taskboard tasks and then call `delegate` for each task it assigns.

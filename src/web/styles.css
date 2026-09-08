@@ -3285,6 +3285,7 @@ kbd {
   justify-content: center;
   gap: 6px;
   color: #c8c5cb;
+  background: transparent;
   font-size: 11px;
   line-height: 1;
 }
@@ -3406,6 +3407,12 @@ kbd {
   font:
     11px / 1.5 "Noto Sans Mono",
     monospace;
+}
+.preview-text pre {
+  margin: 0;
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .preview-truncated {
   margin: 0;

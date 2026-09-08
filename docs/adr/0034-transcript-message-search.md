@@ -2,8 +2,8 @@
 
 ## Context
 
-The web TopBar previously searched only thread metadata: name and title. A user who remembered a
-phrase inside a message had no way to rediscover it. Nexestra keeps one canonical JSONL transcript
+The web TopBar previously searched bootstrap metadata for threads, tasks, agents and Knowledge.
+A user who remembered a phrase inside a message had no way to rediscover it. Nexestra keeps one canonical JSONL transcript
 per thread under the data directory, and messages are append-only. Search must stay local-first
 and read-only: no index, no transcript copies, no provider invocation, and no mutation of
 transcripts or state.

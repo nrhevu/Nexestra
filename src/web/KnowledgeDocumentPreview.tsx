@@ -177,7 +177,10 @@ export const KnowledgeDocumentPreview = forwardRef<
       )}
       {preview?.supported && (
         <div className="preview-content-wrap">
-          <pre className="preview-text">{preview.text}</pre>
+          {/* biome-ignore lint/a11y/noNoninteractiveTabindex: The scrollable reading region needs keyboard focus for PageDown and arrow-key scrolling. */}
+          <section className="preview-text" tabIndex={0} aria-label="Preview text">
+            <pre>{preview.text}</pre>
+          </section>
           {preview.truncated && (
             <p className="preview-truncated">
               Preview is truncated to the first 128 KiB. Download the file to read it in full.
@@ -197,7 +200,7 @@ export const KnowledgeDocumentPreview = forwardRef<
       )}
       {!preview && !loading && !error && (
         <p className="preview-status muted-text">
-          Choose Preview current or a version below to read this file as plain text.
+          Choose Preview current or use Preview in Version history to read this file as plain text.
         </p>
       )}
     </section>

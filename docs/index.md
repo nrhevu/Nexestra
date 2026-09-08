@@ -14,3 +14,7 @@
    reversible thread archival, immutable document revisions, and refreshed Worker starting commits.
 9. [Transcript search research](research/2026-09-09-transcript-search.md): finding remembered messages
    across active and archived conversations, with explicit scan completeness and local data limits.
+10. [Next local workflow candidates](research/2026-09-09-next-local-workflows.md): explicit source
+    branch choice and the unresolved scope of a portable workspace export.
+11. [Knowledge preview research](research/2026-09-09-knowledge-preview.md): current and historical
+    plain-text inspection with integrity verification, truncation and download fallback.

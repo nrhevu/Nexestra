@@ -58,6 +58,13 @@ Global search uses an editable combobox with keyboard selection and an `aria-act
 listbox. It searches the current bootstrap data. Thread results navigate to the thread, while task
 and knowledge results open their existing detail dialogs directly.
 
+The local search endpoint scans only canonical transcript message events in the selected workspace.
+It bounds bytes, lines, line size and retained result metadata, matches after credential redaction,
+and reports observed counts plus explicit completeness. Invalid UTF-8, damaged/missing history and
+budget limits cannot be presented as an exhaustive no-match result. Complete pages accept offsets
+through 10,000; they are not snapshot-stable cursors. No index, provider call or persistence mutation
+is part of search. See [ADR 0034](adr/0034-transcript-message-search.md).
+
 A separate Messages dialog sends explicit phrase/thread/archive filters to the local transcript
 search endpoint. Editing a filter clears old results and aborts pending requests; workspace changes
 invalidate the dialog. A fresh modal request preserves the current focus across background metadata
@@ -150,6 +157,15 @@ reference. Older transcript references without a revision retain their documente
 fallback; they are never rewritten to invent historical provenance. The version list and version
 download endpoints remain local, with downloads served as attachments and `nosniff`.
 See [ADR 0032](adr/0032-revision-history.md).
+
+An explicit document preview endpoint resolves the current or requested immutable revision and
+returns bounded plain text. It verifies a revision's complete checksum before returning content,
+rejects files beyond the upload cap and invalid UTF-8, and redacts known credentials in text and
+labels. The retained prefix is 128 KiB plus bounded redaction lookahead; redaction can expand the
+returned text. Unsupported content uses a download fallback. Legacy documents without a recorded
+revision remain read-only and acquire no new provenance from a preview. The inline panel discards
+old responses when its version/document/workspace changes and makes the scrollable text accessible
+to keyboard readers. See [ADR 0036](adr/0036-knowledge-preview.md).
 
 Each thread has one canonical JSONL file. The `message.created`, `artifact.created`, `run.updated`,
 and `tool.updated` events use a monotonically increasing sequence. Artifact metadata and message

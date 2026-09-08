@@ -35,7 +35,9 @@ metadata, restore archived threads or dispatch agents. Draft handling stays thre
 Focused UI tests cover active/archived links, selected-message focus, Show latest, another message
 in the same thread after changing tabs, missing targets, foreign archived links and ordinary
 workspace switches. Search-to-message tests also cover selecting the same archived result again
-after opening Files & links. Browser verification remains required when the API is integrated.
+after opening Files & links. Native-browser verification confirmed a search hit halfway through an
+archived conversation is centered and focused, survives reload, resolves from another workspace,
+and exits to latest messages without changing the transcript.
 
 - The current thread endpoint and renderer still load a full transcript. This change does not add
   transcript pagination or rendering virtualization.

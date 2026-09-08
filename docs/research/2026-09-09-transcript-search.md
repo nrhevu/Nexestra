@@ -43,17 +43,49 @@ directly over HTTPS and read locally. No external search service or provider is 
 - The UI needs loading/error/partial states, stale-response protection when query or workspace
   changes, and navigation to the matched message in active or archived conversations.
 
-## Work status
+## Implementation and verification
 
-The Messages dialog and exact-message navigation are integrated on the dedicated feature branch.
-The dialog keeps focus during background refresh, clears stale results when a filter changes,
-deduplicates overlapping result pages, and labels partial scans without promising completeness.
-Links open `/threads/<id>?message=<id>`, focus the requested message, and preserve archived threads'
-read-only state. The same result can be selected again after switching to Files & links.
+The Messages dialog, server scanner and exact-message navigation are integrated on the dedicated
+`codex/workspace-attention-navigation` branch. The UI and server use the same shared contracts.
+The final combined check suite passed; its result is recorded below.
 
-The server scanner, endpoint, fixtures, acceptance tests and ADR 0034 remain under verification in
-the isolated `codex/transcript-search` branch. Integrated API/type verification, the complete check
-suite, and real-browser verification remain required before claiming this feature is complete.
+Native-browser verification used one isolated local data directory with a runner that throws if an
+agent is invoked. The fixture included two workspaces, an active thread with 57 messages, an
+archived thread with 61 messages, never-used general threads, and three Knowledge documents.
+
+- Searching “cobalt window” in Search QA returned three hits (user/agent and active/archived).
+  The same phrase in Client Notes returned only its one message. Thread/archive filters worked.
+- A result in the middle of the archived thread opened the stable message URL, highlighted and
+  focused the selected group at about y=411..467 in a 720px viewport. Reload kept that location.
+  Opening the link from the other saved workspace resolved the correct workspace and message.
+  Show latest cleared the query and resumed the latest-message view; archive remained read-only.
+- A 55-hit search returned 50 initial results, then five more. All 55 rendered identities were
+  distinct and the continuation control disappeared at the end.
+- A malformed line was temporarily appended to the isolated fixture. A no-hit search showed the
+  explicit incomplete-result message, without claiming an exhaustive empty result. The fixture
+  was then restored exactly, with a byte-equality guard against overwriting another change.
+- Browser verification found an initial-query request cancelled by React StrictMode's development
+  lifecycle. Cleanup now resets the one-shot initialization guard; a StrictMode regression test
+  and a fresh browser dialog both confirm automatic search completes.
+- Light/dark screenshots were inspected. The modal header now follows the theme, and the result
+  list scrolls without pushing the query and filters behind a sticky header. Keyboard focus
+  remains within the dialog.
+- SHA-256 snapshots of all eight fixture files (state, three canonical transcripts, and four
+  immutable document files) matched before and after search/navigation and Knowledge previews.
+  No live provider was used.
+
+Knowledge preview verification is recorded in the [preview report](2026-09-09-knowledge-preview.md).
+
+### Combined gate
+
+`PATH=/opt/homebrew/bin:$PATH NODE_OPTIONS=--no-experimental-webstorage pnpm check` passed on
+9 September 2026 after the final credential-compatibility fix and UI integration: lint checked
+68 files, TypeScript passed, **361 tests in 29 files passed**, and client/server production builds
+completed. Tests and browser fixtures used no Codex/OpenCode process or live provider credentials.
+
+The integration also preserves legacy credential-file compatibility: an unusually large saved
+credential disables only the bounded preview, with a download fallback, rather than preventing
+the store from reopening.
 
 ## Deliberate limits
 

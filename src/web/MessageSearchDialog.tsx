@@ -375,7 +375,7 @@ export function MessageSearchDialog({
             </p>
           )}
 
-          {partial && (
+          {partial && results.length > 0 && (
             <p className="message-search-partial">
               Results may be incomplete. Try narrowing the search to a thread.
             </p>
