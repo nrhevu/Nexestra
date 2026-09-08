@@ -4025,3 +4025,313 @@ describe("Agent editing", () => {
     expect(body.provider).not.toHaveProperty("removeCredential");
   });
 });
+
+describe("Repository source branch selection", () => {
+  const repoMainCommit = "a".repeat(40);
+  const repoDevCommit = "b".repeat(40);
+  const branchRepository = {
+    id: "repository-branch",
+    workspaceId: workspace.id,
+    kind: "repository" as const,
+    name: "Branch repository",
+    handle: "branch-repo",
+    description: "",
+    source: "https://github.com/example/branch.git",
+    storagePath: "workspaces/workspace-nexestra/repositories/branch/source",
+    status: "ready" as const,
+    defaultBranch: "main",
+    sourceCommit: repoMainCommit,
+    sourceRef: "main",
+    refreshedAt: now,
+    sourceVersion: 3,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const branchListResponse = (sourceVersion: number) => ({
+    branches: [
+      { name: "main", commit: repoMainCommit },
+      { name: "develop", commit: repoDevCommit },
+    ],
+    truncated: false,
+    sourceVersion,
+    selectedBranch: null,
+    defaultBranch: "main",
+  });
+
+  it("applies a listed branch from knowledge details and updates without a bootstrap reload", async () => {
+    window.localStorage.setItem("nexestra.workspaceId", workspace.id);
+    window.history.replaceState({}, "", "/surfaces/knowledge");
+    let bootstraps = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        bootstraps += 1;
+        return jsonResponse({ ...bootstrapData, knowledge: [branchRepository] });
+      }
+      if (path === "/api/knowledge/repository-branch/branches") {
+        expect(bootstraps).toBe(1);
+        return jsonResponse(branchListResponse(3));
+      }
+      if (path === "/api/knowledge/repository-branch/source-branch") {
+        return jsonResponse({
+          ...branchRepository,
+          selectedBranch: "develop",
+          sourceVersion: 4,
+          updatedAt: "2026-09-02T13:00:00.000Z",
+        });
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Knowledge" });
+    await user.click(
+      screen.getByRole("button", { name: `View details for ${branchRepository.name}` }),
+    );
+    const details = screen.getByRole("dialog", { name: branchRepository.name });
+    expect(within(details).getByText("main")).toBeVisible();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/branches"))).toBe(false);
+
+    await user.click(within(details).getByRole("button", { name: "Change branch" }));
+    await user.click(await within(details).findByRole("button", { name: /develop/ }));
+    await user.click(within(details).getByRole("button", { name: "Apply branch" }));
+    expect(await screen.findByText("Source branch set to develop.")).toBeVisible();
+    const updated = screen.getByRole("dialog", { name: branchRepository.name });
+    expect(within(updated).getByText("develop")).toBeVisible();
+    expect(within(updated).getByRole("button", { name: "Change branch" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(bootstraps).toBe(1);
+    const postCalls = fetchMock.mock.calls.filter(
+      ([input]) => String(input) === "/api/knowledge/repository-branch/source-branch",
+    ) as unknown as Array<[RequestInfo | URL, RequestInit | undefined]>;
+    expect(postCalls).toHaveLength(1);
+    expect(postCalls[0]?.[1]).toMatchObject({
+      method: "POST",
+      body: JSON.stringify({ branch: "develop", expectedSourceVersion: 3 }),
+    });
+  });
+
+  it("shows the selected branch over the clone default as the effective branch", async () => {
+    window.localStorage.setItem("nexestra.workspaceId", workspace.id);
+    window.history.replaceState({}, "", "/surfaces/knowledge");
+    const selected = {
+      ...branchRepository,
+      selectedBranch: "release",
+      sourceVersion: 2,
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).startsWith("/api/bootstrap")) {
+        return jsonResponse({ ...bootstrapData, knowledge: [selected] });
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Knowledge" });
+    await user.click(screen.getByRole("button", { name: `View details for ${selected.name}` }));
+    const details = screen.getByRole("dialog", { name: selected.name });
+    expect(within(details).getByText("release")).toBeVisible();
+    expect(within(details).getByText("Clone default: main")).toBeVisible();
+    await user.click(within(details).getByRole("button", { name: "Done" }));
+  });
+
+  it("keeps the previous branch and the picker open when the server reports a refresh error", async () => {
+    window.localStorage.setItem("nexestra.workspaceId", workspace.id);
+    window.history.replaceState({}, "", "/surfaces/knowledge");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        return jsonResponse({ ...bootstrapData, knowledge: [branchRepository] });
+      }
+      if (path === "/api/knowledge/repository-branch/branches") {
+        return jsonResponse(branchListResponse(3));
+      }
+      if (path === "/api/knowledge/repository-branch/source-branch") {
+        return jsonResponse({
+          ...branchRepository,
+          refreshError: "Remote is offline.",
+          updatedAt: "2026-09-02T13:00:00.000Z",
+        });
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Knowledge" });
+    await user.click(
+      screen.getByRole("button", { name: `View details for ${branchRepository.name}` }),
+    );
+    const details = screen.getByRole("dialog", { name: branchRepository.name });
+    await user.click(within(details).getByRole("button", { name: "Change branch" }));
+    await user.click(await within(details).findByRole("button", { name: /develop/ }));
+    await user.click(within(details).getByRole("button", { name: "Apply branch" }));
+    expect(await within(details).findByText("Remote is offline.")).toBeVisible();
+    expect(screen.queryByText("Source branch set to")).not.toBeInTheDocument();
+    expect(within(details).getByRole("button", { name: "Change branch" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(within(details).getByLabelText("Branch name")).toHaveValue("develop");
+    expect(within(details).getByRole("button", { name: "Apply branch" })).toBeEnabled();
+    const effectiveRow = within(details).getByText("Effective source branch").closest("div");
+    if (!effectiveRow) throw new Error("expected effective branch row");
+    expect(within(effectiveRow).getByText("main")).toBeVisible();
+  });
+
+  it("requires an explicit reload and re-apply after a 409 source version conflict", async () => {
+    window.localStorage.setItem("nexestra.workspaceId", workspace.id);
+    window.history.replaceState({}, "", "/surfaces/knowledge");
+    let applications = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        return jsonResponse({ ...bootstrapData, knowledge: [branchRepository] });
+      }
+      if (path === "/api/knowledge/repository-branch/branches") {
+        return jsonResponse(branchListResponse(applications === 0 ? 3 : 9));
+      }
+      if (path === "/api/knowledge/repository-branch/source-branch") {
+        applications += 1;
+        if (applications === 1) {
+          return jsonResponse(
+            { error: { code: "SOURCE_VERSION_CONFLICT", message: "Source version changed." } },
+            409,
+          );
+        }
+        return jsonResponse({
+          ...branchRepository,
+          selectedBranch: "develop",
+          sourceVersion: 10,
+          updatedAt: "2026-09-02T13:00:00.000Z",
+        });
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Knowledge" });
+    await user.click(
+      screen.getByRole("button", { name: `View details for ${branchRepository.name}` }),
+    );
+    const details = screen.getByRole("dialog", { name: branchRepository.name });
+    await user.click(within(details).getByRole("button", { name: "Change branch" }));
+    await user.click(await within(details).findByRole("button", { name: /develop/ }));
+    await user.click(within(details).getByRole("button", { name: "Apply branch" }));
+    expect(await within(details).findByText("Source version changed")).toBeVisible();
+    expect(within(details).getByRole("button", { name: "Apply branch" })).toBeDisabled();
+
+    await user.click(within(details).getByRole("button", { name: "Reload branches" }));
+    expect(await within(details).findByRole("button", { name: "Apply branch" })).toBeEnabled();
+    await user.click(within(details).getByRole("button", { name: "Apply branch" }));
+    expect(await screen.findByText("Source branch set to develop.")).toBeVisible();
+    const postCalls = fetchMock.mock.calls.filter(
+      ([input]) => String(input) === "/api/knowledge/repository-branch/source-branch",
+    ) as unknown as Array<[RequestInfo | URL, RequestInit | undefined]>;
+    expect(postCalls).toHaveLength(2);
+    expect(postCalls.map(([, init]) => String(init?.body))).toEqual([
+      JSON.stringify({ branch: "develop", expectedSourceVersion: 3 }),
+      JSON.stringify({ branch: "develop", expectedSourceVersion: 9 }),
+    ]);
+  });
+
+  it("disables refresh, edit, and delete while a branch change is pending", async () => {
+    window.localStorage.setItem("nexestra.workspaceId", workspace.id);
+    window.history.replaceState({}, "", "/surfaces/knowledge");
+    const pendingApply = deferredResponse();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        return jsonResponse({ ...bootstrapData, knowledge: [branchRepository] });
+      }
+      if (path === "/api/knowledge/repository-branch/branches") {
+        return jsonResponse(branchListResponse(3));
+      }
+      if (path === "/api/knowledge/repository-branch/source-branch") {
+        return pendingApply.promise;
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Knowledge" });
+    await user.click(
+      screen.getByRole("button", { name: `View details for ${branchRepository.name}` }),
+    );
+    const details = screen.getByRole("dialog", { name: branchRepository.name });
+    await user.click(within(details).getByRole("button", { name: "Change branch" }));
+    await user.click(await within(details).findByRole("button", { name: /develop/ }));
+    await user.click(within(details).getByRole("button", { name: "Apply branch" }));
+
+    expect(within(details).getByRole("button", { name: "Refresh source" })).toBeDisabled();
+    expect(within(details).getByRole("button", { name: "Edit" })).toBeDisabled();
+    expect(within(details).getByRole("button", { name: "Delete" })).toBeDisabled();
+    expect(within(details).getByRole("button", { name: "Change branch" })).toBeDisabled();
+
+    await act(async () => {
+      pendingApply.resolve(
+        jsonResponse({
+          ...branchRepository,
+          selectedBranch: "develop",
+          sourceVersion: 4,
+          updatedAt: "2026-09-02T13:00:00.000Z",
+        }),
+      );
+    });
+    expect(await screen.findByText("Source branch set to develop.")).toBeVisible();
+    expect(
+      within(screen.getByRole("dialog", { name: branchRepository.name })).getByRole("button", {
+        name: "Refresh source",
+      }),
+    ).toBeEnabled();
+  });
+
+  it("Escape closes only the branch picker while the detail dialog stays open", async () => {
+    window.localStorage.setItem("nexestra.workspaceId", workspace.id);
+    window.history.replaceState({}, "", "/surfaces/knowledge");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        return jsonResponse({ ...bootstrapData, knowledge: [branchRepository] });
+      }
+      if (path === "/api/knowledge/repository-branch/branches") {
+        return jsonResponse(branchListResponse(3));
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Knowledge" });
+    await user.click(
+      screen.getByRole("button", { name: `View details for ${branchRepository.name}` }),
+    );
+    const details = screen.getByRole("dialog", { name: branchRepository.name });
+    await user.click(within(details).getByRole("button", { name: "Change branch" }));
+    expect(await within(details).findByRole("button", { name: /develop/ })).toBeVisible();
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByLabelText("Change source branch")).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: branchRepository.name })).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("dialog", { name: branchRepository.name })).getByRole("button", {
+        name: "Change branch",
+      }),
+    ).toHaveAttribute("aria-expanded", "false");
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: branchRepository.name })).not.toBeInTheDocument();
+  });
+});

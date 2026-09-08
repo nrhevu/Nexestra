@@ -96,6 +96,8 @@ import {
   type KnowledgeDocumentPreviewHandle,
 } from "./KnowledgeDocumentPreview.js";
 import { MessageSearchDialog } from "./MessageSearchDialog.js";
+import type { BranchAwareRepository } from "./RepositoryBranchPicker.js";
+import { RepositoryBranchPicker } from "./RepositoryBranchPicker.js";
 import { TopBar, type TopBarSurface } from "./TopBar.js";
 
 const RichMessage = lazy(() => import("./RichMessage.js"));
@@ -5060,6 +5062,9 @@ function KnowledgeDetailDialog({
   const [replaceError, setReplaceError] = useState<string>();
   const [restoringRevisionId, setRestoringRevisionId] = useState<string>();
   const [restoreError, setRestoreError] = useState<string>();
+  const [branchBusy, setBranchBusy] = useState(false);
+  const repositoryItem = item.kind === "repository" ? (item as BranchAwareRepository) : undefined;
+  const effectiveBranch = repositoryItem?.selectedBranch ?? repositoryItem?.defaultBranch ?? null;
   const previewRef = useRef<KnowledgeDocumentPreviewHandle>(null);
   const documentItem = item.kind === "document" ? item : undefined;
   useEffect(() => {
@@ -5270,8 +5275,11 @@ function KnowledgeDetailDialog({
               <strong>{item.status}</strong>
             </div>
             <div>
-              <span>Default branch</span>
-              <strong>{item.defaultBranch ?? "Unknown"}</strong>
+              <span>Effective source branch</span>
+              <strong>{effectiveBranch ?? "Unknown"}</strong>
+              {item.defaultBranch && effectiveBranch !== item.defaultBranch && (
+                <small>Clone default: {item.defaultBranch}</small>
+              )}
             </div>
             <div className="resource-details-wide">
               <span>Starting point for new Workers</span>
@@ -5279,10 +5287,25 @@ function KnowledgeDetailDialog({
               <p>
                 {item.refreshedAt
                   ? `Refreshed ${formatDateTime(item.refreshedAt)} from ${item.sourceRef}.`
-                  : "Refresh source to fetch the latest default branch for future assignments."}{" "}
+                  : `Refresh source to fetch the latest ${effectiveBranch ?? "recorded branch"} for future assignments.`}{" "}
                 Existing Worker branches and worktrees keep their changes.
               </p>
             </div>
+            {repositoryItem && (
+              <div className="resource-details-wide">
+                <span>Future Worker assignments</span>
+                <p>
+                  New Worker assignments start from the branch you choose. This does not change
+                  existing Worker branches or worktrees.
+                </p>
+                <RepositoryBranchPicker
+                  item={repositoryItem}
+                  generation={generation}
+                  onPendingChange={setBranchBusy}
+                  onChanged={onChanged}
+                />
+              </div>
+            )}
             {(refreshError || item.refreshError) && (
               <div className="resource-details-wide resource-details-error" role="alert">
                 <span>Source refresh failed</span>
@@ -5349,10 +5372,8 @@ function KnowledgeDetailDialog({
         {item.kind === "repository" && item.status === "ready" && (
           <button
             type="button"
-            disabled={refreshing || item.refreshing || !item.defaultBranch}
-            title={
-              !item.defaultBranch ? "No default branch was recorded for this clone." : undefined
-            }
+            disabled={refreshing || item.refreshing || branchBusy || !effectiveBranch}
+            title={!effectiveBranch ? "No source branch was recorded for this clone." : undefined}
             onClick={async () => {
               setRefreshing(true);
               setRefreshError(undefined);
@@ -5390,11 +5411,16 @@ function KnowledgeDetailDialog({
             Download
           </a>
         )}
-        <button type="button" onClick={() => onEdit(item)}>
+        <button type="button" disabled={branchBusy} onClick={() => onEdit(item)}>
           <Pencil size={14} />
           Edit
         </button>
-        <button type="button" className="danger-button" onClick={() => onDelete(item)}>
+        <button
+          type="button"
+          className="danger-button"
+          disabled={branchBusy}
+          onClick={() => onDelete(item)}
+        >
           <Trash2 size={14} />
           Delete
         </button>
