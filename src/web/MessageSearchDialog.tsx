@@ -78,6 +78,19 @@ function matchLabel(count: number): string {
   return `${count} ${count === 1 ? "match" : "matches"}`;
 }
 
+function mergeHits(current: MessageSearchHit[], incoming: MessageSearchHit[]): MessageSearchHit[] {
+  const seen = new Set(current.map((hit) => `${hit.thread.id}:${hit.messageId}`));
+  return [
+    ...current,
+    ...incoming.filter((hit) => {
+      const key = `${hit.thread.id}:${hit.messageId}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }),
+  ];
+}
+
 export function MessageSearchDialog({
   workspaceId,
   threads,
@@ -96,6 +109,8 @@ export function MessageSearchDialog({
   const [moreError, setMoreError] = useState("");
   const [loadingMore, setLoadingMore] = useState(false);
 
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   const dialogRef = useRef<HTMLElement>(null);
   const queryRef = useRef<HTMLInputElement>(null);
   const requestRef = useRef(0);
@@ -111,8 +126,11 @@ export function MessageSearchDialog({
   }, []);
 
   const threadOptions = useMemo(
-    () => [...threads].sort((left, right) => left.name.localeCompare(right.name)),
-    [threads],
+    () =>
+      threads
+        .filter((thread) => thread.workspaceId === workspaceId)
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    [threads, workspaceId],
   );
 
   const runSearch = useCallback(
@@ -149,7 +167,7 @@ export function MessageSearchDialog({
         );
         if (requestId !== requestRef.current || controller.signal.aborted) return;
         setResults((current) =>
-          offset === undefined ? response.matches : [...current, ...response.matches],
+          offset === undefined ? response.matches : mergeHits(current, response.matches),
         );
         setMeta({
           matchesFound: response.matchesFound,
@@ -187,6 +205,7 @@ export function MessageSearchDialog({
     if (workspaceRef.current === workspaceId) return;
     workspaceRef.current = workspaceId;
     invalidatePending();
+    setThreadId("");
     setSubmitted(null);
     setPhase("idle");
     setResults([]);
@@ -208,7 +227,7 @@ export function MessageSearchDialog({
       );
     const onKey = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") {
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (event.key !== "Tab") return;
@@ -234,7 +253,7 @@ export function MessageSearchDialog({
       window.removeEventListener("keydown", onKey);
       previousActive?.focus();
     };
-  }, [onClose]);
+  }, []);
 
   useEffect(
     () => () => {
@@ -245,13 +264,6 @@ export function MessageSearchDialog({
   );
 
   const trimmedQuery = query.trim();
-  const dirty =
-    submitted !== null &&
-    !(
-      trimmedQuery === submitted.query &&
-      threadId === submitted.threadId &&
-      archiveFilter === submitted.archived
-    );
   const partial = meta !== null && !meta.complete;
   const canSearch = trimmedQuery !== "";
 
@@ -264,9 +276,13 @@ export function MessageSearchDialog({
 
   const handleFormChange = () => {
     invalidatePending();
-    setPhase((current) => (current === "loading" ? "idle" : current));
-    setLoadingMore(false);
+    setSubmitted(null);
+    setPhase("idle");
+    setResults([]);
+    setMeta(null);
+    setErrorMessage("");
     setMoreError("");
+    setLoadingMore(false);
   };
 
   const handleRetry = () => {
@@ -277,7 +293,13 @@ export function MessageSearchDialog({
   };
 
   const handleLoadMore = () => {
-    if (!submitted || meta?.nextOffset === null || meta?.nextOffset === undefined || loadingMore) {
+    if (
+      !submitted ||
+      !meta?.complete ||
+      meta?.nextOffset === null ||
+      meta?.nextOffset === undefined ||
+      loadingMore
+    ) {
       return;
     }
     void runSearch(submitted, meta.nextOffset);
@@ -311,6 +333,7 @@ export function MessageSearchDialog({
                 ref={queryRef}
                 type="search"
                 value={query}
+                maxLength={200}
                 placeholder="Search messages in this workspace"
                 onChange={(event) => {
                   handleFormChange();
@@ -358,12 +381,6 @@ export function MessageSearchDialog({
             </div>
           </form>
 
-          {dirty && phase === "ready" && (
-            <p className="message-search-stale" role="status">
-              Showing results for the previous search. Press Search to update these results.
-            </p>
-          )}
-
           {phase === "loading" && (
             <p className="message-search-status" role="status">
               <LoaderCircle className="spin" size={15} />
@@ -390,14 +407,14 @@ export function MessageSearchDialog({
 
           {partial && (
             <p className="message-search-partial">
-              Results are partial. Narrow the search to a single thread for complete results.
+              Results may be incomplete. Try narrowing the search to a thread.
             </p>
           )}
 
           {phase === "ready" && results.length === 0 && (
             <p className="message-search-empty">
               {meta?.complete === false
-                ? "No matching messages found in the scanned portion. Narrow the search to a single thread for complete results."
+                ? "No matching messages found in the scanned portion. Results may be incomplete. Try narrowing the search to a thread."
                 : "No messages matched your search."}
             </p>
           )}
@@ -426,20 +443,23 @@ export function MessageSearchDialog({
             </ul>
           )}
 
-          {meta?.nextOffset !== null && meta?.nextOffset !== undefined && results.length > 0 && (
-            <div className="message-search-more">
-              {moreError && <p className="form-error">{moreError}</p>}
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={loadingMore}
-                onClick={handleLoadMore}
-              >
-                {loadingMore && <LoaderCircle className="spin" size={14} />}
-                Load more
-              </button>
-            </div>
-          )}
+          {meta?.complete &&
+            meta?.nextOffset !== null &&
+            meta?.nextOffset !== undefined &&
+            results.length > 0 && (
+              <div className="message-search-more">
+                {moreError && <p className="form-error">{moreError}</p>}
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={loadingMore}
+                  onClick={handleLoadMore}
+                >
+                  {loadingMore && <LoaderCircle className="spin" size={14} />}
+                  Load more
+                </button>
+              </div>
+            )}
         </div>
       </section>
     </div>

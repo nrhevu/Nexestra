@@ -100,8 +100,39 @@ describe("MessageSearchDialog", () => {
 
     expect(screen.getByRole("dialog", { name: "Search messages" })).toBeInTheDocument();
     expect(screen.getByRole("searchbox")).toHaveFocus();
+    expect(screen.getByRole("searchbox")).toHaveAttribute("maxlength", "200");
     await user.keyboard("{Escape}");
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps focus on the focused control when a parent rerender changes onClose", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(searchResponse({ matches: [hit()], matchesFound: 1 })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const view = render(
+      <MessageSearchDialog
+        workspaceId="ws-1"
+        threads={[]}
+        initialQuery="wire"
+        onClose={vi.fn()}
+        onOpenMessage={vi.fn()}
+      />,
+    );
+    await screen.findByRole("button", { name: /Old log/ });
+    const threadSelect = screen.getByLabelText("Thread") as HTMLSelectElement;
+    threadSelect.focus();
+    expect(threadSelect).toHaveFocus();
+    view.rerender(
+      <MessageSearchDialog
+        workspaceId="ws-1"
+        threads={[]}
+        initialQuery="wire"
+        onClose={vi.fn()}
+        onOpenMessage={vi.fn()}
+      />,
+    );
+    expect(threadSelect).toHaveFocus();
   });
 
   it("sends thread and archive filters and opens the archived result with stable IDs", async () => {
@@ -136,11 +167,17 @@ describe("MessageSearchDialog", () => {
     render(
       <MessageSearchDialog
         workspaceId="ws-1"
-        threads={[archivedThread, activeThread]}
+        threads={[
+          archivedThread,
+          activeThread,
+          thread({ id: "thread-other", workspaceId: "ws-2", name: "Other workspace" }),
+        ]}
         onClose={vi.fn()}
         onOpenMessage={openMessage}
       />,
     );
+
+    expect(screen.queryByRole("option", { name: "Other workspace" })).not.toBeInTheDocument();
 
     await user.type(screen.getByRole("searchbox"), "wire");
     await user.selectOptions(screen.getByLabelText("Thread"), archivedThread.id);
@@ -245,7 +282,7 @@ describe("MessageSearchDialog", () => {
             matches: [hit()],
             matchesFound: 7,
             complete: false,
-            nextOffset: null,
+            nextOffset: 50,
           }),
         );
       }
@@ -271,10 +308,9 @@ describe("MessageSearchDialog", () => {
     await user.type(screen.getByRole("searchbox"), "2");
     await user.click(screen.getByRole("button", { name: "Search" }));
     expect(
-      await screen.findByText(
-        "Results are partial. Narrow the search to a single thread for complete results.",
-      ),
+      await screen.findByText("Results may be incomplete. Try narrowing the search to a thread."),
     ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
     expect(screen.getByText("At least 7 matches in the scanned portion")).toBeInTheDocument();
     expect(screen.queryByText("No messages matched your search.")).not.toBeInTheDocument();
   });
@@ -288,6 +324,16 @@ describe("MessageSearchDialog", () => {
         return jsonResponse(
           searchResponse({
             matches: [
+              hit({
+                messageId: "msg-1",
+                snippet: "first page result",
+                thread: {
+                  id: activeThread.id,
+                  name: activeThread.name,
+                  slug: activeThread.slug,
+                  archived: false,
+                },
+              }),
               hit({
                 messageId: "msg-2",
                 snippet: "second page result",
@@ -340,9 +386,119 @@ describe("MessageSearchDialog", () => {
 
     await user.click(screen.getByRole("button", { name: "Load more" }));
     expect(await screen.findByText("second page result")).toBeInTheDocument();
+    expect(screen.getAllByText("first page result")).toHaveLength(1);
     expect(screen.getByText("first page result")).toBeInTheDocument();
     expect(screen.getByText("3 matches")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+  });
+
+  it("clears results and errors on form edits and submits the current fields", async () => {
+    let calls = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      calls += 1;
+      const url = new URL(String(input), "http://localhost");
+      if (calls === 1) {
+        return jsonResponse(searchResponse({ matches: [hit()], matchesFound: 1 }));
+      }
+      if (
+        calls === 2 &&
+        url.searchParams.get("q") === "new" &&
+        url.searchParams.get("threadId") === archivedThread.id &&
+        url.searchParams.get("archived") === "archived"
+      ) {
+        return jsonResponse(
+          searchResponse({
+            query: {
+              term: "new",
+              workspaceId: "ws-1",
+              threadId: archivedThread.id,
+              archived: "archived",
+            },
+            matches: [hit({ messageId: "msg-2", snippet: "fresh result" })],
+            matchesFound: 1,
+          }),
+        );
+      }
+      return jsonResponse({ error: { message: "Unexpected request" } }, 500);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    let view = render(
+      <MessageSearchDialog
+        workspaceId="ws-1"
+        threads={[archivedThread, activeThread]}
+        initialQuery="old"
+        onClose={vi.fn()}
+        onOpenMessage={vi.fn()}
+      />,
+    );
+    expect(await screen.findByRole("button", { name: /Old log/ })).toBeInTheDocument();
+    const input = screen.getByRole("searchbox");
+    await user.clear(input);
+    await user.type(input, "new");
+    expect(screen.queryByRole("button", { name: /Old log/ })).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Thread"), archivedThread.id);
+    await user.selectOptions(screen.getByLabelText("Archive status"), "archived");
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByText("fresh result")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    view.unmount();
+
+    const errorFetch = vi.fn(async () =>
+      jsonResponse({ error: { message: "Backend exploded" } }, 500),
+    );
+    vi.stubGlobal("fetch", errorFetch);
+    view = render(
+      <MessageSearchDialog
+        workspaceId="ws-1"
+        threads={[]}
+        onClose={vi.fn()}
+        onOpenMessage={vi.fn()}
+      />,
+    );
+    await user.type(screen.getByRole("searchbox"), "old");
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Backend exploded");
+    await user.type(screen.getByRole("searchbox"), "now");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+    view.unmount();
+  });
+
+  it("filters thread options to the workspace and resets the selected thread on workspace change", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(searchResponse())),
+    );
+    const user = userEvent.setup();
+    const view = render(
+      <MessageSearchDialog
+        workspaceId="ws-1"
+        threads={[activeThread]}
+        onClose={vi.fn()}
+        onOpenMessage={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("option", { name: "Active thread" })).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Thread"), activeThread.id);
+    expect(screen.getByLabelText("Thread")).toHaveValue(activeThread.id);
+    const otherThread = thread({
+      id: "thread-other",
+      workspaceId: "ws-2",
+      name: "Other workspace",
+    });
+    view.rerender(
+      <MessageSearchDialog
+        workspaceId="ws-2"
+        threads={[otherThread]}
+        onClose={vi.fn()}
+        onOpenMessage={vi.fn()}
+      />,
+    );
+    const select = screen.getByLabelText("Thread") as HTMLSelectElement;
+    expect(select).toHaveValue("");
+    expect(screen.queryByRole("option", { name: "Active thread" })).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Other workspace" })).toBeInTheDocument();
   });
 
   it("discards late responses after query changes, workspace switches, and unmount", async () => {
