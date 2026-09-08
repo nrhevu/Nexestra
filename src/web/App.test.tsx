@@ -273,6 +273,7 @@ describe("Activity-aware refresh", () => {
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(`/api/bootstrap?workspaceId=${workspace.id}`, {
         headers: {},
+        signal: expect.any(AbortSignal),
       });
     });
 
@@ -4458,5 +4459,482 @@ describe("Repository source branch selection", () => {
         ([input]) => String(input) === "/api/knowledge/repository-branch/source-branch",
       ),
     ).toHaveLength(0);
+  });
+});
+
+describe("Return to workspace revalidation", () => {
+  it("revalidates the visible thread on window focus without idle polling or full-thread reads", async () => {
+    const thread = activityThread("thread-idle", "general");
+    const transcript: ThreadData = {
+      thread,
+      messages: [],
+      artifacts: [],
+      runs: [],
+      toolCalls: [],
+    };
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    const intervalSpy = vi
+      .spyOn(window, "setInterval")
+      .mockImplementation(() => 1 as unknown as ReturnType<typeof window.setInterval>);
+    let bootstrapReads = 0;
+    let historyReads = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        bootstrapReads += 1;
+        return jsonResponse({ ...bootstrapData, agents: [workerAgent], threads: [thread] });
+      }
+      if (path === historyUrl(thread)) {
+        historyReads += 1;
+        return jsonResponse(historySnapshot(transcript));
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+    await screen.findByRole("combobox", { name: "Message" });
+    expect(bootstrapReads).toBe(1);
+    expect(historyReads).toBe(1);
+
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => expect(bootstrapReads).toBe(2));
+    await waitFor(() => expect(historyReads).toBe(2));
+    expect(intervalSpy.mock.calls.filter(([, delay]) => delay === 1_000)).toHaveLength(0);
+    expect(fetchMock.mock.calls.some(([url]) => String(url) === `/api/threads/${thread.id}`)).toBe(
+      false,
+    );
+  });
+
+  it("coalesces a focus/visible/online burst into one in-flight request plus one follow-up", async () => {
+    const thread = activityThread("thread-burst", "general");
+    const updated = { ...thread, name: "Updated general" };
+    const transcript: ThreadData = {
+      thread,
+      messages: [],
+      artifacts: [],
+      runs: [],
+      toolCalls: [],
+    };
+    const pendingSecond = deferredResponse();
+    let bootstrapReads = 0;
+    let historyReads = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        bootstrapReads += 1;
+        if (bootstrapReads === 1) {
+          return jsonResponse({ ...bootstrapData, agents: [workerAgent], threads: [thread] });
+        }
+        if (bootstrapReads === 2) return pendingSecond.promise;
+        return jsonResponse({ ...bootstrapData, agents: [workerAgent], threads: [updated] });
+      }
+      if (path === historyUrl(thread)) {
+        historyReads += 1;
+        const current = historyReads >= 3 ? { ...transcript, thread: updated } : transcript;
+        return jsonResponse(historySnapshot(current));
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    render(<App />);
+    await screen.findByRole("combobox", { name: "Message" });
+
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => expect(bootstrapReads).toBe(2));
+    expect(historyReads).toBe(1);
+    expect(screen.getByRole("button", { name: "Refresh workspace" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("online"));
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(bootstrapReads).toBe(2);
+    expect(historyReads).toBe(1);
+
+    await act(async () => {
+      pendingSecond.resolve(
+        jsonResponse({ ...bootstrapData, agents: [workerAgent], threads: [updated] }),
+      );
+    });
+    await waitFor(() => expect(bootstrapReads).toBe(3));
+    await waitFor(() => expect(historyReads).toBe(3));
+    expect(await screen.findByRole("heading", { name: "# Updated general" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Refresh workspace" })).toHaveAttribute(
+      "aria-busy",
+      "false",
+    );
+  });
+
+  it("refreshes manually, keeps data usable after a failure, and retries", async () => {
+    const updatedAgent = { ...workerAgent, name: "Updated planner" };
+    let bootstrapReads = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).startsWith("/api/bootstrap")) {
+        bootstrapReads += 1;
+        if (bootstrapReads === 1) {
+          return jsonResponse({ ...bootstrapData, agents: [workerAgent] });
+        }
+        if (bootstrapReads === 2) {
+          return jsonResponse({ error: { message: "Server unavailable" } }, 503);
+        }
+        return jsonResponse({ ...bootstrapData, agents: [updatedAgent] });
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", "/surfaces/agents");
+    render(<App />);
+    await screen.findByRole("heading", { name: "Agent management" });
+
+    await userEvent.click(screen.getByRole("button", { name: "Refresh workspace" }));
+    expect(await screen.findByText("Could not refresh the workspace.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Agent management" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Refresh workspace" }));
+    expect(await screen.findByText("Updated planner")).toBeVisible();
+    expect(screen.queryByText("Could not refresh the workspace.")).not.toBeInTheDocument();
+  });
+
+  it("refreshes metadata only on a surface and never fetches unrelated history", async () => {
+    const thread = activityThread("thread-surface", "general");
+    let bootstrapReads = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).startsWith("/api/bootstrap")) {
+        bootstrapReads += 1;
+        return jsonResponse({ ...bootstrapData, threads: [thread] });
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", "/surfaces/knowledge");
+    render(<App />);
+    await screen.findByRole("heading", { name: "Knowledge" });
+    expect(bootstrapReads).toBe(1);
+
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => expect(bootstrapReads).toBe(2));
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/api/threads/"))).toBe(
+      false,
+    );
+  });
+
+  it("does not load the captured page after the user navigates during a slow revalidation", async () => {
+    const firstThread = activityThread("thread-late-first", "general");
+    const secondThread = activityThread("thread-late-second", "notes");
+    const firstSnapshot = threadSnapshot(firstThread, []);
+    const secondSnapshot = threadSnapshot(secondThread, []);
+    const pendingBootstrap = deferredResponse();
+    let bootstrapReads = 0;
+    let firstHistoryReads = 0;
+    let secondHistoryReads = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        bootstrapReads += 1;
+        if (bootstrapReads === 1) {
+          return jsonResponse({ ...bootstrapData, threads: [firstThread, secondThread] });
+        }
+        return pendingBootstrap.promise;
+      }
+      if (path === historyUrl(firstThread)) {
+        firstHistoryReads += 1;
+        return jsonResponse(firstSnapshot);
+      }
+      if (path === historyUrl(secondThread)) {
+        secondHistoryReads += 1;
+        return jsonResponse(secondSnapshot);
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${firstThread.id}`);
+    render(<App />);
+    await screen.findByRole("combobox", { name: "Message" });
+
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => expect(bootstrapReads).toBe(2));
+    await userEvent.click(screen.getByRole("button", { name: /#notes/ }));
+    await screen.findByRole("combobox", { name: "Message" });
+    const secondReadsAtResolve = secondHistoryReads;
+
+    await act(async () => {
+      pendingBootstrap.resolve(
+        jsonResponse({ ...bootstrapData, threads: [firstThread, secondThread] }),
+      );
+    });
+    expect(firstHistoryReads).toBe(1);
+    expect(secondHistoryReads).toBe(secondReadsAtResolve);
+    expect(window.location.pathname).toBe(`/threads/${secondThread.id}`);
+  });
+
+  it("keeps the draft, attachments, and selected history page across a focus refresh", async () => {
+    const thread = activityThread("thread-preserved", "general");
+    const message = {
+      id: "message-old",
+      threadId: thread.id,
+      sequence: 1,
+      author: { kind: "user" as const, id: "local-user" as const, name: "You" },
+      content: "Older message",
+      mentions: [],
+      knowledgeReferences: [],
+      artifactIds: [],
+      createdAt: now,
+    };
+    const page: ThreadHistoryPage = {
+      thread,
+      messages: [message],
+      artifacts: [],
+      runs: [],
+      activeRuns: [],
+      toolCalls: [],
+      page: {
+        totalMessages: 100,
+        totalArtifacts: 0,
+        firstMessageIndex: 1,
+        lastMessageIndex: 50,
+        beforeCursor: "cursor-before",
+        afterCursor: null,
+      },
+    };
+    const beforeQuery = `?workspaceId=${encodeURIComponent(workspace.id)}&limit=50&before=cursor-before`;
+    const beforeUrl = `/api/threads/${thread.id}/history${beforeQuery}`;
+    let latestReads = 0;
+    let beforeReads = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        return jsonResponse({ ...bootstrapData, threads: [thread] });
+      }
+      if (path === beforeUrl) {
+        beforeReads += 1;
+        return jsonResponse(page);
+      }
+      if (path === historyUrl(thread)) {
+        latestReads += 1;
+        return jsonResponse(page);
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    const user = userEvent.setup();
+    render(<App />);
+    const composer = await screen.findByRole("combobox", { name: "Message" });
+    await user.click(screen.getByRole("button", { name: /Older messages/ }));
+    await screen.findByText("Older message");
+    await user.type(composer, "Draft text");
+    const fileInput = screen.getByLabelText("Choose files or images");
+    await user.upload(fileInput, new File(["# Notes"], "notes.md", { type: "text/markdown" }));
+    expect(screen.getByText("notes.md")).toBeInTheDocument();
+    expect(beforeReads).toBe(1);
+
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => expect(beforeReads).toBe(2));
+    expect(composer).toHaveValue("Draft text");
+    expect(screen.getByText("notes.md")).toBeInTheDocument();
+    expect(screen.getByText("Older message")).toBeInTheDocument();
+    expect(latestReads).toBe(1);
+  });
+
+  it("lets the Files & links tab reload its inventory after a focus refresh", async () => {
+    const thread = activityThread("thread-artifacts-refresh", "general");
+    const message = {
+      id: "message-artifacts-refresh",
+      threadId: thread.id,
+      sequence: 1,
+      author: { kind: "user" as const, id: "local-user" as const, name: "You" },
+      content: "Artifacts",
+      mentions: [],
+      knowledgeReferences: [],
+      artifactIds: [],
+      createdAt: now,
+    };
+    const artifact = {
+      id: "artifact-report",
+      threadId: thread.id,
+      messageId: message.id,
+      sequence: 1,
+      kind: "file" as const,
+      source: "upload" as const,
+      name: "report.pdf",
+      mediaType: "application/pdf",
+      size: 100,
+      createdAt: now,
+    };
+    const emptySnapshot: ThreadHistoryPage = {
+      thread,
+      messages: [message],
+      artifacts: [],
+      runs: [],
+      activeRuns: [],
+      toolCalls: [],
+      page: {
+        totalMessages: 1,
+        totalArtifacts: 0,
+        firstMessageIndex: 1,
+        lastMessageIndex: 1,
+        beforeCursor: null,
+        afterCursor: null,
+      },
+    };
+    const fullSnapshot: ThreadHistoryPage = {
+      ...emptySnapshot,
+      artifacts: [artifact],
+      page: { ...emptySnapshot.page, totalArtifacts: 1 },
+    };
+    let withArtifacts = false;
+    let historyReads = 0;
+    let fullReads = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        return jsonResponse({ ...bootstrapData, threads: [thread] });
+      }
+      if (path === historyUrl(thread)) {
+        historyReads += 1;
+        if (historyReads === 1 && !withArtifacts) return jsonResponse(emptySnapshot);
+        return jsonResponse(fullSnapshot);
+      }
+      if (path === `/api/threads/${thread.id}`) {
+        fullReads += 1;
+        return jsonResponse({
+          thread,
+          messages: [message],
+          artifacts: withArtifacts ? [artifact] : [],
+          runs: [],
+          toolCalls: [],
+        });
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("combobox", { name: "Message" });
+    await user.click(screen.getByRole("button", { name: /Files & links/ }));
+    await screen.findByText("No files or links yet");
+    expect(fullReads).toBe(1);
+
+    withArtifacts = true;
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() => expect(fullReads).toBe(2));
+    expect(await screen.findByText("report.pdf")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Files & links/ })).toHaveTextContent("1");
+  });
+});
+
+describe("Revalidation failure handling", () => {
+  it("reports a retryable failure when the visible history read fails", async () => {
+    const thread = activityThread("thread-history-failure", "general");
+    const transcript: ThreadData = {
+      thread,
+      messages: [],
+      artifacts: [],
+      runs: [],
+      toolCalls: [],
+    };
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    let historyReads = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        return jsonResponse({ ...bootstrapData, threads: [thread] });
+      }
+      if (path === historyUrl(thread)) {
+        historyReads += 1;
+        if (historyReads === 2) {
+          return jsonResponse({ error: { message: "History unavailable" } }, 503);
+        }
+        return jsonResponse(historySnapshot(transcript));
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+    await screen.findByRole("combobox", { name: "Message" });
+
+    await userEvent.click(screen.getByRole("button", { name: "Refresh workspace" }));
+    expect(await screen.findByText("Could not refresh the workspace.")).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Message" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Refresh workspace" }));
+    await waitFor(() => expect(historyReads).toBe(3));
+    expect(screen.queryByText("Could not refresh the workspace.")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Refresh workspace" })).toHaveAttribute(
+      "aria-busy",
+      "false",
+    );
+  });
+
+  it("times out a hung revalidation read and permits a retry", async () => {
+    vi.useFakeTimers();
+    const updatedAgent = { ...workerAgent, name: "Updated planner" };
+    let bootstrapReads = 0;
+    let aborted: AbortSignal | null | undefined;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).startsWith("/api/bootstrap")) {
+        bootstrapReads += 1;
+        if (bootstrapReads === 1) {
+          return jsonResponse({ ...bootstrapData, agents: [workerAgent] });
+        }
+        if (bootstrapReads >= 3) {
+          return jsonResponse({ ...bootstrapData, agents: [updatedAgent] });
+        }
+        aborted = init?.signal;
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            reject(new DOMException("Aborted", "AbortError"));
+          });
+        });
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", "/surfaces/agents");
+    render(<App />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByRole("heading", { name: "Agent management" })).toBeInTheDocument();
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Refresh workspace" }).click();
+    });
+    expect(bootstrapReads).toBe(2);
+    expect(aborted?.aborted).toBe(false);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(aborted?.aborted).toBe(true);
+    expect(screen.getByText("Could not refresh the workspace.")).toBeInTheDocument();
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Refresh workspace" }).click();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByText("Updated planner")).toBeInTheDocument();
+    expect(screen.queryByText("Could not refresh the workspace.")).not.toBeInTheDocument();
+    vi.useRealTimers();
   });
 });

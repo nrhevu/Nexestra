@@ -70,6 +70,8 @@ function makeProps(overrides: Partial<TopBarProps> = {}): TopBarProps {
   return {
     data: { threads: [firstThread, secondThread], tasks: [], agents: [], knowledge: [] },
     theme: "dark",
+    refreshStatus: "idle" as const,
+    onRefresh: vi.fn(),
     onThemeToggle: vi.fn(),
     onThread: vi.fn(),
     onSurface: vi.fn(),
@@ -247,9 +249,12 @@ describe("Global search", () => {
     expect(props.onThread).not.toHaveBeenCalled();
 
     await user.tab();
+    const refresh = screen.getByRole("button", { name: "Refresh workspace" });
+    expect(refresh).toHaveFocus();
+    expect(input).toHaveAttribute("aria-expanded", "false");
+    await user.tab();
     const searchMessages = screen.getByRole("button", { name: "Search messages" });
     expect(searchMessages).toHaveFocus();
-    expect(input).toHaveAttribute("aria-expanded", "false");
     view.rerender(<TopBar {...props} data={{ ...props.data, threads: [secondThread] }} />);
     expect(searchMessages).toHaveFocus();
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
@@ -270,5 +275,43 @@ describe("Global search", () => {
     await user.keyboard("{Control>}k{/Control}");
     expect(phrase).toHaveFocus();
     expect(screen.getByRole("combobox")).toHaveAttribute("aria-expanded", "false");
+  });
+});
+
+describe("Workspace refresh action", () => {
+  it("runs the manual refresh and announces an in-progress state", async () => {
+    const user = userEvent.setup();
+    const props = makeProps();
+    const view = render(<TopBar {...props} />);
+    const refresh = screen.getByRole("button", { name: "Refresh workspace" });
+    await user.click(refresh);
+    expect(props.onRefresh).toHaveBeenCalledTimes(1);
+    expect(refresh).toHaveAttribute("aria-busy", "false");
+
+    view.rerender(<TopBar {...props} refreshStatus="refreshing" />);
+    expect(refresh).toHaveAttribute("aria-busy", "true");
+  });
+
+  it("shows an actionable retry status after a failed refresh and clears it on success", async () => {
+    const user = userEvent.setup();
+    const props = makeProps();
+    const view = render(<TopBar {...props} refreshStatus="error" refreshError="Network down" />);
+    expect(screen.getByRole("status")).toHaveTextContent("Network down");
+    await user.click(screen.getByRole("button", { name: "Refresh workspace" }));
+    expect(props.onRefresh).toHaveBeenCalled();
+    view.rerender(<TopBar {...props} refreshStatus="idle" />);
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("exposes a /refresh command from the palette", async () => {
+    const user = userEvent.setup();
+    const props = makeProps();
+    render(<TopBar {...props} />);
+    const input = screen.getByRole("combobox");
+    await user.type(input, "/refresh");
+    const option = screen.getByRole("option", { name: /Refresh workspace/ });
+    await user.keyboard("{Enter}");
+    expect(option).not.toBeInTheDocument();
+    expect(props.onRefresh).toHaveBeenCalledTimes(1);
   });
 });

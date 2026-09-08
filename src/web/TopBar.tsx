@@ -1,6 +1,7 @@
-import { MessageSquareText, Moon, Search, Sun } from "lucide-react";
+import { LoaderCircle, MessageSquareText, Moon, RefreshCw, Search, Sun } from "lucide-react";
 import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import type { BootstrapData } from "../shared/contracts.js";
+import type { WorkspaceRefreshStatus } from "./workspaceRefresh.js";
 import "./TopBar.css";
 
 export type TopBarSurface = "taskboard" | "agents" | "knowledge" | "attention";
@@ -8,6 +9,9 @@ export type TopBarSurface = "taskboard" | "agents" | "knowledge" | "attention";
 export interface TopBarProps {
   data: Pick<BootstrapData, "threads" | "agents" | "tasks" | "knowledge">;
   theme: "dark" | "light";
+  refreshStatus: WorkspaceRefreshStatus;
+  refreshError?: string;
+  onRefresh: () => void;
   onThemeToggle: () => void;
   onThread: (id: string) => void;
   onSurface: (surface: TopBarSurface) => void;
@@ -89,6 +93,12 @@ export function TopBar(props: TopBarProps) {
           label: "Search messages",
           description: "Find text in active and archived conversations",
           action: () => props.onSearchMessages(""),
+        },
+        {
+          id: "command:refresh-workspace",
+          label: "Refresh workspace",
+          description: "Refresh workspace details and this conversation",
+          action: props.onRefresh,
         },
         {
           id: "command:settings",
@@ -241,6 +251,32 @@ export function TopBar(props: TopBarProps) {
         )}
       </div>
       <div className="topbar-actions">
+        <div className="refresh-workspace">
+          <button
+            className="refresh-workspace-button"
+            type="button"
+            aria-label="Refresh workspace"
+            aria-busy={props.refreshStatus === "refreshing"}
+            title={
+              props.refreshStatus === "error"
+                ? `Refresh failed: ${props.refreshError ?? "unknown error"}`
+                : "Refresh current workspace"
+            }
+            onClick={props.onRefresh}
+          >
+            {props.refreshStatus === "refreshing" ? (
+              <LoaderCircle className="spin" size={16} />
+            ) : (
+              <RefreshCw size={16} />
+            )}
+            <span>{props.refreshStatus === "error" ? "Retry" : "Refresh"}</span>
+          </button>
+          {props.refreshStatus === "error" && (
+            <span className="refresh-workspace-error" role="status">
+              {props.refreshError ?? "Refresh failed"}
+            </span>
+          )}
+        </div>
         <button
           className="message-search-launch"
           type="button"

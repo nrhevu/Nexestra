@@ -109,6 +109,7 @@ import {
   SubmissionState,
 } from "./submissionState.js";
 import { TopBar, type TopBarSurface } from "./TopBar.js";
+import { type RefreshOutcome, useWorkspaceRefresh } from "./workspaceRefresh.js";
 
 const RichMessage = lazy(() => import("./RichMessage.js"));
 
@@ -264,16 +265,28 @@ export function App() {
   }, []);
 
   const refresh = useCallback(
-    async (quiet = false, workspaceId = workspaceIdRef.current) => {
+    async (
+      quiet = false,
+      workspaceId = workspaceIdRef.current,
+      signal?: AbortSignal,
+    ): Promise<BootstrapData | null | undefined> => {
       const generation = workspaceGenerationRef.current;
       if (workspaceId !== workspaceIdRef.current) return undefined;
       const requestId = ++latestBootstrapRequestRef.current;
       const activityRevision = activityRevisionRef.current;
+      const controller = new AbortController();
+      const onExternalAbort = () => controller.abort();
+      if (signal) {
+        if (signal.aborted) controller.abort();
+        else signal.addEventListener("abort", onExternalAbort);
+      }
       try {
         const query = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
         let next: BootstrapData;
         try {
-          next = await api<BootstrapData>(`/api/bootstrap${query}`);
+          next = await api<BootstrapData>(`/api/bootstrap${query}`, {
+            signal: controller.signal,
+          });
         } catch (caught) {
           if (
             !(caught instanceof ApiError) ||
@@ -287,9 +300,12 @@ export function App() {
           // A saved workspace may have disappeared after the local data directory changed.
           workspaceIdRef.current = undefined;
           writeBrowserValue("nexestra.workspaceId", null);
-          next = await api<BootstrapData>("/api/bootstrap");
+          next = await api<BootstrapData>("/api/bootstrap", {
+            signal: controller.signal,
+          });
         }
         if (
+          controller.signal.aborted ||
           generation !== workspaceGenerationRef.current ||
           requestId !== latestBootstrapRequestRef.current
         )
@@ -317,19 +333,22 @@ export function App() {
         return fresh;
       } catch (caught) {
         if (
-          generation === workspaceGenerationRef.current &&
-          requestId === latestBootstrapRequestRef.current &&
-          !quiet
+          generation !== workspaceGenerationRef.current ||
+          requestId !== latestBootstrapRequestRef.current
         )
-          setError(messageFrom(caught));
-        return undefined;
+          return undefined;
+        if (controller.signal.aborted) return undefined;
+        if (!quiet) setError(messageFrom(caught));
+        return null;
+      } finally {
+        signal?.removeEventListener("abort", onExternalAbort);
       }
     },
     [updateData],
   );
 
   const loadHistoryPage = useCallback(
-    async (threadId: string, intent: HistoryIntent, quiet = false) => {
+    async (threadId: string, intent: HistoryIntent, quiet = false, signal?: AbortSignal) => {
       const generation = workspaceGenerationRef.current;
       const workspaceId = workspaceIdRef.current;
       const isCurrent = () =>
@@ -343,6 +362,11 @@ export function App() {
       historyAbortRef.current?.abort();
       const controller = new AbortController();
       historyAbortRef.current = controller;
+      const onExternalAbort = () => controller.abort();
+      if (signal) {
+        if (signal.aborted) controller.abort();
+        else signal.addEventListener("abort", onExternalAbort);
+      }
       setHistoryLoading(true);
       setHistoryError(undefined);
       const params = new URLSearchParams({ workspaceId: workspaceId ?? "" });
@@ -356,6 +380,7 @@ export function App() {
           { signal: controller.signal },
         );
         if (
+          controller.signal.aborted ||
           !isCurrent() ||
           requestId !== historyRequestRef.current ||
           next.thread.id !== threadId ||
@@ -406,12 +431,13 @@ export function App() {
         if (!quiet) setError(undefined);
         return next;
       } catch (caught) {
-        if (isCurrent() && requestId === historyRequestRef.current && !quiet) {
-          if (!controller.signal.aborted) setHistoryError(messageFrom(caught));
-        }
-        return undefined;
+        if (!isCurrent() || requestId !== historyRequestRef.current) return undefined;
+        if (controller.signal.aborted) return undefined;
+        if (!quiet) setHistoryError(messageFrom(caught));
+        return null;
       } finally {
         if (historyAbortRef.current === controller) historyAbortRef.current = null;
+        signal?.removeEventListener("abort", onExternalAbort);
         if (requestId === historyRequestRef.current) setHistoryLoading(false);
       }
     },
@@ -424,6 +450,54 @@ export function App() {
     const intent = historyIntentRef.current;
     return intent?.threadId === threadId ? intent : { threadId, kind: "latest" };
   }, []);
+
+  const revalidateWorkspace = useCallback(
+    async (workspaceId: string, signal: AbortSignal): Promise<RefreshOutcome> => {
+      const generation = workspaceGenerationRef.current;
+      const threadAtStart =
+        routeRef.current.view === "threads" ? routeRef.current.threadId : undefined;
+      const intentAtStart = threadAtStart ? currentHistoryIntent() : undefined;
+      const historyRevisionAtStart = historyRequestRef.current;
+      const next = await refresh(true, workspaceId, signal);
+      if (signal.aborted || generation !== workspaceGenerationRef.current) return "superseded";
+      if (next === undefined) {
+        if (generation !== workspaceGenerationRef.current) return "superseded";
+        if (signal.aborted) return "failed";
+        return "superseded";
+      }
+      if (next === null) return "failed";
+      const routeNow = routeRef.current;
+      if (
+        routeNow.view === "threads" &&
+        threadAtStart &&
+        routeNow.threadId === threadAtStart &&
+        intentAtStart
+      ) {
+        const current = dataRef.current;
+        const stillExists =
+          current !== undefined &&
+          current.workspace.id === workspaceId &&
+          current.threads.some((thread) => thread.id === threadAtStart);
+        if (stillExists && historyRequestRef.current === historyRevisionAtStart) {
+          const result = await loadHistoryPage(threadAtStart, intentAtStart, true, signal);
+          if (signal.aborted || generation !== workspaceGenerationRef.current) return "superseded";
+          if (result === undefined) {
+            if (generation !== workspaceGenerationRef.current) return "superseded";
+            if (signal.aborted) return "failed";
+            return "superseded";
+          }
+          if (result === null) return "failed";
+        }
+      }
+      return "ok";
+    },
+    [currentHistoryIntent, loadHistoryPage, refresh],
+  );
+
+  const workspaceRefresh = useWorkspaceRefresh({
+    workspaceId: data?.workspace.id,
+    revalidate: revalidateWorkspace,
+  });
 
   const clearMessageTargetPreservingThread = useCallback(() => {
     const threadId = routeRef.current.threadId;
@@ -1232,6 +1306,9 @@ export function App() {
         key={`${data.workspace.id}:${route.view}:${route.threadId ?? route.surface}`}
         data={data}
         theme={theme}
+        refreshStatus={workspaceRefresh.status}
+        refreshError={workspaceRefresh.error}
+        onRefresh={workspaceRefresh.requestRefresh}
         onThemeToggle={toggleTheme}
         onThread={openThread}
         onSurface={openSurface}

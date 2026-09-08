@@ -38,3 +38,47 @@
     display: none;
   }
 }
+
+.refresh-workspace {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.refresh-workspace-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 9px;
+  border: 1px solid var(--search-border);
+  border-radius: 7px;
+  background: var(--theme-toggle-bg);
+  color: var(--theme-toggle-color);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.refresh-workspace-button:hover,
+.refresh-workspace-button:focus-visible {
+  color: var(--text);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.refresh-workspace-button[aria-busy="true"] {
+  color: var(--text);
+}
+
+.refresh-workspace-error {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+@media (max-width: 700px) {
+  .refresh-workspace-button span {
+    display: none;
+  }
+  .refresh-workspace-error {
+    display: none;
+  }
+}
