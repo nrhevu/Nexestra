@@ -426,7 +426,7 @@ export class AgentDispatcher {
       const agent = this.store.getAgent(run.agentId);
       if (!thread || thread.archived || !agent || agent.archived || !agent.enabled) {
         const updatedAt = new Date().toISOString();
-        return this.store.updateRun({
+        return await this.store.updateRun({
           ...run,
           status: "failed",
           error: UNAVAILABLE_AGENT_REASON,

@@ -572,6 +572,54 @@ describe("recoverable submission dispatch", () => {
     expect(data.runs.filter((entry) => entry.triggerMessageId === message.id)).toHaveLength(1);
   });
 
+  it("holds the agent reservation until an unavailable queued run is durably failed", async () => {
+    const { store, runner, dispatcher, thread } = await setup();
+    const agent = await createAgent(store, "reserved");
+    const message = await store.createUserMessage(thread.id, "@reserved pending", [
+      { agentId: agent.id, handle: agent.handle },
+    ]);
+    const now = new Date().toISOString();
+    const queued: AgentRun = {
+      id: "reserved-unavailable-run",
+      threadId: thread.id,
+      triggerMessageId: message.id,
+      agentId: agent.id,
+      attempt: 1,
+      status: "queued",
+      createdAt: now,
+      updatedAt: now,
+    };
+    await store.updateRun(queued);
+    await store.updateAgent(agent.id, { enabled: false });
+    const entered = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    const updateRun = store.updateRun.bind(store);
+    vi.spyOn(store, "updateRun").mockImplementation(async (run) => {
+      if (run.id === queued.id && run.status === "failed") {
+        entered.resolve();
+        await gate.promise;
+      }
+      return updateRun(run);
+    });
+    const reconciliation = dispatcher.reconcileQueuedRun(queued, message);
+    await entered.promise;
+    let mutationAcquired = false;
+    try {
+      mutationAcquired = dispatcher.beginAgentMutation(agent.id);
+      expect(mutationAcquired).toBe(false);
+    } finally {
+      if (mutationAcquired) dispatcher.finishAgentMutation(agent.id);
+      gate.resolve();
+      await reconciliation;
+    }
+    expect(dispatcher.beginAgentMutation(agent.id)).toBe(true);
+    dispatcher.finishAgentMutation(agent.id);
+    expect(runner.invocations).toHaveLength(0);
+    expect((await store.threadData(thread.id)).runs).toMatchObject([
+      { id: queued.id, status: "failed" },
+    ]);
+  });
+
   it("keeps legacy unkeyed sends independent for identical text", async () => {
     const { store, runner, dispatcher, chat, thread } = await setup();
     await createAgent(store, "codex");
