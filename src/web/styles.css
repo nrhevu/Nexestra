@@ -1763,6 +1763,50 @@ kbd {
   color: var(--muted);
   font-size: 11px;
 }
+
+.pending-submission-note {
+  margin: 6px 4px 0;
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-raised);
+  color: var(--text);
+  font-size: 11px;
+}
+
+.pending-submission-note > p {
+  margin: 0 0 4px;
+}
+
+.pending-submission-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.pending-submission-actions button {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.pending-submission-actions button:hover {
+  border-color: var(--accent);
+}
+
+.pending-notice-close {
+  margin-left: 4px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+}
 .artifacts-view {
   flex: 1;
   min-height: 0;

@@ -96,6 +96,12 @@ import { AttentionView } from "./AttentionView.js";
 import { ApiError, api } from "./api.js";
 import { ConversationState, readBrowserValue, writeBrowserValue } from "./conversationState.js";
 import {
+  SubmissionState,
+  fingerprintSubmission,
+  newRequestId,
+  type PendingSubmission,
+} from "./submissionState.js";
+import {
   KnowledgeDocumentPreview,
   type KnowledgeDocumentPreviewHandle,
 } from "./KnowledgeDocumentPreview.js";
@@ -139,7 +145,9 @@ interface LoginSession {
 export function App() {
   const [route, setRoute] = useState<RouteState>(() => routeFromLocation());
   const [conversations] = useState(() => new ConversationState());
+  const [submissions] = useState(() => new SubmissionState());
   const [, setDraftRevision] = useState(0);
+  const [pendingNotice, setPendingNotice] = useState<string>();
   const [data, setData] = useState<BootstrapData>();
   const [historyPage, setHistoryPage] = useState<ThreadHistoryPage>();
   const [historyWindow, setHistoryWindow] = useState<HistoryIntent>();
@@ -1077,7 +1085,92 @@ export function App() {
     }
   };
 
-  if (!data) {
+  const sendMessage = async (
+    threadId: string,
+    content: string,
+    files: File[],
+    sendAsNew = false,
+  ) => {
+    const workspaceId = workspaceIdRef.current;
+    if (!workspaceId) throw new Error("No active workspace.");
+    const pending = submissions.pendingFor(workspaceId, threadId);
+    if (sendAsNew && pending) {
+      submissions.retire(workspaceId, threadId, pending.requestId);
+    }
+    const generation = workspaceGenerationRef.current;
+    const draftRevision =
+      routeRef.current.threadId === threadId
+        ? conversations.draft(workspaceId, threadId).revision
+        : undefined;
+    const agentsByHandle = new Map(
+      (dataRef.current?.agents ?? []).map((agent) => [agent.handle, agent] as const),
+    );
+    const key = await fingerprintSubmission(content, files);
+    const retrying = pending?.key === key;
+    if (!retrying) {
+      const unavailable = extractMentionHandles(content)
+        .map((handle) => agentsByHandle.get(handle))
+        .find((agent) => agent && !canCallAgent(agent));
+      if (unavailable) {
+        throw new Error(`@${unavailable.handle} cannot be invoked: ${unavailable.readinessLabel}.`);
+      }
+    }
+    const requestId = retrying && pending ? pending.requestId : newRequestId();
+    const submission: PendingSubmission = {
+      requestId,
+      key,
+      files: files.map((file) => ({
+        name: file.name,
+        type: file.type,
+        size: file.size,
+      })),
+      createdAt: new Date().toISOString(),
+    };
+    const remembered = submissions.remember(workspaceId, threadId, submission);
+    if (!remembered) {
+      setPendingNotice(
+        "Browser storage is unavailable. This send can still be retried in this tab, but a reload would not restore it.",
+      );
+    } else {
+      setPendingNotice(undefined);
+    }
+    const body = new FormData();
+    body.append("requestId", requestId);
+    body.append("content", content);
+    for (const file of files) body.append("files", file);
+    await api(
+      `/api/threads/${encodeURIComponent(threadId)}/messages`,
+      files.length > 0
+        ? { method: "POST", body }
+        : { method: "POST", body: JSON.stringify({ content, requestId }) },
+    );
+    if (
+      draftRevision !== undefined &&
+      conversations.clearSentDraft(workspaceId, threadId, draftRevision)
+    ) {
+      setDraftRevision((revision) => revision + 1);
+    }
+    const retired = submissions.retire(workspaceId, threadId, requestId);
+    if (!retired.persisted) {
+      setPendingNotice(
+        "The send was confirmed, but this tab could not clear the retry identity from browser storage. A reload may prompt about it once.",
+      );
+    }
+    if (generation !== workspaceGenerationRef.current) return;
+    if (routeRef.current.messageTarget && routeRef.current.threadId === threadId) {
+      routeLoadSuppressedRef.current = true;
+      navigate(`/threads/${encodeURIComponent(threadId)}`, {
+        view: "threads",
+        surface: routeRef.current.surface,
+        threadId,
+      });
+    }
+    setLatestScrollRequest((revision) => revision + 1);
+    await Promise.all([
+      refresh(true),
+      loadHistoryPage(threadId, { threadId, kind: "latest" }),
+    ]);
+  };  if (!data) {
     return (
       <div className="boot-screen">
         <div className="brand-mark">N</div>
@@ -1199,39 +1292,17 @@ export function App() {
                 conversations.updateDraft(data.workspace.id, route.threadId, value);
                 setDraftRevision((revision) => revision + 1);
               }}
-              onSend={async (content, files) => {
+              onSend={async (content, files, sendAsNew) => {
                 if (!route.threadId) return;
-                const threadId = route.threadId;
-                const generation = workspaceGenerationRef.current;
-                const workspaceId = data.workspace.id;
-                const draftRevision = conversations.draft(workspaceId, threadId).revision;
-                const body = new FormData();
-                body.append("content", content);
-                for (const file of files) body.append("files", file);
-                await api(
-                  `/api/threads/${threadId}/messages`,
-                  files.length > 0
-                    ? { method: "POST", body }
-                    : { method: "POST", body: JSON.stringify({ content }) },
-                );
-                if (conversations.clearSentDraft(workspaceId, threadId, draftRevision)) {
-                  setDraftRevision((revision) => revision + 1);
-                }
-                if (generation !== workspaceGenerationRef.current) return;
-                if (routeRef.current.messageTarget) {
-                  routeLoadSuppressedRef.current = true;
-                  navigate(`/threads/${encodeURIComponent(threadId)}`, {
-                    view: "threads",
-                    surface: routeRef.current.surface,
-                    threadId,
-                  });
-                }
-                setLatestScrollRequest((revision) => revision + 1);
-                await Promise.all([
-                  refresh(true),
-                  loadHistoryPage(threadId, { threadId, kind: "latest" }),
-                ]);
+                await sendMessage(route.threadId, content, files, sendAsNew);
               }}
+              pendingNotice={pendingNotice}
+              onCloseSubmitNotice={() => setPendingNotice(undefined)}
+              pendingSubmission={
+                route.threadId
+                  ? submissions.pendingFor(data.workspace.id, route.threadId)
+                  : null
+              }
               onRequestRename={setThreadToRename}
               onArchive={archiveThread}
               onRestore={restoreThread}
@@ -1993,8 +2064,11 @@ function ThreadView(props: {
   onClearMessageTarget: () => void;
   draft: string;
   draftSaved: boolean;
+  pendingNotice?: string;
+  onCloseSubmitNotice: () => void;
   onDraftChange: (value: string) => void;
-  onSend: (content: string, files: File[]) => Promise<void>;
+  onSend: (content: string, files: File[], sendAsNew?: boolean) => Promise<void>;
+  pendingSubmission: PendingSubmission | null;
   onRetry: (runId: string) => Promise<unknown>;
   onToolDecision: (toolCallId: string, approved: boolean) => Promise<void>;
   onToolResponse: (toolCallId: string, answers: string[][]) => Promise<void>;
@@ -2004,7 +2078,14 @@ function ThreadView(props: {
 }) {
   const { draft, onDraftChange: setDraft } = props;
   const [sending, setSending] = useState(false);
+  const sendingRef = useRef(false);
+  const [sendAsNew, setSendAsNew] = useState(false);
   const [localError, setLocalError] = useState<string>();
+  const pendingIdentity = props.pendingSubmission?.requestId;
+
+  useEffect(() => {
+    setSendAsNew(false);
+  }, [props.threadData?.thread.id, pendingIdentity]);
   const [mentionMenuOpen, setMentionMenuOpen] = useState(true);
   const [activeSuggestion, setActiveSuggestion] = useState(0);
   const [activeTab, setActiveTab] = useState<"messages" | "artifacts">("messages");
@@ -2143,31 +2224,36 @@ function ThreadView(props: {
 
   const send = async () => {
     const content = draft.trim();
-    if ((!content && attachments.length === 0) || sending) return;
-    const agentsByHandle = new Map(props.data.agents.map((agent) => [agent.handle, agent]));
-    const requestedHandles = extractMentionHandles(content);
-    const unavailable = requestedHandles
-      .map((handle) => agentsByHandle.get(handle))
-      .find((agent) => agent && !canCallAgent(agent));
-    if (unavailable) {
-      setLocalError(`@${unavailable.handle} cannot be invoked: ${unavailable.readinessLabel}.`);
+    if (
+      ((!content && attachments.length === 0) || sendingRef.current) &&
+      !pendingRewarning
+    ) {
       return;
     }
+    if (pendingRewarning && !sendAsNew && attachments.length === 0) return;
+    sendingRef.current = true;
     setSending(true);
     setLocalError(undefined);
+    const sentFiles = attachments;
     try {
-      await props.onSend(content, attachments);
-      setAttachments([]);
+      await props.onSend(content, sentFiles, sendAsNew);
+      setSendAsNew(false);
+      const sentIdentity = new Set(
+        sentFiles.map((file) => `${file.name}\u0000${file.type}\u0000${file.size}`),
+      );
+      setAttachments((current) =>
+        current.filter((file) => !sentIdentity.has(`${file.name}\u0000${file.type}\u0000${file.size}`)),
+      );
       setMentionMenuOpen(true);
       setAddMenuOpen(false);
     } catch (caught) {
       setLocalError(messageFrom(caught));
     } finally {
       setSending(false);
+      sendingRef.current = false;
     }
   };
-
-  const addAttachments = (files: File[]) => {
+    const addAttachments = (files: File[]) => {
     const next = [...attachments, ...files];
     if (next.length > 10) {
       setLocalError("Attach no more than 10 files at once.");
@@ -2272,6 +2358,16 @@ function ThreadView(props: {
   }
   const archived = thread.archived;
   const hasActiveRuns = props.threadData.activeRuns.some(isActiveRun);
+  const pendingFilesMatch =
+    !props.pendingSubmission ||
+    (props.pendingSubmission.files.length === attachments.length &&
+      props.pendingSubmission.files.every((expected, index) =>
+        expected.name === attachments[index]?.name &&
+        expected.type === attachments[index]?.type &&
+        expected.size === attachments[index]?.size,
+      ));
+  const pendingRewarning =
+    !sending && props.pendingSubmission !== null && props.pendingSubmission.files.length > 0 && !pendingFilesMatch;
   return (
     <div className="thread-view">
       <header className="workspace-header">
@@ -2736,6 +2832,33 @@ function ThreadView(props: {
             <p className="draft-storage-note" role="status">
               Browser storage is unavailable. Draft changes stay in this tab until you close it.
             </p>
+          )}
+          {props.pendingNotice && (
+            <p className="pending-submission-note" role="status">
+              {props.pendingNotice}{" "}
+              <button
+                type="button"
+                className="pending-notice-close"
+                aria-label="Dismiss pending identity notice"
+                onClick={props.onCloseSubmitNotice}
+              >
+                Dismiss
+              </button>
+            </p>
+          )}
+          {pendingRewarning && (
+            <div className="pending-submission-note" role="status">
+              <p>The previous send was not confirmed. Reattach the original files (same
+              order) to retry that message, or send as a new message without them.</p>
+              <div className="pending-submission-actions">
+                <button type="button" onClick={() => fileInputRef.current?.click()}>
+                  Reattach original files
+                </button>
+                <button type="button" onClick={() => setSendAsNew(true)}>
+                  Send as new message
+                </button>
+              </div>
+            </div>
           )}
           {localError && (
             <p className="inline-error">
