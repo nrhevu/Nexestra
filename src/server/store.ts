@@ -42,6 +42,7 @@ import {
   MESSAGE_SEARCH_QUERY_MAX_LENGTH,
   MESSAGE_SEARCH_SNIPPET_MAX_CHARS,
   type Message,
+  MessageRequestIdSchema,
   MessageSchema,
   type MessageSearchAuthor,
   MessageSearchAuthorSchema,
@@ -162,7 +163,12 @@ const CredentialSchema = z.object({
 });
 
 type TranscriptEvent =
-  | { type: "message.created"; sequence: number; message: Message }
+  | {
+      type: "message.created";
+      sequence: number;
+      message: Message;
+      submission?: UserSubmissionEnvelope;
+    }
   | { type: "artifact.created"; sequence: number; artifact: Artifact }
   | { type: "run.updated"; sequence: number; run: AgentRun }
   | { type: "tool.updated"; sequence: number; toolCall: ToolCall };
@@ -209,6 +215,20 @@ interface ArtifactDraft extends Omit<Artifact, "sequence"> {
   bytes?: Uint8Array;
 }
 
+interface UserSubmissionEnvelope {
+  requestIdHash: string;
+  fingerprint: string;
+}
+
+interface UserSubmissionReceipt {
+  requestIdHash: string;
+  fingerprint: string;
+  messageId: string;
+  sequence: number;
+  lineStart: number;
+  lineEnd: number;
+}
+
 interface FileStoreOptions {
   root?: string;
   workspacePath?: string;
@@ -237,6 +257,7 @@ export class FileStore {
   private writeQueue: Promise<void> = Promise.resolve();
   private readonly sequenceByThread = new Map<string, number>();
   private readonly historyIndexes = new Map<string, TranscriptHistoryIndex>();
+  private readonly submissionReceipts = new Map<string, UserSubmissionReceipt>();
 
   private constructor(
     paths: {
@@ -1463,7 +1484,9 @@ export class FileStore {
     mentions: Message["mentions"],
     uploads: UploadArtifactInput[] = [],
     knowledgeReferences: KnowledgeReference[] = [],
+    requestId?: string,
   ): Promise<Message> {
+    const normalizedRequestId = requestId === undefined ? undefined : normalizeRequestId(requestId);
     return this.appendMessage(
       threadId,
       {
@@ -1477,9 +1500,129 @@ export class FileStore {
         createdAt: new Date().toISOString(),
       },
       uploads,
+      normalizedRequestId,
     );
   }
 
+  async lookupUserSubmission(
+    threadId: string,
+    content: string,
+    uploads: UploadArtifactInput[],
+    requestId: string,
+  ): Promise<Message | undefined> {
+    validateUploads(uploads);
+    const requestIdHash = hashRequestId(normalizeRequestId(requestId));
+    const fingerprint = computeSubmissionFingerprint(content, uploads);
+    return this.withWrite(() => this.findSubmissionReplay(threadId, requestIdHash, fingerprint));
+  }
+
+  private async findSubmissionReplay(
+    threadId: string,
+    requestIdHash: string,
+    fingerprint: string,
+  ): Promise<Message | undefined> {
+    const receipt = this.submissionReceipts.get(receiptKey(threadId, requestIdHash));
+    if (!receipt) return undefined;
+    if (receipt.fingerprint !== fingerprint) {
+      throw new StoreError(
+        "conflict",
+        "A different message was already stored with this request ID.",
+      );
+    }
+    return this.readReceiptMessage(threadId, receipt);
+  }
+
+  private async readReceiptMessage(
+    threadId: string,
+    receipt: UserSubmissionReceipt,
+  ): Promise<Message> {
+    let handle: Awaited<ReturnType<typeof open>> | undefined;
+    try {
+      handle = await open(this.transcriptPath(threadId), "r");
+    } catch (error) {
+      if (isNodeError(error, "ENOENT")) {
+        throw new StoreError(
+          "conflict",
+          "The stored submission transcript is missing; restart Nexestra before retrying.",
+        );
+      }
+      throw error;
+    }
+    try {
+      const length = receipt.lineEnd - receipt.lineStart;
+      if (length <= 0 || length > HISTORY_MAX_EVENT_BYTES) {
+        throw new StoreError(
+          "conflict",
+          "The stored submission receipt is invalid; restart Nexestra before retrying.",
+        );
+      }
+      const buffer = Buffer.allocUnsafe(length);
+      const { bytesRead } = await handle.read(buffer, 0, length, receipt.lineStart);
+      if (bytesRead !== length) {
+        throw new StoreError(
+          "conflict",
+          "The stored submission transcript changed outside the app; restart Nexestra before retrying.",
+        );
+      }
+      let line: string;
+      try {
+        line = new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+      } catch {
+        throw new StoreError(
+          "conflict",
+          "The stored submission transcript is unreadable; restart Nexestra before retrying.",
+        );
+      }
+      let event: TranscriptEvent | undefined;
+      try {
+        event = parseTranscriptEvent(line);
+      } catch {
+        throw new StoreError(
+          "conflict",
+          "The stored submission transcript is unreadable; restart Nexestra before retrying.",
+        );
+      }
+      if (event?.type !== "message.created" || event.message.id !== receipt.messageId) {
+        throw new StoreError(
+          "conflict",
+          "The stored submission receipt is inconsistent; restart Nexestra before retrying.",
+        );
+      }
+      const envelope = parseSubmissionEnvelope(
+        (JSON.parse(line) as { submission?: unknown }).submission,
+      );
+      if (
+        envelope === undefined ||
+        envelope === "invalid" ||
+        envelope.requestIdHash !== receipt.requestIdHash ||
+        envelope.fingerprint !== receipt.fingerprint
+      ) {
+        throw new StoreError(
+          "conflict",
+          "The stored submission receipt is inconsistent; restart Nexestra before retrying.",
+        );
+      }
+      const index = this.historyIndexes.get(threadId);
+      if (event.message.artifactIds.length > 0) {
+        if (!index || index.unreliable || index.missing) {
+          throw new StoreError(
+            "conflict",
+            "Stored attachment records cannot be verified; restart Nexestra and retry.",
+          );
+        }
+        const artifactEntries = new Set(index.artifacts.map((entry) => entry.id));
+        if (!event.message.artifactIds.every((artifactId) => artifactEntries.has(artifactId))) {
+          throw new StoreError(
+            "conflict",
+            "A stored submission for this request ID is missing its attachment records; send a new message with a different request ID.",
+          );
+        }
+      }
+      return structuredClone(event.message);
+    } finally {
+      await handle?.close().catch(() => undefined);
+    }
+  }
   async createAgentMessage(
     threadId: string,
     agent: Agent,
@@ -1788,18 +1931,35 @@ export class FileStore {
     threadId: string,
     input: Omit<Message, "sequence">,
     uploads: UploadArtifactInput[] = [],
+    requestId?: string,
   ): Promise<Message> {
     return this.withWrite(async () => {
       const threadIndex = this.state.threads.findIndex((thread) => thread.id === threadId);
       const currentThread = this.state.threads[threadIndex];
       if (!currentThread) throw new StoreError("not_found", "Thread not found.");
+      validateUploads(uploads);
+      const requestIdHash = requestId ? hashRequestId(requestId) : undefined;
+      const submissionFingerprint = requestId
+        ? computeSubmissionFingerprint(input.content, uploads)
+        : undefined;
+      const keyedUploadIds = requestId
+        ? prepareSubmissionUploadIds(threadId, requestId, uploads)
+        : undefined;
+      if (requestId && requestIdHash && submissionFingerprint) {
+        const replay = await this.findSubmissionReplay(
+          threadId,
+          requestIdHash,
+          submissionFingerprint,
+        );
+        if (replay !== undefined) return replay;
+      }
       if (currentThread.archived) {
         throw new StoreError(
           "conflict",
           "Archived threads are read-only. Restore the thread before sending new messages.",
         );
       }
-      const artifactDrafts = await this.createArtifactDrafts(input, uploads);
+      const artifactDrafts = await this.createArtifactDrafts(input, uploads, keyedUploadIds);
       const messageSequence = await this.nextSequence(threadId);
       const artifacts = artifactDrafts.map((draft, index) =>
         ArtifactSchema.parse({ ...draft, sequence: messageSequence + index + 1 }),
@@ -1831,15 +1991,29 @@ export class FileStore {
       const thread = nextState.threads[threadIndex];
       if (!thread) throw new StoreError("not_found", "Thread not found.");
       const writtenUploads: string[] = [];
+      let appended: { baseOffset: number; endOffset: number } | undefined;
       try {
         for (const draft of artifactDrafts) {
           if (!draft.bytes) continue;
           const file = this.uploadArtifactPath(threadId, draft.id);
-          await writePrivateFile(file, draft.bytes);
-          writtenUploads.push(file);
+          if (keyedUploadIds?.includes(draft.id) === true) {
+            // Keyed files survive by design: crash orphans are byte-verified
+            // and reused, and a durable transcript must never lose a reference.
+            await writeKeyedUploadFile(file, draft.bytes);
+          } else {
+            await writePrivateFile(file, draft.bytes);
+            writtenUploads.push(file);
+          }
         }
         const events = [
-          { type: "message.created", sequence: messageSequence, message: persistedMessage },
+          {
+            type: "message.created",
+            sequence: messageSequence,
+            message: persistedMessage,
+            ...(requestIdHash && submissionFingerprint
+              ? { submission: { requestIdHash, fingerprint: submissionFingerprint } }
+              : {}),
+          },
           ...artifacts.map(
             (artifact): TranscriptEvent => ({
               type: "artifact.created",
@@ -1848,31 +2022,45 @@ export class FileStore {
             }),
           ),
         ] satisfies TranscriptEvent[];
-        const appended = await appendManySynced(this.transcriptPath(threadId), events);
+        appended = await appendManySynced(this.transcriptPath(threadId), events);
+        if (requestIdHash && submissionFingerprint) {
+          const messageEvent = events[0];
+          const messageLineBytes = Buffer.byteLength(JSON.stringify(messageEvent), "utf8") + 1;
+          this.submissionReceipts.set(receiptKey(threadId, requestIdHash), {
+            requestIdHash,
+            fingerprint: submissionFingerprint,
+            messageId: persistedMessage.id,
+            sequence: messageSequence,
+            lineStart: appended.baseOffset,
+            lineEnd: appended.baseOffset + messageLineBytes,
+          });
+        }
         await this.extendTranscriptIndex(threadId, appended.baseOffset, events);
       } catch (error) {
-        await Promise.all(writtenUploads.map((file) => unlink(file).catch(() => undefined)));
+        if (!appended) {
+          await Promise.all(writtenUploads.map((file) => unlink(file).catch(() => undefined)));
+        }
         throw error;
       }
       this.sequenceByThread.set(threadId, artifacts.at(-1)?.sequence ?? messageSequence);
       thread.messageCount += 1;
       thread.lastMessageAt = persistedMessage.createdAt;
       thread.updatedAt = persistedMessage.createdAt;
-      await this.writeState(nextState);
       this.state = nextState;
+      await this.writeState(this.state);
       return structuredClone(persistedMessage);
     });
   }
-
   private async createArtifactDrafts(
     message: Omit<Message, "sequence">,
     uploads: UploadArtifactInput[],
+    keyedUploadIds?: string[],
   ): Promise<ArtifactDraft[]> {
     validateUploads(uploads);
-    const drafts: ArtifactDraft[] = uploads.map((upload) => {
+    const drafts: ArtifactDraft[] = uploads.map((upload, index) => {
       const mediaType = normaliseMediaType(upload.mediaType) || inferMediaType(upload.name);
       return {
-        id: crypto.randomUUID(),
+        id: keyedUploadIds?.[index] ?? crypto.randomUUID(),
         threadId: message.threadId,
         messageId: message.id,
         kind: isSafeImageType(mediaType) ? "image" : "file",
@@ -2228,6 +2416,22 @@ export class FileStore {
           return { status: "malformed" };
         }
         if (!event) return { status: "unknown" };
+        if (event.type === "message.created") {
+          const submission = parseSubmissionEnvelope((raw as { submission?: unknown }).submission);
+          if (submission === "invalid") return { status: "malformed" };
+          if (submission) {
+            const accepted = upsertSubmissionReceipt(
+              this.submissionReceipts,
+              threadId,
+              submission,
+              event.message.id,
+              event.sequence,
+              lineStart,
+              lineEnd,
+            );
+            if (!accepted) return { status: "malformed" };
+          }
+        }
         const entry = transcriptHistoryEntry(event.sequence, raw, lineStart, lineEnd);
         if (!entry) return { status: "unknown" };
         addTranscriptHistoryEntry(index, entry);
@@ -3364,6 +3568,138 @@ async function writePrivateFile(file: string, bytes: Uint8Array): Promise<void> 
 
 function hashBytes(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function receiptKey(threadId: string, requestIdHash: string): string {
+  return threadId + ":" + requestIdHash;
+}
+
+function normalizeRequestId(requestId: string): string {
+  try {
+    return MessageRequestIdSchema.parse(requestId);
+  } catch {
+    throw new StoreError("invalid", "requestId must be a UUID.");
+  }
+}
+
+function hashRequestId(requestId: string): string {
+  return createHash("sha256").update(requestId).digest("hex");
+}
+
+export function computeSubmissionFingerprint(
+  content: string,
+  uploads: UploadArtifactInput[],
+): string {
+  const uploadEntries = uploads.map((upload) => {
+    const mediaType = normaliseMediaType(upload.mediaType) || inferMediaType(upload.name);
+    return (
+      normaliseArtifactName(upload.name) +
+      String.fromCharCode(0) +
+      mediaType +
+      String.fromCharCode(0) +
+      upload.bytes.byteLength +
+      String.fromCharCode(0) +
+      hashBytes(upload.bytes)
+    );
+  });
+  return createHash("sha256")
+    .update(content.trim() + String.fromCharCode(31) + uploadEntries.join(String.fromCharCode(31)))
+    .digest("hex");
+}
+
+export function keyedUploadStorageId(
+  threadId: string,
+  requestId: string,
+  index: number,
+  bytesHash: string,
+): string {
+  const digest = createHash("sha256")
+    .update(
+      threadId +
+        String.fromCharCode(0) +
+        requestId +
+        String.fromCharCode(0) +
+        index +
+        String.fromCharCode(0) +
+        bytesHash,
+    )
+    .digest("hex");
+  return "sub-" + digest.slice(0, 40);
+}
+
+function prepareSubmissionUploadIds(
+  threadId: string,
+  requestId: string,
+  uploads: UploadArtifactInput[],
+): string[] {
+  return uploads.map((upload, index) =>
+    keyedUploadStorageId(threadId, requestId, index, hashBytes(upload.bytes)),
+  );
+}
+
+function parseSubmissionEnvelope(value: unknown): UserSubmissionEnvelope | "invalid" | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "object" || Array.isArray(value)) return "invalid";
+  const envelope = value as Record<string, unknown>;
+  if (
+    typeof envelope.requestIdHash !== "string" ||
+    typeof envelope.fingerprint !== "string" ||
+    !isSubmissionHash(envelope.requestIdHash) ||
+    !isSubmissionHash(envelope.fingerprint)
+  ) {
+    return "invalid";
+  }
+  return { requestIdHash: envelope.requestIdHash, fingerprint: envelope.fingerprint };
+}
+
+function isSubmissionHash(value: string): boolean {
+  return /^[a-f0-9]{64}$/.test(value);
+}
+
+function upsertSubmissionReceipt(
+  receipts: Map<string, UserSubmissionReceipt>,
+  threadId: string,
+  envelope: UserSubmissionEnvelope,
+  messageId: string,
+  sequence: number,
+  lineStart: number,
+  lineEnd: number,
+): boolean {
+  const key = receiptKey(threadId, envelope.requestIdHash);
+  const existing = receipts.get(key);
+  if (existing && existing.fingerprint !== envelope.fingerprint) return false;
+  receipts.set(key, {
+    requestIdHash: envelope.requestIdHash,
+    fingerprint: envelope.fingerprint,
+    messageId,
+    sequence,
+    lineStart,
+    lineEnd,
+  });
+  return true;
+}
+
+async function writeKeyedUploadFile(
+  file: string,
+  bytes: Uint8Array,
+): Promise<"created" | "reused"> {
+  let existing: Buffer;
+  try {
+    existing = await readFile(file);
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) {
+      await writePrivateFile(file, bytes);
+      return "created";
+    }
+    throw error;
+  }
+  if (hashBytes(existing) !== hashBytes(bytes)) {
+    throw new StoreError(
+      "conflict",
+      "A previously stored attachment for this request ID has different content.",
+    );
+  }
+  return "reused";
 }
 
 async function writeJsonAtomic(file: string, value: unknown, mode: number): Promise<void> {
