@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import {
   type Agent,
   type AgentRun,
@@ -23,7 +22,12 @@ import {
   agentView,
   type RuntimeToolUpdate,
 } from "./runtime.js";
-import { type FileStore, StoreError, type UploadArtifactInput } from "./store.js";
+import {
+  computeSubmissionFingerprint,
+  type FileStore,
+  StoreError,
+  type UploadArtifactInput,
+} from "./store.js";
 
 export class AgentDispatcher {
   private readonly queues = new Map<string, Promise<void>>();
@@ -1182,32 +1186,8 @@ type SubmissionLock = {
   promise: Promise<void>;
 };
 
-function submissionUploadKey(upload: {
-  name: string;
-  mediaType: string;
-  size: number;
-  sha256: string;
-}): string {
-  return `${upload.name}\u0000${upload.mediaType}\u0000${upload.size}\u0000${upload.sha256}`;
-}
-
-function submissionPayloadHash(
-  threadId: string,
-  content: string,
-  uploads: UploadArtifactInput[],
-): string {
-  const canonicalUploads = [...uploads]
-    .map((upload) => ({
-      name: upload.name,
-      mediaType: upload.mediaType ?? "",
-      size: upload.bytes.byteLength,
-      sha256: createHash("sha256").update(upload.bytes).digest("hex"),
-    }))
-    .sort((left, right) => submissionUploadKey(left).localeCompare(submissionUploadKey(right)));
-  return createHash("sha256")
-    .update(JSON.stringify({ threadId, content, uploads: canonicalUploads }))
-    .digest("hex");
-}
+const UNAVAILABLE_AGENT_REASON =
+  "Original agent is unavailable (disabled, archived, or deleted); this mention was not dispatched.";
 
 export type SendMessageResult = {
   message: Message;
@@ -1238,7 +1218,7 @@ export class ChatService {
     return this.withSubmissionLock(
       threadId,
       requestId,
-      submissionPayloadHash(threadId, content, uploads),
+      computeSubmissionFingerprint(content, uploads),
       async () => {
         const existing = await this.store.lookupUserSubmission(
           threadId,
@@ -1361,22 +1341,54 @@ export class ChatService {
     const data = await this.store.threadData(threadId);
     const runsForMessage = data.runs.filter((run) => run.triggerMessageId === message.id);
     if (!allowDispatch || data.thread.archived) return runsForMessage;
+    const resolved: AgentRun[] = [];
     for (const run of runsForMessage) {
-      if (run.status !== "queued" || this.dispatcher.liveRunExists(run.id)) continue;
+      if (run.status !== "queued" || this.dispatcher.liveRunExists(run.id)) {
+        resolved.push(run);
+        continue;
+      }
       const agent = this.store.getAgent(run.agentId);
-      if (!agent || agent.archived || !agent.enabled) continue;
-      this.dispatcher.reconcileQueuedRun(run, agent, message);
+      if (agent && !agent.archived && agent.enabled) {
+        this.dispatcher.reconcileQueuedRun(run, agent, message);
+        resolved.push(run);
+        continue;
+      }
+      const updatedAt = new Date().toISOString();
+      resolved.push(
+        await this.store.updateRun({
+          ...run,
+          status: "failed",
+          error: UNAVAILABLE_AGENT_REASON,
+          updatedAt,
+        }),
+      );
     }
-    const alreadyDispatched = new Set(runsForMessage.map((run) => run.agentId));
+    const alreadyDispatched = new Set(resolved.map((run) => run.agentId));
     const newlyQueued: AgentRun[] = [];
     for (const mention of message.mentions) {
       if (alreadyDispatched.has(mention.agentId)) continue;
       const agent = this.store.getAgent(mention.agentId);
-      if (!agent || agent.archived || !agent.enabled) continue;
-      const [run] = await this.dispatcher.enqueue(message, [agent]);
-      if (run) newlyQueued.push(run);
+      if (agent && !agent.archived && agent.enabled) {
+        const [run] = await this.dispatcher.enqueue(message, [agent]);
+        if (run) newlyQueued.push(run);
+        continue;
+      }
+      const createdAt = new Date().toISOString();
+      newlyQueued.push(
+        await this.store.updateRun({
+          id: crypto.randomUUID(),
+          threadId,
+          triggerMessageId: message.id,
+          agentId: mention.agentId,
+          attempt: 1,
+          status: "failed",
+          error: UNAVAILABLE_AGENT_REASON,
+          createdAt,
+          updatedAt: createdAt,
+        }),
+      );
     }
-    return [...runsForMessage, ...newlyQueued];
+    return [...resolved, ...newlyQueued];
   }
 
   private async withSubmissionLock<T>(

@@ -29,6 +29,7 @@ const uuidJ = "3f0f8f1a-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const uuidK = "3f0f8f1a-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const uuidL = "3f0f8f1a-cccc-4ccc-8ccc-cccccccccccc";
 const uuidM = "3f0f8f1a-dddd-4ddd-8ddd-dddddddddddd";
+const uuidN = "3f0f8f1a-eeee-4eee-8eee-eeeeeeeeeeee";
 
 class RecordingRunner implements AgentRunner {
   invocations: { agentId: string; runId?: string }[] = [];
@@ -405,7 +406,7 @@ describe("recoverable submission dispatch", () => {
     expect(await userMessages(store, thread.id)).toHaveLength(1);
   });
 
-  it("skips dispatch for disabled or deleted original agents on replay", async () => {
+  it("records failed runs for disabled or deleted original agents on replay", async () => {
     const { store, runner, dispatcher, chat, thread } = await setup();
     const codex = await createAgent(store, "codex");
     const requestId = uuidL;
@@ -420,7 +421,10 @@ describe("recoverable submission dispatch", () => {
     await store.updateAgent(codex.id, { enabled: false });
     const disabled = await chat.send(thread.id, { content: "@codex disabled", requestId });
     expect(disabled.replayed).toBe(true);
-    expect(disabled.runs).toHaveLength(0);
+    expect(disabled.runs).toHaveLength(1);
+    expect(disabled.runs[0]?.agentId).toBe(codex.id);
+    expect(disabled.runs[0]?.status).toBe("failed");
+    expect(disabled.runs[0]?.error).toMatch(/unavailable/i);
     expect(runner.invocations).toHaveLength(0);
 
     const delta = await createAgent(store, "delta");
@@ -440,9 +444,52 @@ describe("recoverable submission dispatch", () => {
     });
     expect(stored.id).toBeDefined();
     expect(deleted.replayed).toBe(true);
-    expect(deleted.runs).toHaveLength(0);
+    expect(deleted.runs).toHaveLength(1);
+    expect(deleted.runs[0]?.agentId).toBe(delta.id);
+    expect(deleted.runs[0]?.status).toBe("failed");
+    expect(deleted.runs[0]?.triggerMessageId).toBe(stored.id);
     await dispatcher.waitForIdle();
     expect(runner.invocations).toHaveLength(0);
+  });
+
+  it("marks a durable queued run failed without creating a new run when the agent is unavailable", async () => {
+    const { store, runner, dispatcher, chat, thread } = await setup();
+    const codex = await createAgent(store, "codex");
+    const requestId = uuidN;
+    const message = await store.createUserMessage(
+      thread.id,
+      "@codex unavailable",
+      [{ agentId: codex.id, handle: codex.handle }],
+      [],
+      [],
+      requestId,
+    );
+    const now = new Date().toISOString();
+    const run: AgentRun = {
+      id: "durable-disabled-run",
+      threadId: thread.id,
+      triggerMessageId: message.id,
+      agentId: codex.id,
+      attempt: 1,
+      status: "queued",
+      createdAt: now,
+      updatedAt: now,
+    };
+    await store.updateRun(run);
+    await store.updateAgent(codex.id, { enabled: false });
+    const replayed = await chat.send(thread.id, { content: "@codex unavailable", requestId });
+    expect(replayed.replayed).toBe(true);
+    expect(replayed.runs).toHaveLength(1);
+    expect(replayed.runs[0]?.id).toBe(run.id);
+    expect(replayed.runs[0]?.agentId).toBe(codex.id);
+    expect(replayed.runs[0]?.status).toBe("failed");
+    expect(replayed.runs[0]?.error).toMatch(/unavailable/i);
+    await dispatcher.waitForIdle();
+    expect(runner.invocations).toHaveLength(0);
+    const data = await store.threadData(thread.id);
+    const storedRun = data.runs.find((entry) => entry.id === run.id);
+    expect(storedRun?.status).toBe("failed");
+    expect(data.runs.filter((entry) => entry.triggerMessageId === message.id)).toHaveLength(1);
   });
 
   it("keeps legacy unkeyed sends independent for identical text", async () => {
