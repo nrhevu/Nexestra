@@ -280,6 +280,34 @@ describe("manual Worker delegation", () => {
     await expect(dispatcher.retry(first.id)).rejects.toMatchObject({ code: "conflict" });
   });
 
+  it("rejects a late Stop after the assignment completed while its task update is still saving", async () => {
+    const { dispatcher, task, worker, repository, store } = await setup(async () => "Done.");
+    const tailStarted = deferred();
+    const finishTail = deferred();
+    const updateTask = store.updateTask.bind(store);
+    const update = vi.spyOn(store, "updateTask").mockImplementation(async (id, input) => {
+      if ((input as { status?: string }).status === "done") {
+        tailStarted.resolve();
+        await finishTail.promise;
+      }
+      return updateTask(id, input);
+    });
+    await dispatcher.delegateFromTask(task.id, worker.handle, repository.handle);
+    try {
+      await tailStarted.promise;
+      await expect(dispatcher.stopTask(task.id)).rejects.toMatchObject({ code: "conflict" });
+    } finally {
+      finishTail.resolve();
+      await dispatcher.waitForIdle();
+      update.mockRestore();
+    }
+    expect(await dispatcher.taskProcess(task.id)).toMatchObject({
+      assignment: { status: "completed" },
+      task: { status: "done" },
+      run: { status: "completed" },
+    });
+  });
+
   it("accepts an HTTP delegation before the Worker finishes and validates its handles", async () => {
     const gate = deferred();
     const fixture = await setup(async () => {

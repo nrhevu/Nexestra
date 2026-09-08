@@ -14,6 +14,11 @@ Research date: 8 September 2026 (Asia/Ho_Chi_Minh).
 - [Linear: Workspaces](https://linear.app/docs/workspaces) places workspace settings and workspace
   switching in the workspace menu. Nexestra uses a rail and Settings already; keeping management in
   those controls is a local design inference, not a claim about Linear's rename or reorder behavior.
+- [Git fetch](https://git-scm.com/docs/git-fetch) documents fetching objects and updating remote
+  tracking refs. A repository refresh must therefore distinguish those refs from the starting commit
+  used for a new assignment. [Git diff](https://git-scm.com/docs/git-diff) exposes `--no-ext-diff` and
+  `--no-textconv`; a future review surface should disable external diff/conversion programs while
+  displaying repository changes. These are constraints for the next repository-management wave.
 
 These sources informed product choices. No usability study or measured productivity improvement is
 claimed. Search tooling was unavailable during this pass; the linked official pages were fetched

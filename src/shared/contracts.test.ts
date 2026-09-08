@@ -109,10 +109,14 @@ describe("UpdateAgentSchema", () => {
         baseUrl: "https://gateway.example/v1",
         model: "model-a",
         protocol: "openai-chat",
-        apiKey: "sk-new",
+        apiKey: "fixture-new-key",
         removeCredential: true,
       },
     });
     expect(result.success).toBe(false);
+    if (result.success) throw new Error("expected conflicting credential choices to be rejected");
+    expect(result.error.issues[0]?.message).toBe(
+      "Choose either a new API key or Remove credential.",
+    );
   });
 });
