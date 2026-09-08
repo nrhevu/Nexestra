@@ -2733,4 +2733,127 @@ describe("Agent editing", () => {
     expect(body.provider).toMatchObject({ type: "custom", removeCredential: true });
     expect(body.provider).not.toHaveProperty("apiKey");
   });
+  it("keeps the removal checkbox visible and retains the stored key when unchecked before save", async () => {
+    window.history.replaceState({}, "", "/surfaces/agents");
+    const masterAgent: AgentView = {
+      id: "agent-master",
+      workspaceId: workspace.id,
+      kind: "master",
+      name: "Maya",
+      handle: "maya",
+      description: "",
+      instructions: "",
+      enabled: true,
+      archived: false,
+      accessMode: "auto",
+      provider: {
+        type: "custom",
+        name: "Gateway",
+        baseUrl: "https://gateway.example/v1",
+        model: "model-a",
+        protocol: "openai-chat",
+        hasCredential: true,
+      },
+      createdAt: now,
+      updatedAt: now,
+      readiness: "ready",
+      readinessLabel: "Ready",
+    };
+    let receivedBody: unknown;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/bootstrap") {
+        return jsonResponse({ ...bootstrapData, agents: [masterAgent] });
+      }
+      if (path === `/api/agents/${masterAgent.id}` && init?.method === "PATCH") {
+        receivedBody = JSON.parse(String(init.body));
+        return jsonResponse(masterAgent);
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Agent management" });
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit @maya" });
+    const removal = within(dialog).getByRole("checkbox", { name: "Remove the stored key" });
+    const keyInput = within(dialog).getByPlaceholderText("••••••••••");
+    await user.click(removal);
+    expect(removal).toBeChecked();
+    expect(removal).toBeInTheDocument();
+    expect(keyInput).toBeDisabled();
+    await user.click(removal);
+    expect(removal).not.toBeChecked();
+    expect(keyInput).toBeEnabled();
+    await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
+    await waitFor(() => {
+      expect(receivedBody).toBeDefined();
+    });
+    const body = receivedBody as { provider: Record<string, unknown> };
+    expect(body.provider).toMatchObject({ type: "custom" });
+    expect(body.provider).not.toHaveProperty("removeCredential");
+    expect(body.provider).not.toHaveProperty("apiKey");
+  });
+  it("switches from removal back to rotation without sending removeCredential", async () => {
+    window.history.replaceState({}, "", "/surfaces/agents");
+    const masterAgent: AgentView = {
+      id: "agent-master",
+      workspaceId: workspace.id,
+      kind: "master",
+      name: "Maya",
+      handle: "maya",
+      description: "",
+      instructions: "",
+      enabled: true,
+      archived: false,
+      accessMode: "auto",
+      provider: {
+        type: "custom",
+        name: "Gateway",
+        baseUrl: "https://gateway.example/v1",
+        model: "model-a",
+        protocol: "openai-chat",
+        hasCredential: true,
+      },
+      createdAt: now,
+      updatedAt: now,
+      readiness: "ready",
+      readinessLabel: "Ready",
+    };
+    let receivedBody: unknown;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/bootstrap") {
+        return jsonResponse({ ...bootstrapData, agents: [masterAgent] });
+      }
+      if (path === `/api/agents/${masterAgent.id}` && init?.method === "PATCH") {
+        receivedBody = JSON.parse(String(init.body));
+        return jsonResponse(masterAgent);
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Agent management" });
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit @maya" });
+    const removal = within(dialog).getByRole("checkbox", { name: "Remove the stored key" });
+    const keyInput = within(dialog).getByPlaceholderText("••••••••••");
+    await user.click(removal);
+    expect(keyInput).toBeDisabled();
+    await user.click(removal);
+    expect(keyInput).toBeEnabled();
+    await user.type(keyInput, "sk-rotated");
+    await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
+    await waitFor(() => {
+      expect(receivedBody).toBeDefined();
+    });
+    const body = receivedBody as { provider: Record<string, unknown> };
+    expect(body.provider).toMatchObject({ type: "custom", apiKey: "sk-rotated" });
+    expect(body.provider).not.toHaveProperty("removeCredential");
+  });
 });

@@ -4349,15 +4349,24 @@ function CustomProviderFields({
             required
           />
         </Field>
-        {hasCredential && !removeCredential ? (
+        {hasCredential ? (
           <div className="credential-field">
-            <Field label="API key" optional hint="A key is already stored. Leave blank to keep it.">
+            <Field
+              label="API key"
+              optional
+              hint={
+                removeCredential
+                  ? "Removing the stored key cannot be undone."
+                  : "A key is already stored. Leave blank to keep it."
+              }
+            >
               <input
                 name="apiKey"
                 type="password"
                 minLength={8}
                 autoComplete="new-password"
-                placeholder="••••••••••"
+                placeholder={removeCredential ? "—" : "••••••••••"}
+                disabled={removeCredential}
               />
             </Field>
             <label className="checkbox-row">
@@ -4370,21 +4379,13 @@ function CustomProviderFields({
             </label>
           </div>
         ) : (
-          <Field
-            label="API key"
-            optional
-            hint={
-              hasCredential
-                ? "Removing the stored key cannot be undone."
-                : "Leave blank or enter at least 8 characters"
-            }
-          >
+          <Field label="API key" optional hint="Leave blank or enter at least 8 characters">
             <input
               name="apiKey"
               type="password"
               minLength={8}
               autoComplete="new-password"
-              placeholder={hasCredential ? "—" : "••••••••••"}
+              placeholder="••••••••••"
             />
           </Field>
         )}
