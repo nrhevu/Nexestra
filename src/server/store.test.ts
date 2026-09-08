@@ -1826,7 +1826,7 @@ describe("FileStore transcript search", () => {
     const store = await openStore();
     const [workspace] = store.listWorkspaces();
     if (!workspace) throw new Error("expected workspace");
-    const secret = "sk-hunter2-secret";
+    const secret = "fixture-hello-world";
     const agent = await store.createAgent({
       kind: "master",
       name: `${secret} bot`,
@@ -2020,5 +2020,42 @@ describe("FileStore transcript search", () => {
     expect(atCap.matches).toHaveLength(100);
     expect(atCap.matchesFound).toBe(count);
     expect(atCap.nextOffset).toBeNull();
+  });
+
+  it("treats invalid UTF-8 transcript lines as malformed while preserving valid Unicode and CRLF lines", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected workspace");
+    const thread = store.listThreads(workspace.id)[0];
+    if (!thread) throw new Error("expected thread");
+    const good = await store.createUserMessage(thread.id, "needle with Unicode ☃", []);
+    const invalidLine = Buffer.concat([
+      Buffer.from(
+        '{"type":"message.created","sequence":2,"message":{"id":"bad-utf8","threadId":"' +
+          thread.id +
+          '","sequence":2,"author":{"kind":"user","id":"local-user","name":"You"},' +
+          '"content":"valid needle ',
+      ),
+      Buffer.from([0xff]),
+      Buffer.from(
+        '","mentions":[],"knowledgeReferences":[],"artifactIds":[],"createdAt":"2026-01-01T00:00:00.000Z"}}\n',
+      ),
+    ]);
+    const crlfLine =
+      '{"type":"message.created","sequence":3,"message":{"id":"crlf-line","threadId":"' +
+      thread.id +
+      '","sequence":3,"author":{"kind":"user","id":"local-user","name":"You"},' +
+      '"content":"needle crlf","mentions":[],"knowledgeReferences":[],"artifactIds":[],' +
+      '"createdAt":"2026-01-01T00:00:01.000Z"}}\r\n';
+    await appendFile(store.transcriptPath(thread.id), invalidLine);
+    await appendFile(store.transcriptPath(thread.id), crlfLine);
+
+    const result = await store.searchMessages({ workspaceId: workspace.id, q: "needle" });
+    expect(result.complete).toBe(false);
+    expect(result.diagnostics.malformedLines).toBe(1);
+    expect(result.matches.map((hit) => hit.messageId)).toEqual(
+      expect.arrayContaining([good.id, "crlf-line"]),
+    );
+    expect(result.matches.some((hit) => hit.messageId === "bad-utf8")).toBe(false);
   });
 });

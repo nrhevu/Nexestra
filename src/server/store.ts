@@ -2374,6 +2374,7 @@ class MessageSearchScanner {
       (line) => this.handleLine(thread, line),
       () => this.handleOversizedLine(),
       (oversized) => this.handleTornTail(oversized),
+      () => this.handleMalformedUtf8Line(),
     );
     this.bytesRead += outcome.bytesRead;
     this.linesRead += outcome.lineCount;
@@ -2491,6 +2492,11 @@ class MessageSearchScanner {
     this.complete = false;
   }
 
+  private handleMalformedUtf8Line(): void {
+    this.malformedLines += 1;
+    this.complete = false;
+  }
+
   private handleTornTail(oversized: boolean): void {
     this.tornTailLines += 1;
     if (oversized) this.oversizedLines += 1;
@@ -2558,6 +2564,7 @@ async function scanTranscriptFile(
   onLine: (line: string) => void,
   onOversizedLine: () => void,
   onTornTail: (oversized: boolean) => void,
+  onInvalidUtf8: () => void,
 ): Promise<TranscriptFileScanOutcome> {
   return new Promise((resolve) => {
     let bytesRead = 0;
@@ -2627,8 +2634,18 @@ async function scanTranscriptFile(
           finish({ status: "limited", limitedBy: "lines", bytesRead, lineCount });
           return;
         }
-        if (isOversized) onOversizedLine();
-        else onLine(buffer().toString("utf8", 0, carryLength));
+        if (isOversized) {
+          onOversizedLine();
+        } else {
+          try {
+            const line = new TextDecoder("utf-8", { fatal: true }).decode(
+              buffer().subarray(0, carryLength),
+            );
+            onLine(line);
+          } catch {
+            onInvalidUtf8();
+          }
+        }
         carryLength = 0;
         oversized = false;
         lastByte = 0x0a;

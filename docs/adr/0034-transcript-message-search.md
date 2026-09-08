@@ -59,9 +59,10 @@ Streaming reader:
 
 - A custom UTF-8 line reader enforces byte and line budgets per file, drops over-1 MiB lines
   without buffering them, detects torn tails by tracking the final byte, and reports ENOENT
-  separately from other read errors. Line parse failures are counted and skipped instead of
-  throwing like the mutation path's readEvents. The scanner never writes to transcripts, state,
-  or credential files.
+  separately from other read errors. Lines are decoded with a fatal UTF-8 decoder, so invalid
+  bytes are counted as malformed/partial instead of being silently replaced. Line parse failures
+  are counted and skipped instead of throwing like the mutation path's readEvents. The scanner
+  never writes to transcripts, state, or credential files.
 
 ## Consequences and gaps
 
@@ -87,9 +88,10 @@ Streaming reader:
 
 Store tests cover active+archived filters, rename identity, workspace isolation and foreign
 thread rejection, case-insensitive phrase/snippet behavior, malformed/torn/oversized line
-accounting, byte/line budgets, pagination only on complete scans, the offset cap, never-used
-threads, missing/unreadable history, read-only invariants, credential redaction in query/snippet/
-metadata, redacted handles that coincide with credentials, and metadata-unsafe hits. HTTP tests
+accounting, invalid UTF-8 line handling with unchanged valid Unicode and CRLF behavior,
+byte/line budgets, pagination only on complete scans, the offset cap, never-used threads,
+missing/unreadable history, read-only invariants, credential redaction in query/snippet/metadata,
+redacted handles that coincide with credentials, and metadata-unsafe hits. HTTP tests
 cover query validation, 404/400 behavior, response shape without provider invocation, and HTTP
 credential echo redaction.
 

@@ -1358,7 +1358,7 @@ describe("HTTP message search", () => {
   it("redacts stored credentials from query echo over HTTP", async () => {
     const [workspace] = store.listWorkspaces();
     if (!workspace) throw new Error("expected workspace");
-    const secret = "sk-http-secret-123";
+    const secret = "fixture-http-world";
     await store.createAgent({
       kind: "master",
       name: "Http Gateway",
