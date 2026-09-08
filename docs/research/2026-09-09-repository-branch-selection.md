@@ -59,13 +59,53 @@ not features promised by the cited tools.
 - Cover loading, empty, partial, manual-entry, failure and stale states in the UI. Cancel or ignore
   old requests when the repository or workspace changes. Verify keyboard and light/dark themes.
 
-## Verification status
+## Implementation and verification
 
 The subprocess regression fixture reproduced corrupted UTF-8 before the change. All seven focused
 process tests pass after the fix, including separate stdout/stderr decoding, incomplete final
-characters, callback failure and the combined raw-byte limit. The transport-only `pnpm check`
-passed with 365 tests in 29 files, lint, typecheck and both production builds. Branch backend/UI
-integration and its final combined gate are still in progress.
+characters, callback failure and the combined raw-byte limit. Three HTTP error-boundary cases
+also verify redaction of stored credentials from validation, store and unexpected errors and logs.
+The branch backend, picker and shared contracts are integrated on
+`codex/workspace-attention-navigation`; [ADR 0037](../adr/0037-explicit-repository-source-branch.md)
+records the state and Git boundaries.
+
+Native-browser verification used one isolated local Git source and a runner that throws if invoked:
+
+- Opening details and explicitly listing `main`, `feature/release` and `nhánh/🚀` left all 39
+  original data files byte-identical, including state and the managed clone's Git metadata.
+- Applying `feature/release` published its commit at source version 1 while retaining the original
+  default `main`. Preparing a new Worker worktree through `RepositoryManager` used that feature
+  commit; the existing Worker's staged, unstaged and untracked edits and both clone/Worker index
+  files retained their hashes. Preparation itself did not modify state metadata.
+- Two browser pickers started from version 0. After the first applied the feature branch, the
+  second could not apply its stale choice. Reloading and explicitly applying `nhánh/🚀` succeeded
+  at version 2. The picker now shows the loaded response's current source branch after a reload.
+- Selecting a missing branch displayed the Git failure while preserving the selected Unicode
+  branch, commit and version. Advancing that source branch and using **Refresh source** selected
+  its new commit at version 3; source and clone HEAD still pointed to `main`.
+- With 509 source branches, the list displayed 500 rows in a 240px scroll region and showed its
+  partial-list note. PageDown moved the list by 220px. Typing the omitted `release/outside-list`
+  branch and pressing Enter successfully applied it at version 4.
+- Browser QA found a successful apply leaving **Change branch** disabled because the guarded
+  finalizer skipped a cleared intent. Success now clears the busy state directly, and focus returns
+  after React enables the button. A regression test and a fresh native apply both verify that the
+  picker can reopen immediately. Closing a pending picker also restores focus after rendering.
+- Escape closes only the inline picker, returning focus to **Change branch**; a second Escape
+  closes details. Light/dark screenshots were inspected. Detail cards now use theme colors, and
+  metadata-label styling no longer leaks into nested branch rows and messages.
+- After all selections, refreshes and worktree preparation, all 38 original data files other than
+  the intentionally changed `state.json` retained their hashes. The old Worker still had its main
+  commit and edits, the first newly prepared Worker retained the feature commit, clone HEAD stayed
+  unchanged, and no `FETCH_HEAD` was created.
+
+The focused UI integration run passed 86 tests. The final combined `pnpm check` ran after the last
+presentation adjustment.
+
+### Combined gate
+
+`PATH=/opt/homebrew/bin:$PATH NODE_OPTIONS=--no-experimental-webstorage pnpm check` passed with
+**406 tests in 32 files**, lint on 76 files, TypeScript and client/server production builds on
+9 September 2026. No live provider or credentialed remote was used.
 
 ## Deliberate limits
 
@@ -73,3 +113,9 @@ This workflow selects existing source branches for future work. It does not crea
 switch existing Worker worktrees, merge, push, or turn the managed clone into an interactive checkout.
 Branch listing is an observation of a changing source, not a guaranteed future fetch result. A
 deleted branch can fail when selected even if it appeared in the list earlier.
+
+Names are limited to 256 characters and results to 500 rows. A list exceeding the 1 MiB transport
+budget fails visibly instead of returning an unverified partial result; branch listing is not a
+paginated remote-ref browser. Private fetched snapshot refs have no automatic pruning. If both
+publication and its recovery write fail, the last commit remains selected but the persisted busy
+flag can require restart recovery, as documented for source refresh.

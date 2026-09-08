@@ -96,7 +96,6 @@ import {
   type KnowledgeDocumentPreviewHandle,
 } from "./KnowledgeDocumentPreview.js";
 import { MessageSearchDialog } from "./MessageSearchDialog.js";
-import type { BranchAwareRepository } from "./RepositoryBranchPicker.js";
 import { RepositoryBranchPicker } from "./RepositoryBranchPicker.js";
 import { TopBar, type TopBarSurface } from "./TopBar.js";
 
@@ -5063,7 +5062,7 @@ function KnowledgeDetailDialog({
   const [restoringRevisionId, setRestoringRevisionId] = useState<string>();
   const [restoreError, setRestoreError] = useState<string>();
   const [branchBusy, setBranchBusy] = useState(false);
-  const repositoryItem = item.kind === "repository" ? (item as BranchAwareRepository) : undefined;
+  const repositoryItem = item.kind === "repository" ? item : undefined;
   const effectiveBranch = repositoryItem?.selectedBranch ?? repositoryItem?.defaultBranch ?? null;
   const previewRef = useRef<KnowledgeDocumentPreviewHandle>(null);
   const documentItem = item.kind === "document" ? item : undefined;

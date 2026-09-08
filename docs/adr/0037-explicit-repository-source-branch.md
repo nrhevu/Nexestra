@@ -59,8 +59,8 @@ agent or provider.
 
 ## Consequences and limits
 
-- sourceVersion is a monotonic selection counter, not a global refresh count. It increments only
-  on successful publication; stale expected versions make concurrent selection safe under the
+- sourceVersion counts successful source publications from both selection and refresh. Stale
+  expected versions make concurrent selection safe under the
   per-repository lock.
 - GET returns the effective selectedBranch, not the raw stored field, so a UI always sees the
   branch that future assignments will use. defaultBranch remains the clone original.
@@ -69,8 +69,8 @@ agent or provider.
 - Credential filtering uses the existing redactSecrets rule. A short stored credential embedded
   inside a larger word may not be recognized by that rule; full-credential and word-delimited
   cases are covered without adding exemptions.
-- Private snapshot refs are never pruned by this feature. Failed-fetch snapshots retain reachability
-  as in refresh; cleanup of stale snapshot refs remains a documented gap.
+- Private snapshot refs are never pruned by this feature. A successful fetch whose metadata
+  publication fails retains its snapshot ref, as in refresh; cleanup remains a documented gap.
 - Listing can race a mutation: it publishes snapshot-versioned metadata and may run while a
   private fetch is writing. If the managed clone provenance fails containment or origin checks,
   listing is refused rather than reading an untrusted Git directory.
@@ -91,4 +91,3 @@ provenance refusal, and HTTP origin/error mapping. No provider or credentialed r
 ## Status
 
 Accepted for Milestone M9.
-

@@ -3180,7 +3180,7 @@ kbd {
   padding: 11px 12px;
   border: 1px solid var(--border-soft);
   border-radius: 8px;
-  background: #191b20;
+  background: var(--canvas);
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -3188,7 +3188,7 @@ kbd {
 .resource-details-wide {
   grid-column: 1 / -1;
 }
-.resource-details span,
+.resource-details > div > span,
 .immutable-resource > span {
   color: var(--quiet);
   font-size: 10px;
@@ -3196,15 +3196,19 @@ kbd {
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
-.resource-details strong,
-.resource-details p,
-.resource-details code,
+.resource-details > div > strong,
+.resource-details > div > p,
+.resource-details > div > code,
 .immutable-resource code {
   margin: 0;
   overflow-wrap: anywhere;
-  color: #d9d5dd;
+  color: var(--text);
   font-size: 12px;
   line-height: 1.5;
+}
+.resource-details > div > small {
+  color: var(--muted);
+  font-size: 11px;
 }
 .resource-details-error p {
   color: #e28e91;

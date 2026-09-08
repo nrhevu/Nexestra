@@ -18,3 +18,5 @@
     branch choice and the unresolved scope of a portable workspace export.
 11. [Knowledge preview research](research/2026-09-09-knowledge-preview.md): current and historical
     plain-text inspection with integrity verification, truncation and download fallback.
+12. [Repository branch selection research](research/2026-09-09-repository-branch-selection.md):
+    choosing a source branch for future Workers, preserving existing work, and Unicode Git output.

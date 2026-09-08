@@ -75,7 +75,7 @@
   align-items: center;
   gap: 6px;
   margin: 0;
-  color: var(--quiet);
+  color: var(--muted);
   font-size: 11px;
 }
 
@@ -145,7 +145,7 @@
 
 .branch-picker-options code {
   flex: none;
-  color: var(--quiet);
+  color: var(--muted);
   font-size: 10px;
 }
 

@@ -111,9 +111,13 @@ Git paths are also accepted. URLs containing embedded credentials are rejected. 
 card to inspect its details, edit its name, `#handle`, and description, download a stored document,
 or permanently delete it. A repository whose clone failed can be retried from its detail dialog with
 **Retry clone**; the record keeps its id, `#handle`, source, and creation time while the clone is
-re-created safely. A ready repository offers **Refresh source** to fetch its recorded default branch
-for future Worker assignments. The detail view shows the selected commit and refresh time. Existing
-Worker worktrees and edits stay intact; a failed refresh keeps the previous starting point usable.
+re-created safely. A ready repository offers **Change branch** to choose an existing source branch
+for future Worker assignments. Open the picker to load branches, choose or type a name, and apply
+the change. **Refresh source** fetches the selected branch, or the original default branch before
+the first selection. The detail view shows the branch, selected commit and refresh time. Existing
+Worker worktrees and edits stay intact; a failed fetch keeps the previous starting point usable.
+A stale picker requires reloading before applying a choice, preserving a newer selection made in
+another window. A partial branch list allows typing an existing branch name directly.
 Documents offer **Replace file** and **Version history**. Download an older version or restore it as
 a new current version while keeping the item's identity. New messages pin the version referenced at
 send time, including the first new reference to an older stored document. A stale replacement or

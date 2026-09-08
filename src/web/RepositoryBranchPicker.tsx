@@ -1,30 +1,13 @@
 import { Check, CircleAlert, GitBranch, LoaderCircle } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import type { KnowledgeItem, KnowledgeRepository } from "../shared/contracts.js";
+import {
+  KNOWLEDGE_BRANCH_NAME_MAX_LENGTH,
+  type KnowledgeItem,
+  type KnowledgeRepository,
+  type KnowledgeRepositoryBranchesResponse,
+} from "../shared/contracts.js";
 import { ApiError, api } from "./api.js";
 import "./RepositoryBranchPicker.css";
-
-export const BRANCH_NAME_MAX_LENGTH = 256;
-
-export interface RepositoryBranch {
-  name: string;
-  commit: string;
-}
-
-export interface RepositoryBranchList {
-  branches: RepositoryBranch[];
-  truncated: boolean;
-  sourceVersion: number;
-  selectedBranch: string | null;
-  defaultBranch: string | null;
-}
-
-// Temporary local extension until the shared KnowledgeRepository contract adds
-// these fields; root will reconcile with the server slice.
-export type BranchAwareRepository = KnowledgeRepository & {
-  selectedBranch?: string;
-  sourceVersion?: number;
-};
 
 type LoadPhase = "loading" | "ready" | "error";
 
@@ -39,7 +22,7 @@ export function RepositoryBranchPicker({
   onPendingChange,
   onChanged,
 }: {
-  item: BranchAwareRepository;
+  item: KnowledgeRepository;
   generation: number;
   disabled?: boolean;
   onPendingChange: (pending: boolean) => void;
@@ -47,7 +30,7 @@ export function RepositoryBranchPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [phase, setPhase] = useState<LoadPhase>("loading");
-  const [branches, setBranches] = useState<RepositoryBranchList | null>(null);
+  const [branches, setBranches] = useState<KnowledgeRepositoryBranchesResponse | null>(null);
   const [branchName, setBranchName] = useState("");
   const [applying, setApplying] = useState(false);
   const [listError, setListError] = useState<string>();
@@ -110,7 +93,7 @@ export function RepositoryBranchPicker({
     setListError(undefined);
     setConflict(false);
     try {
-      const value = await api<RepositoryBranchList>(
+      const value = await api<KnowledgeRepositoryBranchesResponse>(
         `/api/knowledge/${encodeURIComponent(item.id)}/branches`,
         { signal: controller.signal },
       );
@@ -140,7 +123,7 @@ export function RepositoryBranchPicker({
     setListError(undefined);
     setApplyError(undefined);
     setConflict(false);
-    triggerRef.current?.focus();
+    focusTriggerAfterCommitRef.current = true;
   }, [cancelApply]);
 
   // If the repository item, its source version, or the workspace generation
@@ -189,7 +172,9 @@ export function RepositoryBranchPicker({
 
   const handleApply = async () => {
     const branch = branchName.trim();
-    if (!branch || !branches) return;
+    if (disabled || applyingRef.current || conflict || phase !== "ready" || !branch || !branches) {
+      return;
+    }
     const operationGeneration = generationRef.current;
     const intentKey = `${itemRef.current.id}:${itemRef.current.sourceVersion ?? 0}:${operationGeneration}`;
     const requestId = ++applyRequestRef.current;
@@ -239,7 +224,7 @@ export function RepositoryBranchPicker({
       onChanged(
         updated,
         operationGeneration,
-        `Source branch set to ${(updated as BranchAwareRepository).selectedBranch ?? branch}.`,
+        `Source branch set to ${updated.selectedBranch ?? branch}.`,
       );
     } catch (caught) {
       if (
@@ -299,7 +284,7 @@ export function RepositoryBranchPicker({
               ref={inputRef}
               id={inputId}
               list={datalistId}
-              maxLength={BRANCH_NAME_MAX_LENGTH}
+              maxLength={KNOWLEDGE_BRANCH_NAME_MAX_LENGTH}
               value={branchName}
               disabled={disabled || applying}
               placeholder={effectiveBranch ?? "Type a branch name"}

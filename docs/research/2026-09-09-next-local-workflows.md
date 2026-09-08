@@ -1,14 +1,16 @@
 # Research: next local workspace workflows
 
-Research date: 9 September 2026 (Asia/Ho_Chi_Minh). These are candidates, not shipped features.
-The current implementation wave remains transcript search, message navigation and document preview.
+Research date: 9 September 2026 (Asia/Ho_Chi_Minh). These were candidates identified during the
+transcript-search and document-preview wave. Branch selection is now implemented;
+its status and verification are recorded in the [branch selection report](2026-09-09-repository-branch-selection.md).
+Portable workspace export remains research only.
 
 ## Explicit repository branch selection
 
 The repository contract records `defaultBranch`, `sourceCommit` and `sourceRef`. Source refresh
 fetches that recorded branch. ADR 0033 deliberately leaves a deleted or renamed branch as a visible
-error instead of guessing a replacement. There is no control for choosing another branch for
-future Worker assignments.
+error instead of guessing a replacement. At that point there was no control for choosing another
+branch for future Worker assignments.
 
 [Git's clone documentation](https://git-scm.com/docs/git-clone) describes selecting a branch with
 `--branch` and the narrower history/ref behavior of `--single-branch`. These options establish that
@@ -43,7 +45,7 @@ Without import/restore and verification, such an export must not be presented as
 
 ## Priority
 
-Prefer branch selection as the next bounded implementation because source refresh already defines
-how future assignments obtain a commit without altering existing work. Keep workspace export in
-research until its snapshot and restoration boundaries are concrete. Neither candidate is part of
-the completed search/preview verification report.
+Branch selection was prioritized because source refresh already defines how future assignments
+obtain a commit without altering existing work. Keep workspace export in research until its
+snapshot and restoration boundaries are concrete. The search/preview verification report does not
+cover either candidate; branch selection has its own report linked above.

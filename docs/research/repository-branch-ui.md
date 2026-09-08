@@ -1,7 +1,8 @@
 # Repository source branch selection UI behavior note
 
-UI slice for explicit repository branch selection on ready knowledge items. Backend contract and
-ADR0037 are owned by the server agent; this file records UI behavior, tests, and honest limits.
+Ready repository Knowledge items offer explicit source branch selection. The backend state model
+is defined in [ADR 0037](../adr/0037-explicit-repository-source-branch.md); this note records UI
+behavior, tests and limits.
 
 ## Behavior
 
@@ -38,7 +39,7 @@ ADR0037 are owned by the server agent; this file records UI behavior, tests, and
   When the item id, item `sourceVersion`, or workspace generation changes while an apply is
   pending, that specific apply intent is cancelled immediately (busy state cleared), so its late
   resolution or rejection cannot show an error, open a conflict, close the picker, call
-  `onChanged`, or overwrite a newer item. Closing and unmounting abort all pending work.
+  `onChanged`, or overwrite a newer item. Closing and unmounting abort pending browser requests.
   StrictMode double-effects leave the picker loading and then ready rather than stuck.
 - **Refresh source** is disabled while a branch change is pending, follows the new effective
   branch, and stays available when `defaultBranch` is absent but `selectedBranch` exists. Edit and
@@ -47,9 +48,8 @@ ADR0037 are owned by the server agent; this file records UI behavior, tests, and
   options, Retry, and Reload are disabled, while Cancel and Escape stay usable. A pending apply is
   cancelled when the picker becomes disabled so a racing refresh can never surface as a false
   source-version conflict.
-- The UI keeps a temporary local `BranchAwareRepository`/branch-list type until the shared
-  contract adds `selectedBranch?: string` and `sourceVersion?: number` (legacy items read as 0);
-  root reconciles these with the server slice.
+- The UI imports the repository and branch-list types and branch-name length cap from shared
+  contracts. Legacy items without `sourceVersion` read as version zero.
 
 ## Tests
 
@@ -59,7 +59,7 @@ reload/re-apply and survives input edits until reload, late apply ignored after
 close/unmount/sourceVersion change, rejected late apply ignored after generation change, late list
 ignored after close, focus/Escape, StrictMode loading recovery.
 
-`App.test.tsx` additions (6 tests): end-to-end apply updates the detail without bootstrap reload,
+`App.test.tsx` additions (7 tests): end-to-end apply updates the detail without bootstrap reload,
 reopens the picker after success with focus on **Change branch**, selected-over-default effective
 branch display, ready+refreshError keeps the old branch and picker, 409 shows the refreshed
 current source branch after Reload and requires re-apply with the fresh expectedSourceVersion,
@@ -68,8 +68,10 @@ inert until it resolves, and Escape closes only the picker first.
 
 ## Limits
 
-- No restore/import, no assignment-time branch hints, and no pruning of previously selected source
-  refs. Deleting a selected branch is a server concern and documented there.
+- No assignment-time branch override or pruning of previous source snapshot refs. If a source
+  branch is deleted before fetching, the picker keeps the prior selection and displays the failure.
 - The list is capped by the server; the UI only says results are first-N and invites typing.
 - Branch names typed by the user are validated by the server. The UI caps input length at 256 to
   match the backend `KNOWLEDGE_BRANCH_NAME_MAX_LENGTH` but does not re-implement Git ref rules.
+- An accepted source update can finish after the picker closes. The next refresh of repository
+  metadata shows its result; closing the browser request does not roll back a Git operation.

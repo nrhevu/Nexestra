@@ -5,18 +5,15 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  BRANCH_NAME_MAX_LENGTH,
-  type BranchAwareRepository,
-  RepositoryBranchPicker,
-} from "./RepositoryBranchPicker.js";
+import { KNOWLEDGE_BRANCH_NAME_MAX_LENGTH, type KnowledgeRepository } from "../shared/contracts.js";
+import { RepositoryBranchPicker } from "./RepositoryBranchPicker.js";
 
 const now = "2026-09-02T12:00:00.000Z";
 const later = "2026-09-02T13:00:00.000Z";
 const mainCommit = "a".repeat(40);
 const devCommit = "b".repeat(40);
 
-const repository: BranchAwareRepository = {
+const repository: KnowledgeRepository = {
   id: "repository-product",
   workspaceId: "workspace-nexestra",
   kind: "repository",
@@ -83,7 +80,7 @@ function deferredResponse() {
 
 function renderPicker(
   props: Partial<{
-    item: BranchAwareRepository;
+    item: KnowledgeRepository;
     generation: number;
   }> = {},
 ) {
@@ -133,7 +130,7 @@ describe("Repository branch picker", () => {
     ).toBeVisible();
 
     const input = screen.getByLabelText("Branch name");
-    expect(input).toHaveAttribute("maxlength", String(BRANCH_NAME_MAX_LENGTH));
+    expect(input).toHaveAttribute("maxlength", String(KNOWLEDGE_BRANCH_NAME_MAX_LENGTH));
     await user.type(input, "feature/manual");
     await user.click(screen.getByRole("button", { name: "Apply branch" }));
     await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1));
@@ -395,6 +392,8 @@ describe("Repository branch picker", () => {
     });
     expect(onChanged).not.toHaveBeenCalled();
     expect(onPendingChange).toHaveBeenLastCalledWith(false);
+    expect(screen.getByRole("button", { name: "Change branch" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Change branch" })).toHaveFocus();
     expect(screen.getByRole("button", { name: "Change branch" })).toHaveAttribute(
       "aria-expanded",
       "false",

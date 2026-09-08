@@ -1,5 +1,8 @@
 # 0033 — Explicit repository source refresh for future assignments
 
+Amended by [ADR 0037](0037-explicit-repository-source-branch.md): users can select an existing
+source branch, refresh follows that selection, and successful publications advance a source version.
+
 ## Context
 
 Ready repository Knowledge previously stayed at its clone's original HEAD. Retrying a failed clone
@@ -10,8 +13,9 @@ starting commit, so future source selection can advance independently of that hi
 ## Decision
 
 The ready Knowledge detail view exposes **Refresh source**, backed by
-`POST /api/knowledge/repositories/:id/refresh`. It fetches the recorded default branch from the
-recorded source. Each request writes only a new `refs/nexestra/source-refresh/<uuid>` ref, then
+`POST /api/knowledge/repositories/:id/refresh`. It fetches the selected source branch, falling back
+to the original default branch before a selection. Each request writes only a new
+`refs/nexestra/source-refresh/<uuid>` ref, then
 publishes its full commit ID as `sourceCommit`, together with `sourceRef` and `refreshedAt`, in
 atomic state metadata. A new worktree reads this selection at the beginning of preparation and
 records its actual `baseCommit` before invocation. Before the first successful refresh, preparation
@@ -39,7 +43,7 @@ output limit. Browser updates are explicit and generation-guarded; no idle polli
 ## Consequences and limits
 
 - The default branch is the branch recorded when cloning. An upstream rename or detached initial
-  clone needs an explicit future branch-selection feature; refresh does not guess another branch.
+  clone can use the explicit branch picker from ADR 0037; refresh does not guess another branch.
 - A queued assignment selects the latest published commit when its worktree preparation begins,
   which may be later than the delegation request. A running assignment never changes its base.
 - Refresh snapshots retain their own refs, including refs from a fetch whose state write failed.
