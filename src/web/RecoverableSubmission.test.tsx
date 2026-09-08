@@ -192,7 +192,8 @@ describe("Recoverable message submission", () => {
       requestId: body instanceof FormData ? String(body.get("requestId")) : String(body.requestId),
       content: body instanceof FormData ? String(body.get("content")) : String(body.content),
     }));
-    expect(bodies[0]).toEqual({ requestId: bodies[1]?.requestId, content: "Retry me" });
+    expect(bodies[0]!.requestId).toBe(bodies[1]!.requestId);
+    expect(bodies[0]!.content).toBe("Retry me");
     expect(bodies[0].requestId).toMatch(/^[0-9a-f-]{36}$/);
   });
 
@@ -297,7 +298,9 @@ describe("Recoverable message submission", () => {
     await user.click(screen.getByRole("button", { name: "Send" }));
     await screen.findByText("Unavailable");
     await user.click(screen.getByRole("button", { name: "Remove b.txt" }));
+    await user.click(screen.getByRole("button", { name: "Remove a.txt" }));
     await user.upload(input, uploadFile("b.txt"));
+    await user.upload(input, uploadFile("a.txt"));
     await user.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(requestIds).toHaveLength(2));
     expect(requestIds[1]).not.toBe(requestIds[0]);
@@ -389,7 +392,7 @@ describe("Recoverable message submission", () => {
     const thread = threadRow("thread-reload-retry", "general");
     const key = pendingKey(workspace.id, thread.id);
     const requestId = newRequestId();
-    const persistedKey = "v1:" + (await fingerprintSubmission("Persisted", []));
+    const persistedKey = await fingerprintSubmission("Persisted", []);
     window.localStorage.setItem(
       key,
       JSON.stringify({ version: 1, requestId, key: persistedKey, files: [], createdAt: now }),
@@ -460,7 +463,7 @@ describe("Recoverable message submission", () => {
     const thread = threadRow("thread-reload-files", "general");
     const key = pendingKey(workspace.id, thread.id);
     const requestId = newRequestId();
-    const persistedKey = "v1:" + (await fingerprintSubmission("With file", []));
+    const persistedKey = await fingerprintSubmission("With file", []);
     window.localStorage.setItem(
       key,
       JSON.stringify({
@@ -473,6 +476,7 @@ describe("Recoverable message submission", () => {
     );
     window.localStorage.setItem("nexestra.draft." + workspace.id + ":" + thread.id, "With file");
     window.history.replaceState({}, "", "/threads/" + thread.id);
+    const postedIds: string[] = [];
     let posting = 0;
     vi.stubGlobal(
       "fetch",
@@ -482,6 +486,7 @@ describe("Recoverable message submission", () => {
         if (path === historyUrl(thread)) return jsonResponse(historySnapshot(thread));
         if (path === "/api/threads/" + thread.id + "/messages" && init?.method === "POST") {
           posting += 1;
+          postedIds.push((JSON.parse(String(init.body)) as { requestId: string }).requestId);
           return jsonResponse({ message: {}, runs: [] }, 201);
         }
         return jsonResponse({ error: { message: "Not found" } }, 404);
@@ -493,14 +498,17 @@ describe("Recoverable message submission", () => {
     expect(await screen.findByText(/The previous send was not confirmed/)).toBeVisible();
     expect(screen.getByRole("button", { name: "Reattach original files" })).toBeInTheDocument();
 
-    await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeDisabled());
-    await user.click(screen.getByRole("button", { name: "Send as new message" }));
     await user.click(screen.getByRole("button", { name: "Send" }));
-    await waitFor(() => expect(posting).toBe(1));
+    expect(await screen.findByText(/Reattach the original files, or choose Send as new message/)).toBeVisible();
+    expect(posting).toBe(0);
+
+    await user.click(screen.getByRole("button", { name: "Send as new message" }));
+    await waitFor(() => expect(postedIds).toHaveLength(1));
+    expect(postedIds[0]).not.toBe(requestId);
     expect(window.localStorage.getItem(key)).toBeNull();
   });
 
-  it("skips agent-readiness preflight only when retrying the exact pending payload", async () => {
+  it("skips agent-readiness preflight when retrying the exact pending payload", async () => {
     const user = userEvent.setup();
     const thread = threadRow("thread-ready-retry", "general");
     const busyAgent = {
@@ -519,6 +527,15 @@ describe("Recoverable message submission", () => {
       readiness: "unavailable" as const,
       readinessLabel: "Unavailable",
     };
+    const content = "@planner do the work";
+    const key = pendingKey(workspace.id, thread.id);
+    const requestId = newRequestId();
+    const persistedKey = await fingerprintSubmission(content, []);
+    window.localStorage.setItem(
+      key,
+      JSON.stringify({ version: 1, requestId, key: persistedKey, files: [], createdAt: now }),
+    );
+    window.localStorage.setItem("nexestra.draft." + workspace.id + ":" + thread.id, content);
     window.history.replaceState({}, "", "/threads/" + thread.id);
     const requestIds: string[] = [];
     let failed = false;
@@ -543,11 +560,191 @@ describe("Recoverable message submission", () => {
     );
     render(<App />);
     const composer = await screen.findByRole("combobox", { name: "Message" });
+    expect(composer).toHaveValue(content);
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(requestIds).toEqual([requestId]));
+    expect(screen.queryByText(/planner cannot be invoked/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(requestIds).toHaveLength(2));
+    expect(requestIds[1]).toBe(requestId);
+  });
+
+  it("preflights a new mention send when the agent is unavailable", async () => {
+    const user = userEvent.setup();
+    const thread = threadRow("thread-ready-new", "general");
+    const busyAgent = {
+      id: "agent-planner",
+      workspaceId: workspace.id,
+      kind: "worker" as const,
+      name: "Planner",
+      handle: "planner",
+      description: "Plans work",
+      instructions: "",
+      enabled: true,
+      archived: false,
+      harness: "codex" as const,
+      createdAt: now,
+      updatedAt: now,
+      readiness: "unavailable" as const,
+      readinessLabel: "Unavailable",
+    };
+    window.history.replaceState({}, "", "/threads/" + thread.id);
+    const requestIds: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/bootstrap") {
+          return jsonResponse({ ...bootstrapData, threads: [thread], agents: [busyAgent] });
+        }
+        if (path === historyUrl(thread)) return jsonResponse(historySnapshot(thread));
+        if (path === "/api/threads/" + thread.id + "/messages" && init?.method === "POST") {
+          requestIds.push((JSON.parse(String(init.body)) as { requestId: string }).requestId);
+          return jsonResponse({ message: {}, runs: [] }, 201);
+        }
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      }),
+    );
+    render(<App />);
+    const composer = await screen.findByRole("combobox", { name: "Message" });
     await user.type(composer, "@planner do the work");
     await user.click(screen.getByRole("button", { name: "Send" }));
-    await screen.findByText(/planner cannot be invoked/);
+    expect(await screen.findByText(/planner cannot be invoked/)).toBeVisible();
     expect(requestIds).toHaveLength(0);
+  });
+
+  it("rejects changed attachment bytes and requires an explicit new message after reload", async () => {
+    const user = userEvent.setup();
+    const thread = threadRow("thread-reload-replaced", "general");
+    const key = pendingKey(workspace.id, thread.id);
+    const requestId = newRequestId();
+    const original = new File(["aaaa"], "lost.bin", { type: "application/octet-stream" });
+    const persistedKey = await fingerprintSubmission("With file", [original]);
+    window.localStorage.setItem(
+      key,
+      JSON.stringify({
+        version: 1,
+        requestId,
+        key: persistedKey,
+        files: [{ name: original.name, type: original.type, size: original.size }],
+        createdAt: now,
+      }),
+    );
+    window.localStorage.setItem("nexestra.draft." + workspace.id + ":" + thread.id, "With file");
+    window.history.replaceState({}, "", "/threads/" + thread.id);
+    const postedIds: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/bootstrap") return jsonResponse({ ...bootstrapData, threads: [thread] });
+        if (path === historyUrl(thread)) return jsonResponse(historySnapshot(thread));
+        if (path === "/api/threads/" + thread.id + "/messages" && init?.method === "POST") {
+          const body = init.body as FormData;
+          postedIds.push(String(body.get("requestId")));
+          return jsonResponse({ message: {}, runs: [] }, 201);
+        }
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      }),
+    );
+    render(<App />);
+        const input = screen.getByLabelText("Choose files or images");
+    await user.upload(
+      input,
+      new File(["bbbb"], original.name, {
+        type: original.type,
+        lastModified: original.lastModified,
+      }),
+    );
     await user.click(screen.getByRole("button", { name: "Send" }));
-    await waitFor(() => expect(requestIds).toHaveLength(1));
+    expect(await screen.findByText(/files differ from the unconfirmed send/)).toBeVisible();
+    expect(postedIds).toHaveLength(0);
+    await user.click(screen.getByRole("button", { name: "Send as new message" }));
+    await waitFor(() => expect(postedIds).toHaveLength(1));
+    expect(postedIds[0]).not.toBe(requestId);
+    expect(window.localStorage.getItem(key)).toBeNull();
+  });
+
+  it("reuses the saved request identity when original attachment bytes are restored", async () => {
+    const user = userEvent.setup();
+    const thread = threadRow("thread-reload-exact", "general");
+    const key = pendingKey(workspace.id, thread.id);
+    const requestId = newRequestId();
+    const original = new File(["aaaa"], "lost.bin", { type: "application/octet-stream" });
+    const persistedKey = await fingerprintSubmission("With file", [original]);
+    window.localStorage.setItem(
+      key,
+      JSON.stringify({
+        version: 1,
+        requestId,
+        key: persistedKey,
+        files: [{ name: original.name, type: original.type, size: original.size }],
+        createdAt: now,
+      }),
+    );
+    window.localStorage.setItem("nexestra.draft." + workspace.id + ":" + thread.id, "With file");
+    window.history.replaceState({}, "", "/threads/" + thread.id);
+    const postedIds: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/bootstrap") return jsonResponse({ ...bootstrapData, threads: [thread] });
+        if (path === historyUrl(thread)) return jsonResponse(historySnapshot(thread));
+        if (path === "/api/threads/" + thread.id + "/messages" && init?.method === "POST") {
+          const body = init.body as FormData;
+          postedIds.push(String(body.get("requestId")));
+          return jsonResponse({ message: {}, runs: [] }, 201);
+        }
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      }),
+    );
+    render(<App />);
+        await user.upload(screen.getByLabelText("Choose files or images"), original);
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(postedIds).toEqual([requestId]));
+    expect(window.localStorage.getItem(key)).toBeNull();
+  });
+
+  it("does not reuse a confirmed identity when clearing browser storage fails", async () => {
+    const user = userEvent.setup();
+    const thread = threadRow("thread-tombstone", "general");
+    const key = pendingKey(workspace.id, thread.id);
+    const requestId = newRequestId();
+    const persistedKey = await fingerprintSubmission("Same words", []);
+    window.localStorage.setItem(
+      key,
+      JSON.stringify({ version: 1, requestId, key: persistedKey, files: [], createdAt: now }),
+    );
+    window.localStorage.setItem("nexestra.draft." + workspace.id + ":" + thread.id, "Same words");
+    window.history.replaceState({}, "", "/threads/" + thread.id);
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+      throw new DOMException("Storage denied", "SecurityError");
+    });
+    const postedIds: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/bootstrap") return jsonResponse({ ...bootstrapData, threads: [thread] });
+        if (path === historyUrl(thread)) return jsonResponse(historySnapshot(thread));
+        if (path === "/api/threads/" + thread.id + "/messages" && init?.method === "POST") {
+          postedIds.push((JSON.parse(String(init.body)) as { requestId: string }).requestId);
+          return jsonResponse({ message: {}, runs: [] }, 201);
+        }
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      }),
+    );
+    render(<App />);
+    const composer = await screen.findByRole("combobox", { name: "Message" });
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(postedIds).toEqual([requestId]));
+    expect(await screen.findByText(/could not clear the retry identity/)).toBeVisible();
+    await user.type(composer, "Same words");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(postedIds).toHaveLength(2));
+    expect(postedIds[1]).not.toBe(requestId);
+    expect(window.localStorage.getItem(key)).not.toBeNull();
+    vi.restoreAllMocks();
   });
 });
