@@ -1,0 +1,44 @@
+[
+  {
+    "name": "empty comparison",
+    "raw": "",
+    "expected": { "files": [], "insertions": 0, "deletions": 0, "truncated": false }
+  },
+  {
+    "name": "ordinary tracked changes",
+    "raw": "3\t1\tsrc/app.ts\u00000\t5\tdeleted.md\u0000",
+    "expected": {
+      "files": [
+        { "path": "src/app.ts", "insertions": 3, "deletions": 1 },
+        { "path": "deleted.md", "insertions": 0, "deletions": 5 }
+      ],
+      "insertions": 3,
+      "deletions": 6,
+      "truncated": false
+    }
+  },
+  {
+    "name": "binary and unusual filenames",
+    "raw": "-\t-\tassets/icon.png\u00002\t1\tspace and\ttab\nline.txt\u00001\t0\t-leading.txt\u0000",
+    "expected": {
+      "files": [
+        { "path": "assets/icon.png", "insertions": null, "deletions": null },
+        { "path": "space and\ttab\nline.txt", "insertions": 2, "deletions": 1 },
+        { "path": "-leading.txt", "insertions": 1, "deletions": 0 }
+      ],
+      "insertions": 3,
+      "deletions": 1,
+      "truncated": false
+    }
+  },
+  {
+    "name": "malformed records do not hide later valid changes",
+    "raw": "unexpected\u0000-1\t0\tnegative.txt\u00001e2\t0\texponent.txt\u0000-\t2\tmixed.txt\u00001\t0\u00002\t3\tvalid.txt\u0000partial",
+    "expected": {
+      "files": [{ "path": "valid.txt", "insertions": 2, "deletions": 3 }],
+      "insertions": 2,
+      "deletions": 3,
+      "truncated": true
+    }
+  }
+]
