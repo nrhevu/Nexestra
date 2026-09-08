@@ -153,6 +153,27 @@ const AgentInputBaseSchema = z.object({
   instructions: z.string().trim().max(8_000).default(""),
 });
 
+const ChatGptProviderInputSchema = z.object({
+  type: z.literal("chatgpt"),
+  model: z.string().trim().max(120).default(""),
+});
+
+const CustomProviderInputSchema = z.object({
+  type: z.literal("custom"),
+  name: z.string().trim().min(1).max(60),
+  baseUrl: z.string().trim().url(),
+  model: z.string().trim().min(1).max(160),
+  protocol: z.enum(["openai-chat", "openai-responses"]),
+  apiKey: z
+    .string()
+    .trim()
+    .max(4_096)
+    .refine((value) => value.length === 0 || value.length >= 8, {
+      message: "API key must be blank or at least 8 characters.",
+    })
+    .optional(),
+});
+
 export const CreateAgentSchema = z.discriminatedUnion("kind", [
   AgentInputBaseSchema.extend({
     kind: z.literal("worker"),
@@ -163,34 +184,31 @@ export const CreateAgentSchema = z.discriminatedUnion("kind", [
   AgentInputBaseSchema.extend({
     kind: z.literal("master"),
     accessMode: MasterAccessModeSchema.default("ask"),
-    provider: z.discriminatedUnion("type", [
-      z.object({
-        type: z.literal("chatgpt"),
-        model: z.string().trim().max(120).default(""),
-      }),
-      z.object({
-        type: z.literal("custom"),
-        name: z.string().trim().min(1).max(60),
-        baseUrl: z.string().trim().url(),
-        model: z.string().trim().min(1).max(160),
-        protocol: z.enum(["openai-chat", "openai-responses"]),
-        apiKey: z
-          .string()
-          .trim()
-          .max(4_096)
-          .refine((value) => value.length === 0 || value.length >= 8, {
-            message: "API key must be blank or at least 8 characters.",
-          })
-          .optional(),
-      }),
-    ]),
+    provider: z.discriminatedUnion("type", [ChatGptProviderInputSchema, CustomProviderInputSchema]),
   }),
 ]);
 export type CreateAgentInput = z.input<typeof CreateAgentSchema>;
 
-export const UpdateAgentSchema = z.object({
+export const UpdateAgentSchema = z.strictObject({
   enabled: z.boolean().optional(),
   archived: z.boolean().optional(),
+  name: AgentInputBaseSchema.shape.name.optional(),
+  handle: HandleSchema.optional(),
+  description: z.string().trim().max(240).optional(),
+  instructions: z.string().trim().max(8_000).optional(),
+  harness: z.enum(["codex", "opencode"]).optional(),
+  model: WorkerModelSchema.nullable().optional(),
+  reasoningEffort: WorkerReasoningEffortSchema.nullable().optional(),
+  accessMode: MasterAccessModeSchema.optional(),
+  provider: z
+    .discriminatedUnion("type", [
+      ChatGptProviderInputSchema,
+      CustomProviderInputSchema.extend({ removeCredential: z.boolean().optional() }).refine(
+        (provider) => !(provider.removeCredential && provider.apiKey),
+        { message: "Choose either a new API key or Remove credential." },
+      ),
+    ])
+    .optional(),
 });
 export type UpdateAgentInput = z.infer<typeof UpdateAgentSchema>;
 

@@ -226,6 +226,16 @@ When creating a Worker, the model and reasoning effort are optional. Leaving eit
 uses the selected harness default. Codex receives the model and `model_reasoning_effort` overrides;
 OpenCode receives `--model` (in `provider/model` form) and the provider-specific `--variant`.
 
+Every agent profile can be edited from the Agent management surface: name, handle, description,
+custom instructions, and the Worker or Master fields shown at creation. Handles stay unique per
+workspace and can be reused after an update, while kind, workspace, and ID remain fixed. Clearing a
+Worker model or reasoning effort removes the override and returns to the harness default.
+
+Custom Master API keys are write-only. The edit form never reveals a stored key: leaving the key
+field blank keeps it, entering a new key rotates it in the same save, and a separate checkbox
+removes it explicitly. Configuration edits are blocked while the agent is busy, queued, or being
+changed, so a running agent never reads a half-applied profile.
+
 ## Provider
 
 - **ChatGPT OAuth:** install Codex CLI and run `codex login`, or click Connect in the Master

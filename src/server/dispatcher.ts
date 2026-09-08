@@ -10,6 +10,7 @@ import {
   type TaskProcessData,
   type ThreadStreamEvent,
   type ToolCall,
+  UpdateAgentSchema,
   type WorkAssignment,
 } from "../shared/contracts.js";
 import { runCommand, safeProcessEnv } from "./process.js";
@@ -26,7 +27,7 @@ export class AgentDispatcher {
   private readonly queues = new Map<string, Promise<void>>();
   private readonly busy = new Set<string>();
   private readonly pendingEnqueues = new Map<string, number>();
-  private readonly deletingAgentIds = new Set<string>();
+  private readonly changingAgentIds = new Set<string>();
   private readonly retryingRunIds = new Set<string>();
   private readonly delegatingTaskIds = new Set<string>();
   private readonly assignmentCompletions = new Set<Promise<unknown>>();
@@ -133,17 +134,40 @@ export class AgentDispatcher {
   }
 
   hasPendingWork(agentId: string): boolean {
-    return this.queues.has(agentId) || (this.pendingEnqueues.get(agentId) ?? 0) > 0;
+    return (
+      this.busy.has(agentId) ||
+      this.queues.has(agentId) ||
+      (this.pendingEnqueues.get(agentId) ?? 0) > 0
+    );
   }
 
-  beginAgentDeletion(agentId: string): boolean {
-    if (this.deletingAgentIds.has(agentId) || this.hasPendingWork(agentId)) return false;
-    this.deletingAgentIds.add(agentId);
+  beginAgentMutation(agentId: string): boolean {
+    if (this.changingAgentIds.has(agentId) || this.hasPendingWork(agentId)) return false;
+    this.changingAgentIds.add(agentId);
     return true;
   }
 
-  finishAgentDeletion(agentId: string): void {
-    this.deletingAgentIds.delete(agentId);
+  finishAgentMutation(agentId: string): void {
+    this.changingAgentIds.delete(agentId);
+  }
+
+  async updateAgent(agentId: string, rawInput: unknown): Promise<Agent> {
+    const input = UpdateAgentSchema.parse(rawInput);
+    const changesConfiguration = Object.keys(input).some(
+      (key) => key !== "enabled" && key !== "archived",
+    );
+    if (!changesConfiguration) return this.store.updateAgent(agentId, input);
+    if (!this.beginAgentMutation(agentId)) {
+      throw new StoreError(
+        "conflict",
+        "Wait for the agent's current work or configuration change to finish before editing it.",
+      );
+    }
+    try {
+      return await this.store.updateAgent(agentId, input);
+    } finally {
+      this.finishAgentMutation(agentId);
+    }
   }
 
   resolveToolApproval(toolCallId: string, approved: boolean): void {
@@ -161,7 +185,7 @@ export class AgentDispatcher {
   }
 
   reserveAgent(agentId: string): (() => void) | undefined {
-    if (this.deletingAgentIds.has(agentId)) return undefined;
+    if (this.changingAgentIds.has(agentId)) return undefined;
     this.pendingEnqueues.set(agentId, (this.pendingEnqueues.get(agentId) ?? 0) + 1);
     let released = false;
     return () => {
@@ -179,7 +203,7 @@ export class AgentDispatcher {
       const release = this.reserveAgent(agent.id);
       if (!release) {
         for (const releaseReservedAgent of releases) releaseReservedAgent();
-        throw new StoreError("conflict", `@${agent.handle} is being deleted.`);
+        throw new StoreError("conflict", `@${agent.handle} is being updated or deleted.`);
       }
       releases.push(release);
     }
@@ -573,7 +597,8 @@ export class AgentDispatcher {
       );
     }
     const release = this.reserveAgent(worker.id);
-    if (!release) throw new StoreError("conflict", `@${worker.handle} is being deleted.`);
+    if (!release)
+      throw new StoreError("conflict", `@${worker.handle} is being updated or deleted.`);
     this.delegatingTaskIds.add(task.id);
     const id = crypto.randomUUID();
     const controller = new AbortController();
@@ -1047,7 +1072,13 @@ export class ChatService {
       const agent = this.store.findAgentByHandle(handle, thread.workspaceId);
       if (!agent) continue;
       const release = this.dispatcher.reserveAgent(agent.id);
-      if (!release) continue;
+      if (!release) {
+        for (const releaseReservedAgent of releases) releaseReservedAgent();
+        throw new StoreError(
+          "conflict",
+          `@${agent.handle} is being updated or deleted. Try again.`,
+        );
+      }
       agents.push(agent);
       releases.push(release);
     }

@@ -188,27 +188,24 @@ export function createApp(options: CreateAppOptions) {
   });
 
   app.patch("/api/agents/:id", async (context) => {
-    const agent = await options.store.updateAgent(
-      context.req.param("id"),
-      await context.req.json(),
-    );
+    const agent = await dispatcher.updateAgent(context.req.param("id"), await context.req.json());
     const runtime = await runner.runtimeStatus();
     return context.json(agentView(agent, runtime, dispatcher.busyAgentIds()));
   });
 
   app.delete("/api/agents/:id", async (context) => {
     const agentId = context.req.param("id");
-    if (!dispatcher.beginAgentDeletion(agentId)) {
+    if (!dispatcher.beginAgentMutation(agentId)) {
       throw new StoreError(
         "conflict",
-        "Wait for the agent's current work to finish before deleting it.",
+        "Wait for the agent's current work or configuration change to finish before deleting it.",
       );
     }
     try {
       await options.store.deleteAgent(agentId);
       return context.body(null, 204);
     } finally {
-      dispatcher.finishAgentDeletion(agentId);
+      dispatcher.finishAgentMutation(agentId);
     }
   });
 

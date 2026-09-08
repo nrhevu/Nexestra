@@ -695,14 +695,92 @@ export class FileStore {
       const index = this.state.agents.findIndex((agent) => agent.id === id);
       const current = this.state.agents[index];
       if (!current) throw new StoreError("not_found", "Agent not found.");
+      if (
+        input.handle !== undefined &&
+        this.state.agents.some(
+          (agent) =>
+            agent.id !== id &&
+            agent.workspaceId === current.workspaceId &&
+            agent.handle === input.handle,
+        )
+      ) {
+        throw new StoreError("conflict", `@${input.handle} is already in use.`);
+      }
+      if (
+        (current.kind === "worker" &&
+          (input.provider !== undefined || input.accessMode !== undefined)) ||
+        (current.kind === "master" &&
+          (input.harness !== undefined ||
+            input.model !== undefined ||
+            input.reasoningEffort !== undefined))
+      ) {
+        throw new StoreError("invalid", "Configuration fields must match the agent's kind.");
+      }
+
+      const nextCredentials = { ...this.credentials };
+      let provider = current.kind === "master" ? current.provider : undefined;
+      if (input.provider?.type === "custom") {
+        const credential = input.provider.removeCredential
+          ? undefined
+          : input.provider.apiKey || this.credentials[id];
+        provider = {
+          type: "custom",
+          name: input.provider.name,
+          baseUrl: normaliseBaseUrl(input.provider.baseUrl),
+          model: input.provider.model,
+          protocol: input.provider.protocol,
+          hasCredential: Boolean(credential),
+        };
+        if (credential) nextCredentials[id] = credential;
+        else delete nextCredentials[id];
+      } else if (input.provider?.type === "chatgpt") {
+        provider = input.provider;
+        delete nextCredentials[id];
+      }
+      const baseInput = {
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.handle !== undefined ? { handle: input.handle } : {}),
+        ...(input.description !== undefined ? { description: input.description } : {}),
+        ...(input.instructions !== undefined ? { instructions: input.instructions } : {}),
+        ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+        ...(input.archived !== undefined ? { archived: input.archived } : {}),
+      };
       const updated = AgentSchema.parse({
         ...current,
-        ...input,
+        ...baseInput,
+        ...(current.kind === "worker"
+          ? {
+              harness: input.harness ?? current.harness,
+              ...(input.model !== undefined && input.model !== null ? { model: input.model } : {}),
+              ...(input.reasoningEffort !== undefined && input.reasoningEffort !== null
+                ? { reasoningEffort: input.reasoningEffort }
+                : {}),
+            }
+          : {
+              accessMode: input.accessMode ?? current.accessMode,
+              provider,
+            }),
         enabled: input.archived === true ? false : (input.enabled ?? current.enabled),
         updatedAt: new Date().toISOString(),
       });
-      this.state.agents[index] = updated;
-      await this.writeState();
+      if (current.kind === "worker") {
+        if (input.model === null) delete (updated as { model?: unknown }).model;
+        if (input.reasoningEffort === null) {
+          delete (updated as { reasoningEffort?: unknown }).reasoningEffort;
+        }
+      }
+      const nextState = structuredClone(this.state);
+      nextState.agents[index] = updated;
+      const credentialChanged = nextCredentials[id] !== this.credentials[id];
+      if (credentialChanged) await this.writeCredentials(nextCredentials);
+      try {
+        await this.writeState(nextState);
+      } catch (error) {
+        if (credentialChanged) await this.writeCredentials(this.credentials);
+        throw error;
+      }
+      this.credentials = nextCredentials;
+      this.state = nextState;
       return structuredClone(updated);
     });
   }

@@ -973,4 +973,64 @@ describe("HTTP app", () => {
     expect(activeBranch.status).toBe(409);
     expect(deleteAssignmentBranch).toHaveBeenCalledTimes(1);
   });
+  it("rejects configuration edits while an agent is busy and applies them afterwards", async () => {
+    let releaseRunner: () => void = () => undefined;
+    runner.gate = new Promise<void>((resolve) => {
+      releaseRunner = resolve;
+    });
+    const agent = await store.createAgent({
+      kind: "worker",
+      name: "Codex",
+      handle: "codex",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    await app.request(`/api/threads/${thread.id}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "@codex wait" }),
+    });
+    const blocked = await app.request(`/api/agents/${agent.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Busy Editor" }),
+    });
+    expect(blocked.status).toBe(409);
+    await expect(blocked.json()).resolves.toMatchObject({
+      error: { code: "conflict" },
+    });
+    releaseRunner();
+    await app.dispatcher.waitForIdle();
+    const updated = await app.request(`/api/agents/${agent.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Edited Codex" }),
+    });
+    expect(updated.status).toBe(200);
+    await expect(updated.json()).resolves.toMatchObject({ name: "Edited Codex" });
+  });
+  it("rejects unknown fields and kind changes when updating an agent", async () => {
+    const agent = await store.createAgent({
+      kind: "worker",
+      name: "Codex",
+      handle: "codex",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    for (const payload of [
+      { name: "Changed", kind: "master" },
+      { name: "Changed", workspaceId: "other-workspace" },
+    ]) {
+      const response = await app.request(`/api/agents/${agent.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      expect(response.status).toBe(400);
+    }
+  });
 });

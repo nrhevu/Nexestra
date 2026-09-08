@@ -940,3 +940,154 @@ describe("FileStore", () => {
     expect(data.runs[0]?.status).toBe("completed");
   });
 });
+
+describe("FileStore agent profile updates", () => {
+  it("updates Worker identity, harness, and optional model fields, keeping the handle unique", async () => {
+    const store = await openStore();
+    const agent = await store.createAgent({
+      kind: "worker",
+      name: "Old Planner",
+      handle: "old-planner",
+      description: "",
+      instructions: "",
+      harness: "codex",
+      model: "gpt-test",
+      reasoningEffort: "high",
+    });
+    await store.createAgent({
+      kind: "worker",
+      name: "Reserved",
+      handle: "reserved",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    const updated = await store.updateAgent(agent.id, {
+      name: "New Planner",
+      handle: "planner",
+      description: "Plans the work",
+      instructions: "Keep replies short.",
+      harness: "opencode",
+      model: null,
+      reasoningEffort: "max",
+    });
+    expect(updated).toMatchObject({
+      kind: "worker",
+      name: "New Planner",
+      handle: "planner",
+      description: "Plans the work",
+      instructions: "Keep replies short.",
+      harness: "opencode",
+      reasoningEffort: "max",
+    });
+    expect(updated).not.toHaveProperty("model");
+    expect(store.findAgentByHandle("old-planner")).toBeUndefined();
+    await expect(store.updateAgent(agent.id, { handle: "reserved" })).rejects.toMatchObject({
+      code: "conflict",
+    });
+    const restored = await store.updateAgent(agent.id, { model: "gpt-test" });
+    expect(restored).toMatchObject({ kind: "worker", model: "gpt-test" });
+  });
+  it("keeps, rotates, and removes a custom Master credential without leaking secrets", async () => {
+    const store = await openStore();
+    const agent = await store.createAgent({
+      kind: "master",
+      name: "Gateway",
+      handle: "gateway",
+      description: "",
+      instructions: "",
+      provider: {
+        type: "custom" as const,
+        name: "Gateway",
+        baseUrl: "https://gateway.example/v1",
+        model: "model-a",
+        protocol: "openai-chat" as const,
+        apiKey: "sk-original",
+      },
+    });
+    const providerFields = {
+      type: "custom" as const,
+      name: "Gateway",
+      baseUrl: "https://gateway.example/v1",
+      model: "model-a",
+      protocol: "openai-chat" as const,
+    };
+    const kept = await store.updateAgent(agent.id, { provider: providerFields });
+    if (kept.kind !== "master") throw new Error("expected master");
+    expect(kept.provider).toMatchObject({ type: "custom", hasCredential: true });
+    expect(store.getCredential(agent.id)).toBe("sk-original");
+    const rotated = await store.updateAgent(agent.id, {
+      provider: { ...providerFields, apiKey: "sk-rotated" },
+    });
+    if (rotated.kind !== "master") throw new Error("expected master");
+    expect(rotated.provider).toMatchObject({ hasCredential: true });
+    expect(store.getCredential(agent.id)).toBe("sk-rotated");
+    const removed = await store.updateAgent(agent.id, {
+      provider: { ...providerFields, removeCredential: true },
+    });
+    if (removed.kind !== "master") throw new Error("expected master");
+    expect(removed.provider).toMatchObject({ hasCredential: false });
+    expect(store.getCredential(agent.id)).toBeUndefined();
+    const stateText = await readFile(store.stateFile, "utf8");
+    const credentialText = await readFile(store.credentialFile, "utf8");
+    expect(stateText).not.toContain("sk-");
+    expect(credentialText).not.toContain("sk-rotated");
+  });
+  it("rolls back a credential rotation when the state write fails", async () => {
+    const store = await openStore();
+    const agent = await store.createAgent({
+      kind: "master",
+      name: "Gateway",
+      handle: "gateway",
+      description: "",
+      instructions: "",
+      provider: {
+        type: "custom" as const,
+        name: "Gateway",
+        baseUrl: "https://gateway.example/v1",
+        model: "model-a",
+        protocol: "openai-chat" as const,
+        apiKey: "sk-original",
+      },
+    });
+    const internal = store as unknown as { writeState: (state?: unknown) => Promise<void> };
+    const writeState = internal.writeState.bind(store);
+    internal.writeState = async () => {
+      throw new Error("simulated state write failure");
+    };
+    try {
+      await expect(
+        store.updateAgent(agent.id, {
+          provider: {
+            type: "custom" as const,
+            name: "Gateway",
+            baseUrl: "https://gateway.example/v1",
+            model: "model-a",
+            protocol: "openai-chat" as const,
+            apiKey: "sk-new-rotated",
+          },
+        }),
+      ).rejects.toThrow("simulated state write failure");
+      expect(store.getCredential(agent.id)).toBe("sk-original");
+      expect(await readFile(store.credentialFile, "utf8")).toContain("sk-original");
+      expect(await readFile(store.credentialFile, "utf8")).not.toContain("sk-new-rotated");
+      expect(await readFile(store.stateFile, "utf8")).not.toContain("sk-new-rotated");
+    } finally {
+      internal.writeState = writeState;
+    }
+  });
+  it("rejects configuration fields that do not match the agent kind", async () => {
+    const store = await openStore();
+    const master = await store.createAgent({
+      kind: "master",
+      name: "Maya",
+      handle: "maya",
+      description: "",
+      instructions: "",
+      provider: { type: "chatgpt", model: "" },
+    });
+    await expect(store.updateAgent(master.id, { harness: "codex" })).rejects.toMatchObject({
+      code: "invalid",
+    });
+  });
+});

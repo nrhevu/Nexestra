@@ -2565,3 +2565,172 @@ function jsonResponse(body: unknown, status = 200): Response {
     headers: { "content-type": "application/json" },
   });
 }
+
+describe("Agent editing", () => {
+  it("submits Worker profile changes as a PATCH", async () => {
+    window.history.replaceState({}, "", "/surfaces/agents");
+    const updated: AgentView = {
+      ...workerAgent,
+      name: "New Planner",
+      description: "Plans more work",
+      instructions: "Be concise.",
+    };
+    let receivedBody: unknown;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/bootstrap") return jsonResponse({ ...bootstrapData, agents: [updated] });
+      if (path === `/api/agents/${workerAgent.id}` && init?.method === "PATCH") {
+        receivedBody = JSON.parse(String(init.body));
+        return jsonResponse(updated);
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Agent management" });
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit @planner" });
+    const nameInput = within(dialog).getByPlaceholderText("Codex Builder");
+    await user.clear(nameInput);
+    await user.type(nameInput, "New Planner");
+    const description = within(dialog).getByPlaceholderText("What does this agent handle?");
+    await user.clear(description);
+    await user.type(description, "Plans more work");
+    const instructions = within(dialog).getByPlaceholderText(
+      "Role, response style, and agent boundaries…",
+    );
+    await user.clear(instructions);
+    await user.type(instructions, "Be concise.");
+    await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        `/api/agents/${workerAgent.id}`,
+        expect.objectContaining({ method: "PATCH" }),
+      );
+    });
+    expect(receivedBody).toEqual({
+      name: "New Planner",
+      handle: "planner",
+      description: "Plans more work",
+      instructions: "Be concise.",
+      harness: "codex",
+      model: null,
+      reasoningEffort: null,
+    });
+    await screen.findByText("Agent updated.");
+  });
+  it("rotates an existing custom Master credential without removing it first", async () => {
+    window.history.replaceState({}, "", "/surfaces/agents");
+    const masterAgent: AgentView = {
+      id: "agent-master",
+      workspaceId: workspace.id,
+      kind: "master",
+      name: "Maya",
+      handle: "maya",
+      description: "",
+      instructions: "",
+      enabled: true,
+      archived: false,
+      accessMode: "auto",
+      provider: {
+        type: "custom",
+        name: "Gateway",
+        baseUrl: "https://gateway.example/v1",
+        model: "model-a",
+        protocol: "openai-chat",
+        hasCredential: true,
+      },
+      createdAt: now,
+      updatedAt: now,
+      readiness: "ready",
+      readinessLabel: "Ready",
+    };
+    let receivedBody: unknown;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/bootstrap") {
+        return jsonResponse({ ...bootstrapData, agents: [masterAgent] });
+      }
+      if (path === `/api/agents/${masterAgent.id}` && init?.method === "PATCH") {
+        receivedBody = JSON.parse(String(init.body));
+        return jsonResponse(masterAgent);
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Agent management" });
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit @maya" });
+    expect(dialog).toHaveTextContent("A key is already stored. Leave blank to keep it.");
+    await user.type(within(dialog).getByPlaceholderText("••••••••••"), "sk-rotated");
+    await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
+    await waitFor(() => {
+      expect(receivedBody).toBeDefined();
+    });
+    const body = receivedBody as { provider: Record<string, unknown> };
+    expect(body.provider).toMatchObject({ type: "custom", apiKey: "sk-rotated" });
+    expect(body.provider).not.toHaveProperty("removeCredential");
+  });
+  it("removes a stored custom Master credential explicitly", async () => {
+    window.history.replaceState({}, "", "/surfaces/agents");
+    const masterAgent: AgentView = {
+      id: "agent-master",
+      workspaceId: workspace.id,
+      kind: "master",
+      name: "Maya",
+      handle: "maya",
+      description: "",
+      instructions: "",
+      enabled: true,
+      archived: false,
+      accessMode: "ask",
+      provider: {
+        type: "custom",
+        name: "Gateway",
+        baseUrl: "https://gateway.example/v1",
+        model: "model-a",
+        protocol: "openai-chat",
+        hasCredential: true,
+      },
+      createdAt: now,
+      updatedAt: now,
+      readiness: "ready",
+      readinessLabel: "Ready",
+    };
+    let receivedBody: unknown;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/bootstrap") {
+          return jsonResponse({ ...bootstrapData, agents: [masterAgent] });
+        }
+        if (path === `/api/agents/${masterAgent.id}` && init?.method === "PATCH") {
+          receivedBody = JSON.parse(String(init.body));
+          return jsonResponse(masterAgent);
+        }
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      }),
+    );
+    const user = userEvent.setup();
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "Agent management" });
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit @maya" });
+    await user.click(within(dialog).getByRole("checkbox", { name: "Remove the stored key" }));
+    await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
+    await waitFor(() => {
+      expect(receivedBody).toBeDefined();
+    });
+    const body = receivedBody as { provider: Record<string, unknown> };
+    expect(body.provider).toMatchObject({ type: "custom", removeCredential: true });
+    expect(body.provider).not.toHaveProperty("apiKey");
+  });
+});

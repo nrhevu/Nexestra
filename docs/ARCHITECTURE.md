@@ -99,6 +99,11 @@ assignments, and releases the handle for reuse. Credential removal is persisted 
 so an interrupted multi-file write favors removing the secret. Thread JSONL files are never rewritten
 for agent deletion; historical author and mention snapshots remain part of the canonical transcript.
 
+Agent profile updates use the same write order and never touch transcript files. Custom Master
+updates are write-only: an omitted or blank API key keeps the stored key, a new key rotates it, and
+`removeCredential: true` deletes it. The credential file is written first and rolled back if the
+public state write fails, so metadata cannot claim a credential the file lacks.
+
 Task and Knowledge metadata support create, detail, update, and permanent-delete operations.
 Deleting a task is rejected while one of its Worker assignments is queued or running. Historical
 assignment and transcript events are retained after task deletion. Deleting repository knowledge is
@@ -144,6 +149,11 @@ Deletion is rejected while a reservation or per-agent queue is pending or runnin
 tombstone prevents new reservations until the profile update finishes. After an agent is deleted, a
 newly typed reference to its old handle is plain text unless that handle has been reused by another
 agent. Historical failed runs for a deleted profile cannot be retried.
+
+Configuration edits reuse that tombstone: a PATCH changing anything other than `enabled` or
+`archived` is rejected while the agent is busy, queued, reserved, or already being changed, and
+falls back to the direct store call for pure toggles. Update validation matches creation, rejects
+unknown and immutable fields (kind, workspace, ID), and re-checks handle uniqueness.
 
 ## Planning and Worker delegation
 
@@ -306,8 +316,6 @@ credentials.
 - Tasks created before the delegation-completion guard may remain unassigned; their process dialog
   reports that state, but does not retroactively start a Worker.
 - OpenCode `plan` is an application policy, not an independent OS or container sandbox.
-- Agent profiles cannot yet edit their full configuration after creation; enable, disable, archive,
-  and permanent deletion are available.
 - Workspaces can be renamed and reordered from Settings; deletion is not yet supported.
 - Device OAuth displays raw Codex CLI instructions; it does not yet use `codex app-server` JSON-RPC.
 - Custom providers support only two OpenAI-compatible protocols; Anthropic Messages is not supported.

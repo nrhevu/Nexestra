@@ -119,6 +119,7 @@ export function App() {
   const [knowledgeToEdit, setKnowledgeToEdit] = useState<KnowledgeItem>();
   const [knowledgeToDelete, setKnowledgeToDelete] = useState<KnowledgeItem>();
   const [agentToDelete, setAgentToDelete] = useState<AgentView>();
+  const [agentToEdit, setAgentToEdit] = useState<AgentView>();
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     const stored = window.localStorage.getItem("nexestra.theme") as "dark" | "light" | null;
     return stored ?? "dark";
@@ -721,6 +722,7 @@ export function App() {
           <AgentsView
             data={data}
             onCreate={() => setModal("agent")}
+            onEdit={setAgentToEdit}
             onToggle={(agent) =>
               mutate(
                 () =>
@@ -828,6 +830,18 @@ export function App() {
             await refresh();
             setModal(null);
             flash("Agent created. Its runtime status is shown in the directory.");
+          }}
+        />
+      )}
+      {agentToEdit && (
+        <AgentDialog
+          data={data}
+          agent={agentToEdit}
+          onClose={() => setAgentToEdit(undefined)}
+          onCreated={async (flashMessage) => {
+            await refresh();
+            setAgentToEdit(undefined);
+            flash(flashMessage ?? "Agent updated.");
           }}
         />
       )}
@@ -2735,6 +2749,7 @@ function KnowledgeView({
 function AgentsView(props: {
   data: BootstrapData;
   onCreate: () => void;
+  onEdit: (agent: AgentView) => void;
   onToggle: (agent: AgentView) => Promise<unknown>;
   onArchive: (agent: AgentView) => Promise<unknown>;
   onDelete: (agent: AgentView) => void;
@@ -2790,6 +2805,7 @@ function AgentsView(props: {
             <AgentCard
               key={agent.id}
               agent={agent}
+              onEdit={props.onEdit}
               onToggle={props.onToggle}
               onArchive={props.onArchive}
               onDelete={props.onDelete}
@@ -2811,6 +2827,7 @@ function AgentsView(props: {
               <AgentCard
                 key={agent.id}
                 agent={agent}
+                onEdit={props.onEdit}
                 onToggle={props.onToggle}
                 onArchive={props.onArchive}
                 onDelete={props.onDelete}
@@ -2825,11 +2842,13 @@ function AgentsView(props: {
 
 function AgentCard({
   agent,
+  onEdit,
   onToggle,
   onArchive,
   onDelete,
 }: {
   agent: AgentView;
+  onEdit: (agent: AgentView) => void;
   onToggle: (agent: AgentView) => Promise<unknown>;
   onArchive: (agent: AgentView) => Promise<unknown>;
   onDelete: (agent: AgentView) => void;
@@ -2887,6 +2906,10 @@ function AgentCard({
         <div>
           {!agent.archived && (
             <>
+              <button type="button" onClick={() => onEdit(agent)}>
+                <Pencil size={12} />
+                Edit
+              </button>
               <button type="button" onClick={() => void onToggle(agent)}>
                 {agent.enabled ? "Disable" : "Enable"}
               </button>
@@ -3853,22 +3876,42 @@ function DeleteAgentDialog({
 
 function AgentDialog({
   data,
+  agent,
   onClose,
   onCreated,
 }: {
   data: BootstrapData;
+  agent?: AgentView;
   onClose: () => void;
-  onCreated: () => Promise<void>;
+  onCreated: (flashMessage?: string) => Promise<void>;
 }) {
-  const [kind, setKind] = useState<"worker" | "master">("worker");
-  const [workerHarness, setWorkerHarness] = useState<"codex" | "opencode">("codex");
-  const [providerMode, setProviderMode] = useState<"chatgpt" | "custom">("chatgpt");
-  const [name, setName] = useState("");
-  const [handle, setHandle] = useState("");
-  const [handleTouched, setHandleTouched] = useState(false);
+  const editing = agent !== undefined;
+  const [kind, setKind] = useState<"worker" | "master">(agent?.kind ?? "worker");
+  const [workerHarness, setWorkerHarness] = useState<"codex" | "opencode">(
+    agent?.kind === "worker" ? agent.harness : "codex",
+  );
+  const [providerMode, setProviderMode] = useState<"chatgpt" | "custom">(
+    agent?.kind === "master" ? agent.provider.type : "chatgpt",
+  );
+  const [name, setName] = useState(agent?.name ?? "");
+  const [handle, setHandle] = useState(agent?.handle ?? "");
+  const [handleTouched, setHandleTouched] = useState(Boolean(agent));
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string>();
   const [login, setLogin] = useState<LoginSession>();
+  const [hasCredential] = useState(
+    agent?.kind === "master" && agent.provider.type === "custom" && agent.provider.hasCredential,
+  );
+  const [removeCredential, setRemoveCredential] = useState(false);
+  const providerFrom =
+    agent?.kind === "master" && agent.provider.type === "custom"
+      ? {
+          name: agent.provider.name,
+          baseUrl: agent.provider.baseUrl,
+          model: agent.provider.model,
+          protocol: agent.provider.protocol,
+        }
+      : undefined;
 
   useEffect(() => {
     if (login?.status !== "running") return;
@@ -3890,8 +3933,6 @@ function AgentDialog({
     setFormError(undefined);
     const fields = new FormData(event.currentTarget);
     const common = {
-      workspaceId: data.workspace.id,
-      kind,
       name,
       handle,
       description: String(fields.get("description") ?? ""),
@@ -3899,32 +3940,43 @@ function AgentDialog({
     };
     const workerModel = String(fields.get("workerModel") ?? "").trim();
     const workerReasoningEffort = String(fields.get("reasoningEffort") ?? "").trim();
-    const payload =
-      kind === "worker"
-        ? {
-            ...common,
-            harness: workerHarness,
-            ...(workerModel ? { model: workerModel } : {}),
-            ...(workerReasoningEffort ? { reasoningEffort: workerReasoningEffort } : {}),
-          }
-        : {
-            ...common,
-            accessMode: String(fields.get("accessMode") ?? "ask"),
-            provider:
-              providerMode === "chatgpt"
-                ? { type: "chatgpt", model: String(fields.get("model") ?? "") }
-                : {
-                    type: "custom",
-                    name: String(fields.get("providerName") ?? ""),
-                    baseUrl: String(fields.get("baseUrl") ?? ""),
-                    model: String(fields.get("model") ?? ""),
-                    protocol: String(fields.get("protocol") ?? "openai-chat"),
-                    apiKey: String(fields.get("apiKey") ?? ""),
-                  },
-          };
+    let payload: Record<string, unknown>;
+    if (!editing) {
+      payload = {
+        workspaceId: data.workspace.id,
+        kind,
+        ...common,
+        ...(kind === "worker"
+          ? {
+              harness: workerHarness,
+              ...(workerModel ? { model: workerModel } : {}),
+              ...(workerReasoningEffort ? { reasoningEffort: workerReasoningEffort } : {}),
+            }
+          : {
+              accessMode: String(fields.get("accessMode") ?? "ask"),
+              provider: buildProviderInput(providerMode, fields, false, false),
+            }),
+      };
+    } else if (kind === "worker") {
+      payload = {
+        ...common,
+        harness: workerHarness,
+        model: workerModel || null,
+        reasoningEffort: workerReasoningEffort || null,
+      };
+    } else {
+      payload = {
+        ...common,
+        accessMode: String(fields.get("accessMode") ?? "ask"),
+        provider: buildProviderInput(providerMode, fields, removeCredential, hasCredential),
+      };
+    }
     try {
-      await api("/api/agents", { method: "POST", body: JSON.stringify(payload) });
-      await onCreated();
+      await api(editing ? `/api/agents/${agent.id}` : "/api/agents", {
+        method: editing ? "PATCH" : "POST",
+        body: JSON.stringify(payload),
+      });
+      await onCreated(editing ? "Agent updated." : undefined);
     } catch (caught) {
       setFormError(messageFrom(caught));
     } finally {
@@ -3933,34 +3985,45 @@ function AgentDialog({
   };
 
   return (
-    <Modal title="Create agent" eyebrow="AGENT DIRECTORY" onClose={onClose} wide>
+    <Modal
+      title={editing ? `Edit @${agent.handle}` : "Create agent"}
+      eyebrow="AGENT DIRECTORY"
+      onClose={onClose}
+      wide
+    >
       <form onSubmit={submit}>
-        <div className="segmented">
-          <button
-            type="button"
-            className={kind === "worker" ? "active" : ""}
-            aria-pressed={kind === "worker"}
-            onClick={() => setKind("worker")}
-          >
-            <Bot size={16} />
-            <span>
-              <strong>Worker</strong>
-              <small>Codex or OpenCode</small>
-            </span>
-          </button>
-          <button
-            type="button"
-            className={kind === "master" ? "active" : ""}
-            aria-pressed={kind === "master"}
-            onClick={() => setKind("master")}
-          >
-            <Sparkles size={16} />
-            <span>
-              <strong>Master</strong>
-              <small>Conversations in Nexestra</small>
-            </span>
-          </button>
-        </div>
+        {editing ? (
+          <p className="kind-note">
+            Kind and workspace are fixed after creation to keep transcripts addressable.
+          </p>
+        ) : (
+          <div className="segmented">
+            <button
+              type="button"
+              className={kind === "worker" ? "active" : ""}
+              aria-pressed={kind === "worker"}
+              onClick={() => setKind("worker")}
+            >
+              <Bot size={16} />
+              <span>
+                <strong>Worker</strong>
+                <small>Codex or OpenCode</small>
+              </span>
+            </button>
+            <button
+              type="button"
+              className={kind === "master" ? "active" : ""}
+              aria-pressed={kind === "master"}
+              onClick={() => setKind("master")}
+            >
+              <Sparkles size={16} />
+              <span>
+                <strong>Master</strong>
+                <small>Conversations in Nexestra</small>
+              </span>
+            </button>
+          </div>
+        )}
         <div className="form-grid">
           <Field label="Display name">
             <input
@@ -3988,7 +4051,12 @@ function AgentDialog({
           </Field>
         </div>
         <Field label="Description" optional>
-          <input name="description" placeholder="What does this agent handle?" maxLength={240} />
+          <input
+            name="description"
+            placeholder="What does this agent handle?"
+            defaultValue={agent?.description ?? ""}
+            maxLength={240}
+          />
         </Field>
         {kind === "worker" ? (
           <>
@@ -4044,6 +4112,7 @@ function AgentDialog({
                   name="workerModel"
                   aria-label="Worker model"
                   placeholder={workerHarness === "codex" ? "Default" : "provider/model"}
+                  defaultValue={agent?.kind === "worker" ? (agent.model ?? "") : ""}
                   maxLength={160}
                 />
               </Field>
@@ -4064,6 +4133,7 @@ function AgentDialog({
                   placeholder={
                     workerHarness === "codex" ? "Default, high, xhigh…" : "Default, high, max…"
                   }
+                  defaultValue={agent?.kind === "worker" ? (agent.reasoningEffort ?? "") : ""}
                   list="worker-reasoning-suggestions"
                   maxLength={40}
                 />
@@ -4086,7 +4156,10 @@ function AgentDialog({
                   type="button"
                   className={providerMode === "chatgpt" ? "active" : ""}
                   aria-pressed={providerMode === "chatgpt"}
-                  onClick={() => setProviderMode("chatgpt")}
+                  onClick={() => {
+                    setProviderMode("chatgpt");
+                    setRemoveCredential(false);
+                  }}
                 >
                   ChatGPT OAuth
                 </button>
@@ -4150,13 +4223,27 @@ function AgentDialog({
                 </button>
                 {login?.output && <pre>{login.output}</pre>}
                 <Field label="Model" optional hint="Leave blank to use the Codex default">
-                  <input name="model" placeholder="Default" />
+                  <input
+                    name="model"
+                    aria-label="Master model"
+                    placeholder="Default"
+                    defaultValue={
+                      agent?.kind === "master" && agent.provider.type === "chatgpt"
+                        ? agent.provider.model
+                        : ""
+                    }
+                  />
                 </Field>
               </div>
             ) : (
-              <CustomProviderFields />
+              <CustomProviderFields
+                provider={providerFrom}
+                hasCredential={hasCredential}
+                removeCredential={removeCredential}
+                onRemoveCredential={setRemoveCredential}
+              />
             )}
-            <MasterAccessModeField />
+            <MasterAccessModeField agent={agent} />
           </>
         )}
         <Field label="Custom instructions" optional>
@@ -4164,6 +4251,7 @@ function AgentDialog({
             name="instructions"
             rows={3}
             placeholder="Role, response style, and agent boundaries…"
+            defaultValue={agent?.instructions ?? ""}
             maxLength={8000}
           />
         </Field>
@@ -4173,42 +4261,133 @@ function AgentDialog({
             {formError}
           </p>
         )}
-        <ModalActions onClose={onClose} saving={saving} submitLabel="Create agent" />
+        <ModalActions
+          onClose={onClose}
+          saving={saving}
+          submitLabel={editing ? "Save changes" : "Create agent"}
+        />
       </form>
     </Modal>
   );
 }
 
-function CustomProviderFields() {
+function buildProviderInput(
+  providerMode: "chatgpt" | "custom",
+  fields: FormData,
+  removeCredential: boolean,
+  hasCredential: boolean,
+): { type: "chatgpt"; model: string } | Record<string, unknown> {
+  if (providerMode === "chatgpt") {
+    return { type: "chatgpt", model: String(fields.get("model") ?? "") };
+  }
+  const apiKey = String(fields.get("apiKey") ?? "").trim();
+  return {
+    type: "custom",
+    name: String(fields.get("providerName") ?? ""),
+    baseUrl: String(fields.get("baseUrl") ?? ""),
+    model: String(fields.get("model") ?? ""),
+    protocol: String(fields.get("protocol") ?? "openai-chat"),
+    ...(hasCredential && !apiKey ? {} : { apiKey }),
+    ...(removeCredential ? { removeCredential: true } : {}),
+  };
+}
+
+function CustomProviderFields({
+  provider,
+  hasCredential,
+  removeCredential,
+  onRemoveCredential,
+}: {
+  provider?: {
+    name: string;
+    baseUrl: string;
+    model: string;
+    protocol: "openai-chat" | "openai-responses";
+  };
+  hasCredential: boolean;
+  removeCredential: boolean;
+  onRemoveCredential: (value: boolean) => void;
+}) {
   return (
     <div className="custom-provider">
       <div className="form-grid">
         <Field label="Provider name">
-          <input name="providerName" placeholder="Local gateway" required />
+          <input
+            name="providerName"
+            placeholder="Local gateway"
+            defaultValue={provider?.name ?? ""}
+            required
+          />
         </Field>
         <Field label="Protocol">
-          <select name="protocol" defaultValue="openai-chat">
+          <select
+            name="protocol"
+            aria-label="Protocol"
+            defaultValue={provider?.protocol ?? "openai-chat"}
+          >
             <option value="openai-chat">OpenAI Chat Completions</option>
             <option value="openai-responses">OpenAI Responses</option>
           </select>
         </Field>
       </div>
       <Field label="Base URL" hint="API root: use HTTPS remotely; HTTP is limited to localhost">
-        <input name="baseUrl" type="url" placeholder="https://api.example.com/v1" required />
+        <input
+          name="baseUrl"
+          type="url"
+          placeholder="https://api.example.com/v1"
+          defaultValue={provider?.baseUrl ?? ""}
+          required
+        />
       </Field>
       <div className="form-grid">
         <Field label="Model ID">
-          <input name="model" placeholder="model-name" required />
-        </Field>
-        <Field label="API key" optional hint="Leave blank or enter at least 8 characters">
           <input
-            name="apiKey"
-            type="password"
-            minLength={8}
-            autoComplete="new-password"
-            placeholder="••••••••••"
+            name="model"
+            placeholder="model-name"
+            aria-label="Provider model"
+            defaultValue={provider?.model ?? ""}
+            required
           />
         </Field>
+        {hasCredential && !removeCredential ? (
+          <div className="credential-field">
+            <Field label="API key" optional hint="A key is already stored. Leave blank to keep it.">
+              <input
+                name="apiKey"
+                type="password"
+                minLength={8}
+                autoComplete="new-password"
+                placeholder="••••••••••"
+              />
+            </Field>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={removeCredential}
+                onChange={(event) => onRemoveCredential(event.target.checked)}
+              />
+              Remove the stored key
+            </label>
+          </div>
+        ) : (
+          <Field
+            label="API key"
+            optional
+            hint={
+              hasCredential
+                ? "Removing the stored key cannot be undone."
+                : "Leave blank or enter at least 8 characters"
+            }
+          >
+            <input
+              name="apiKey"
+              type="password"
+              minLength={8}
+              autoComplete="new-password"
+              placeholder={hasCredential ? "—" : "••••••••••"}
+            />
+          </Field>
+        )}
       </div>
       <p className="security-note">
         Use only an endpoint you trust. API keys are stored separately and are readable only by the
@@ -4218,14 +4397,18 @@ function CustomProviderFields() {
   );
 }
 
-function MasterAccessModeField() {
+function MasterAccessModeField({ agent }: { agent?: AgentView }) {
   return (
     <>
       <Field
         label="Access mode"
         hint="Choose one policy for the whole agent instead of configuring individual tools."
       >
-        <select name="accessMode" aria-label="Access mode" defaultValue="ask">
+        <select
+          name="accessMode"
+          aria-label="Access mode"
+          defaultValue={agent?.kind === "master" ? agent.accessMode : "ask"}
+        >
           <option value="ask">Ask for permission</option>
           <option value="auto">Auto</option>
           <option value="full">Full access</option>

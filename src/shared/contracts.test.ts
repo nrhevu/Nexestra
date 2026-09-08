@@ -5,6 +5,7 @@ import {
   extractMentionHandles,
   handleFromName,
   ReorderWorkspacesSchema,
+  UpdateAgentSchema,
 } from "./contracts.js";
 
 describe("extractMentionHandles", () => {
@@ -84,5 +85,34 @@ describe("ReorderWorkspacesSchema", () => {
       ReorderWorkspacesSchema.safeParse({ workspaceIds: ["workspace-a", "workspace-a"] }).success,
     ).toBe(false);
     expect(ReorderWorkspacesSchema.safeParse({ workspaceIds: [] }).success).toBe(false);
+  });
+});
+
+describe("UpdateAgentSchema", () => {
+  it("clears Worker model fields with null and never accepts unknown or immutable keys", () => {
+    const parsed = UpdateAgentSchema.safeParse({
+      name: "Planner",
+      model: null,
+      reasoningEffort: null,
+    });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) throw new Error("expected success");
+    expect(parsed.data).toMatchObject({ name: "Planner", model: null, reasoningEffort: null });
+    expect(UpdateAgentSchema.safeParse({ name: "X", kind: "master" }).success).toBe(false);
+    expect(UpdateAgentSchema.safeParse({ name: "X", workspaceId: "w" }).success).toBe(false);
+  });
+  it("rejects removing a credential at the same time as providing a new key", () => {
+    const result = UpdateAgentSchema.safeParse({
+      provider: {
+        type: "custom",
+        name: "Gateway",
+        baseUrl: "https://gateway.example/v1",
+        model: "model-a",
+        protocol: "openai-chat",
+        apiKey: "sk-new",
+        removeCredential: true,
+      },
+    });
+    expect(result.success).toBe(false);
   });
 });
