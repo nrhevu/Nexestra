@@ -30,6 +30,8 @@ const uuidK = "3f0f8f1a-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const uuidL = "3f0f8f1a-cccc-4ccc-8ccc-cccccccccccc";
 const uuidM = "3f0f8f1a-dddd-4ddd-8ddd-dddddddddddd";
 const uuidN = "3f0f8f1a-eeee-4eee-8eee-eeeeeeeeeeee";
+const uuidO = "3f0f8f1a-0f0f-4f0f-8f0f-0f0f0f0f0f0f";
+const uuidP = "3f0f8f1a-1f1f-4f1f-8f1f-1f1f1f1f1f1f";
 
 class RecordingRunner implements AgentRunner {
   invocations: { agentId: string; runId?: string }[] = [];
@@ -297,13 +299,91 @@ describe("recoverable submission dispatch", () => {
       createdAt: now,
       updatedAt: now,
     };
-    expect(dispatcher.reconcileQueuedRun(run, codex, message)).toBe(true);
+    const reconciled = await dispatcher.reconcileQueuedRun(run, message);
+    expect(reconciled.id).toBe(run.id);
     expect(dispatcher.liveRunExists(run.id)).toBe(true);
     await dispatcher.waitForIdle();
     expect(runner.invocations.some((entry) => entry.runId === run.id)).toBe(true);
     const data = await store.threadData(thread.id);
     expect(data.runs.filter((entry) => entry.id === run.id)).toHaveLength(1);
     expect(data.runs.find((entry) => entry.id === run.id)?.status).toBe("completed");
+  });
+
+  it("conflicts while agent mutation is in flight and keeps the durable queued run untouched", async () => {
+    const { store, runner, dispatcher, chat, thread } = await setup();
+    const codex = await createAgent(store, "codex");
+    const requestId = uuidO;
+    const message = await store.createUserMessage(
+      thread.id,
+      "@codex mutate",
+      [{ agentId: codex.id, handle: codex.handle }],
+      [],
+      [],
+      requestId,
+    );
+    const now = new Date().toISOString();
+    const run: AgentRun = {
+      id: "durable-mutation-run",
+      threadId: thread.id,
+      triggerMessageId: message.id,
+      agentId: codex.id,
+      attempt: 1,
+      status: "queued",
+      createdAt: now,
+      updatedAt: now,
+    };
+    await store.updateRun(run);
+    expect(dispatcher.beginAgentMutation(codex.id)).toBe(true);
+    try {
+      await expect(
+        chat.send(thread.id, { content: "@codex mutate", requestId }),
+      ).rejects.toMatchObject({ code: "conflict" });
+      const data = await store.threadData(thread.id);
+      const stored = data.runs.find((entry) => entry.id === run.id);
+      expect(stored?.status).toBe("queued");
+      expect(data.runs.filter((entry) => entry.triggerMessageId === message.id)).toHaveLength(1);
+      expect(runner.invocations).toHaveLength(0);
+    } finally {
+      dispatcher.finishAgentMutation(codex.id);
+    }
+    const retried = await chat.send(thread.id, { content: "@codex mutate", requestId });
+    expect(retried.replayed).toBe(true);
+    await dispatcher.waitForIdle();
+    expect(runner.invocations.some((entry) => entry.runId === run.id)).toBe(true);
+  });
+
+  it("does not record a failed run for a missing mention during an in-flight mutation", async () => {
+    const { store, runner, dispatcher, chat, thread } = await setup();
+    const codex = await createAgent(store, "codex");
+    const requestId = uuidP;
+    await store.createUserMessage(
+      thread.id,
+      "@codex pending",
+      [{ agentId: codex.id, handle: codex.handle }],
+      [],
+      [],
+      requestId,
+    );
+    expect(dispatcher.beginAgentMutation(codex.id)).toBe(true);
+    try {
+      await expect(
+        chat.send(thread.id, { content: "@codex pending", requestId }),
+      ).rejects.toMatchObject({ code: "conflict" });
+      const data = await store.threadData(thread.id);
+      expect(data.runs).toHaveLength(0);
+      expect(runner.invocations).toHaveLength(0);
+    } finally {
+      dispatcher.finishAgentMutation(codex.id);
+    }
+    const retried = await chat.send(thread.id, { content: "@codex pending", requestId });
+    expect(retried.replayed).toBe(true);
+    await dispatcher.waitForIdle();
+    expect(runner.invocations).toHaveLength(1);
+    const data = await store.threadData(thread.id);
+    const runs = data.runs.filter((entry) => entry.triggerMessageId === retried.message.id);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.agentId).toBe(codex.id);
+    expect(runs[0]?.status).toBe("completed");
   });
 
   it("enqueues only the missing original mention after a partial multi-agent failure", async () => {

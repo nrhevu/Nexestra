@@ -411,24 +411,45 @@ export class AgentDispatcher {
     return this.liveRuns.has(runId);
   }
 
-  reconcileQueuedRun(run: AgentRun, agent: Agent, trigger: Message): boolean {
-    if (run.status !== "queued" || this.liveRuns.has(run.id)) return false;
-    const thread = this.store.getThread(run.threadId);
-    if (!thread || thread.archived || agent.archived || !agent.enabled) return false;
-    this.liveRuns.set(run.id, run);
-    this.liveActivities.set(run.id, {
-      runId: run.id,
-      threadId: run.threadId,
-      agentId: run.agentId,
-      stage: "queued",
-      thinking: "",
-      text: "",
-      detail: "Waiting in the queue",
-      updatedAt: run.updatedAt,
-    });
-    this.notifyThread(run.threadId, true);
-    this.enqueueRun(run, agent, trigger);
-    return true;
+  async reconcileQueuedRun(run: AgentRun, trigger: Message): Promise<AgentRun> {
+    if (run.status !== "queued" || this.liveRuns.has(run.id)) return run;
+    const snapshot = this.store.getAgent(run.agentId);
+    const release = this.reserveAgent(run.agentId);
+    if (!release) {
+      throw new StoreError(
+        "conflict",
+        `@${snapshot?.handle ?? "unknown"} is being updated or deleted. Try again.`,
+      );
+    }
+    try {
+      const thread = this.store.getThread(run.threadId);
+      const agent = this.store.getAgent(run.agentId);
+      if (!thread || thread.archived || !agent || agent.archived || !agent.enabled) {
+        const updatedAt = new Date().toISOString();
+        return this.store.updateRun({
+          ...run,
+          status: "failed",
+          error: UNAVAILABLE_AGENT_REASON,
+          updatedAt,
+        });
+      }
+      this.liveRuns.set(run.id, run);
+      this.liveActivities.set(run.id, {
+        runId: run.id,
+        threadId: run.threadId,
+        agentId: run.agentId,
+        stage: "queued",
+        thinking: "",
+        text: "",
+        detail: "Waiting in the queue",
+        updatedAt: run.updatedAt,
+      });
+      this.notifyThread(run.threadId, true);
+      this.enqueueRun(run, agent, trigger);
+      return run;
+    } finally {
+      release();
+    }
   }
 
   private enqueueRun(run: AgentRun, agent: Agent, trigger: Message): void {
@@ -1347,46 +1368,43 @@ export class ChatService {
         resolved.push(run);
         continue;
       }
-      const agent = this.store.getAgent(run.agentId);
-      if (agent && !agent.archived && agent.enabled) {
-        this.dispatcher.reconcileQueuedRun(run, agent, message);
-        resolved.push(run);
-        continue;
-      }
-      const updatedAt = new Date().toISOString();
-      resolved.push(
-        await this.store.updateRun({
-          ...run,
-          status: "failed",
-          error: UNAVAILABLE_AGENT_REASON,
-          updatedAt,
-        }),
-      );
+      resolved.push(await this.dispatcher.reconcileQueuedRun(run, message));
     }
     const alreadyDispatched = new Set(resolved.map((run) => run.agentId));
     const newlyQueued: AgentRun[] = [];
     for (const mention of message.mentions) {
       if (alreadyDispatched.has(mention.agentId)) continue;
-      const agent = this.store.getAgent(mention.agentId);
-      if (agent && !agent.archived && agent.enabled) {
-        const [run] = await this.dispatcher.enqueue(message, [agent]);
-        if (run) newlyQueued.push(run);
-        continue;
+      const release = this.dispatcher.reserveAgent(mention.agentId);
+      if (!release) {
+        throw new StoreError(
+          "conflict",
+          "An original agent is being updated or deleted. Try again.",
+        );
       }
-      const createdAt = new Date().toISOString();
-      newlyQueued.push(
-        await this.store.updateRun({
-          id: crypto.randomUUID(),
-          threadId,
-          triggerMessageId: message.id,
-          agentId: mention.agentId,
-          attempt: 1,
-          status: "failed",
-          error: UNAVAILABLE_AGENT_REASON,
-          createdAt,
-          updatedAt: createdAt,
-        }),
-      );
+      try {
+        const agent = this.store.getAgent(mention.agentId);
+        if (agent && !agent.archived && agent.enabled) {
+          const [run] = await this.dispatcher.enqueue(message, [agent]);
+          if (run) newlyQueued.push(run);
+          continue;
+        }
+        const createdAt = new Date().toISOString();
+        newlyQueued.push(
+          await this.store.updateRun({
+            id: crypto.randomUUID(),
+            threadId,
+            triggerMessageId: message.id,
+            agentId: mention.agentId,
+            attempt: 1,
+            status: "failed",
+            error: UNAVAILABLE_AGENT_REASON,
+            createdAt,
+            updatedAt: createdAt,
+          }),
+        );
+      } finally {
+        release();
+      }
     }
     return [...resolved, ...newlyQueued];
   }
