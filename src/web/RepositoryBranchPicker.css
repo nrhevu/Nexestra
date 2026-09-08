@@ -106,13 +106,17 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+  max-height: 240px;
   margin: 0;
-  padding: 0;
+  padding: 0 2px 0 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   list-style: none;
 }
 
 .branch-picker-options button {
   display: flex;
+  width: 100%;
   min-width: 0;
   align-items: center;
   gap: 8px;
@@ -157,7 +161,7 @@
 }
 
 .branch-picker-conflict strong {
-  color: #e28e91;
+  color: var(--text);
   font-size: 12px;
 }
 

@@ -5301,6 +5301,7 @@ function KnowledgeDetailDialog({
                 <RepositoryBranchPicker
                   item={repositoryItem}
                   generation={generation}
+                  disabled={refreshing || item.refreshing === true}
                   onPendingChange={setBranchBusy}
                   onChanged={onChanged}
                 />

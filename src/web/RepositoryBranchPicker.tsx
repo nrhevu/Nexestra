@@ -35,11 +35,13 @@ function messageFrom(error: unknown): string {
 export function RepositoryBranchPicker({
   item,
   generation,
+  disabled = false,
   onPendingChange,
   onChanged,
 }: {
   item: BranchAwareRepository;
   generation: number;
+  disabled?: boolean;
   onPendingChange: (pending: boolean) => void;
   onChanged: (item: KnowledgeItem, generation: number, notice?: string) => void;
 }) {
@@ -60,6 +62,7 @@ export function RepositoryBranchPicker({
   const applyControllerRef = useRef<AbortController | null>(null);
   const applyingRef = useRef(false);
   const pendingApplyKeyRef = useRef<string | null>(null);
+  const focusTriggerAfterCommitRef = useRef(false);
   const itemRef = useRef(item);
   itemRef.current = item;
   const generationRef = useRef(generation);
@@ -145,9 +148,23 @@ export function RepositoryBranchPicker({
   // late success, failure, or conflict can never touch the current state.
   useEffect(() => {
     if (!applyingRef.current || pendingApplyKeyRef.current === null) return;
+    if (disabled) {
+      cancelApply();
+      return;
+    }
     if (applyKey === pendingApplyKeyRef.current) return;
     cancelApply();
-  }, [applyKey, cancelApply]);
+  }, [applyKey, cancelApply, disabled]);
+
+  // Focus the trigger only after React commits the enable transition; calling
+  // focus() synchronously while the button is still disabled drops the request.
+  useEffect(() => {
+    if (!focusTriggerAfterCommitRef.current) return;
+    if (open || disabled || applying) return;
+    if (!triggerRef.current || triggerRef.current.disabled) return;
+    focusTriggerAfterCommitRef.current = false;
+    triggerRef.current.focus();
+  }, [open, disabled, applying]);
 
   useEffect(() => {
     if (!open) return;
@@ -214,10 +231,11 @@ export function RepositoryBranchPicker({
       }
       pendingApplyKeyRef.current = null;
       applyingRef.current = false;
+      setApplying(false);
       setOpen(false);
       setBranchName("");
       onPendingChange(false);
-      triggerRef.current?.focus();
+      focusTriggerAfterCommitRef.current = true;
       onChanged(
         updated,
         operationGeneration,
@@ -267,7 +285,7 @@ export function RepositoryBranchPicker({
         type="button"
         aria-expanded={open}
         aria-controls={open ? panelId : undefined}
-        disabled={applying}
+        disabled={disabled || applying}
         onClick={() => setOpen(true)}
       >
         <GitBranch size={14} />
@@ -283,7 +301,7 @@ export function RepositoryBranchPicker({
               list={datalistId}
               maxLength={BRANCH_NAME_MAX_LENGTH}
               value={branchName}
-              disabled={applying}
+              disabled={disabled || applying}
               placeholder={effectiveBranch ?? "Type a branch name"}
               onChange={(event) => {
                 setBranchName(event.target.value);
@@ -292,7 +310,13 @@ export function RepositoryBranchPicker({
               onKeyDown={(event) => {
                 if (event.key !== "Enter") return;
                 event.preventDefault();
-                if (!applying && !conflict && phase === "ready" && branchName.trim() !== "") {
+                if (
+                  !disabled &&
+                  !applying &&
+                  !conflict &&
+                  phase === "ready" &&
+                  branchName.trim() !== ""
+                ) {
                   void handleApply();
                 }
               }}
@@ -301,7 +325,9 @@ export function RepositoryBranchPicker({
               ref={applyRef}
               type="button"
               className="primary-button"
-              disabled={applying || conflict || phase !== "ready" || branchName.trim() === ""}
+              disabled={
+                disabled || applying || conflict || phase !== "ready" || branchName.trim() === ""
+              }
               onClick={() => void handleApply()}
             >
               {applying ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />}
@@ -320,13 +346,16 @@ export function RepositoryBranchPicker({
                 <CircleAlert size={14} />
                 {listError}
               </p>
-              <button type="button" onClick={() => void loadBranches()}>
+              <button type="button" disabled={disabled} onClick={() => void loadBranches()}>
                 Retry
               </button>
             </div>
           )}
           {branches && (
             <>
+              <p className="branch-picker-muted">
+                Current source branch: {branches.selectedBranch ?? "Not available"}
+              </p>
               {branches.branches.length === 0 ? (
                 <p className="branch-picker-muted">
                   No branches were returned. Type a branch name above.
@@ -340,7 +369,7 @@ export function RepositoryBranchPicker({
                         <button
                           type="button"
                           className={active ? "active" : undefined}
-                          disabled={applying}
+                          disabled={disabled || applying}
                           onClick={() => selectBranch(branch.name)}
                         >
                           <GitBranch size={14} />
@@ -373,7 +402,7 @@ export function RepositoryBranchPicker({
                 The repository changed while you were applying. Reload the branch list, then apply
                 your choice again.
               </p>
-              <button type="button" onClick={() => void loadBranches()}>
+              <button type="button" disabled={disabled} onClick={() => void loadBranches()}>
                 Reload branches
               </button>
             </div>

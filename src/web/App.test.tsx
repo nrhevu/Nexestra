@@ -4113,6 +4113,13 @@ describe("Repository source branch selection", () => {
       method: "POST",
       body: JSON.stringify({ branch: "develop", expectedSourceVersion: 3 }),
     });
+    const changeBranch = within(updated).getByRole("button", { name: "Change branch" });
+    expect(changeBranch).toBeEnabled();
+    await waitFor(() => expect(changeBranch).toHaveFocus());
+    await user.click(changeBranch);
+    expect(changeBranch).toHaveAttribute("aria-expanded", "true");
+    await user.click(await within(updated).findByRole("button", { name: /develop/ }));
+    expect(within(updated).getByRole("button", { name: "Apply branch" })).toBeEnabled();
   });
 
   it("shows the selected branch over the clone default as the effective branch", async () => {
@@ -4196,7 +4203,10 @@ describe("Repository source branch selection", () => {
         return jsonResponse({ ...bootstrapData, knowledge: [branchRepository] });
       }
       if (path === "/api/knowledge/repository-branch/branches") {
-        return jsonResponse(branchListResponse(applications === 0 ? 3 : 9));
+        return jsonResponse({
+          ...branchListResponse(applications === 0 ? 3 : 9),
+          selectedBranch: applications === 0 ? null : "feature/release",
+        });
       }
       if (path === "/api/knowledge/repository-branch/source-branch") {
         applications += 1;
@@ -4231,6 +4241,9 @@ describe("Repository source branch selection", () => {
     expect(within(details).getByRole("button", { name: "Apply branch" })).toBeDisabled();
 
     await user.click(within(details).getByRole("button", { name: "Reload branches" }));
+    expect(
+      await within(details).findByText("Current source branch: feature/release"),
+    ).toBeVisible();
     expect(await within(details).findByRole("button", { name: "Apply branch" })).toBeEnabled();
     await user.click(within(details).getByRole("button", { name: "Apply branch" }));
     expect(await screen.findByText("Source branch set to develop.")).toBeVisible();
@@ -4333,5 +4346,73 @@ describe("Repository source branch selection", () => {
 
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: branchRepository.name })).not.toBeInTheDocument();
+  });
+
+  it("keeps an open branch picker inert while a refresh is running", async () => {
+    window.localStorage.setItem("nexestra.workspaceId", workspace.id);
+    window.history.replaceState({}, "", "/surfaces/knowledge");
+    const pendingRefresh = deferredResponse();
+    let refreshClicked = false;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        return jsonResponse({ ...bootstrapData, knowledge: [branchRepository] });
+      }
+      if (path === "/api/knowledge/repository-branch/branches") {
+        return jsonResponse(branchListResponse(refreshClicked ? 5 : 3));
+      }
+      if (path === "/api/knowledge/repositories/repository-branch/refresh") {
+        refreshClicked = true;
+        return pendingRefresh.promise;
+      }
+      if (path === "/api/knowledge/repository-branch/source-branch") {
+        return jsonResponse({ ...branchRepository, selectedBranch: "develop", sourceVersion: 4 });
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Knowledge" });
+    await user.click(
+      screen.getByRole("button", { name: `View details for ${branchRepository.name}` }),
+    );
+    const details = screen.getByRole("dialog", { name: branchRepository.name });
+    await user.click(within(details).getByRole("button", { name: "Change branch" }));
+    await user.click(await within(details).findByRole("button", { name: /develop/ }));
+    expect(within(details).getByRole("button", { name: "Apply branch" })).toBeEnabled();
+
+    await user.click(within(details).getByRole("button", { name: "Refresh source" }));
+    await waitFor(() =>
+      expect(within(details).getByRole("button", { name: "Change branch" })).toBeDisabled(),
+    );
+    expect(within(details).getByRole("button", { name: "Apply branch" })).toBeDisabled();
+    expect(within(details).getByLabelText("Branch name")).toBeDisabled();
+    expect(within(details).getByRole("button", { name: "Cancel" })).toBeEnabled();
+    expect(
+      fetchMock.mock.calls.filter(
+        ([input]) => String(input) === "/api/knowledge/repository-branch/source-branch",
+      ),
+    ).toHaveLength(0);
+
+    await act(async () => {
+      pendingRefresh.resolve(
+        jsonResponse({
+          ...branchRepository,
+          sourceCommit: repoDevCommit,
+          refreshedAt: "2026-09-02T13:00:00.000Z",
+          sourceVersion: 5,
+          updatedAt: "2026-09-02T13:00:00.000Z",
+        }),
+      );
+    });
+    const refreshedDialog = screen.getByRole("dialog", { name: branchRepository.name });
+    expect(within(refreshedDialog).getByRole("button", { name: "Apply branch" })).toBeEnabled();
+    expect(
+      fetchMock.mock.calls.filter(
+        ([input]) => String(input) === "/api/knowledge/repository-branch/source-branch",
+      ),
+    ).toHaveLength(0);
   });
 });
