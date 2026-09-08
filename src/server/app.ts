@@ -9,6 +9,7 @@ import {
   type BootstrapData,
   DelegateTaskSchema,
   MessageSearchRequestSchema,
+  SelectRepositorySourceBranchSchema,
   ToolAnswersSchema,
 } from "../shared/contracts.js";
 import { reviewAssignmentGit } from "./assignment-review.js";
@@ -198,6 +199,17 @@ export function createApp(options: CreateAppOptions) {
 
   app.post("/api/knowledge/repositories/:id/refresh", async (context) => {
     return context.json(await defaultRepositories.refreshRepository(context.req.param("id")));
+  });
+
+  app.get("/api/knowledge/:id/branches", async (context) => {
+    return context.json(await defaultRepositories.listBranches(context.req.param("id")));
+  });
+
+  app.post("/api/knowledge/:id/source-branch", async (context) => {
+    const input = SelectRepositorySourceBranchSchema.parse(await context.req.json());
+    return context.json(
+      await defaultRepositories.selectSourceBranch(context.req.param("id"), input),
+    );
   });
 
   app.get("/api/knowledge/:id", (context) => {

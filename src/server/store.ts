@@ -863,6 +863,8 @@ export class FileStore {
         Pick<
           KnowledgeRepository,
           | "defaultBranch"
+          | "selectedBranch"
+          | "sourceVersion"
           | "error"
           | "sourceCommit"
           | "sourceRef"

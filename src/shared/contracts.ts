@@ -36,6 +36,9 @@ export const KnowledgeHandleSchema = z
   .toLowerCase()
   .regex(/^[a-z0-9][a-z0-9_-]{1,47}$/, "Use 2–48 characters: a-z, 0-9, _ or -.");
 
+export const KNOWLEDGE_BRANCH_NAME_MAX_LENGTH = 256;
+export const KNOWLEDGE_BRANCH_LIST_MAX_ROWS = 500;
+
 const KnowledgeBaseSchema = z.object({
   id: z.string(),
   workspaceId: z.string(),
@@ -74,6 +77,8 @@ export const KnowledgeRepositorySchema = KnowledgeBaseSchema.extend({
   source: z.string(),
   storagePath: z.string(),
   defaultBranch: z.string().optional(),
+  selectedBranch: z.string().trim().min(1).max(KNOWLEDGE_BRANCH_NAME_MAX_LENGTH).optional(),
+  sourceVersion: z.number().int().nonnegative().optional(),
   sourceCommit: z
     .string()
     .regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/)
@@ -85,6 +90,29 @@ export const KnowledgeRepositorySchema = KnowledgeBaseSchema.extend({
   status: z.enum(["cloning", "ready", "failed"]),
   error: z.string().optional(),
 });
+
+export const KnowledgeRepositoryBranchSchema = z.object({
+  name: z.string().trim().min(1).max(KNOWLEDGE_BRANCH_NAME_MAX_LENGTH),
+  commit: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/),
+});
+export type KnowledgeRepositoryBranch = z.infer<typeof KnowledgeRepositoryBranchSchema>;
+
+export const KnowledgeRepositoryBranchesResponseSchema = z.object({
+  branches: z.array(KnowledgeRepositoryBranchSchema).max(KNOWLEDGE_BRANCH_LIST_MAX_ROWS),
+  truncated: z.boolean(),
+  sourceVersion: z.number().int().nonnegative(),
+  selectedBranch: z.string().trim().min(1).max(KNOWLEDGE_BRANCH_NAME_MAX_LENGTH).nullable(),
+  defaultBranch: z.string().trim().min(1).max(KNOWLEDGE_BRANCH_NAME_MAX_LENGTH).nullable(),
+});
+export type KnowledgeRepositoryBranchesResponse = z.infer<
+  typeof KnowledgeRepositoryBranchesResponseSchema
+>;
+
+export const SelectRepositorySourceBranchSchema = z.object({
+  branch: z.string().trim().min(1).max(KNOWLEDGE_BRANCH_NAME_MAX_LENGTH),
+  expectedSourceVersion: z.number().int().nonnegative(),
+});
+export type SelectRepositorySourceBranchInput = z.infer<typeof SelectRepositorySourceBranchSchema>;
 
 export const KnowledgeItemSchema = z.discriminatedUnion("kind", [
   KnowledgeDocumentSchema,
