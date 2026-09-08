@@ -31,6 +31,10 @@ snippet, author, time, and the current thread name; selecting one opens and focu
 The message URL survives reloads and thread renames. **Show latest** returns to the newest messages.
 Search is case-insensitive literal text; partial results are labeled when the scan cannot finish.
 
+Each saved message has a **Copy message link** action beside its timestamp, including in archived
+threads and on older pages. If clipboard access fails, a field shows the URL for manual copying.
+These links open the same local server and data; they do not publish the conversation.
+
 Messages opens the newest 50 messages. **Older messages** and **Newer messages** replace that page;
 **Show latest** returns to the newest page. Message links load the page around the selected message.
 An old page keeps its position while run and tool state updates. Needs attention opens the exact

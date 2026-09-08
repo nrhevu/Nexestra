@@ -24,3 +24,5 @@
     pages, stable linked targets, indexed JSONL reads and active work outside the current page.
 14. [Recoverable submission research](research/2026-09-09-recoverable-message-submission.md): stable
     send identities, durable receipt recovery, attachment reuse and partial dispatch verification.
+15. [Copy message links research](research/2026-09-09-copy-message-links.md): direct links from saved
+    message rows, clipboard confirmation and manual fallback on the existing local route.

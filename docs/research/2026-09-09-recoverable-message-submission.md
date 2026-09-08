@@ -99,17 +99,17 @@ TypeScript and production build. New coverage includes 31 store tests, 17 dispat
 The combined run also identified UI assertions that read before bootstrap or scheduled focus;
 those assertions now wait for the behavior they verify.
 
-## Follow-up candidate
+## Implemented follow-up
 
-An explicit **Copy message link** action could make the existing message navigation easier to use.
+An explicit **Copy message link** action makes the existing message navigation easier to use.
 The app already parses `/threads/<id>?message=<id>`, resolves foreign workspace links and loads the
-page around a target. The missing convenience is producing that existing URL from a message row;
-it does not require another routing format or a new history endpoint. Links would remain local to
+page around a target. The new action produces that existing URL from a message row;
+it does not require another routing format or a new history endpoint. Links remain local to
 the same server and data directory.
 
 [MDN's clipboard documentation](https://developer.mozilla.org/en-US/docs/Web/API/Clipboard/writeText)
-describes an asynchronous write that can be denied. The action should report success only after
+describes an asynchronous write that can be denied. The action reports success only after
 the write resolves and expose the URL for manual copying when unavailable or denied. Acceptance
-would cover an old paginated message, a renamed/archived thread, keyboard access, denied clipboard
-access and reopening the generated URL. This remains a candidate after submission recovery is
-integrated and verified.
+covers an old paginated message, a renamed/archived thread, keyboard access, denied clipboard
+access and reopening the generated URL. This follow-up is now implemented and verified in the
+[copy-link research record](2026-09-09-copy-message-links.md).

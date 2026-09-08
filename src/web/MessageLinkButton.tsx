@@ -66,7 +66,7 @@ export function MessageLinkButton({
         className={copied ? "copied" : undefined}
         aria-label="Copy message link"
         title="Copy message link"
-        disabled={phase === "pending"}
+        aria-disabled={phase === "pending"}
         onClick={handleCopy}
       >
         {copied ? <Check size={14} /> : <LinkIcon size={14} />}

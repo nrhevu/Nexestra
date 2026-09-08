@@ -74,6 +74,11 @@ workspace links, opens Messages, and focuses the matching group. Automatic botto
 paused until **Show latest** clears the target. Archived conversations remain read-only. See
 [ADR 0035](adr/0035-message-deep-links.md).
 
+Saved message rows also expose that route through **Copy message link**. The button builds an
+absolute URL for the current origin using stored thread and message IDs, waits for clipboard
+confirmation, and reveals a selectable URL when copying is unavailable or denied. Its feedback
+is component state; it adds no transcript, run or server-side sharing record.
+
 Messages uses `/api/threads/:id/history` with a 50-message window. Stable message-ID anchors select
 older, newer or centered pages; a missing linked target is established across the index rather than
 inferred from absence in the current page. A startup-built in-memory byte-offset index locates

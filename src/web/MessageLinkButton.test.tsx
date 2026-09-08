@@ -29,7 +29,11 @@ afterEach(() => {
 describe("MessageLinkButton", () => {
   it("copies a stable absolute message URL only after the clipboard write resolves", async () => {
     const user = userEvent.setup();
-    const writeText = vi.fn().mockResolvedValue(undefined);
+    let resolveWrite: () => void = () => undefined;
+    const pendingWrite = new Promise<void>((resolve) => {
+      resolveWrite = resolve;
+    });
+    const writeText = vi.fn().mockReturnValue(pendingWrite);
     stubClipboard(writeText);
     window.history.replaceState({}, "", "/threads/current?tab=notes#intro");
     render(<MessageLinkButton threadId="thread release" messageId="message/1?x=2" />);
@@ -40,8 +44,26 @@ describe("MessageLinkButton", () => {
     expect(writeText).toHaveBeenCalledWith(
       `${origin}/threads/thread%20release?message=message%2F1%3Fx%3D2`,
     );
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    // Native disabled buttons lose focus in Chromium while the clipboard promise is pending.
+    expect(button).not.toBeDisabled();
+    expect(button).toHaveFocus();
+    expect(screen.queryByText("Copied")).not.toBeInTheDocument();
+    await user.keyboard("{Enter}");
+    expect(writeText).toHaveBeenCalledTimes(1);
+    await act(async () => resolveWrite());
     await waitFor(() => expect(screen.getByText("Copied")).toBeInTheDocument());
     expect(button).toHaveFocus();
+
+    const nextWrite = new Promise<void>((resolve) => {
+      resolveWrite = resolve;
+    });
+    writeText.mockReturnValueOnce(nextWrite);
+    await user.click(button);
+    expect(writeText).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText("Copied")).not.toBeInTheDocument();
+    await act(async () => resolveWrite());
+    expect(await screen.findByText("Copied")).toBeVisible();
   });
 
   it("shows the URL for manual copying when the Clipboard API is unavailable", async () => {
@@ -87,7 +109,7 @@ describe("MessageLinkButton", () => {
 
     const button = screen.getByRole("button", { name: "Copy message link" });
     await user.click(button);
-    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("aria-disabled", "true");
     const elsewhere = screen.getByRole("button", { name: "Elsewhere" });
     await user.click(elsewhere);
     await act(async () => {
