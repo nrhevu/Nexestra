@@ -21,6 +21,11 @@ failed, or interrupted. Open an item to return to its thread or task process con
 show current agent activity, including work in other threads while your current conversation runs.
 Items disappear when the underlying condition is resolved; this view does not start or approve work.
 
+Returning to the workspace refreshes its metadata and the conversation page you were reading.
+You can also choose **Refresh** beside search or the `/refresh workspace` command. Drafts and
+selected files stay in place, including an unconfirmed send. A failed refresh offers **Retry**;
+refreshing does not send messages or approve agent work.
+
 Press **Cmd/Ctrl+K** to focus search, use **↑/↓** to select a result, **Enter** to open it, and
 **Escape** to dismiss suggestions. Task and knowledge results open the exact item. Start a query
 with `/` to find commands, including opening Needs attention.

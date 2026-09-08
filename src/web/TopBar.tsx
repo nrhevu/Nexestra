@@ -34,6 +34,7 @@ export function TopBar(props: TopBarProps) {
   const [selection, setSelection] = useState<{ key: string; index: number }>();
   const searchRef = useRef<HTMLInputElement>(null);
   const listboxId = useId();
+  const refreshErrorId = useId();
 
   useEffect(() => {
     const onShortcut = (event: globalThis.KeyboardEvent) => {
@@ -257,6 +258,7 @@ export function TopBar(props: TopBarProps) {
             type="button"
             aria-label="Refresh workspace"
             aria-busy={props.refreshStatus === "refreshing"}
+            aria-describedby={props.refreshStatus === "error" ? refreshErrorId : undefined}
             title={
               props.refreshStatus === "error"
                 ? `Refresh failed: ${props.refreshError ?? "unknown error"}`
@@ -272,7 +274,7 @@ export function TopBar(props: TopBarProps) {
             <span>{props.refreshStatus === "error" ? "Retry" : "Refresh"}</span>
           </button>
           {props.refreshStatus === "error" && (
-            <span className="refresh-workspace-error" role="status">
+            <span className="refresh-workspace-error" id={refreshErrorId} role="status">
               {props.refreshError ?? "Refresh failed"}
             </span>
           )}

@@ -70,15 +70,18 @@
 }
 
 .refresh-workspace-error {
-  color: var(--muted);
+  max-width: clamp(76px, 20vw, 140px);
+  color: var(--search-text);
   font-size: 11px;
+  line-height: 1.2;
+  white-space: normal;
 }
 
 @media (max-width: 700px) {
   .refresh-workspace-button span {
     display: none;
   }
-  .refresh-workspace-error {
-    display: none;
+  .refresh-workspace-button[aria-describedby] span {
+    display: inline;
   }
 }

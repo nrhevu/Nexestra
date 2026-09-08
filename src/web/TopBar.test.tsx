@@ -297,10 +297,16 @@ describe("Workspace refresh action", () => {
     const props = makeProps();
     const view = render(<TopBar {...props} refreshStatus="error" refreshError="Network down" />);
     expect(screen.getByRole("status")).toHaveTextContent("Network down");
+    expect(screen.getByRole("button", { name: "Refresh workspace" })).toHaveAccessibleDescription(
+      "Network down",
+    );
     await user.click(screen.getByRole("button", { name: "Refresh workspace" }));
     expect(props.onRefresh).toHaveBeenCalled();
     view.rerender(<TopBar {...props} refreshStatus="idle" />);
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Refresh workspace" })).not.toHaveAttribute(
+      "aria-describedby",
+    );
   });
 
   it("exposes a /refresh command from the palette", async () => {

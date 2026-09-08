@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -221,8 +221,8 @@ describe("resume pending submission", () => {
 
     window.dispatchEvent(new Event("focus"));
     await waitFor(() => expect(server.bootstrapFetches()).toBeGreaterThanOrEqual(2));
-    expect(server.historyFetches()).toBeGreaterThanOrEqual(2);
-    expect(await screen.findByText("Resume me", { selector: "article.message" })).toBeVisible();
+    await waitFor(() => expect(server.historyFetches()).toBeGreaterThanOrEqual(2));
+    expect(await within(await screen.findByRole("article")).findByText("Resume me")).toBeVisible();
 
     expect(server.posts).toHaveLength(1);
     expect(
@@ -250,8 +250,8 @@ describe("resume pending submission", () => {
 
     window.dispatchEvent(new Event("focus"));
     await waitFor(() => expect(server.bootstrapFetches()).toBeGreaterThanOrEqual(2));
-    expect(server.historyFetches()).toBeGreaterThanOrEqual(2);
-    expect(await screen.findByText("Resume me", { selector: "article.message" })).toBeVisible();
+    await waitFor(() => expect(server.historyFetches()).toBeGreaterThanOrEqual(2));
+    expect(await within(await screen.findByRole("article")).findByText("Resume me")).toBeVisible();
     expect(server.posts).toHaveLength(1);
     expect(composer).toHaveValue("Resume me");
     expect(screen.getByRole("button", { name: "Remove diagram.png" })).toBeInTheDocument();
@@ -278,6 +278,7 @@ describe("resume pending submission", () => {
       expect(window.localStorage.getItem(pendingKey(workspace.id, thread.id))).toBeNull(),
     );
     expect(composer).toHaveValue("");
-    expect(screen.getAllByText("Resume me", { selector: "article.message" })).toHaveLength(1);
+    expect(screen.getAllByRole("article")).toHaveLength(1);
+    expect(within(screen.getByRole("article")).getByText("Resume me")).toBeVisible();
   });
 });

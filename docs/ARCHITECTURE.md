@@ -49,6 +49,17 @@ are discarded. The dispatcher keeps the live run and response
 projection in memory, while JSONL run and tool events remain the durable source used for restart
 recovery.
 
+An idle workspace revalidates on window focus, document visibility and visible network-online
+events, or the explicit **Refresh workspace** action. Related lifecycle events coalesce into one
+read cycle with at most one queued follow-up. Revalidation refreshes bootstrap metadata and the
+current bounded history intent; a newer navigation or request keeps ownership of its view.
+Each cycle times out after 30 seconds, aborts its reads and permits retry; late responses cannot
+apply after cancellation. Hidden tabs discard queued automatic work.
+Drafts, selected files and pending submission identities remain unchanged. Surfaces need only
+bootstrap metadata, and Files & links retains its on-demand inventory path. Failures expose Retry
+while preserving usable data. Browser online status is a hint to attempt a read, never a gate on
+loopback access. See [ADR 0040](adr/0040-workspace-resume-revalidation.md).
+
 Harness installation and ChatGPT login status are cached for 30 seconds and explicitly invalidated
 by the login flow. In React, search input owns its local state and the transcript is a memoized render
 boundary. Runs are grouped by trigger in one pass, so typing does not rebuild message rows and a
@@ -421,8 +432,9 @@ credentials.
 
 - Needs attention reflects the selected workspace's current conditions. It has no historical
   notification log, read markers, snoozing, dismissal, desktop notifications, or cross-workspace
-  monitoring. Ordinary failed chat turns remain in their thread. An idle browser does not discover
-  work started by another client until a normal refresh.
+  monitoring. Ordinary failed chat turns remain in their thread. Changes from another client are
+  discovered on return, a visible online event or explicit refresh; idle clients do not continuously
+  exchange updates.
 
 - App-native `plan` and `delegate` are currently available to custom OpenAI-compatible Masters.
   ChatGPT OAuth Masters run through Codex CLI and do not yet receive this bridge.

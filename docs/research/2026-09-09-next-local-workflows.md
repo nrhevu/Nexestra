@@ -3,7 +3,9 @@
 Research date: 9 September 2026 (Asia/Ho_Chi_Minh). These were candidates identified during the
 transcript-search and document-preview wave. Branch selection is now implemented;
 its status and verification are recorded in the [branch selection report](2026-09-09-repository-branch-selection.md).
-Portable workspace export and recoverable message submission remain research only.
+Recoverable message submission is also implemented and verified in its
+[submission recovery report](2026-09-09-recoverable-message-submission.md).
+Portable workspace export remains research only.
 
 ## Explicit repository branch selection
 
@@ -47,8 +49,8 @@ Without import/restore and verification, such an export must not be presented as
 
 The conversation-history work exposed another concrete boundary: `appendMessage` durably appends
 JSONL before writing the thread counters to `state.json`. A metadata-write failure or a lost HTTP
-response can leave a saved message while the browser sees failure. `createUserMessage` assigns a
-fresh UUID for each call, so submitting the same intent again can save another message.
+response can leave a saved message while the browser sees failure. At the time, `createUserMessage`
+assigned a fresh UUID for each call, so submitting the same intent again could save another message.
 
 [RFC 9110 section 9.2.2](https://www.rfc-editor.org/rfc/rfc9110.html#section-9.2.2) explains why a
 client needs known idempotent semantics, or proof that the first attempt was not applied, before
@@ -72,13 +74,14 @@ bytes rather than treating every existing filename as success. A request key alo
 exactly-once effects inside an external harness. Acceptance should cover lost responses, concurrent
 duplicate requests, changed payloads, uploaded-file reuse, server restart and a deliberately repeated
 identical message. Browser reload cannot restore a JavaScript `File` object from a text-only draft.
-This remains a proposed follow-up, separate from the history index and paging implementation.
+This proposal was implemented separately from history paging, with durable receipts and explicit
+replay reconciliation. Its actual guarantees and verification are recorded in
+[ADR 0039](../adr/0039-recoverable-message-submission.md).
 
 ## Priority
 
 Branch selection was prioritized because source refresh already defines how future assignments
 obtain a commit without altering existing work. Keep workspace export in research until its
-snapshot and restoration boundaries are concrete. Recoverable submission is the next correctness
-candidate because the history tests now demonstrate the durable-append/failed-metadata boundary.
-The search/preview verification report does not cover these follow-ups; branch selection has its
-own report linked above, and recoverable submission has not been implemented or verified yet.
+snapshot and restoration boundaries are concrete. Recoverable submission followed because the
+history tests demonstrated the durable-append/failed-metadata boundary. Branch selection and
+recoverable submission each have their own implementation and verification reports linked above.

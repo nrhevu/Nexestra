@@ -26,3 +26,5 @@
     send identities, durable receipt recovery, attachment reuse and partial dispatch verification.
 15. [Copy message links research](research/2026-09-09-copy-message-links.md): direct links from saved
     message rows, clipboard confirmation and manual fallback on the existing local route.
+16. [Workspace resume research](research/2026-09-09-workspace-resume-revalidation.md): refresh on
+    return, bounded read cycles, retained drafts and pending sends, and archived-notice contrast.
