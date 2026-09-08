@@ -74,12 +74,22 @@ workspace links, opens Messages, and focuses the matching group. Automatic botto
 paused until **Show latest** clears the target. Archived conversations remain read-only. See
 [ADR 0035](adr/0035-message-deep-links.md).
 
+Messages uses `/api/threads/:id/history` with a 50-message window. Stable message-ID anchors select
+older, newer or centered pages; a missing linked target is established across the index rather than
+inferred from absence in the current page. A startup-built in-memory byte-offset index locates
+selected messages, their artifacts and the latest associated run/tool records in canonical JSONL.
+Durable appends extend the index. Whole-thread active runs are returned separately from page runs,
+so reading history does not hide current work or stop its SSE subscription. Historical refreshes
+keep their anchor. Needs attention resolves a live run to its trigger message before navigation.
+Files & links explicitly loads the complete legacy thread response when opened. See
+[ADR 0038](adr/0038-bounded-conversation-history-pagination.md).
+
 Draft text, the theme, and the saved workspace are the only browser-persisted UI state. An
 App-owned `ConversationState` keeps drafts under `nexestra.draft.<workspaceId>:<threadId>`, reads
 only on first access, and clears only the sent revision after a successful send; the empty value is a tombstone that also retires legacy thread-only keys. The sidebar shows a **Draft**
 badge per thread, and each workspace remembers its last opened thread under
 `nexestra.lastThread.<workspaceId>` so the Threads entry returns to the active conversation. Guarded
-storage calls degrade to in-memory text with a visible note instead of interrupting the composer. Foreign bare deep links are resolved once through `/api/threads/:id` with workspace and route generation guards, never by polling.
+storage calls degrade to in-memory text with a visible note instead of interrupting the composer. Foreign bare deep links are resolved once through `/api/threads/:id/metadata` with workspace and route generation guards, never by polling or loading a transcript.
 See [ADR 0025](adr/0025-app-scoped-conversation-state.md).
 
 The attention projection uses active dispatcher runs plus current task, assignment, agent, and
@@ -375,6 +385,11 @@ access may use the current OS user's existing SSH and Git configuration; Nexestr
 credentials.
 
 ## Known gaps
+
+- Conversation history pages avoid whole-log reads after startup, but startup still scans the
+  logs and the in-memory offset index grows with record counts. Oversized page/event reads fail
+  visibly. Files & links, Markdown export and agent context retain full-history reads. Finite
+  pages replace their predecessor; the app does not virtualize one continuous transcript.
 
 - Needs attention reflects the selected workspace's current conditions. It has no historical
   notification log, read markers, snoozing, dismissal, desktop notifications, or cross-workspace

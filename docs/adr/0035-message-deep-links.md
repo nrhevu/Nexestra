@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted for Milestone M9.
+Accepted for Milestone M9; history loading amended by
+[ADR 0038](0038-bounded-conversation-history-pagination.md).
 
 ## Context
 
@@ -39,8 +40,9 @@ after opening Files & links. Native-browser verification confirmed a search hit 
 archived conversation is centered and focused, survives reload, resolves from another workspace,
 and exits to latest messages without changing the transcript.
 
-- The current thread endpoint and renderer still load a full transcript. This change does not add
-  transcript pagination or rendering virtualization.
+- The initial implementation loaded a full transcript. ADR 0038 replaces message loading with a
+  finite page around the linked ID and a metadata-only foreign-workspace lookup. Rendering remains
+  a finite page, without continuous transcript virtualization.
 - Focus selects the message group, not a substring inside formatted Markdown. Media loaded later
   can change row height; browser verification must check the actual selected message is visible.
 - External malformed message IDs longer than 200 characters are ignored by the route parser.

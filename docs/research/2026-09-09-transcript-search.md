@@ -93,7 +93,8 @@ the store from reopening.
   or the query language of the reference product.
 - Each page scans canonical files again; a live conversation can shift offsets between requests.
   The dialog removes duplicate hits, but this is not a snapshot-stable cursor.
-- Opening a result still loads and renders the full thread. Bounded search does not solve the
-  separate long-conversation rendering and history pagination problem.
+- The initial search implementation opened the full thread. The follow-up
+  [conversation history change](2026-09-09-conversation-history.md) loads a bounded page around the
+  result; search scanning and its offset limitations are unchanged.
 - Search does not scan attachment bytes or Knowledge content. Knowledge text preview is a separate
   explicit read operation, with its own integrity and size checks.

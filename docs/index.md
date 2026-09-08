@@ -20,3 +20,5 @@
     plain-text inspection with integrity verification, truncation and download fallback.
 12. [Repository branch selection research](research/2026-09-09-repository-branch-selection.md):
     choosing a source branch for future Workers, preserving existing work, and Unicode Git output.
+13. [Conversation history research](research/2026-09-09-conversation-history.md): bounded message
+    pages, stable linked targets, indexed JSONL reads and active work outside the current page.

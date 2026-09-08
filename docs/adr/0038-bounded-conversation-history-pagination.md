@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted for backend implementation; frontend consumes the frozen contracts.
+Accepted for Milestone M9.
 
 ## Context
 
@@ -20,14 +20,19 @@ on a target message without reading the whole file per request.
   `activeRuns` from the dispatcher and page metadata). `before`/`after` anchors
   are mutually exclusive; an unknown `before`/`after` anchor is an explicit 400.
   An unknown `around` anchor returns the latest window with `targetFound:false`
-  rather than pretending the target was scanned and missing.
+  and an explicit missing-target notice in the browser.
 - Add `GET /api/threads/:id/metadata` returning a redacted `Thread` for any
   existing thread ID. Unlike the history endpoint it intentionally does not
   require `workspaceId`, because its purpose is resolving a thread when the
   client does not yet know which workspace it belongs to. It performs no
   transcript I/O.
 - Keep the legacy full `GET /api/threads/:id` and export endpoints unchanged;
-  the UI may still request full data explicitly for Files/links/export.
+  the UI requests full data explicitly for Files & links and retains only the
+  most recently opened full inventory. Its count changes refresh an open tab.
+- Render finite windows of 50 messages. Older/newer replace the window, Show latest
+  clears a linked target, and `around` focuses the target after lazy Markdown settles.
+  Historical SSE/poll refreshes keep the selected anchor and cannot supersede a
+  pending explicit page request. Needs attention opens the run's trigger message.
 - Prime an in-memory byte-offset index (`src/server/conversation-history.ts`)
   for every thread during `FileStore.open`, as an additional startup pass; startup already performs other full passes (tail repair, summary repair, interrupted-run recovery), so this is deliberately not a single-scan optimization.
   Messages and artifacts are ordered by sequence; run and tool events keep only
@@ -52,10 +57,11 @@ on a target message without reading the whole file per request.
 ## Budgets and limits
 
 - Page limit: 1-100 messages, default 50.
-- Per event line: 1 MiB; per page: 8 MiB total decoded line bytes. Pages that
+- Per event line: 1 MiB; per page: 8 MiB of selected raw JSONL bytes, before redaction. Pages that
   would exceed either fail explicitly rather than silently omitting content.
 - Startup performs multiple full passes over every transcript (tail repair, summary repair, history-index priming, interrupted-run recovery);
-  per-request cost is bounded by the page limits above.
+  per-request transcript reads are bounded by the page limits above. Anchor lookup
+  still scans the in-memory message index, so total CPU cost is not constant.
 - The transcript itself is never copied, indexed to disk, or mutated by these
   endpoints, and no provider is invoked.
 
@@ -97,13 +103,18 @@ on a target message without reading the whole file per request.
 - External transcript edits while the process is running are rejected with 409;
   they require restart/reload.
 - Index memory is `O(record count)` and startup performs multiple full passes.
+  Finding an anchored page is linear in the number of indexed messages; page
+  payload bounds do not make startup, metadata lookup, or all browser memory constant.
   File identity (device/inode/size/mtimeNs/ctimeNs) is an honest change
   detector, not cryptographic proof: same-size rewrites with a restored
   millisecond mtime are detected through nanosecond and ctime differences in
   practice, but a determined external editor that restores all metadata can
   still defeat it; external edits while running are unsupported.
-- A page that exceeds byte/event budgets fails explicitly; the UI should narrow
-  the page or use the legacy full endpoint for export-style access.
+- A page that exceeds byte/event budgets fails explicitly. The browser currently
+  requests 50 messages and has no smaller-page selector; a smaller limit is
+  available through the API, and exports retain the legacy full read path.
+- The linked-message layout watcher stops after 180 animation frames or real user
+  input. Images or pathological layouts that grow after it stops can move content.
 
 # Notes
 

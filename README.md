@@ -31,6 +31,12 @@ snippet, author, time, and the current thread name; selecting one opens and focu
 The message URL survives reloads and thread renames. **Show latest** returns to the newest messages.
 Search is case-insensitive literal text; partial results are labeled when the scan cannot finish.
 
+Messages opens the newest 50 messages. **Older messages** and **Newer messages** replace that page;
+**Show latest** returns to the newest page. Message links load the page around the selected message.
+An old page keeps its position while run and tool state updates. Needs attention opens the exact
+message for a pending decision, including one outside the newest page. **Files & links** loads the
+complete inventory when opened, so files shared earlier remain available with their attribution.
+
 Composer drafts are stored per workspace and thread, so switching threads or reloading the tab
 restores what you were typing. Thread rows show a **Draft** badge while a draft exists, and the
 Threads entry returns to the last thread you had open in that workspace. Drafts stay browser-only;
