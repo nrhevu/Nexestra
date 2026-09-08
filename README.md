@@ -42,6 +42,19 @@ restores what you were typing. Thread rows show a **Draft** badge while a draft 
 Threads entry returns to the last thread you had open in that workspace. Drafts stay browser-only;
 if browser storage is unavailable they remain in the tab with a short note.
 
+If a send fails before its result is confirmed, sending the unchanged draft again confirms the
+original message. It preserves the original attachments and agent runs, including runs that have
+already finished. Editing an in-session payload or deliberately sending after a successful send starts
+a new message. Pending text sends can be recovered after a reload; attached files must be selected
+again because the browser does not persist their bytes. An explicit new send remains available if
+you want to replace an unconfirmed attachment submission.
+
+API clients can supply a random UUID `requestId` with JSON or multipart sends. The first successful
+creation returns 201; confirmation of a saved request returns 200 and `replayed: true`. Reusing a
+thread's request ID with different content or ordered attachments returns 409. Clients that omit
+the ID retain ordinary independent-send behavior. Confirmation and an explicit agent **Retry** are
+separate actions.
+
 Thread headers offer **Rename**, **Archive**, and **Restore**. Archiving keeps the transcript,
 attachments, draft, and links in the sidebar's **Archived** list, with a read-only conversation view.
 Restore the thread to send messages or retry/delegate work. Archive is refused while messages or

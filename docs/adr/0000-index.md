@@ -40,3 +40,4 @@
 | [0036](0036-knowledge-preview.md) | Accepted | Preview current and historical document text with bounded reads and integrity checks |
 | [0037](0037-explicit-repository-source-branch.md) | Accepted | Select an existing source branch for future Workers with version checks and preserved worktrees |
 | [0038](0038-bounded-conversation-history-pagination.md) | Accepted | Read finite message pages through an in-memory canonical JSONL offset index |
+| [0039](0039-recoverable-message-submission.md) | Accepted | Confirm saved sends by stable request identity and reconcile only unstarted agent work |

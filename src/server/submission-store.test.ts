@@ -677,7 +677,7 @@ describe("recoverable user submissions", () => {
       const parsed = JSON.parse(line) as { type?: string };
       return parsed.type === "message.created";
     });
-    await writeFile(store.transcriptPath(thread.id), kept.join("\n") + "\n");
+    await writeFile(store.transcriptPath(thread.id), `${kept.join("\n")}\n`);
     expect(message.artifactIds).toHaveLength(1);
 
     const reopened = await FileStore.open({
@@ -721,7 +721,7 @@ describe("recoverable user submissions", () => {
     });
     if (!messageLine) throw new Error("expected message line");
     const artifactPrefix = '{"type":"artifact.created","sequence":';
-    await writeFile(store.transcriptPath(thread.id), messageLine + "\n" + artifactPrefix);
+    await writeFile(store.transcriptPath(thread.id), `${messageLine}\n${artifactPrefix}`);
     const reopened = await FileStore.open({
       root: store.root,
       workspacePath: store.workspacePath,
@@ -756,7 +756,7 @@ describe("recoverable user submissions", () => {
       return parsed.type === "message.created";
     });
     if (!messageLine) throw new Error("expected message line");
-    await writeFile(store.transcriptPath(thread.id), messageLine + "\n");
+    await writeFile(store.transcriptPath(thread.id), `${messageLine}\n`);
     const reopened = await FileStore.open({
       root: store.root,
       workspacePath: store.workspacePath,
@@ -807,7 +807,7 @@ describe("recoverable user submissions", () => {
     const parsedMessage = JSON.parse(messageLine) as Record<string, unknown>;
     const envelope = parsedMessage.submission as Record<string, unknown>;
     delete envelope.artifactPlan;
-    await writeFile(store.transcriptPath(thread.id), JSON.stringify(parsedMessage) + "\n");
+    await writeFile(store.transcriptPath(thread.id), `${JSON.stringify(parsedMessage)}\n`);
     const reopened = await FileStore.open({
       root: store.root,
       workspacePath: store.workspacePath,
@@ -879,10 +879,7 @@ describe("recoverable user submissions", () => {
       sequence: (first.sequence as number) + 1,
       submission: { requestIdHash: "short" },
     };
-    await appendFile(
-      badStore.transcriptPath(badThread.id),
-      "\n" + JSON.stringify(malformed) + "\n",
-    );
+    await appendFile(badStore.transcriptPath(badThread.id), `\n${JSON.stringify(malformed)}\n`);
     const reopenedBad = await FileStore.open({
       root: badStore.root,
       workspacePath: badStore.workspacePath,
@@ -1001,7 +998,7 @@ describe("recoverable user submissions", () => {
       return parsed.type === "message.created";
     });
     if (!messageLine) throw new Error("expected message line");
-    await writeFile(store.transcriptPath(thread.id), messageLine + "\n");
+    await writeFile(store.transcriptPath(thread.id), `${messageLine}\n`);
     const firstReopen = await FileStore.open({
       root: store.root,
       workspacePath: store.workspacePath,
@@ -1115,7 +1112,7 @@ describe("recoverable user submissions", () => {
     if (!artifactId) throw new Error("expected artifact");
     const file = (await store.artifactContent(thread.id, artifactId)).file;
     await unlink(file);
-    await writeFile(store.transcriptPath(thread.id), messageLine + "\n");
+    await writeFile(store.transcriptPath(thread.id), `${messageLine}\n`);
     const reopened = await FileStore.open({
       root: store.root,
       workspacePath: store.workspacePath,
@@ -1144,7 +1141,7 @@ describe("recoverable user submissions", () => {
       sequence: (first.sequence as number) + 1,
       submission: { requestIdHash: "short" },
     };
-    await appendFile(store.transcriptPath(thread.id), "\n" + JSON.stringify(malformed) + "\n");
+    await appendFile(store.transcriptPath(thread.id), `\n${JSON.stringify(malformed)}\n`);
     const reopened = await FileStore.open({
       root: store.root,
       workspacePath: store.workspacePath,
@@ -1210,7 +1207,7 @@ describe("recoverable user submissions", () => {
         content: "external appended",
       },
     };
-    await appendFile(store.transcriptPath(thread.id), JSON.stringify(external) + "\n");
+    await appendFile(store.transcriptPath(thread.id), `${JSON.stringify(external)}\n`);
     const newRequest = crypto.randomUUID();
     await expect(
       store.createUserMessage(thread.id, "new keyed", [], [], [], newRequest),

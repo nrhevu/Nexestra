@@ -4,9 +4,9 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { BootstrapData, Thread, ThreadHistoryPage, ThreadData } from "../shared/contracts.js";
+import type { BootstrapData, Thread, ThreadData, ThreadHistoryPage } from "../shared/contracts.js";
 import { App } from "./App.js";
-import { SubmissionState, fingerprintSubmission, newRequestId } from "./submissionState.js";
+import { fingerprintSubmission, newRequestId, SubmissionState } from "./submissionState.js";
 
 const now = "2026-09-02T12:00:00.000Z";
 
@@ -33,7 +33,7 @@ function threadRow(id: string, name: string): Thread {
 }
 
 function historyUrl(thread: Thread): string {
-  return "/api/threads/" + encodeURIComponent(thread.id) + "/history?workspaceId=" + encodeURIComponent(thread.workspaceId) + "&limit=50";
+  return `/api/threads/${encodeURIComponent(thread.id)}/history?workspaceId=${encodeURIComponent(thread.workspaceId)}&limit=50`;
 }
 function historySnapshot(thread: Thread): ThreadHistoryPage {
   const data: ThreadData = { thread, runs: [], messages: [], artifacts: [], toolCalls: [] };
@@ -67,7 +67,7 @@ function deferredResponse() {
 }
 
 function pendingKey(workspaceId: string, threadId: string): string {
-  return "nexestra.pendingSubmission.1." + workspaceId + ":" + threadId;
+  return `nexestra.pendingSubmission.1.${workspaceId}:${threadId}`;
 }
 
 function uploadFile(name: string): File {
@@ -160,14 +160,14 @@ describe("Recoverable message submission", () => {
     const user = userEvent.setup();
     const thread = threadRow("thread-retry-files", "general");
     const posts: (FormData | Record<string, unknown>)[] = [];
-    window.history.replaceState({}, "", "/threads/" + thread.id);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = String(input);
         if (path === "/api/bootstrap") return jsonResponse({ ...bootstrapData, threads: [thread] });
         if (path === historyUrl(thread)) return jsonResponse(historySnapshot(thread));
-        if (path === "/api/threads/" + thread.id + "/messages" && init?.method === "POST") {
+        if (path === `/api/threads/${thread.id}/messages` && init?.method === "POST") {
           if (init.body instanceof FormData) posts.push(init.body as FormData);
           else posts.push(JSON.parse(String(init.body)) as Record<string, unknown>);
           return jsonResponse({ error: { message: "Unavailable" } }, 503);
@@ -179,7 +179,7 @@ describe("Recoverable message submission", () => {
 
     const composer = await screen.findByRole("combobox", { name: "Message" });
     await user.type(composer, "Retry me");
-    const input = screen.getByLabelText("Choose files or images");
+    const input = await screen.findByLabelText("Choose files or images");
     await user.upload(input, uploadFile("diagram.png"));
     await user.click(screen.getByRole("button", { name: "Send" }));
     await screen.findByText("Unavailable");
@@ -192,23 +192,23 @@ describe("Recoverable message submission", () => {
       requestId: body instanceof FormData ? String(body.get("requestId")) : String(body.requestId),
       content: body instanceof FormData ? String(body.get("content")) : String(body.content),
     }));
-    expect(bodies[0]!.requestId).toBe(bodies[1]!.requestId);
-    expect(bodies[0]!.content).toBe("Retry me");
-    expect(bodies[0].requestId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(bodies[0]?.requestId).toBe(bodies[1]?.requestId);
+    expect(bodies[0]?.content).toBe("Retry me");
+    expect(bodies[0]?.requestId).toMatch(/^[0-9a-f-]{36}$/);
   });
 
   it("gives edited content a new request identity because it is a new intent", async () => {
     const user = userEvent.setup();
     const thread = threadRow("thread-retry-edit", "general");
     const requestIds: string[] = [];
-    window.history.replaceState({}, "", "/threads/" + thread.id);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = String(input);
         if (path === "/api/bootstrap") return jsonResponse({ ...bootstrapData, threads: [thread] });
         if (path === historyUrl(thread)) return jsonResponse(historySnapshot(thread));
-        if (path === "/api/threads/" + thread.id + "/messages" && init?.method === "POST") {
+        if (path === `/api/threads/${thread.id}/messages` && init?.method === "POST") {
           requestIds.push((JSON.parse(String(init.body)) as { requestId: string }).requestId);
           return jsonResponse({ error: { message: "Unavailable" } }, 503);
         }
@@ -230,14 +230,14 @@ describe("Recoverable message submission", () => {
     const thread = threadRow("thread-retry-bytes", "general");
     const requestIds: string[] = [];
     let failed = false;
-    window.history.replaceState({}, "", "/threads/" + thread.id);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = String(input);
         if (path === "/api/bootstrap") return jsonResponse({ ...bootstrapData, threads: [thread] });
         if (path === historyUrl(thread)) return jsonResponse(historySnapshot(thread));
-        if (path === "/api/threads/" + thread.id + "/messages" && init?.method === "POST") {
+        if (path === `/api/threads/${thread.id}/messages` && init?.method === "POST") {
           const body = init.body as FormData;
           requestIds.push(String(body.get("requestId")));
           if (!failed) {
@@ -272,14 +272,14 @@ describe("Recoverable message submission", () => {
     const thread = threadRow("thread-retry-order", "general");
     const requestIds: string[] = [];
     let failed = false;
-    window.history.replaceState({}, "", "/threads/" + thread.id);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = String(input);
         if (path === "/api/bootstrap") return jsonResponse({ ...bootstrapData, threads: [thread] });
         if (path === historyUrl(thread)) return jsonResponse(historySnapshot(thread));
-        if (path === "/api/threads/" + thread.id + "/messages" && init?.method === "POST") {
+        if (path === `/api/threads/${thread.id}/messages` && init?.method === "POST") {
           const body = init.body as FormData;
           requestIds.push(String(body.get("requestId")));
           if (!failed) {
@@ -310,14 +310,14 @@ describe("Recoverable message submission", () => {
     const user = userEvent.setup();
     const thread = threadRow("thread-retry-success", "general");
     const requestIds: string[] = [];
-    window.history.replaceState({}, "", "/threads/" + thread.id);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = String(input);
         if (path === "/api/bootstrap") return jsonResponse({ ...bootstrapData, threads: [thread] });
         if (path === historyUrl(thread)) return jsonResponse(historySnapshot(thread));
-        if (path === "/api/threads/" + thread.id + "/messages" && init?.method === "POST") {
+        if (path === `/api/threads/${thread.id}/messages` && init?.method === "POST") {
           requestIds.push((JSON.parse(String(init.body)) as { requestId: string }).requestId);
           return jsonResponse({ message: {}, runs: [] }, 201);
         }
@@ -344,7 +344,7 @@ describe("Recoverable message submission", () => {
     const secondPending = deferredResponse();
     const firstIds: string[] = [];
     const secondIds: string[] = [];
-    window.history.replaceState({}, "", "/threads/" + first.id);
+    window.history.replaceState({}, "", `/threads/${first.id}`);
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -354,11 +354,11 @@ describe("Recoverable message submission", () => {
         }
         if (path === historyUrl(first)) return jsonResponse(historySnapshot(first));
         if (path === historyUrl(second)) return jsonResponse(historySnapshot(second));
-        if (path === "/api/threads/" + first.id + "/messages" && init?.method === "POST") {
+        if (path === `/api/threads/${first.id}/messages` && init?.method === "POST") {
           firstIds.push((JSON.parse(String(init.body)) as { requestId: string }).requestId);
           return firstPending.promise;
         }
-        if (path === "/api/threads/" + second.id + "/messages" && init?.method === "POST") {
+        if (path === `/api/threads/${second.id}/messages` && init?.method === "POST") {
           secondIds.push((JSON.parse(String(init.body)) as { requestId: string }).requestId);
           return secondPending.promise;
         }
@@ -397,8 +397,8 @@ describe("Recoverable message submission", () => {
       key,
       JSON.stringify({ version: 1, requestId, key: persistedKey, files: [], createdAt: now }),
     );
-    window.localStorage.setItem("nexestra.draft." + workspace.id + ":" + thread.id, "Persisted");
-    window.history.replaceState({}, "", "/threads/" + thread.id);
+    window.localStorage.setItem(`nexestra.draft.${workspace.id}:${thread.id}`, "Persisted");
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
     const requestIds: string[] = [];
     vi.stubGlobal(
       "fetch",
@@ -406,7 +406,7 @@ describe("Recoverable message submission", () => {
         const path = String(input);
         if (path === "/api/bootstrap") return jsonResponse({ ...bootstrapData, threads: [thread] });
         if (path === historyUrl(thread)) return jsonResponse(historySnapshot(thread));
-        if (path === "/api/threads/" + thread.id + "/messages" && init?.method === "POST") {
+        if (path === `/api/threads/${thread.id}/messages` && init?.method === "POST") {
           requestIds.push((JSON.parse(String(init.body)) as { requestId: string }).requestId);
           return jsonResponse({ message: {}, runs: [] }, 201);
         }
@@ -432,16 +432,17 @@ describe("Recoverable message submission", () => {
     vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
       throw new DOMException("Storage denied", "SecurityError");
     });
-    window.history.replaceState({}, "", "/threads/" + thread.id);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = String(input);
         if (path === "/api/bootstrap") return jsonResponse({ ...bootstrapData, threads: [thread] });
         if (path === historyUrl(thread)) return jsonResponse(historySnapshot(thread));
-        if (path === "/api/threads/" + thread.id + "/messages" && init?.method === "POST") {
+        if (path === `/api/threads/${thread.id}/messages` && init?.method === "POST") {
           requestIds.push((JSON.parse(String(init.body)) as { requestId: string }).requestId);
-          if (requestIds.length === 1) return jsonResponse({ error: { message: "Unavailable" } }, 503);
+          if (requestIds.length === 1)
+            return jsonResponse({ error: { message: "Unavailable" } }, 503);
           return jsonResponse({ message: {}, runs: [] }, 201);
         }
         return jsonResponse({ error: { message: "Not found" } }, 404);
@@ -474,8 +475,8 @@ describe("Recoverable message submission", () => {
         createdAt: now,
       }),
     );
-    window.localStorage.setItem("nexestra.draft." + workspace.id + ":" + thread.id, "With file");
-    window.history.replaceState({}, "", "/threads/" + thread.id);
+    window.localStorage.setItem(`nexestra.draft.${workspace.id}:${thread.id}`, "With file");
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
     const postedIds: string[] = [];
     let posting = 0;
     vi.stubGlobal(
@@ -484,7 +485,7 @@ describe("Recoverable message submission", () => {
         const path = String(input);
         if (path === "/api/bootstrap") return jsonResponse({ ...bootstrapData, threads: [thread] });
         if (path === historyUrl(thread)) return jsonResponse(historySnapshot(thread));
-        if (path === "/api/threads/" + thread.id + "/messages" && init?.method === "POST") {
+        if (path === `/api/threads/${thread.id}/messages` && init?.method === "POST") {
           posting += 1;
           postedIds.push((JSON.parse(String(init.body)) as { requestId: string }).requestId);
           return jsonResponse({ message: {}, runs: [] }, 201);
@@ -499,7 +500,9 @@ describe("Recoverable message submission", () => {
     expect(screen.getByRole("button", { name: "Reattach original files" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Send" }));
-    expect(await screen.findByText(/Reattach the original files, or choose Send as new message/)).toBeVisible();
+    expect(
+      await screen.findByText(/Reattach the original files, or choose Send as new message/),
+    ).toBeVisible();
     expect(posting).toBe(0);
 
     await user.click(screen.getByRole("button", { name: "Send as new message" }));
@@ -535,8 +538,8 @@ describe("Recoverable message submission", () => {
       key,
       JSON.stringify({ version: 1, requestId, key: persistedKey, files: [], createdAt: now }),
     );
-    window.localStorage.setItem("nexestra.draft." + workspace.id + ":" + thread.id, content);
-    window.history.replaceState({}, "", "/threads/" + thread.id);
+    window.localStorage.setItem(`nexestra.draft.${workspace.id}:${thread.id}`, content);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
     const requestIds: string[] = [];
     let failed = false;
     vi.stubGlobal(
@@ -547,7 +550,7 @@ describe("Recoverable message submission", () => {
           return jsonResponse({ ...bootstrapData, threads: [thread], agents: [busyAgent] });
         }
         if (path === historyUrl(thread)) return jsonResponse(historySnapshot(thread));
-        if (path === "/api/threads/" + thread.id + "/messages" && init?.method === "POST") {
+        if (path === `/api/threads/${thread.id}/messages` && init?.method === "POST") {
           requestIds.push((JSON.parse(String(init.body)) as { requestId: string }).requestId);
           if (!failed) {
             failed = true;
@@ -588,7 +591,7 @@ describe("Recoverable message submission", () => {
       readiness: "unavailable" as const,
       readinessLabel: "Unavailable",
     };
-    window.history.replaceState({}, "", "/threads/" + thread.id);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
     const requestIds: string[] = [];
     vi.stubGlobal(
       "fetch",
@@ -598,7 +601,7 @@ describe("Recoverable message submission", () => {
           return jsonResponse({ ...bootstrapData, threads: [thread], agents: [busyAgent] });
         }
         if (path === historyUrl(thread)) return jsonResponse(historySnapshot(thread));
-        if (path === "/api/threads/" + thread.id + "/messages" && init?.method === "POST") {
+        if (path === `/api/threads/${thread.id}/messages` && init?.method === "POST") {
           requestIds.push((JSON.parse(String(init.body)) as { requestId: string }).requestId);
           return jsonResponse({ message: {}, runs: [] }, 201);
         }
@@ -630,8 +633,8 @@ describe("Recoverable message submission", () => {
         createdAt: now,
       }),
     );
-    window.localStorage.setItem("nexestra.draft." + workspace.id + ":" + thread.id, "With file");
-    window.history.replaceState({}, "", "/threads/" + thread.id);
+    window.localStorage.setItem(`nexestra.draft.${workspace.id}:${thread.id}`, "With file");
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
     const postedIds: string[] = [];
     vi.stubGlobal(
       "fetch",
@@ -639,7 +642,7 @@ describe("Recoverable message submission", () => {
         const path = String(input);
         if (path === "/api/bootstrap") return jsonResponse({ ...bootstrapData, threads: [thread] });
         if (path === historyUrl(thread)) return jsonResponse(historySnapshot(thread));
-        if (path === "/api/threads/" + thread.id + "/messages" && init?.method === "POST") {
+        if (path === `/api/threads/${thread.id}/messages` && init?.method === "POST") {
           const body = init.body as FormData;
           postedIds.push(String(body.get("requestId")));
           return jsonResponse({ message: {}, runs: [] }, 201);
@@ -648,7 +651,7 @@ describe("Recoverable message submission", () => {
       }),
     );
     render(<App />);
-        const input = screen.getByLabelText("Choose files or images");
+    const input = await screen.findByLabelText("Choose files or images");
     await user.upload(
       input,
       new File(["bbbb"], original.name, {
@@ -682,8 +685,8 @@ describe("Recoverable message submission", () => {
         createdAt: now,
       }),
     );
-    window.localStorage.setItem("nexestra.draft." + workspace.id + ":" + thread.id, "With file");
-    window.history.replaceState({}, "", "/threads/" + thread.id);
+    window.localStorage.setItem(`nexestra.draft.${workspace.id}:${thread.id}`, "With file");
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
     const postedIds: string[] = [];
     vi.stubGlobal(
       "fetch",
@@ -691,7 +694,7 @@ describe("Recoverable message submission", () => {
         const path = String(input);
         if (path === "/api/bootstrap") return jsonResponse({ ...bootstrapData, threads: [thread] });
         if (path === historyUrl(thread)) return jsonResponse(historySnapshot(thread));
-        if (path === "/api/threads/" + thread.id + "/messages" && init?.method === "POST") {
+        if (path === `/api/threads/${thread.id}/messages` && init?.method === "POST") {
           const body = init.body as FormData;
           postedIds.push(String(body.get("requestId")));
           return jsonResponse({ message: {}, runs: [] }, 201);
@@ -700,7 +703,7 @@ describe("Recoverable message submission", () => {
       }),
     );
     render(<App />);
-        await user.upload(screen.getByLabelText("Choose files or images"), original);
+    await user.upload(await screen.findByLabelText("Choose files or images"), original);
     await user.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(postedIds).toEqual([requestId]));
     expect(window.localStorage.getItem(key)).toBeNull();
@@ -716,8 +719,8 @@ describe("Recoverable message submission", () => {
       key,
       JSON.stringify({ version: 1, requestId, key: persistedKey, files: [], createdAt: now }),
     );
-    window.localStorage.setItem("nexestra.draft." + workspace.id + ":" + thread.id, "Same words");
-    window.history.replaceState({}, "", "/threads/" + thread.id);
+    window.localStorage.setItem(`nexestra.draft.${workspace.id}:${thread.id}`, "Same words");
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
     vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
       throw new DOMException("Storage denied", "SecurityError");
     });
@@ -728,7 +731,7 @@ describe("Recoverable message submission", () => {
         const path = String(input);
         if (path === "/api/bootstrap") return jsonResponse({ ...bootstrapData, threads: [thread] });
         if (path === historyUrl(thread)) return jsonResponse(historySnapshot(thread));
-        if (path === "/api/threads/" + thread.id + "/messages" && init?.method === "POST") {
+        if (path === `/api/threads/${thread.id}/messages` && init?.method === "POST") {
           postedIds.push((JSON.parse(String(init.body)) as { requestId: string }).requestId);
           return jsonResponse({ message: {}, runs: [] }, 201);
         }

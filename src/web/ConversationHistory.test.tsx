@@ -347,7 +347,7 @@ describe("Conversation history pagination", () => {
 
     const selected = await screen.findByRole("region", { name: "Selected message" });
     expect(within(selected).getByText("Message 5")).toBeVisible();
-    expect(selected).toHaveFocus();
+    await waitFor(() => expect(selected).toHaveFocus());
     expect(window.location.search).toBe("?message=message-5");
   });
 

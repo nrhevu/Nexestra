@@ -84,13 +84,21 @@ keep their anchor. Needs attention resolves a live run to its trigger message be
 Files & links explicitly loads the complete legacy thread response when opened. See
 [ADR 0038](adr/0038-bounded-conversation-history-pagination.md).
 
-Draft text, the theme, and the saved workspace are the only browser-persisted UI state. An
+Draft text, pending send identities, the theme, and navigation preferences are browser-persisted UI state. An
 App-owned `ConversationState` keeps drafts under `nexestra.draft.<workspaceId>:<threadId>`, reads
 only on first access, and clears only the sent revision after a successful send; the empty value is a tombstone that also retires legacy thread-only keys. The sidebar shows a **Draft**
 badge per thread, and each workspace remembers its last opened thread under
 `nexestra.lastThread.<workspaceId>` so the Threads entry returns to the active conversation. Guarded
 storage calls degrade to in-memory text with a visible note instead of interrupting the composer. Foreign bare deep links are resolved once through `/api/threads/:id/metadata` with workspace and route generation guards, never by polling or loading a transcript.
 See [ADR 0025](adr/0025-app-scoped-conversation-state.md).
+
+`SubmissionState` owns pending message request IDs independently of a mounted conversation. Its
+workspace/thread-scoped entry records a UUID, payload fingerprint, timestamp and bounded file
+descriptors. WebCrypto hashes file bytes before a send; the bytes themselves stay in browser `File`
+objects. A confirmed response retires only its captured request ID and draft revision. Unconfirmed
+attachment submissions require the original files or an explicit new send after reload. Guarded
+storage and memory tombstones prevent a failed storage removal from reviving a retired identity in
+the current App session. See [ADR 0039](adr/0039-recoverable-message-submission.md).
 
 The attention projection uses active dispatcher runs plus current task, assignment, agent, and
 thread metadata. Bootstrap and the activity endpoint return the same shared item shape. Waiting
@@ -185,6 +193,14 @@ and artifacts by sequence and the final state of each run. On startup, only an i
 is truncated. After a restart, queued, running, approval-waiting, or input-waiting runs are completed
 if their replies were fsynced; otherwise, they and any unfinished tools are marked interrupted and
 can be retried.
+
+Keyed user messages carry a private `submission` receipt in their canonical `message.created`
+event. It stores hashes of the normalized UUID and the server-verified payload, rather than a
+second transcript or cached HTTP response. Startup reconstructs receipt offsets; the write barrier
+and per-request dispatch lock serialize repeated submissions. Same-key payload changes fail with
+409. Confirmation returns the original message, Knowledge pins and artifact identities with current
+durable run records. Missing initial runs can be reconciled, while existing running or terminal runs
+are never repeated by confirmation. Archived confirmation has no new dispatch side effects.
 
 The upload boundary validates file count and size before converting multipart files to byte buffers.
 Images are classified from a small MIME allowlist; SVG and every other file type are downloaded with
@@ -385,6 +401,13 @@ access may use the current OS user's existing SSH and Git configuration; Nexestr
 credentials.
 
 ## Known gaps
+
+- Recoverable submissions require a client request ID; legacy unkeyed calls remain independent.
+  Receipt metadata grows with retained user messages and is rebuilt from JSONL at startup. Replay
+  reconciliation reads durable thread runs; this is separate from bounded history-page reads.
+  Browser storage may be denied or cleared, and file bytes are not persisted by the composer.
+  Explicit run retries and the existing automatic retry policy can invoke a harness again; message
+  confirmation does not provide exactly-once external effects or multi-process coordination.
 
 - Conversation history pages avoid whole-log reads after startup, but startup still scans the
   logs and the in-memory offset index grows with record counts. Oversized page/event reads fail

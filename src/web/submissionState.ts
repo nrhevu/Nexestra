@@ -31,8 +31,7 @@ const MAX_TOTAL_BYTES = 50 * 1024 * 1024;
 const MAX_NAME_LENGTH = 255;
 const MAX_TYPE_LENGTH = 255;
 
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const KEY_PATTERN = /^v1:[a-f0-9]{64}$/;
 
 export function newRequestId(): string {
@@ -48,7 +47,9 @@ function hex(bytes: Uint8Array): string {
 function webCrypto(): SubtleCrypto {
   const subtle = globalThis.crypto as Crypto | undefined;
   if (!subtle?.subtle) {
-    throw new Error("This browser cannot fingerprint messages. Update to a browser with WebCrypto.");
+    throw new Error(
+      "This browser cannot fingerprint messages. Update to a browser with WebCrypto.",
+    );
   }
   return subtle.subtle;
 }
@@ -122,7 +123,8 @@ function isValidEntry(value: unknown): value is PendingSubmission {
   if (entry.version !== PENDING_SUBMISSION_VERSION) return false;
   if (!isRequestId(entry.requestId)) return false;
   if (typeof entry.key !== "string" || !KEY_PATTERN.test(entry.key)) return false;
-  if (typeof entry.createdAt !== "string" || Number.isNaN(Date.parse(entry.createdAt))) return false;
+  if (typeof entry.createdAt !== "string" || Number.isNaN(Date.parse(entry.createdAt)))
+    return false;
   if (!Array.isArray(entry.files) || entry.files.length > MAX_FILES) return false;
   if (entry.files.some((file) => !isValidFileDescriptor(file))) return false;
   return entry.files.reduce((total, file) => total + file.size, 0) <= MAX_TOTAL_BYTES;
@@ -170,7 +172,10 @@ export class SubmissionState {
   remember(workspaceId: string, threadId: string, submission: PendingSubmission): boolean {
     const key = this.pendingKey(workspaceId, threadId);
     this.pending.set(key, submission);
-    return writeBrowserValue(key, JSON.stringify({ ...submission, version: PENDING_SUBMISSION_VERSION }));
+    return writeBrowserValue(
+      key,
+      JSON.stringify({ ...submission, version: PENDING_SUBMISSION_VERSION }),
+    );
   }
 
   // Retires only the exact request identity that was acknowledged. The memory tombstone is

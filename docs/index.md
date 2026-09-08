@@ -22,3 +22,5 @@
     choosing a source branch for future Workers, preserving existing work, and Unicode Git output.
 13. [Conversation history research](research/2026-09-09-conversation-history.md): bounded message
     pages, stable linked targets, indexed JSONL reads and active work outside the current page.
+14. [Recoverable submission research](research/2026-09-09-recoverable-message-submission.md): stable
+    send identities, durable receipt recovery, attachment reuse and partial dispatch verification.

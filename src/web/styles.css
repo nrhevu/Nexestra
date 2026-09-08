@@ -1772,6 +1772,7 @@ kbd {
   background: var(--panel-raised);
   color: var(--text);
   font-size: 11px;
+  overflow-wrap: anywhere;
 }
 
 .pending-submission-note > p {
@@ -1780,6 +1781,7 @@ kbd {
 
 .pending-submission-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -1797,11 +1799,16 @@ kbd {
   border-color: var(--accent);
 }
 
+.pending-submission-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .pending-notice-close {
   margin-left: 4px;
   background: none;
   border: none;
-  color: var(--text-muted);
+  color: var(--muted);
   font-size: 11px;
   padding: 0;
   cursor: pointer;
