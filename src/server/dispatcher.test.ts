@@ -1025,6 +1025,105 @@ describe("mention dispatch", () => {
       expect.objectContaining({ name: "write", status: "interrupted" }),
     ]);
   });
+
+  it("lets an archive win over a retry whose thread lookup is still pending", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-retry-archive-"));
+    const store = await FileStore.open({ root, workspacePath: root });
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const agent = await store.createAgent({
+      kind: "worker",
+      name: "Archiver",
+      handle: "archiver",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    const trigger = await store.createUserMessage(thread.id, "retry me", [
+      { agentId: agent.id, handle: agent.handle },
+    ]);
+    const run = {
+      id: "run-to-retry",
+      threadId: thread.id,
+      triggerMessageId: trigger.id,
+      agentId: agent.id,
+      attempt: 1,
+      status: "failed" as const,
+      error: "Network unavailable.",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    await store.updateRun(run);
+    const dispatcher = new AgentDispatcher(store, new FakeRunner());
+
+    const originalThreadData = store.threadData.bind(store);
+    let gateOpened = false;
+    let releaseGate: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    let dataCalls = 0;
+    vi.spyOn(store, "threadData").mockImplementation(async (threadId) => {
+      dataCalls += 1;
+      const result = await originalThreadData(threadId);
+      if (dataCalls === 1) {
+        gateOpened = true;
+        await gate;
+      }
+      return result;
+    });
+
+    const retryPromise = dispatcher.retry(run.id);
+    await waitUntil(() => gateOpened);
+    await expect(dispatcher.archiveThread(thread.id)).resolves.toMatchObject({ archived: true });
+    releaseGate();
+    await expect(retryPromise).rejects.toMatchObject({ code: "conflict" });
+
+    const after = await store.threadData(thread.id);
+    expect(after.runs).toHaveLength(1);
+    expect(after.messages).toHaveLength(1);
+    expect(store.getThread(thread.id)).toMatchObject({ archived: true });
+  });
+
+  it("releases a rejected send reservation so archiving can proceed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-send-archive-"));
+    const store = await FileStore.open({ root, workspacePath: root });
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const agent = await store.createAgent({
+      kind: "worker",
+      name: "Busy Agent",
+      handle: "busy",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    const dispatcher = new AgentDispatcher(store, new FakeRunner());
+    const chat = new ChatService(store, dispatcher);
+
+    const originalUpdateAgent = store.updateAgent.bind(store);
+    let mutationEntered = false;
+    let releaseMutation: () => void = () => undefined;
+    const mutationGate = new Promise<void>((resolve) => {
+      releaseMutation = resolve;
+    });
+    vi.spyOn(store, "updateAgent").mockImplementation(async (id, input) => {
+      const result = await originalUpdateAgent(id, input);
+      mutationEntered = true;
+      await mutationGate;
+      return result;
+    });
+    const updatePromise = dispatcher.updateAgent(agent.id, { name: "Being Changed" });
+    await waitUntil(() => mutationEntered);
+
+    await expect(chat.send(thread.id, { content: "@busy hello" })).rejects.toMatchObject({
+      code: "conflict",
+    });
+    await expect(dispatcher.archiveThread(thread.id)).resolves.toMatchObject({ archived: true });
+
+    releaseMutation();
+    await updatePromise;
+  });
 });
 
 async function waitUntil(predicate: () => boolean | Promise<boolean>): Promise<void> {

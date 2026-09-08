@@ -3798,3 +3798,66 @@ kbd {
   font-size: 0.8rem;
   color: var(--muted-color, #9a9a9a);
 }
+
+.sidebar-row.archived {
+  opacity: 0.78;
+}
+
+.sidebar-row.archived.selected {
+  opacity: 1;
+}
+
+.archived-label {
+  padding: 1px 6px;
+  border: 1px solid rgba(200, 160, 210, 0.35);
+  border-radius: 999px;
+  color: #c9a8d4;
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.header-actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.header-actions button:disabled:hover {
+  border-color: var(--border);
+  color: var(--muted);
+}
+
+.archived-thread-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 22px;
+  border-top: 1px solid var(--border);
+  background: rgba(107, 62, 112, 0.16);
+  color: #d9c8da;
+  font-size: 12px;
+}
+
+.empty-threads {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.empty-threads h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 18px;
+}
+
+.empty-threads p {
+  margin: 0 0 6px;
+  max-width: 380px;
+  font-size: 13px;
+}

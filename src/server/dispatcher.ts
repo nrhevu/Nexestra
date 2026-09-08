@@ -8,6 +8,7 @@ import {
   type RunActivity,
   type Task,
   type TaskProcessData,
+  type Thread,
   type ThreadStreamEvent,
   type ToolCall,
   UpdateAgentSchema,
@@ -29,6 +30,8 @@ export class AgentDispatcher {
   private readonly pendingEnqueues = new Map<string, number>();
   private readonly changingAgentIds = new Set<string>();
   private readonly retryingRunIds = new Set<string>();
+  private readonly mutatingThreadIds = new Set<string>();
+  private readonly threadPendingWrites = new Map<string, number>();
   private readonly delegatingTaskIds = new Set<string>();
   private readonly assignmentCompletions = new Set<Promise<unknown>>();
   private readonly liveRuns = new Map<string, AgentRun>();
@@ -139,6 +142,72 @@ export class AgentDispatcher {
       this.queues.has(agentId) ||
       (this.pendingEnqueues.get(agentId) ?? 0) > 0
     );
+  }
+
+  // A thread write reservation spans the async gap between accepting a send/delegate/retry
+  // and the durable run/assignment write, so archiving cannot orphan a message in flight.
+  reserveThreadWrite(threadId: string): () => void {
+    // Re-read the durable thread and the archive mutation lock synchronously. An archive can
+    // win between an earlier async snapshot and this reservation; after this line a concurrent
+    // archive either sees the pending reservation or the archived flag and refuses to run.
+    const thread = this.store.getThread(threadId);
+    if (!thread) throw new StoreError("not_found", "Thread not found.");
+    if (thread.archived) {
+      throw new StoreError(
+        "conflict",
+        "Archived threads are read-only. Restore the thread before sending messages, retrying, or delegating.",
+      );
+    }
+    if (this.mutatingThreadIds.has(threadId)) {
+      throw new StoreError(
+        "conflict",
+        "This thread is being archived. Wait for the archive to finish.",
+      );
+    }
+    this.threadPendingWrites.set(threadId, (this.threadPendingWrites.get(threadId) ?? 0) + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const remaining = (this.threadPendingWrites.get(threadId) ?? 1) - 1;
+      if (remaining === 0) this.threadPendingWrites.delete(threadId);
+      else this.threadPendingWrites.set(threadId, remaining);
+    };
+  }
+
+  // Archiving must not hide active, reserved, queued, running, approval, input, or delegated
+  // work. The persisted-run check below is the store's own safety net for crash leftovers.
+  async archiveThread(threadId: string): Promise<Thread> {
+    const thread = this.store.getThread(threadId);
+    if (!thread) throw new StoreError("not_found", "Thread not found.");
+    if (thread.archived) return structuredClone(thread);
+    if (this.mutatingThreadIds.has(threadId)) {
+      throw new StoreError("conflict", "This thread is already being archived.");
+    }
+    this.mutatingThreadIds.add(threadId);
+    try {
+      if ((this.threadPendingWrites.get(threadId) ?? 0) > 0) {
+        throw new StoreError(
+          "conflict",
+          "Wait for this thread's pending messages, delegations, or retries to finish before archiving it.",
+        );
+      }
+      if (
+        [...this.liveRuns.values()].some(
+          (run) =>
+            run.threadId === threadId &&
+            ["queued", "running", "waiting_approval", "waiting_input"].includes(run.status),
+        )
+      ) {
+        throw new StoreError(
+          "conflict",
+          "Wait for this thread's agents and Worker assignments to finish before archiving it.",
+        );
+      }
+      return await this.store.archiveThread(threadId);
+    } finally {
+      this.mutatingThreadIds.delete(threadId);
+    }
   }
 
   beginAgentMutation(agentId: string): boolean {
@@ -255,6 +324,14 @@ export class AgentDispatcher {
         if (process.assignment?.id !== assignment.id) {
           throw new StoreError("conflict", "A newer assignment already exists for this task.");
         }
+        const assignmentThread = this.store.getThread(assignment.threadId);
+        if (!assignmentThread) throw new StoreError("not_found", "Thread not found.");
+        if (assignmentThread.archived) {
+          throw new StoreError(
+            "conflict",
+            "Archived threads are read-only. Restore the thread before retrying work.",
+          );
+        }
         if (assignment.status !== "failed" && assignment.status !== "interrupted") {
           throw new StoreError("invalid", "Only failed or interrupted Worker runs can be retried.");
         }
@@ -280,6 +357,12 @@ export class AgentDispatcher {
         const data = await this.store.threadData(thread.id);
         const previous = data.runs.find((run) => run.id === runId);
         if (!previous) continue;
+        if (thread.archived) {
+          throw new StoreError(
+            "conflict",
+            "Archived threads are read-only. Restore the thread before retrying work.",
+          );
+        }
         if (previous.status !== "failed" && previous.status !== "interrupted") {
           throw new StoreError("invalid", "Only failed or interrupted runs can be retried.");
         }
@@ -298,9 +381,14 @@ export class AgentDispatcher {
         if (!trigger || !agent) {
           throw new StoreError("not_found", "There is not enough data to retry this run.");
         }
-        const [run] = await this.enqueue(trigger, [agent], previous.attempt + 1);
-        if (!run) throw new Error("Could not create a retry run.");
-        return run;
+        const releaseThreadWrite = this.reserveThreadWrite(thread.id);
+        try {
+          const [run] = await this.enqueue(trigger, [agent], previous.attempt + 1);
+          if (!run) throw new Error("Could not create a retry run.");
+          return run;
+        } finally {
+          releaseThreadWrite();
+        }
       }
       throw new StoreError("not_found", "Run not found.");
     } finally {
@@ -326,6 +414,7 @@ export class AgentDispatcher {
 
   private async execute(run: AgentRun, agent: Agent, trigger: Message): Promise<void> {
     this.busy.add(agent.id);
+    const releaseThreadWrite = this.reserveThreadWrite(run.threadId);
     let currentRun = run;
     try {
       const runtime = await this.runner.runtimeStatus();
@@ -518,6 +607,7 @@ export class AgentDispatcher {
       this.liveRuns.delete(run.id);
       this.liveActivities.delete(run.id);
       this.busy.delete(agent.id);
+      releaseThreadWrite();
       this.notifyThread(run.threadId, true);
     }
   }
@@ -561,6 +651,12 @@ export class AgentDispatcher {
     if (!task.threadId) throw new StoreError("invalid", "Task must be linked to a thread.");
     const thread = this.store.getThread(task.threadId);
     if (!thread) throw new StoreError("not_found", "Thread not found.");
+    if (thread.archived) {
+      throw new StoreError(
+        "conflict",
+        "Archived threads are read-only. Restore the thread before delegating work.",
+      );
+    }
     if (
       task.workspaceId !== thread.workspaceId ||
       (origin && origin.masterRun.threadId !== thread.id)
@@ -596,9 +692,12 @@ export class AgentDispatcher {
         `#${knowledge.handle} is not ready for delegation (status: ${knowledge.status}).`,
       );
     }
+    const releaseThreadWrite = this.reserveThreadWrite(thread.id);
     const release = this.reserveAgent(worker.id);
-    if (!release)
+    if (!release) {
+      releaseThreadWrite();
       throw new StoreError("conflict", `@${worker.handle} is being updated or deleted.`);
+    }
     this.delegatingTaskIds.add(task.id);
     const id = crypto.randomUUID();
     const controller = new AbortController();
@@ -855,6 +954,7 @@ export class AgentDispatcher {
       this.liveRuns.delete(id);
       this.liveActivities.delete(id);
       this.notifyThread(thread.id, true);
+      releaseThreadWrite();
       release();
     }
   }
@@ -1069,27 +1169,34 @@ export class ChatService {
     }
     const thread = this.store.getThread(threadId);
     if (!thread) throw new StoreError("not_found", "Thread not found.");
-    const agents: Agent[] = [];
-    const knowledgeReferences = extractKnowledgeHandles(content).flatMap((handle) => {
-      const item = this.store.findKnowledgeByHandle(handle, thread.workspaceId);
-      return item ? [{ knowledgeId: item.id, handle: item.handle }] : [];
-    });
-    const releases: (() => void)[] = [];
-    for (const handle of extractMentionHandles(content)) {
-      const agent = this.store.findAgentByHandle(handle, thread.workspaceId);
-      if (!agent) continue;
-      const release = this.dispatcher.reserveAgent(agent.id);
-      if (!release) {
-        for (const releaseReservedAgent of releases) releaseReservedAgent();
-        throw new StoreError(
-          "conflict",
-          `@${agent.handle} is being updated or deleted. Try again.`,
-        );
-      }
-      agents.push(agent);
-      releases.push(release);
+    if (thread.archived) {
+      throw new StoreError(
+        "conflict",
+        "Archived threads are read-only. Restore the thread before sending messages.",
+      );
     }
+    const releaseThreadWrite = this.dispatcher.reserveThreadWrite(threadId);
+    const releases: (() => void)[] = [];
     try {
+      const agents: Agent[] = [];
+      const knowledgeReferences = extractKnowledgeHandles(content).flatMap((handle) => {
+        const item = this.store.findKnowledgeByHandle(handle, thread.workspaceId);
+        return item ? [{ knowledgeId: item.id, handle: item.handle }] : [];
+      });
+      for (const handle of extractMentionHandles(content)) {
+        const agent = this.store.findAgentByHandle(handle, thread.workspaceId);
+        if (!agent) continue;
+        const release = this.dispatcher.reserveAgent(agent.id);
+        if (!release) {
+          for (const releaseReservedAgent of releases) releaseReservedAgent();
+          throw new StoreError(
+            "conflict",
+            `@${agent.handle} is being updated or deleted. Try again.`,
+          );
+        }
+        agents.push(agent);
+        releases.push(release);
+      }
       const mentions = agents.map((agent) => ({ agentId: agent.id, handle: agent.handle }));
       const message = await this.store.createUserMessage(
         threadId,
@@ -1101,6 +1208,7 @@ export class ChatService {
       const runs = await this.dispatcher.enqueue(message, agents);
       return { message, runs };
     } finally {
+      releaseThreadWrite();
       for (const release of releases) release();
     }
   }

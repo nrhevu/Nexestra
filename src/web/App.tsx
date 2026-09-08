@@ -1,5 +1,6 @@
 import {
   Archive,
+  ArchiveRestore,
   ArrowDown,
   ArrowLeft,
   ArrowRight,
@@ -130,6 +131,7 @@ export function App() {
   const [knowledgeToDelete, setKnowledgeToDelete] = useState<KnowledgeItem>();
   const [agentToDelete, setAgentToDelete] = useState<AgentView>();
   const [agentToEdit, setAgentToEdit] = useState<AgentView>();
+  const [threadToRename, setThreadToRename] = useState<Thread>();
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     return readBrowserValue("nexestra.theme") === "light" ? "light" : "dark";
   });
@@ -369,6 +371,7 @@ export function App() {
     setKnowledgeToEdit(undefined);
     setKnowledgeToDelete(undefined);
     setAgentToDelete(undefined);
+    setThreadToRename(undefined);
     setError(undefined);
     setNotice(undefined);
   }, []);
@@ -389,7 +392,12 @@ export function App() {
   useEffect(() => {
     if (route.view !== "threads" || !data || data.workspace.id !== workspaceIdRef.current) return;
     if (route.threadId && !routeThreadExists) return;
-    const threadId = conversations.resolveThread(data.workspace.id, data.threads, route.threadId);
+    const threadId = conversations.resolveThread(
+      data.workspace.id,
+      activeThreads(data.threads),
+      route.threadId,
+      archivedThreads(data.threads),
+    );
     if (!threadId) return;
     conversations.rememberThread(data.workspace.id, threadId);
     if (threadId !== route.threadId) {
@@ -448,7 +456,10 @@ export function App() {
         foreignLookupThreadRef.current = threadId;
         const current = dataRef.current;
         if (!current || current.workspace.id !== workspaceIdRef.current) return;
-        const fallbackId = conversations.resolveThread(current.workspace.id, current.threads);
+        const fallbackId = conversations.resolveThread(
+          current.workspace.id,
+          activeThreads(current.threads),
+        );
         if (fallbackId) {
           const next = {
             view: "threads" as const,
@@ -612,7 +623,7 @@ export function App() {
     const next = await refresh(false, workspaceId);
     if (!next) return;
     if (routeRef.current.view === "threads") {
-      const threadId = conversations.resolveThread(next.workspace.id, next.threads);
+      const threadId = conversations.resolveThread(next.workspace.id, activeThreads(next.threads));
       if (threadId) {
         const previousThreadId = routeRef.current.threadId;
         navigate(`/threads/${threadId}`, { ...routeRef.current, view: "threads", threadId });
@@ -644,6 +655,62 @@ export function App() {
     [updateData],
   );
 
+  const renameThread = async (threadId: string, name: string) => {
+    const generation = workspaceGenerationRef.current;
+    try {
+      await api(`/api/threads/${encodeURIComponent(threadId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name }),
+      });
+      if (generation !== workspaceGenerationRef.current) return;
+      await refresh();
+      if (generation !== workspaceGenerationRef.current) return;
+      if (routeRef.current.threadId === threadId) await loadThread(threadId, true);
+      if (generation !== workspaceGenerationRef.current) return;
+      setThreadToRename((current) => (current?.id === threadId ? undefined : current));
+      flash("Thread renamed.");
+    } catch (caught) {
+      if (generation !== workspaceGenerationRef.current) return;
+      setError(messageFrom(caught));
+      throw caught;
+    }
+  };
+
+  const archiveThread = async (threadId: string) => {
+    const generation = workspaceGenerationRef.current;
+    try {
+      await api(`/api/threads/${encodeURIComponent(threadId)}/archive`, {
+        method: "POST",
+        body: "{}",
+      });
+      if (generation !== workspaceGenerationRef.current) return;
+      await refresh();
+      if (generation !== workspaceGenerationRef.current) return;
+      if (routeRef.current.threadId === threadId) await loadThread(threadId, true);
+      if (generation !== workspaceGenerationRef.current) return;
+      flash("Thread archived.");
+    } catch (caught) {
+      if (generation === workspaceGenerationRef.current) setError(messageFrom(caught));
+    }
+  };
+
+  const restoreThread = async (threadId: string) => {
+    const generation = workspaceGenerationRef.current;
+    try {
+      await api(`/api/threads/${encodeURIComponent(threadId)}/restore`, {
+        method: "POST",
+        body: "{}",
+      });
+      if (generation !== workspaceGenerationRef.current) return;
+      await refresh();
+      if (generation !== workspaceGenerationRef.current) return;
+      if (routeRef.current.threadId === threadId) await loadThread(threadId, true);
+      if (generation !== workspaceGenerationRef.current) return;
+      flash("Thread restored.");
+    } catch (caught) {
+      if (generation === workspaceGenerationRef.current) setError(messageFrom(caught));
+    }
+  };
   const reorderWorkspaces = useCallback(
     async (workspaceIds: string[]) => {
       const workspaces = await api<Workspace[]>("/api/workspaces/order", {
@@ -777,8 +844,18 @@ export function App() {
         onThread={openThread}
         onSurface={openSurface}
         onThreads={() => {
-          const threadId = conversations.resolveThread(data.workspace.id, data.threads);
-          if (threadId) openThread(threadId);
+          const threadId = conversations.resolveThread(
+            data.workspace.id,
+            activeThreads(data.threads),
+          );
+          if (threadId) {
+            openThread(threadId);
+          } else {
+            navigate("/threads", {
+              view: "threads",
+              surface: routeRef.current.surface,
+            });
+          }
         }}
         onSettings={() => setModal("settings")}
         onCreate={() => {
@@ -792,64 +869,71 @@ export function App() {
       />
       <section className="workspace">
         {route.view === "threads" ? (
-          <ThreadView
-            key={route.threadId}
-            data={data}
-            threadData={visibleThreadData}
-            runActivities={deferredRunActivities}
-            draft={
-              route.threadId ? conversations.draft(data.workspace.id, route.threadId).text : ""
-            }
-            draftSaved={
-              route.threadId ? conversations.draft(data.workspace.id, route.threadId).saved : true
-            }
-            onDraftChange={(value) => {
-              if (!route.threadId) return;
-              conversations.updateDraft(data.workspace.id, route.threadId, value);
-              setDraftRevision((revision) => revision + 1);
-            }}
-            onSend={async (content, files) => {
-              if (!route.threadId) return;
-              const threadId = route.threadId;
-              const generation = workspaceGenerationRef.current;
-              const workspaceId = data.workspace.id;
-              const draftRevision = conversations.draft(workspaceId, threadId).revision;
-              const body = new FormData();
-              body.append("content", content);
-              for (const file of files) body.append("files", file);
-              await api(
-                `/api/threads/${threadId}/messages`,
-                files.length > 0
-                  ? { method: "POST", body }
-                  : { method: "POST", body: JSON.stringify({ content }) },
-              );
-              if (conversations.clearSentDraft(workspaceId, threadId, draftRevision)) {
-                setDraftRevision((revision) => revision + 1);
+          route.threadId || activeThreads(data.threads).length > 0 ? (
+            <ThreadView
+              key={route.threadId}
+              data={data}
+              threadData={visibleThreadData}
+              runActivities={deferredRunActivities}
+              draft={
+                route.threadId ? conversations.draft(data.workspace.id, route.threadId).text : ""
               }
-              if (generation !== workspaceGenerationRef.current) return;
-              await Promise.all([refresh(true), loadThread(threadId)]);
-            }}
-            onRetry={(runId) =>
-              mutate(
-                () => api(`/api/runs/${runId}/retry`, { method: "POST", body: "{}" }),
-                "Reply queued again.",
-              )
-            }
-            onToolDecision={async (toolCallId, approved) => {
-              await api(`/api/tool-calls/${toolCallId}/${approved ? "approve" : "deny"}`, {
-                method: "POST",
-                body: "{}",
-              });
-              if (route.threadId) await loadThread(route.threadId, true);
-            }}
-            onToolResponse={async (toolCallId, answers) => {
-              await api(`/api/tool-calls/${toolCallId}/respond`, {
-                method: "POST",
-                body: JSON.stringify({ answers }),
-              });
-              if (route.threadId) await loadThread(route.threadId, true);
-            }}
-          />
+              draftSaved={
+                route.threadId ? conversations.draft(data.workspace.id, route.threadId).saved : true
+              }
+              onDraftChange={(value) => {
+                if (!route.threadId) return;
+                conversations.updateDraft(data.workspace.id, route.threadId, value);
+                setDraftRevision((revision) => revision + 1);
+              }}
+              onSend={async (content, files) => {
+                if (!route.threadId) return;
+                const threadId = route.threadId;
+                const generation = workspaceGenerationRef.current;
+                const workspaceId = data.workspace.id;
+                const draftRevision = conversations.draft(workspaceId, threadId).revision;
+                const body = new FormData();
+                body.append("content", content);
+                for (const file of files) body.append("files", file);
+                await api(
+                  `/api/threads/${threadId}/messages`,
+                  files.length > 0
+                    ? { method: "POST", body }
+                    : { method: "POST", body: JSON.stringify({ content }) },
+                );
+                if (conversations.clearSentDraft(workspaceId, threadId, draftRevision)) {
+                  setDraftRevision((revision) => revision + 1);
+                }
+                if (generation !== workspaceGenerationRef.current) return;
+                await Promise.all([refresh(true), loadThread(threadId)]);
+              }}
+              onRequestRename={setThreadToRename}
+              onArchive={archiveThread}
+              onRestore={restoreThread}
+              onRetry={(runId) =>
+                mutate(
+                  () => api(`/api/runs/${runId}/retry`, { method: "POST", body: "{}" }),
+                  "Reply queued again.",
+                )
+              }
+              onToolDecision={async (toolCallId, approved) => {
+                await api(`/api/tool-calls/${toolCallId}/${approved ? "approve" : "deny"}`, {
+                  method: "POST",
+                  body: "{}",
+                });
+                if (route.threadId) await loadThread(route.threadId, true);
+              }}
+              onToolResponse={async (toolCallId, answers) => {
+                await api(`/api/tool-calls/${toolCallId}/respond`, {
+                  method: "POST",
+                  body: JSON.stringify({ answers }),
+                });
+                if (route.threadId) await loadThread(route.threadId, true);
+              }}
+            />
+          ) : (
+            <EmptyThreads onCreate={() => setModal("thread")} />
+          )
         ) : route.surface === "attention" ? (
           <AttentionView
             items={data.attention}
@@ -930,6 +1014,13 @@ export function App() {
               throw caught;
             }
           }}
+        />
+      )}
+      {threadToRename && (
+        <RenameThreadDialog
+          thread={threadToRename}
+          onClose={() => setThreadToRename(undefined)}
+          onRename={renameThread}
         />
       )}
       {modal === "workspace" && (
@@ -1210,6 +1301,14 @@ function isActiveRun(run: AgentRun): boolean {
   );
 }
 
+function activeThreads(threads: Thread[]): Thread[] {
+  return threads.filter((thread) => !thread.archived);
+}
+
+function archivedThreads(threads: Thread[]): Thread[] {
+  return threads.filter((thread) => thread.archived);
+}
+
 function ThreadRunBadge({ runs }: { runs: AgentRun[] }) {
   if (runs.length === 0) return null;
   const status = runs.some(
@@ -1274,6 +1373,8 @@ function Sidebar(props: {
   onCreate: () => void;
 }) {
   const visibleAgents = props.data.agents.filter((agent) => !agent.archived);
+  const visibleThreads = props.data.threads.filter((thread) => !thread.archived);
+  const archivedThreads = props.data.threads.filter((thread) => thread.archived);
   return (
     <aside className="sidebar">
       <div className="workspace-title">
@@ -1340,7 +1441,7 @@ function Sidebar(props: {
               </button>
             </div>
             <div className="sidebar-list">
-              {props.data.threads.map((thread) => (
+              {visibleThreads.map((thread) => (
                 <button
                   className={
                     thread.id === props.route.threadId ? "sidebar-row selected" : "sidebar-row"
@@ -1363,6 +1464,47 @@ function Sidebar(props: {
                 </button>
               ))}
             </div>
+            {visibleThreads.length === 0 && (
+              <button className="sidebar-empty" type="button" onClick={props.onCreate}>
+                No active threads. Create one →
+              </button>
+            )}
+            {archivedThreads.length > 0 && (
+              <>
+                <div className="sidebar-rule" />
+                <div className="section-label">
+                  <ArchiveRestore size={14} />
+                  <span>Archived</span>
+                  <span className="count">{archivedThreads.length}</span>
+                </div>
+                <div className="sidebar-list">
+                  {archivedThreads.map((thread) => (
+                    <button
+                      className={
+                        thread.id === props.route.threadId
+                          ? "sidebar-row archived selected"
+                          : "sidebar-row archived"
+                      }
+                      type="button"
+                      key={thread.id}
+                      onClick={() => props.onThread(thread.id)}
+                    >
+                      <span className="hash">#</span>
+                      <span className="row-label">{thread.name}</span>
+                      <span className="thread-row-status">
+                        {props.hasDraft(thread.id) && (
+                          <span className="thread-draft-badge">Draft</span>
+                        )}
+                        <span className="archived-label">Archived</span>
+                        {thread.messageCount > 0 && (
+                          <span className="count">{thread.messageCount}</span>
+                        )}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
             <div className="sidebar-rule" />
             <div className="section-label">
               <span>Agent directory</span>
@@ -1464,6 +1606,9 @@ function ThreadView(props: {
   onRetry: (runId: string) => Promise<unknown>;
   onToolDecision: (toolCallId: string, approved: boolean) => Promise<void>;
   onToolResponse: (toolCallId: string, answers: string[][]) => Promise<void>;
+  onRequestRename: (thread: Thread) => void;
+  onArchive: (threadId: string) => Promise<void>;
+  onRestore: (threadId: string) => Promise<void>;
 }) {
   const { draft, onDraftChange: setDraft } = props;
   const [sending, setSending] = useState(false);
@@ -1729,14 +1874,36 @@ function ThreadView(props: {
       </div>
     );
   }
+  const archived = thread.archived;
+  const hasActiveRuns = props.threadData.runs.some(isActiveRun);
   return (
     <div className="thread-view">
       <header className="workspace-header">
         <div>
-          <p className="eyebrow">THREAD</p>
+          <p className="eyebrow">{archived ? "ARCHIVED THREAD" : "THREAD"}</p>
           <h1># {thread.name}</h1>
         </div>
         <div className="header-actions">
+          <button type="button" onClick={() => props.onRequestRename(thread)} title="Rename thread">
+            <Pencil size={14} />
+            <span>Rename</span>
+          </button>
+          {archived ? (
+            <button type="button" onClick={() => props.onRestore(thread.id)} title="Restore thread">
+              <ArchiveRestore size={14} />
+              <span>Restore</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={hasActiveRuns}
+              onClick={() => props.onArchive(thread.id)}
+              title={hasActiveRuns ? "Wait for agents and Workers to finish" : "Archive thread"}
+            >
+              <Archive size={14} />
+              <span>Archive</span>
+            </button>
+          )}
           <a
             href={`/api/threads/${encodeURIComponent(thread.id)}/export`}
             download={`${thread.slug}.md`}
@@ -1786,6 +1953,7 @@ function ThreadView(props: {
           onRetry={props.onRetry}
           onToolDecision={props.onToolDecision}
           onToolResponse={props.onToolResponse}
+          readOnly={archived}
         />
       ) : (
         <ThreadArtifacts
@@ -1794,7 +1962,7 @@ function ThreadView(props: {
           messages={props.threadData.messages}
         />
       )}
-      {activeTab === "messages" && (
+      {activeTab === "messages" && !archived && (
         <div className="composer-wrap">
           {addMenuOpen && (
             <div
@@ -2121,6 +2289,14 @@ function ThreadView(props: {
           )}
         </div>
       )}
+      {archived && (
+        <div className="archived-thread-notice" role="status">
+          <ArchiveRestore size={15} />
+          <span>
+            This thread is archived. Restore it to send messages, retry runs, or delegate tasks.
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -2137,6 +2313,7 @@ const ThreadTranscript = memo(function ThreadTranscript({
   onRetry,
   onToolDecision,
   onToolResponse,
+  readOnly,
 }: {
   thread: Thread;
   messages: Message[];
@@ -2149,6 +2326,7 @@ const ThreadTranscript = memo(function ThreadTranscript({
   onRetry: (runId: string) => Promise<unknown>;
   onToolDecision: (toolCallId: string, approved: boolean) => Promise<void>;
   onToolResponse: (toolCallId: string, answers: string[][]) => Promise<void>;
+  readOnly: boolean;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const agentsById = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
@@ -2246,6 +2424,7 @@ const ThreadTranscript = memo(function ThreadTranscript({
               knownHandles={knownAgentHandles}
               onToolDecision={onToolDecision}
               onToolResponse={onToolResponse}
+              readOnly={readOnly}
             />
           ))}
         </div>
@@ -2522,6 +2701,7 @@ function RunRow({
   knownHandles,
   onToolDecision,
   onToolResponse,
+  readOnly,
 }: {
   run: AgentRun;
   agent?: AgentView;
@@ -2532,6 +2712,7 @@ function RunRow({
   knownHandles: ReadonlySet<string>;
   onToolDecision: (id: string, approved: boolean) => Promise<void>;
   onToolResponse: (id: string, answers: string[][]) => Promise<void>;
+  readOnly: boolean;
 }) {
   const [retrying, setRetrying] = useState(false);
   const handle = agent?.handle ?? historicalHandle;
@@ -2618,25 +2799,26 @@ function RunRow({
           <strong>{handle ? `@${handle}` : "Deleted agent"} could not reply</strong>
           <p>{run.error ?? "The run was interrupted."}</p>
         </div>
-        {agent ? (
-          <button
-            type="button"
-            disabled={retrying}
-            onClick={async () => {
-              setRetrying(true);
-              try {
-                await onRetry(run.id);
-              } finally {
-                setRetrying(false);
-              }
-            }}
-          >
-            {retrying ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}
-            {retrying ? "Queueing…" : "Retry"}
-          </button>
-        ) : (
-          <span className="run-unavailable">Agent deleted</span>
-        )}
+        {!readOnly &&
+          (agent ? (
+            <button
+              type="button"
+              disabled={retrying}
+              onClick={async () => {
+                setRetrying(true);
+                try {
+                  await onRetry(run.id);
+                } finally {
+                  setRetrying(false);
+                }
+              }}
+            >
+              {retrying ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}
+              {retrying ? "Queueing…" : "Retry"}
+            </button>
+          ) : (
+            <span className="run-unavailable">Agent deleted</span>
+          ))}
       </div>
     </>
   );
@@ -4089,6 +4271,61 @@ function WorkspaceDialog({
         <ModalActions onClose={onClose} saving={saving} submitLabel="Create workspace" />
       </form>
     </Modal>
+  );
+}
+
+function RenameThreadDialog({
+  thread,
+  onClose,
+  onRename,
+}: {
+  thread: Thread;
+  onClose: () => void;
+  onRename: (threadId: string, name: string) => Promise<void>;
+}) {
+  const [name, setName] = useState(thread.name);
+  const [saving, setSaving] = useState(false);
+  return (
+    <Modal title="Rename thread" eyebrow="THREAD" onClose={onClose}>
+      <form
+        onSubmit={async (event) => {
+          event.preventDefault();
+          setSaving(true);
+          try {
+            await onRename(thread.id, name);
+          } finally {
+            setSaving(false);
+          }
+        }}
+      >
+        <Field label="Thread name" hint="Rename keeps the thread ID and transcript path">
+          <input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="product-room"
+            required
+            maxLength={80}
+          />
+        </Field>
+        <ModalActions onClose={onClose} saving={saving} submitLabel="Save name" />
+      </form>
+    </Modal>
+  );
+}
+
+function EmptyThreads({ onCreate }: { onCreate: () => void }) {
+  return (
+    <div className="empty-threads">
+      <ArchiveRestore size={28} />
+      <h2>No active threads</h2>
+      <p>
+        Archived conversations stay available in the sidebar. Create a new thread to resume work.
+      </p>
+      <button type="button" className="primary-button" onClick={onCreate}>
+        <Plus size={15} />
+        Create thread
+      </button>
+    </div>
   );
 }
 

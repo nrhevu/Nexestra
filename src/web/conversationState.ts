@@ -74,9 +74,24 @@ export class ConversationState {
     return true;
   }
 
-  resolveThread(workspaceId: string, threads: Thread[], explicitId?: string): string | undefined {
+  // The active list drives ordinary navigation and the last-thread fallback, so an archived
+  // thread is never chosen invisibly. An explicit archived deep link still resolves when the
+  // caller supplies the archived records.
+  resolveThread(
+    workspaceId: string,
+    threads: Thread[],
+    explicitId?: string,
+    archivedThreads: Thread[] = [],
+  ): string | undefined {
     const validThreads = threads.filter((thread) => thread.workspaceId === workspaceId);
-    if (validThreads.some((thread) => thread.id === explicitId)) return explicitId;
+    const archived = archivedThreads.filter((thread) => thread.workspaceId === workspaceId);
+    if (
+      explicitId &&
+      (validThreads.some((thread) => thread.id === explicitId) ||
+        archived.some((thread) => thread.id === explicitId))
+    ) {
+      return explicitId;
+    }
     if (!this.lastThreads.has(workspaceId)) {
       this.lastThreads.set(workspaceId, readBrowserValue(`nexestra.lastThread.${workspaceId}`));
     }

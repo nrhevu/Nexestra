@@ -259,11 +259,17 @@ export const ThreadSchema = z.object({
   updatedAt: z.string(),
   messageCount: z.number().int().nonnegative(),
   lastMessageAt: z.string().nullable(),
+  // Default keeps legacy state files and fixtures readable without a version bump.
+  archived: z.boolean().default(false),
 });
 export type Thread = z.infer<typeof ThreadSchema>;
 
 export const CreateThreadSchema = z.object({
   workspaceId: z.string().optional(),
+  name: z.string().trim().min(1).max(80),
+});
+
+export const RenameThreadSchema = z.object({
   name: z.string().trim().min(1).max(80),
 });
 

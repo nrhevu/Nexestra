@@ -82,6 +82,87 @@ describe("FileStore", () => {
     ).rejects.toMatchObject({ code: "invalid" });
   });
 
+  it("renames without changing identity and archives/restores reversibly with slug safety", async () => {
+    const store = await openStore();
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    await store.createUserMessage(thread.id, "shared history", []);
+    const transcriptPath = store.transcriptPath(thread.id);
+    const transcriptBefore = await readFile(transcriptPath, "utf8");
+
+    const renamed = await store.renameThread(thread.id, { name: "Research Log" });
+    expect(renamed).toMatchObject({
+      id: thread.id,
+      name: "Research Log",
+      slug: "research-log",
+      archived: false,
+    });
+    expect(store.transcriptPath(thread.id)).toBe(transcriptPath);
+    expect(await readFile(transcriptPath, "utf8")).toBe(transcriptBefore);
+
+    const archived = await store.archiveThread(thread.id);
+    expect(archived.archived).toBe(true);
+    await expect(store.createUserMessage(thread.id, "late note", [])).rejects.toMatchObject({
+      code: "conflict",
+    });
+    expect(await readFile(transcriptPath, "utf8")).toBe(transcriptBefore);
+
+    const archivedSlug = await store.createThread({ name: "Research Log" });
+    expect(archivedSlug.slug).toBe("research-log-2");
+
+    const restored = await store.restoreThread(thread.id);
+    expect(restored).toMatchObject({ id: thread.id, archived: false, name: "Research Log" });
+    expect(await store.createUserMessage(thread.id, "back to work", [])).toMatchObject({
+      threadId: thread.id,
+      content: "back to work",
+    });
+  });
+
+  it("refuses to archive a thread with active runs or Worker assignments", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    const [thread] = store.listThreads();
+    if (!workspace || !thread) throw new Error("expected seeded workspace");
+    const trigger = await store.createUserMessage(thread.id, "run me", []);
+    const run = {
+      id: "run-active",
+      threadId: thread.id,
+      triggerMessageId: trigger.id,
+      agentId: "agent-any",
+      attempt: 1,
+      status: "queued" as const,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    await store.updateRun(run);
+    await expect(store.archiveThread(thread.id)).rejects.toMatchObject({ code: "conflict" });
+    await store.updateRun({ ...run, status: "completed" });
+    expect((await store.archiveThread(thread.id)).archived).toBe(true);
+    await store.restoreThread(thread.id);
+
+    const task = await store.createTask({
+      title: "Archived guard",
+      status: "todo",
+      threadId: thread.id,
+    });
+    const assignment = {
+      id: "assignment-active",
+      workspaceId: workspace.id,
+      taskId: task.id,
+      threadId: thread.id,
+      masterRunId: "",
+      workerAgentId: "worker-any",
+      repositoryId: "repo-any",
+      status: "queued" as const,
+      branch: "codex/assignment-active",
+      worktreePath: "assignment-active",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    await store.createAssignment(assignment);
+    await expect(store.archiveThread(thread.id)).rejects.toMatchObject({ code: "conflict" });
+  });
+
   it("renames workspaces with unique slugs and persists the rail order", async () => {
     const store = await openStore();
     const [firstWorkspace] = store.listWorkspaces();

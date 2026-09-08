@@ -88,6 +88,7 @@ function activityThread(id: string, name: string): Thread {
     updatedAt: now,
     messageCount: 1,
     lastMessageAt: now,
+    archived: false,
   };
 }
 
@@ -190,6 +191,7 @@ describe("Activity-aware refresh", () => {
       updatedAt: now,
       messageCount: 1,
       lastMessageAt: now,
+      archived: false,
     };
     const run = {
       id: "run-active",
@@ -269,6 +271,7 @@ describe("Activity-aware refresh", () => {
       updatedAt: now,
       messageCount: 1,
       lastMessageAt: now,
+      archived: false,
     };
     const run = {
       id: "run-stream",
@@ -1107,6 +1110,7 @@ describe("Thread navigation", () => {
       updatedAt: now,
       messageCount: 1,
       lastMessageAt: now,
+      archived: false,
     };
     const secondThread = {
       ...firstThread,
@@ -2012,6 +2016,7 @@ describe("Knowledge surface", () => {
       updatedAt: now,
       messageCount: 0,
       lastMessageAt: null,
+      archived: false,
     };
     const repository = {
       id: "knowledge-product",
@@ -2121,6 +2126,7 @@ describe("Taskboard Worker process", () => {
       updatedAt: now,
       messageCount: 1,
       lastMessageAt: now,
+      archived: false,
     };
     const task = {
       id: "task-build",
@@ -2398,6 +2404,7 @@ describe("Taskboard Worker process", () => {
       updatedAt: now,
       messageCount: 1,
       lastMessageAt: now,
+      archived: false,
     };
     const task = {
       id: "task-delegate",
@@ -2607,6 +2614,7 @@ describe("Master harness", () => {
       updatedAt: now,
       messageCount: 1,
       lastMessageAt: now,
+      archived: false,
     };
     const masterAgent: AgentView = {
       id: "agent-master",
@@ -2857,6 +2865,7 @@ describe("Agent deletion", () => {
       updatedAt: now,
       messageCount: 2,
       lastMessageAt: now,
+      archived: false,
     };
     const transcript: ThreadData = {
       thread,
@@ -2941,6 +2950,7 @@ describe("Agent deletion", () => {
       updatedAt: now,
       messageCount: 0,
       lastMessageAt: null,
+      archived: false,
     };
     window.history.replaceState({}, "", `/threads/${thread.id}`);
     const emptyTranscript: ThreadData = {
@@ -2995,6 +3005,7 @@ describe("Thread composer", () => {
       updatedAt: now,
       messageCount: 0,
       lastMessageAt: null,
+      archived: false,
     };
     const transcript: ThreadData = {
       thread,
@@ -3423,6 +3434,7 @@ describe("Thread artifacts", () => {
       updatedAt: now,
       messageCount: 0,
       lastMessageAt: null,
+      archived: false,
     };
     const transcript: ThreadData = {
       thread,
@@ -3477,6 +3489,7 @@ describe("Thread artifacts", () => {
       updatedAt: now,
       messageCount: 1,
       lastMessageAt: now,
+      archived: false,
     };
     const message = {
       id: "message-artifacts",
@@ -3553,6 +3566,164 @@ describe("Thread artifacts", () => {
     await user.click(screen.getByRole("button", { name: "Links" }));
     expect(screen.queryByText("brief.md")).not.toBeInTheDocument();
     expect(screen.getByText("https://example.com/spec")).toBeInTheDocument();
+  });
+});
+
+describe("Thread archive lifecycle", () => {
+  it("lists archived threads separately and renders archived detail read-only", async () => {
+    const user = userEvent.setup();
+    const active = activityThread("thread-active", "Active Thread");
+    const archived = {
+      ...activityThread("thread-archived", "Old Thread"),
+      archived: true,
+      messageCount: 3,
+    };
+    window.history.replaceState({}, "", "/threads/thread-active");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/bootstrap") {
+          return jsonResponse({ ...bootstrapData, threads: [active, archived] });
+        }
+        if (path === "/api/threads/thread-active") {
+          return jsonResponse(threadSnapshot(active, []));
+        }
+        if (path === "/api/threads/thread-archived") {
+          return jsonResponse(threadSnapshot(archived, []));
+        }
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      }),
+    );
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Active Thread" });
+    expect(screen.getByText("Archived", { selector: ".section-label span" })).toBeInTheDocument();
+    const archivedRow = await screen.findByRole("button", { name: /Old Thread/ });
+    await user.click(archivedRow);
+
+    expect(await screen.findByRole("heading", { name: "Old Thread" })).toBeInTheDocument();
+    expect(screen.getByText("ARCHIVED THREAD")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Restore" })).toBeInTheDocument();
+    expect(screen.getByText(/This thread is archived/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Message")).not.toBeInTheDocument();
+  });
+
+  it("does not auto-select an archived thread as the ordinary last thread", async () => {
+    window.localStorage.setItem("nexestra.lastThread.workspace-nexestra", "thread-archived");
+    const archived = {
+      ...activityThread("thread-archived", "Old Thread"),
+      archived: true,
+    };
+    window.history.replaceState({}, "", "/threads");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/bootstrap") {
+          return jsonResponse({ ...bootstrapData, threads: [archived] });
+        }
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      }),
+    );
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "No active threads" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Create thread" }).length).toBeGreaterThan(0);
+    expect(screen.getByText("Archived", { selector: ".section-label span" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Message")).not.toBeInTheDocument();
+  });
+  it("ignores a delayed archive result after switching workspaces", async () => {
+    const user = userEvent.setup();
+    const productWorkspace = { ...workspace, id: "workspace-product", name: "Product" };
+    const local = activityThread("thread-archive-local", "general");
+    const product = {
+      ...activityThread("thread-archive-product", "notes"),
+      workspaceId: productWorkspace.id,
+    };
+    const pendingArchive = deferredResponse();
+    window.localStorage.setItem("nexestra.workspaceId", workspace.id);
+    window.history.replaceState({}, "", "/threads/thread-archive-local");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === `/api/bootstrap?workspaceId=${productWorkspace.id}`) {
+        return jsonResponse({
+          ...bootstrapData,
+          workspaces: [workspace, productWorkspace],
+          workspace: productWorkspace,
+          threads: [product],
+        });
+      }
+      if (path === "/api/bootstrap" || path === `/api/bootstrap?workspaceId=${workspace.id}`) {
+        return jsonResponse({
+          ...bootstrapData,
+          workspaces: [workspace, productWorkspace],
+          threads: [local],
+        });
+      }
+      if (path === `/api/threads/${local.id}/archive`) return pendingArchive.promise;
+      if (path === `/api/threads/${local.id}`) return jsonResponse(threadSnapshot(local, []));
+      if (path === `/api/threads/${product.id}`) {
+        return jsonResponse(threadSnapshot(product, []));
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "general" });
+    await user.click(screen.getByRole("button", { name: "Archive" }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        `/api/threads/${local.id}/archive`,
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Switch to Product" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Switch to Product" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      ),
+    );
+    await screen.findByRole("heading", { name: "notes" });
+
+    await act(async () => {
+      pendingArchive.resolve(jsonResponse({ ...local, archived: true }));
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText("Thread archived.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "notes" })).toBeInTheDocument();
+    expect(window.localStorage.getItem("nexestra.workspaceId")).toBe(productWorkspace.id);
+    expect(window.location.pathname).toBe("/threads/thread-archive-product");
+  });
+  it("opens the empty thread state from a surface when all threads are archived", async () => {
+    const user = userEvent.setup();
+    const archived = {
+      ...activityThread("thread-only-archived", "Old Thread"),
+      archived: true,
+    };
+    window.history.replaceState({}, "", "/surfaces/knowledge");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/bootstrap") {
+          return jsonResponse({ ...bootstrapData, threads: [archived] });
+        }
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      }),
+    );
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Threads" }));
+    expect(await screen.findByRole("heading", { name: "No active threads" })).toBeInTheDocument();
+    expect(screen.getByText("Archived", { selector: ".section-label span" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Create thread" }).length).toBeGreaterThan(0);
+    expect(window.location.pathname).toBe("/threads");
   });
 });
 

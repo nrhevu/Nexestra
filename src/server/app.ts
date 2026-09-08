@@ -285,6 +285,20 @@ export function createApp(options: CreateAppOptions) {
     return context.json(await options.store.createThread(await context.req.json()), 201);
   });
 
+  app.patch("/api/threads/:id", async (context) => {
+    return context.json(
+      await options.store.renameThread(context.req.param("id"), await context.req.json()),
+    );
+  });
+
+  app.post("/api/threads/:id/archive", async (context) => {
+    return context.json(await dispatcher.archiveThread(context.req.param("id")));
+  });
+
+  app.post("/api/threads/:id/restore", async (context) => {
+    return context.json(await options.store.restoreThread(context.req.param("id")));
+  });
+
   app.get("/api/threads/:id", async (context) => {
     return context.json(await options.store.threadData(context.req.param("id")));
   });

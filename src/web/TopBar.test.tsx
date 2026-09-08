@@ -17,6 +17,7 @@ const firstThread: Thread = {
   updatedAt: now,
   messageCount: 1,
   lastMessageAt: now,
+  archived: false,
 };
 const secondThread: Thread = {
   ...firstThread,

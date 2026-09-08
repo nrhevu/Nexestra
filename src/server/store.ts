@@ -38,6 +38,7 @@ import {
   type KnowledgeRepository,
   type Message,
   MessageSchema,
+  RenameThreadSchema,
   ReorderWorkspacesSchema,
   ReplaceKnowledgeDocumentSchema,
   RestoreKnowledgeDocumentRevisionSchema,
@@ -1181,6 +1182,87 @@ export class FileStore {
     });
   }
 
+  async renameThread(id: string, rawInput: unknown): Promise<Thread> {
+    const input = RenameThreadSchema.parse(rawInput);
+    return this.withWrite(async () => {
+      const current = this.requireThread(id);
+      if (current.name === input.name) return structuredClone(current);
+      const updated = ThreadSchema.parse({
+        ...current,
+        name: input.name,
+        slug: uniqueThreadSlug(
+          input.name,
+          this.state.threads.filter(
+            (thread) => thread.workspaceId === current.workspaceId && thread.id !== id,
+          ),
+        ),
+        updatedAt: new Date().toISOString(),
+      });
+      const next = {
+        ...this.state,
+        threads: this.state.threads.map((thread) => (thread.id === id ? updated : thread)),
+      };
+      await this.writeState(next);
+      this.state = next;
+      return structuredClone(updated);
+    });
+  }
+
+  async archiveThread(id: string): Promise<Thread> {
+    return this.withWrite(async () => {
+      const current = this.requireThread(id);
+      if (current.archived) return structuredClone(current);
+      const data = await this.threadData(id);
+      const activeRun = data.runs.find((run) =>
+        ["queued", "running", "waiting_approval", "waiting_input"].includes(run.status),
+      );
+      if (
+        activeRun ||
+        this.state.assignments.some(
+          (assignment) =>
+            assignment.threadId === id &&
+            (assignment.status === "queued" || assignment.status === "running"),
+        )
+      ) {
+        throw new StoreError(
+          "conflict",
+          "Wait for this thread's agents and Worker assignments to finish before archiving it.",
+        );
+      }
+      const updated = ThreadSchema.parse({
+        ...current,
+        archived: true,
+        updatedAt: new Date().toISOString(),
+      });
+      const next = {
+        ...this.state,
+        threads: this.state.threads.map((thread) => (thread.id === id ? updated : thread)),
+      };
+      await this.writeState(next);
+      this.state = next;
+      return structuredClone(updated);
+    });
+  }
+
+  async restoreThread(id: string): Promise<Thread> {
+    return this.withWrite(async () => {
+      const current = this.requireThread(id);
+      if (!current.archived) return structuredClone(current);
+      const updated = ThreadSchema.parse({
+        ...current,
+        archived: false,
+        updatedAt: new Date().toISOString(),
+      });
+      const next = {
+        ...this.state,
+        threads: this.state.threads.map((thread) => (thread.id === id ? updated : thread)),
+      };
+      await this.writeState(next);
+      this.state = next;
+      return structuredClone(updated);
+    });
+  }
+
   async createUserMessage(
     threadId: string,
     content: string,
@@ -1511,7 +1593,14 @@ export class FileStore {
   ): Promise<Message> {
     return this.withWrite(async () => {
       const threadIndex = this.state.threads.findIndex((thread) => thread.id === threadId);
-      if (threadIndex === -1) throw new StoreError("not_found", "Thread not found.");
+      const currentThread = this.state.threads[threadIndex];
+      if (!currentThread) throw new StoreError("not_found", "Thread not found.");
+      if (currentThread.archived) {
+        throw new StoreError(
+          "conflict",
+          "Archived threads are read-only. Restore the thread before sending new messages.",
+        );
+      }
       const artifactDrafts = await this.createArtifactDrafts(input, uploads);
       const messageSequence = await this.nextSequence(threadId);
       const artifacts = artifactDrafts.map((draft, index) =>
@@ -1981,7 +2070,7 @@ function createThreadRecord(
     id: crypto.randomUUID(),
     workspaceId,
     name,
-    slug: uniqueSlug(
+    slug: uniqueThreadSlug(
       name,
       threads.filter((thread) => thread.workspaceId === workspaceId),
     ),
@@ -1989,7 +2078,14 @@ function createThreadRecord(
     updatedAt: now,
     messageCount: 0,
     lastMessageAt: null,
+    archived: false,
   });
+}
+
+function uniqueThreadSlug(name: string, threads: Thread[]): string {
+  // Archived threads stay addressable by the same slug space, so renaming or creating a
+  // thread can never silently reuse the deep link of an archived conversation.
+  return uniqueSlug(name, threads);
 }
 
 function uniqueSlug(name: string, entries: { slug: string }[]): string {

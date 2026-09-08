@@ -692,6 +692,48 @@ describe("HTTP app", () => {
     expect(new TextDecoder().decode(chunk.value)).toContain('"activities":[]');
   });
 
+  it("renames, archives, restores, and rejects new messages in archived threads", async () => {
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+
+    const renamed = await app.request(`/api/threads/${thread.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Renamed Thread" }),
+    });
+    expect(renamed.status).toBe(200);
+    await expect(renamed.json()).resolves.toMatchObject({
+      id: thread.id,
+      name: "Renamed Thread",
+      slug: "renamed-thread",
+      archived: false,
+    });
+
+    const archived = await app.request(`/api/threads/${thread.id}/archive`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    await expect(archived.json()).resolves.toMatchObject({ id: thread.id, archived: true });
+
+    const rejected = await app.request(`/api/threads/${thread.id}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "late note" }),
+    });
+    expect(rejected.status).toBe(409);
+    const afterSend = await store.threadData(thread.id);
+    expect(afterSend.messages).toHaveLength(0);
+
+    const restored = await app.request(`/api/threads/${thread.id}/restore`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    await expect(restored.json()).resolves.toMatchObject({ id: thread.id, archived: false });
+    expect(store.transcriptPath(thread.id)).toBe(join(store.threadDirectory, `${thread.id}.jsonl`));
+  });
+
   it("rejects mutating browser requests from a non-loopback origin", async () => {
     const response = await app.request("/api/threads", {
       method: "POST",
