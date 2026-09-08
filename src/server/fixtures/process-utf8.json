@@ -1,0 +1,26 @@
+[
+  {
+    "name": "multibyte branch names split across stdout and stderr chunks",
+    "writes": [
+      { "stream": "stdout", "hex": "726566732f68656164732f6e68c3" },
+      { "stream": "stderr", "hex": "e2" },
+      { "stream": "stdout", "hex": "a16e682ff09f" },
+      { "stream": "stderr", "hex": "82ac20f0" },
+      { "stream": "stdout", "hex": "9a800a" },
+      { "stream": "stderr", "hex": "9f9a800a" }
+    ],
+    "stdout": "refs/heads/nhánh/🚀\n",
+    "stderr": "€ 🚀\n"
+  },
+  {
+    "name": "incomplete final characters are flushed once per stream",
+    "writes": [
+      { "stream": "stdout", "hex": "7461696c3ae2" },
+      { "stream": "stderr", "hex": "646961676e6f737469633af09f" },
+      { "stream": "stdout", "hex": "82" },
+      { "stream": "stderr", "hex": "9a" }
+    ],
+    "stdout": "tail:�",
+    "stderr": "diagnostic:�"
+  }
+]
