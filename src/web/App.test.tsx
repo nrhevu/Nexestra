@@ -1386,6 +1386,74 @@ describe("Last thread per workspace", () => {
     expect(window.location.pathname).toBe(`/threads/${local.id}`);
   });
 
+  it("does not repeat the foreign lookup when a background refresh replaces metadata", async () => {
+    const productWorkspace = { ...workspace, id: "workspace-product", name: "Product" };
+    const deep = {
+      ...activityThread("thread-no-repeat", "notes"),
+      workspaceId: productWorkspace.id,
+    };
+    const local = activityThread("thread-local", "general");
+    const timers = installActivityTimers();
+    const pending = deferredResponse();
+    let lookups = 0;
+    window.localStorage.setItem("nexestra.workspaceId", workspace.id);
+    window.history.replaceState({}, "", `/threads/${deep.id}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === `/api/bootstrap?workspaceId=${workspace.id}`) {
+          return jsonResponse({
+            ...bootstrapData,
+            workspaces: [workspace, productWorkspace],
+            threads: [local],
+            activeRuns: [activityRun(local)],
+          });
+        }
+        if (path === `/api/bootstrap?workspaceId=${productWorkspace.id}`) {
+          return jsonResponse({
+            ...bootstrapData,
+            workspaces: [workspace, productWorkspace],
+            workspace: productWorkspace,
+            threads: [deep],
+          });
+        }
+        if (path.startsWith("/api/activity")) {
+          return jsonResponse({
+            workspaceId: workspace.id,
+            activeRuns: [activityRun(local)],
+            attention: [],
+          });
+        }
+        if (path === `/api/threads/${deep.id}`) {
+          lookups += 1;
+          // The lookup body is a one-shot stream; the transcript load needs a fresh response.
+          return lookups === 1 ? pending.promise : jsonResponse(threadSnapshot(deep, []));
+        }
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      }),
+    );
+    render(<App />);
+
+    await screen.findByText("general");
+    await act(async () => {});
+    expect(lookups).toBe(1);
+
+    await timers.tick();
+    await act(async () => {});
+    // A background activity refresh replaced `data` while the lookup was in flight; the
+    // intent guard must keep it a single request rather than restarting the lookup.
+    expect(lookups).toBe(1);
+
+    await act(async () => {
+      pending.resolve(jsonResponse(threadSnapshot(deep, [])));
+    });
+    await act(async () => {});
+    await screen.findByRole("heading", { name: "# notes" });
+    expect(lookups).toBe(2);
+    expect(window.location.pathname).toBe(`/threads/${deep.id}`);
+  });
+
   it("ignores a delayed foreign lookup after a manual workspace switch", async () => {
     const user = userEvent.setup();
     const productWorkspace = { ...workspace, id: "workspace-product", name: "Product" };

@@ -391,13 +391,16 @@ export function App() {
   }, [conversations, data, navigate, route, routeThreadExists]);
 
   useEffect(() => {
-    if (route.view !== "threads" || !route.threadId || !data || routeThreadExists) return;
+    if (route.view !== "threads" || !route.threadId || !data) return;
+    if (data.workspace.id !== workspaceIdRef.current) return;
+    if (routeThreadExists || foreignLookupThreadRef.current === route.threadId) return;
     const threadId = route.threadId;
     const generation = workspaceGenerationRef.current;
     const requestId = ++latestForeignLookupRequestRef.current;
     foreignLookupThreadRef.current = threadId;
-    void api<ThreadData>(`/api/threads/${encodeURIComponent(threadId)}`)
-      .then((next) => {
+    void (async () => {
+      try {
+        const next = await api<ThreadData>(`/api/threads/${encodeURIComponent(threadId)}`);
         if (
           requestId !== latestForeignLookupRequestRef.current ||
           generation !== workspaceGenerationRef.current ||
@@ -413,9 +416,20 @@ export function App() {
           return;
         }
         beginWorkspaceSwitch(targetWorkspace);
-        void refresh(false, targetWorkspace);
-      })
-      .catch(() => {
+        const switchGeneration = workspaceGenerationRef.current;
+        const switchRequestId = latestForeignLookupRequestRef.current;
+        await refresh(false, targetWorkspace);
+        if (
+          switchRequestId !== latestForeignLookupRequestRef.current ||
+          switchGeneration !== workspaceGenerationRef.current ||
+          routeRef.current.view !== "threads" ||
+          routeRef.current.threadId !== threadId
+        )
+          return;
+        // The lookup intent is consumed even when the target bootstrap refresh fails, so a later
+        // metadata update cannot start a retry loop for the same URL.
+        foreignLookupThreadRef.current = threadId;
+      } catch {
         if (
           requestId !== latestForeignLookupRequestRef.current ||
           generation !== workspaceGenerationRef.current ||
@@ -423,7 +437,7 @@ export function App() {
           routeRef.current.threadId !== threadId
         )
           return;
-        foreignLookupThreadRef.current = undefined;
+        foreignLookupThreadRef.current = threadId;
         const current = dataRef.current;
         if (!current || current.workspace.id !== workspaceIdRef.current) return;
         const fallbackId = conversations.resolveThread(current.workspace.id, current.threads);
@@ -435,7 +449,8 @@ export function App() {
           };
           navigate(`/threads/${fallbackId}`, next, true);
         }
-      });
+      }
+    })();
   }, [
     beginWorkspaceSwitch,
     conversations,
