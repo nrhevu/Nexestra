@@ -4,24 +4,23 @@ Research date: 9 September 2026 (Asia/Ho_Chi_Minh).
 
 ## Problem
 
-The Needs attention surface currently opens a pending approval or input by navigating to its
-thread (`openThread`). With conversation-history pagination the thread view shows the latest
-page (planned default 50 messages); an approval or input whose user or agent trigger is older
-than that window would be hidden after the navigation, so the user cannot act on the item from
-the attention list.
+The Needs attention surface opens a pending approval or input by navigating to its thread. With
+conversation-history pagination the thread view shows a bounded latest page (planned 50 messages);
+an approval or input whose trigger message is older than that window would be hidden after the
+navigation, so the user cannot act on the item from the attention list.
 
-## Sources and observations
+## Source observations
 
-- Notion's document-history help demonstrates version inspection plus restore while preserving
-  history; Nexestra's conversation-history work applies the same idea to threads by keeping the
-  canonical JSONL transcript and projecting pageable derived state.
-- The existing workspace attention projection already carries `runId` on `AttentionItem`
-  alongside `threadId` and `taskId`. The planner/planner-delegated runs are current state in
-  `dispatcher.activeRuns`, so the parent has enough information to open the exact trigger
-  message for a run.
-- Linear's Inbox opens the related issue/direct route from a notification; the equivalent here
-  is a direct route into the exact message that prompted the pending tool or question rather
-  than a bare thread landing page.
+- `AttentionItem` in `src/shared/contracts.ts` carries `threadId`, `runId`, and `taskId`;
+  `runAttentionItem` builds the pending items from the workspace activity projection.
+- `dispatcher.activeRuns` supplies the current runs used to build that projection, and each run
+  records `triggerMessageId` on `RunSchema`. Resolving `runId -> triggerMessageId` therefore
+  lets the parent open the exact message that prompted the pending tool or question.
+- `src/web/App.tsx` already has `openThread(threadId)` and `openMessage(threadId, messageId)`
+  navigation routes, including a message-target route, so a run-aware hook does not need new
+  routing machinery.
+
+These are local code observations, not external product research.
 
 ## Selected behavior
 
@@ -30,23 +29,20 @@ the attention list.
 - When `onRun` is provided and an item has both `threadId` and `runId` and no `taskId`,
   the row renders **Open run** and calls `onRun(threadId, runId)`.
 - Task rows keep **Inspect task** precedence even when they also carry `runId`.
-- When `onRun` is absent (stale page, legacy caller, or future surface that only opens bare
-  threads), the previous **Open thread** fallback remains, so the component is backward
-  compatible.
+- When `onRun` is absent, the previous **Open thread** fallback remains so callers that only
+  open bare threads keep working.
 
-The parent (root UI agent) wires `onRun` using `data.activeRuns` to resolve
-`runId -> triggerMessageId` and calls the existing `openMessage(threadId, messageId)`;
-if the run is stale and no trigger message exists, it falls back to `openThread`.
-
-No App/shared/backend edits are part of this slice. The component contract is the only change:
-a run-aware navigation hook that preserves task precedence and legacy fallback.
+The accessible button name is `Open run: <title>`; run identifiers stay out of the product text
+and are passed only through the callback. The parent resolves the run to its trigger message and
+navigates with `openMessage`, falling back to `openThread` when the run is stale and no trigger
+message exists.
 
 ## Acceptance and limits
 
-Focused tests cover exact run identity, two pending runs of the same thread being independently
-addressable, legacy fallback when `onRun` is absent, task precedence over run buttons, and the
-original thread/task flows. The repository handoff gate is `pnpm check`.
+Focused tests cover empty state, original thread/task flows, two pending runs with the same
+visible title being independently addressable to their exact run ids, legacy fallback when
+`onRun` is absent, and task precedence over run buttons.
 
-Limits: this slice does not paginate history or resolve `runId` to a trigger message; root is
-integrating that resolution in App. If the run disappears between attention refresh and click,
-the parent decides the stale fallback; the component does not do its own activity lookup.
+Limits: this change does not paginate history or resolve `runId` to a trigger message; the
+parent performs that resolution. If the run disappears between attention refresh and click, the
+parent decides the stale fallback; the component does not perform its own activity lookup.

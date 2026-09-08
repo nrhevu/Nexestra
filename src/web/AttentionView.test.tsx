@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AttentionItem } from "../shared/contracts.js";
@@ -9,10 +9,15 @@ import { AttentionView } from "./AttentionView.js";
 
 afterEach(cleanup);
 
-const approval = (id: string, runId: string, threadId: string): AttentionItem => ({
+const approval = (
+  id: string,
+  runId: string,
+  threadId: string,
+  title = `Approval ${runId}`,
+): AttentionItem => ({
   id,
   kind: "approval",
-  title: `Approval ${runId}`,
+  title,
   detail: "Review the pending tool request.",
   threadId,
   runId,
@@ -60,25 +65,33 @@ describe("Needs attention", () => {
     expect(onThread).toHaveBeenCalledTimes(1);
   });
 
-  it("resolves two pending runs in the same thread to their exact run ids", async () => {
+  it("resolves two pending runs with the same visible title to their exact run ids", async () => {
     const onRun = vi.fn();
     const onThread = vi.fn();
     const onTask = vi.fn();
     const items: AttentionItem[] = [
-      approval("run:one", "run-one", "thread-general"),
-      approval("run:two", "run-two", "thread-general"),
+      approval("run:one", "run-one", "thread-general", "Planner in #general"),
+      approval("run:two", "run-two", "thread-general", "Planner in #general"),
     ];
     render(<AttentionView items={items} onThread={onThread} onTask={onTask} onRun={onRun} />);
 
+    const rows = screen.getAllByRole("listitem");
+    expect(rows).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Open run: Planner in #general" })).toHaveLength(
+      2,
+    );
+    expect(screen.queryByText("run-one")).not.toBeInTheDocument();
+    expect(screen.queryByText("run-two")).not.toBeInTheDocument();
+
     await userEvent.click(
-      screen.getByRole("button", { name: "Open run run-one: Approval run-one" }),
+      within(rows[0] as HTMLElement).getByRole("button", { name: "Open run: Planner in #general" }),
     );
     expect(onRun).toHaveBeenCalledExactlyOnceWith("thread-general", "run-one");
     expect(onThread).not.toHaveBeenCalled();
     expect(onTask).not.toHaveBeenCalled();
 
     await userEvent.click(
-      screen.getByRole("button", { name: "Open run run-two: Approval run-two" }),
+      within(rows[1] as HTMLElement).getByRole("button", { name: "Open run: Planner in #general" }),
     );
     expect(onRun).toHaveBeenCalledTimes(2);
     expect(onRun.mock.calls[1]).toEqual(["thread-general", "run-two"]);
@@ -97,7 +110,9 @@ describe("Needs attention", () => {
       />,
     );
 
-    expect(screen.queryByRole("button", { name: /^Open run / })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Open run: Approval run-fallback" }),
+    ).not.toBeInTheDocument();
     await userEvent.click(
       screen.getByRole("button", { name: "Open thread: Approval run-fallback" }),
     );
@@ -118,7 +133,9 @@ describe("Needs attention", () => {
     );
 
     expect(screen.getByRole("button", { name: "Inspect task: Task task-blocked" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: /^Open run / })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Open run: Task task-blocked" }),
+    ).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Inspect task: Task task-blocked" }));
     expect(onTask).toHaveBeenCalledExactlyOnceWith("task-blocked");
     expect(onRun).not.toHaveBeenCalled();

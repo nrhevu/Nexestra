@@ -63,7 +63,7 @@ export function AttentionView({
                   className="secondary-button"
                   type="button"
                   onClick={() => onRun(item.threadId as string, item.runId as string)}
-                  aria-label={`Open run ${item.runId}: ${item.title}`}
+                  aria-label={`Open run: ${item.title}`}
                 >
                   Open run <ArrowRight size={15} />
                 </button>
