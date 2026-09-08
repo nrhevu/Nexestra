@@ -1279,13 +1279,14 @@ describe("Last thread per workspace", () => {
     expect(window.location.pathname).toBe(`/threads/${second.id}`);
   });
 
-  it("opens an explicit URL in another workspace before route fallback runs", async () => {
+  it("resolves a bare foreign thread deep link by looking up the thread once", async () => {
     const productWorkspace = { ...workspace, id: "workspace-product", name: "Product" };
     const deep = { ...activityThread("thread-deep", "notes"), workspaceId: productWorkspace.id };
     const local = activityThread("thread-local", "general");
     window.localStorage.setItem("nexestra.workspaceId", workspace.id);
     window.localStorage.setItem(`nexestra.lastThread.${workspace.id}`, local.id);
-    window.history.replaceState({}, "", `/threads/${deep.id}?workspace=${productWorkspace.id}`);
+    window.history.replaceState({}, "", `/threads/${deep.id}`);
+    let deepReads = 0;
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -1305,7 +1306,10 @@ describe("Last thread per workspace", () => {
             threads: [deep],
           });
         }
-        if (path === `/api/threads/${deep.id}`) return jsonResponse(threadSnapshot(deep, []));
+        if (path === `/api/threads/${deep.id}`) {
+          deepReads += 1;
+          return jsonResponse(threadSnapshot(deep, []));
+        }
         return jsonResponse({ error: { message: "Not found" } }, 404);
       }),
     );
@@ -1313,13 +1317,191 @@ describe("Last thread per workspace", () => {
 
     await screen.findByRole("combobox", { name: "Message" });
     expect(window.location.pathname).toBe(`/threads/${deep.id}`);
-    expect(window.location.search).toBe(`?workspace=${productWorkspace.id}`);
+    expect(window.location.search).toBe("");
     expect(window.localStorage.getItem(`nexestra.lastThread.${productWorkspace.id}`)).toBe(deep.id);
     expect(window.localStorage.getItem("nexestra.workspaceId")).toBe(productWorkspace.id);
     expect(screen.getByRole("button", { name: "Switch to Product" })).toHaveAttribute(
       "aria-current",
       "page",
     );
+    expect(deepReads).toBe(2);
+  });
+
+  it("restores the foreign thread when navigating back after popstate", async () => {
+    const productWorkspace = { ...workspace, id: "workspace-product", name: "Product" };
+    const deep = { ...activityThread("thread-deep", "notes"), workspaceId: productWorkspace.id };
+    const local = activityThread("thread-local", "general");
+    window.localStorage.setItem("nexestra.workspaceId", workspace.id);
+    window.localStorage.setItem(`nexestra.lastThread.${workspace.id}`, local.id);
+    window.history.replaceState({}, "", `/threads/${local.id}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === `/api/bootstrap?workspaceId=${workspace.id}`) {
+          return jsonResponse({
+            ...bootstrapData,
+            workspaces: [workspace, productWorkspace],
+            threads: [local],
+          });
+        }
+        if (path === `/api/bootstrap?workspaceId=${productWorkspace.id}`) {
+          return jsonResponse({
+            ...bootstrapData,
+            workspaces: [workspace, productWorkspace],
+            workspace: productWorkspace,
+            threads: [deep],
+          });
+        }
+        if (path === `/api/threads/${local.id}`) return jsonResponse(threadSnapshot(local, []));
+        if (path === `/api/threads/${deep.id}`) return jsonResponse(threadSnapshot(deep, []));
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      }),
+    );
+    render(<App />);
+
+    await screen.findByRole("combobox", { name: "Message" });
+    act(() => {
+      window.history.replaceState({}, "", `/threads/${deep.id}`);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Switch to Product" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      ),
+    );
+    expect(window.location.pathname).toBe(`/threads/${deep.id}`);
+
+    act(() => {
+      window.history.replaceState({}, "", `/threads/${local.id}`);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Switch to Nexestra" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      ),
+    );
+    expect(window.location.pathname).toBe(`/threads/${local.id}`);
+  });
+
+  it("ignores a delayed foreign lookup after a manual workspace switch", async () => {
+    const user = userEvent.setup();
+    const productWorkspace = { ...workspace, id: "workspace-product", name: "Product" };
+    const analyticsWorkspace = { ...workspace, id: "workspace-analytics", name: "Analytics" };
+    const deep = { ...activityThread("thread-delayed", "notes"), workspaceId: productWorkspace.id };
+    const local = activityThread("thread-local", "general");
+    const analytics = {
+      ...activityThread("thread-analytics", "general"),
+      workspaceId: analyticsWorkspace.id,
+    };
+    const pending = deferredResponse();
+    window.localStorage.setItem("nexestra.workspaceId", workspace.id);
+    window.history.replaceState({}, "", `/threads/${deep.id}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === `/api/bootstrap?workspaceId=${workspace.id}`) {
+          return jsonResponse({
+            ...bootstrapData,
+            workspaces: [workspace, productWorkspace, analyticsWorkspace],
+            threads: [local],
+          });
+        }
+        if (path === `/api/bootstrap?workspaceId=${analyticsWorkspace.id}`) {
+          return jsonResponse({
+            ...bootstrapData,
+            workspaces: [workspace, productWorkspace, analyticsWorkspace],
+            workspace: analyticsWorkspace,
+            threads: [analytics],
+          });
+        }
+        if (path === `/api/threads/${deep.id}`) return pending.promise;
+        if (path === `/api/threads/${local.id}`) return jsonResponse(threadSnapshot(local, []));
+        if (path === `/api/threads/${analytics.id}`) {
+          return jsonResponse(threadSnapshot(analytics, []));
+        }
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      }),
+    );
+    render(<App />);
+
+    await screen.findByRole("button", { name: "Switch to Analytics" });
+    await user.click(screen.getByRole("button", { name: "Switch to Analytics" }));
+    await screen.findByRole("combobox", { name: "Message" });
+    expect(window.location.pathname).toBe(`/threads/${analytics.id}`);
+
+    await act(async () => {
+      pending.resolve(jsonResponse(threadSnapshot(deep, [])));
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(window.location.pathname).toBe(`/threads/${analytics.id}`);
+    expect(window.localStorage.getItem("nexestra.workspaceId")).toBe(analyticsWorkspace.id);
+    expect(screen.getByRole("button", { name: "Switch to Analytics" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
+  it("keeps a manually selected workspace while on a surface and opens its threads", async () => {
+    const user = userEvent.setup();
+    const productWorkspace = { ...workspace, id: "workspace-product", name: "Product" };
+    const local = activityThread("thread-surface-local", "general");
+    const product = {
+      ...activityThread("thread-surface-product", "notes"),
+      workspaceId: productWorkspace.id,
+    };
+    window.localStorage.setItem("nexestra.workspaceId", workspace.id);
+    window.history.replaceState({}, "", "/surfaces/agents");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === `/api/bootstrap?workspaceId=${workspace.id}`) {
+          return jsonResponse({
+            ...bootstrapData,
+            workspaces: [workspace, productWorkspace],
+            threads: [local],
+          });
+        }
+        if (path === `/api/bootstrap?workspaceId=${productWorkspace.id}`) {
+          return jsonResponse({
+            ...bootstrapData,
+            workspaces: [workspace, productWorkspace],
+            workspace: productWorkspace,
+            threads: [product],
+          });
+        }
+        if (path === `/api/threads/${product.id}`) {
+          return jsonResponse(threadSnapshot(product, []));
+        }
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      }),
+    );
+    const first = render(<App />);
+
+    await screen.findByRole("heading", { name: "Agent management" });
+    await user.click(screen.getByRole("button", { name: "Switch to Product" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Switch to Product" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      ),
+    );
+    expect(window.location.pathname).toBe("/surfaces/agents");
+    expect(window.localStorage.getItem("nexestra.workspaceId")).toBe(productWorkspace.id);
+
+    await user.click(screen.getByRole("button", { name: "Threads" }));
+    await screen.findByRole("combobox", { name: "Message" });
+    expect(window.location.pathname).toBe(`/threads/${product.id}`);
+    first.unmount();
+
+    render(<App />);
+    await screen.findByRole("combobox", { name: "Message" });
+    expect(window.location.pathname).toBe(`/threads/${product.id}`);
+    expect(window.localStorage.getItem("nexestra.workspaceId")).toBe(productWorkspace.id);
   });
 });
 

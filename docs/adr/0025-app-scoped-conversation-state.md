@@ -18,9 +18,9 @@ cannot resurrect text that was already sent. Loads of the old thread-only key re
 
 The sidebar marks thread rows with a **Draft** badge while any nonempty draft exists. The browser
 also remembers the last opened thread per workspace; opening Threads returns to that conversation
-when it is still listed. An explicit `?workspace=` URL selects that workspace before any route
-fallback runs; otherwise a thread outside the current workspace is treated as invalid and resolved
-through the same per-workspace history.
+when it is still listed. A bare `/threads/:id` URL whose thread is absent from the current
+bootstrap is resolved with one `GET /api/threads/:id`, which returns the owning `workspaceId`; the app switches
+to that workspace before route fallback runs, and a missing thread falls back through the same per-workspace history.
 
 Theme and workspace selection move through the same guarded browser storage helpers, so a denied
 storage area cannot crash startup. When persistence is unavailable, the composer keeps text in

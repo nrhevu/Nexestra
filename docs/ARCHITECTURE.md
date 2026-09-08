@@ -63,7 +63,7 @@ App-owned `ConversationState` keeps drafts under `nexestra.draft.<workspaceId>:<
 only on first access, and clears only the sent revision after a successful send; the empty value is a tombstone that also retires legacy thread-only keys. The sidebar shows a **Draft**
 badge per thread, and each workspace remembers its last opened thread under
 `nexestra.lastThread.<workspaceId>` so the Threads entry returns to the active conversation. Guarded
-storage calls degrade to in-memory text with a visible note instead of interrupting the composer.
+storage calls degrade to in-memory text with a visible note instead of interrupting the composer. Foreign bare deep links are resolved once through `/api/threads/:id` with workspace and route generation guards, never by polling.
 See [ADR 0025](adr/0025-app-scoped-conversation-state.md).
 
 The attention projection uses active dispatcher runs plus current task, assignment, agent, and

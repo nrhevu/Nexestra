@@ -95,7 +95,6 @@ interface RouteState {
   view: PrimaryView;
   surface: Surface;
   threadId?: string;
-  workspaceId?: string;
 }
 
 interface LoginSession {
@@ -133,6 +132,8 @@ export function App() {
   );
   const latestThreadRequestRef = useRef(0);
   const latestTaskInspectionRequestRef = useRef(0);
+  const latestForeignLookupRequestRef = useRef(0);
+  const foreignLookupThreadRef = useRef<string | undefined>(undefined);
   const latestBootstrapRequestRef = useRef(0);
   const workspaceGenerationRef = useRef(0);
   const activityRevisionRef = useRef(0);
@@ -343,6 +344,27 @@ export function App() {
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
 
+  const beginWorkspaceSwitch = useCallback((workspaceId: string) => {
+    workspaceGenerationRef.current += 1;
+    latestThreadRequestRef.current += 1;
+    latestForeignLookupRequestRef.current += 1;
+    foreignLookupThreadRef.current = undefined;
+    workspaceIdRef.current = workspaceId;
+    threadActivityRevisionRef.current = undefined;
+    setThreadData(undefined);
+    setRunActivities([]);
+    setModal(null);
+    setTaskToInspect(undefined);
+    setTaskToEdit(undefined);
+    setTaskToDelete(undefined);
+    setKnowledgeToInspect(undefined);
+    setKnowledgeToEdit(undefined);
+    setKnowledgeToDelete(undefined);
+    setAgentToDelete(undefined);
+    setError(undefined);
+    setNotice(undefined);
+  }, []);
+
   const routeThreadExists = Boolean(
     route.threadId &&
       data?.threads.some(
@@ -350,21 +372,81 @@ export function App() {
       ),
   );
   useEffect(() => {
+    const changed = route.view !== "threads" || route.threadId !== foreignLookupThreadRef.current;
+    if (!changed) return;
+    latestForeignLookupRequestRef.current += 1;
+    foreignLookupThreadRef.current = undefined;
+  }, [route.threadId, route.view]);
+
+  useEffect(() => {
     if (route.view !== "threads" || !data || data.workspace.id !== workspaceIdRef.current) return;
+    if (route.threadId && !routeThreadExists) return;
     const threadId = conversations.resolveThread(data.workspace.id, data.threads, route.threadId);
     if (!threadId) return;
     conversations.rememberThread(data.workspace.id, threadId);
     if (threadId !== route.threadId) {
-      const next = {
-        view: "threads" as const,
-        surface: route.surface,
-        threadId,
-        workspaceId: route.workspaceId,
-      };
-      navigate(pathFromRoute(next), next, true);
+      const next = { view: "threads" as const, surface: route.surface, threadId };
+      navigate(`/threads/${threadId}`, next, true);
     }
-  }, [conversations, data, navigate, route]);
+  }, [conversations, data, navigate, route, routeThreadExists]);
 
+  useEffect(() => {
+    if (route.view !== "threads" || !route.threadId || !data || routeThreadExists) return;
+    const threadId = route.threadId;
+    const generation = workspaceGenerationRef.current;
+    const requestId = ++latestForeignLookupRequestRef.current;
+    foreignLookupThreadRef.current = threadId;
+    void api<ThreadData>(`/api/threads/${encodeURIComponent(threadId)}`)
+      .then((next) => {
+        if (
+          requestId !== latestForeignLookupRequestRef.current ||
+          generation !== workspaceGenerationRef.current ||
+          routeRef.current.view !== "threads" ||
+          routeRef.current.threadId !== threadId ||
+          next.thread.id !== threadId
+        )
+          return;
+        const targetWorkspace = next.thread.workspaceId;
+        if (targetWorkspace === workspaceIdRef.current) {
+          void refresh(true, targetWorkspace);
+          void loadThread(threadId);
+          return;
+        }
+        beginWorkspaceSwitch(targetWorkspace);
+        void refresh(false, targetWorkspace);
+      })
+      .catch(() => {
+        if (
+          requestId !== latestForeignLookupRequestRef.current ||
+          generation !== workspaceGenerationRef.current ||
+          routeRef.current.view !== "threads" ||
+          routeRef.current.threadId !== threadId
+        )
+          return;
+        foreignLookupThreadRef.current = undefined;
+        const current = dataRef.current;
+        if (!current || current.workspace.id !== workspaceIdRef.current) return;
+        const fallbackId = conversations.resolveThread(current.workspace.id, current.threads);
+        if (fallbackId) {
+          const next = {
+            view: "threads" as const,
+            surface: routeRef.current.surface,
+            threadId: fallbackId,
+          };
+          navigate(`/threads/${fallbackId}`, next, true);
+        }
+      });
+  }, [
+    beginWorkspaceSwitch,
+    conversations,
+    data,
+    loadThread,
+    navigate,
+    refresh,
+    route.threadId,
+    route.view,
+    routeThreadExists,
+  ]);
   useEffect(() => {
     if (route.view !== "threads" || !route.threadId || !routeThreadExists) return;
     setRunActivities([]);
@@ -496,45 +578,10 @@ export function App() {
     };
   }, [activeWorkspaceId, hasBackgroundRuns, refresh, updateData]);
 
-  const openThread = (threadId: string) => {
-    const next = {
-      view: "threads" as const,
-      surface: route.surface,
-      threadId,
-      workspaceId: route.workspaceId,
-    };
-    navigate(pathFromRoute(next), next);
-  };
-  const openSurface = (surface: Surface) => {
-    const next = { view: "surfaces" as const, surface, workspaceId: route.workspaceId };
-    navigate(pathFromRoute(next), next);
-  };
-
-  const beginWorkspaceSwitch = useCallback((workspaceId: string) => {
-    workspaceGenerationRef.current += 1;
-    latestThreadRequestRef.current += 1;
-    workspaceIdRef.current = workspaceId;
-    threadActivityRevisionRef.current = undefined;
-    setThreadData(undefined);
-    setRunActivities([]);
-    setModal(null);
-    setTaskToInspect(undefined);
-    setTaskToEdit(undefined);
-    setTaskToDelete(undefined);
-    setKnowledgeToInspect(undefined);
-    setKnowledgeToEdit(undefined);
-    setKnowledgeToDelete(undefined);
-    setAgentToDelete(undefined);
-    setError(undefined);
-    setNotice(undefined);
-  }, []);
-
-  useEffect(() => {
-    const workspaceId = route.workspaceId;
-    if (!workspaceId || workspaceId === workspaceIdRef.current) return;
-    beginWorkspaceSwitch(workspaceId);
-    void refresh(false, workspaceId);
-  }, [beginWorkspaceSwitch, refresh, route.workspaceId]);
+  const openThread = (threadId: string) =>
+    navigate(`/threads/${threadId}`, { view: "threads", surface: route.surface, threadId });
+  const openSurface = (surface: Surface) =>
+    navigate(`/surfaces/${surface}`, { view: "surfaces", surface });
 
   const selectWorkspace = async (workspaceId: string) => {
     if (workspaceId === workspaceIdRef.current) return;
@@ -545,21 +592,10 @@ export function App() {
       const threadId = conversations.resolveThread(next.workspace.id, next.threads);
       if (threadId) {
         const previousThreadId = routeRef.current.threadId;
-        const nextRoute = {
-          ...routeRef.current,
-          view: "threads" as const,
-          threadId,
-          workspaceId,
-        };
-        navigate(pathFromRoute(nextRoute), nextRoute);
+        navigate(`/threads/${threadId}`, { ...routeRef.current, view: "threads", threadId });
         if (threadId === previousThreadId) void loadThread(threadId);
       } else {
-        const nextRoute = {
-          view: "threads" as const,
-          surface: routeRef.current.surface,
-          workspaceId,
-        };
-        navigate(pathFromRoute(nextRoute), nextRoute);
+        navigate("/threads", { view: "threads", surface: routeRef.current.surface });
       }
     }
   };
@@ -5458,26 +5494,12 @@ function messageFrom(error: unknown): string {
 
 function routeFromLocation(): RouteState {
   const parts = window.location.pathname.split("/").filter(Boolean);
-  const workspaceId = new URLSearchParams(window.location.search).get("workspace") ?? undefined;
   if (parts[0] === "surfaces") {
     const surface =
       parts[1] === "taskboard" || parts[1] === "knowledge" || parts[1] === "attention"
         ? parts[1]
         : "agents";
-    return { view: "surfaces", surface, ...(workspaceId ? { workspaceId } : {}) };
+    return { view: "surfaces", surface };
   }
-  return {
-    view: "threads",
-    surface: "agents",
-    ...(parts[1] ? { threadId: parts[1] } : {}),
-    ...(workspaceId ? { workspaceId } : {}),
-  };
-}
-
-function pathFromRoute(route: RouteState): string {
-  const view =
-    route.view === "threads" && route.threadId
-      ? `/threads/${encodeURIComponent(route.threadId)}`
-      : `/surfaces/${route.surface}`;
-  return route.workspaceId ? `${view}?workspace=${encodeURIComponent(route.workspaceId)}` : view;
+  return { view: "threads", surface: "agents", ...(parts[1] ? { threadId: parts[1] } : {}) };
 }
