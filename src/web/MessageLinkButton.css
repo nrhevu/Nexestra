@@ -1,0 +1,63 @@
+.message-link {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-left: 6px;
+  min-width: 0;
+}
+.message-link.manual {
+  flex-basis: 100%;
+  margin-left: 0;
+}
+.message-link button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--quiet);
+  cursor: pointer;
+}
+.message-link button:hover,
+.message-link button:focus-visible {
+  border-color: var(--border);
+  background: var(--panel);
+  color: var(--text);
+}
+.message-link button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.message-link-status {
+  color: var(--accent);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.message-link-manual {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--quiet);
+  font-size: 11px;
+}
+.message-link-manual input {
+  min-width: 0;
+  flex: 1 1 160px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--input-bg);
+  color: var(--text);
+  font: inherit;
+}
+.message-link-manual input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}

@@ -99,6 +99,7 @@ import {
   KnowledgeDocumentPreview,
   type KnowledgeDocumentPreviewHandle,
 } from "./KnowledgeDocumentPreview.js";
+import { MessageLinkButton } from "./MessageLinkButton.js";
 import { MessageSearchDialog } from "./MessageSearchDialog.js";
 import { RepositoryBranchPicker } from "./RepositoryBranchPicker.js";
 import {
@@ -3237,6 +3238,7 @@ function MessageRow({
             </span>
           )}
           <time>{formatTime(message.createdAt)}</time>
+          <MessageLinkButton threadId={message.threadId} messageId={message.id} />
         </div>
         {message.content && (
           <Suspense fallback={<p className="message-markdown-fallback">{message.content}</p>}>

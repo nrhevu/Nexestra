@@ -357,4 +357,40 @@ describe("Message navigation", () => {
     expect(window.location.search).toBe("");
     expect(screen.queryByRole("region", { name: "Selected message" })).not.toBeInTheDocument();
   });
+
+  it("reopens a copied message link for a renamed archived thread through around history", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    mockWorkspace({ ...thread, name: "Release after rename", archived: true });
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    render(<App />);
+
+    await screen.findByText("Ship on Friday");
+    const messageArticle = screen.getByText("Ship on Friday").closest("article");
+    expect(messageArticle).not.toBeNull();
+    await user.click(
+      within(messageArticle as HTMLElement).getByRole("button", { name: "Copy message link" }),
+    );
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    const copiedUrl = writeText.mock.calls[0]?.[0] as string;
+    expect(copiedUrl).toBe(`${window.location.origin}/threads/${thread.id}?message=message-1`);
+
+    followLocation(copiedUrl.replace(/^https?:\/\/[^/]+/, ""));
+    const selected = await screen.findByRole("region", { name: "Selected message" });
+    await waitFor(() => expect(selected).toHaveFocus());
+    expect(within(selected).getByText("Ship on Friday")).toBeVisible();
+    expect(window.location.search).toBe("?message=message-1");
+    expect(screen.getByRole("button", { name: "Restore" })).toBeVisible();
+
+    if (clipboardDescriptor) {
+      Object.defineProperty(navigator, "clipboard", clipboardDescriptor);
+    } else {
+      Reflect.deleteProperty(navigator, "clipboard");
+    }
+  });
 });
