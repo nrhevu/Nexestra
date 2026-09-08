@@ -8,3 +8,5 @@
    ideas, selected scope, and follow-up candidates.
 6. [Resumable workspace research](research/2026-09-08-resumable-workspaces.md): drafts, profile editing,
    workspace management, and canonical manual delegation.
+7. [Repository recovery and review research](research/2026-09-08-repository-recovery-review.md):
+   clone recovery, stable assignment comparisons, Git execution boundaries, and next candidates.
