@@ -12,3 +12,5 @@
    clone recovery, stable assignment comparisons, Git execution boundaries, and next candidates.
 8. [Lifecycle, history, and source refresh research](research/2026-09-08-lifecycle-history-source-refresh.md):
    reversible thread archival, immutable document revisions, and refreshed Worker starting commits.
+9. [Transcript search research](research/2026-09-09-transcript-search.md): finding remembered messages
+   across active and archived conversations, with explicit scan completeness and local data limits.

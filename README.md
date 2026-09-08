@@ -30,6 +30,11 @@ restores what you were typing. Thread rows show a **Draft** badge while a draft 
 Threads entry returns to the last thread you had open in that workspace. Drafts stay browser-only;
 if browser storage is unavailable they remain in the tab with a short note.
 
+Thread headers offer **Rename**, **Archive**, and **Restore**. Archiving keeps the transcript,
+attachments, draft, and links in the sidebar's **Archived** list, with a read-only conversation view.
+Restore the thread to send messages or retry/delegate work. Archive is refused while messages or
+agent work are pending, and ordinary workspace navigation selects an active thread.
+
 ## Run locally
 
 Requires Node.js 24+ and pnpm 11.
@@ -52,7 +57,7 @@ By default, data is stored in `.nexestra/` in the running repository:
 │   └── <thread-id>/<artifact-id> # uploaded bytes, mode 0600
 ├── workspaces/
 │   └── <workspace-id>/
-│       ├── knowledge/<knowledge-id>/document
+│       ├── knowledge/<knowledge-id>/revisions/<revision-id> # immutable document versions
 │       ├── repositories/<knowledge-id>/source
 │       └── worktrees/<assignment-id>
 └── threads/
@@ -103,7 +108,11 @@ or permanently delete it. A repository whose clone failed can be retried from it
 re-created safely. A ready repository offers **Refresh source** to fetch its recorded default branch
 for future Worker assignments. The detail view shows the selected commit and refresh time. Existing
 Worker worktrees and edits stay intact; a failed refresh keeps the previous starting point usable.
-Replacing document bytes or a repository source uses delete-and-create.
+Documents offer **Replace file** and **Version history**. Download an older version or restore it as
+a new current version while keeping the item's identity. New messages pin the version referenced at
+send time, including the first new reference to an older stored document. A stale replacement or
+restore is rejected so another window's edit is preserved. Permanent Knowledge deletion removes its
+versions; changing a repository source still uses delete-and-create.
 
 Workers run in read-only discussion mode. For an implementation request, a custom-provider Master
 must call `plan` to create durable Taskboard tasks and then call `delegate` for each task it assigns.

@@ -124,6 +124,24 @@ checks. Unused Knowledge storage is
 removed; repository storage with assignment history is retained so its worktrees remain inspectable.
 Existing message text and stable historical references are never rewritten.
 
+Thread rename changes only metadata and derives a unique slug across active and archived threads
+in the workspace. Archive keeps the same ID, JSONL file and artifact paths, and Restore reopens the
+conversation. Dispatcher thread reservations span sends, retries and delegations; archival checks
+both those reservations and durable active runs/assignments. Archived threads reject new activity
+before persistence while retaining reads, exports and historical task inspection. The sidebar has
+separate active and archived lists, and ordinary last-thread resolution uses active threads. See
+[ADR 0031](adr/0031-thread-rename-and-archive.md).
+
+Knowledge document versions keep immutable bytes in a per-item revisions directory. The current
+document's storage path points at its selected revision. Replacement writes a new private file
+before publishing cloned state metadata; restoring copies a historical version into a new revision.
+Both mutations require the expected current revision, so stale edits fail explicitly. New user
+messages pin the selected document revision, with legacy bytes captured before their first pinned
+reference. Older transcript references without a revision retain their documented current-content
+fallback; they are never rewritten to invent historical provenance. The version list and version
+download endpoints remain local, with downloads served as attachments and `nosniff`.
+See [ADR 0032](adr/0032-revision-history.md).
+
 Each thread has one canonical JSONL file. The `message.created`, `artifact.created`, `run.updated`,
 and `tool.updated` events use a monotonically increasing sequence. Artifact metadata and message
 IDs are committed in the same append; uploaded bytes live under a thread-scoped private directory.
@@ -342,7 +360,9 @@ credentials.
   without automatic pruning. Branch deletion still uses Git's non-forced merged check against its
   upstream or the clone HEAD, so even an unchanged branch from a refreshed source can require the
   clone's integration branch to be advanced manually before Git allows deletion.
-- Knowledge metadata can be edited, but replacing stored document bytes or a repository source
+- Document versions have no automatic retention limit or pruning. Permanent Knowledge deletion
+  removes its versions, so historical references to a deleted item cannot load those bytes. Old
+  messages without a pinned revision use current contents. Changing a repository source still
   requires deleting and creating the item again.
 - A crash during cloning can leave a `source.retrying-*` staging directory. It is preserved for
   manual review instead of being auto-removed, because no ownership record exists for it.

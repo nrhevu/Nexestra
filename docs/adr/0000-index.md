@@ -32,4 +32,6 @@
 | [0028](0028-shared-worker-assignment-lifecycle.md) | Accepted | Share the canonical queued Worker lifecycle between manual and Master delegation |
 | [0029](0029-repository-clone-retry.md) | Accepted | Explicit safe retry for failed repository clones |
 | [0030](0030-read-only-assignment-git-review.md) | Accepted | Read-only on-demand Git review of Worker assignment changes before cleanup |
+| [0031](0031-thread-rename-and-archive.md) | Accepted | Rename threads and archive or restore them without changing canonical history |
+| [0032](0032-revision-history.md) | Accepted | Keep immutable Knowledge document revisions and pin new message references |
 | [0033](0033-explicit-repository-source-refresh.md) | Accepted | Refresh the recorded source branch for future Worker assignments without changing existing worktrees |
