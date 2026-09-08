@@ -3337,7 +3337,7 @@ function TaskProcessDialog({
       {summary.truncated && <small>list truncated</small>}
       {summary.files.length > 0 && (
         <ul className="git-review-files">
-          {summary.files.slice(0, 10).map((file) => (
+          {summary.files.map((file) => (
             <li key={file.path}>
               <code>{file.path}</code>
               <small>
@@ -3763,7 +3763,7 @@ function TaskProcessDialog({
                             {gitReview.untracked.truncated && <small>list truncated</small>}
                             {gitReview.untracked.files.length > 0 && (
                               <ul className="git-review-files">
-                                {gitReview.untracked.files.slice(0, 10).map((path) => (
+                                {gitReview.untracked.files.map((path) => (
                                   <li key={path}>
                                     <code>{path}</code>
                                   </li>

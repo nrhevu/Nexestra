@@ -3683,6 +3683,8 @@ kbd {
 }
 .git-review-files {
   width: 100%;
+  max-height: 12rem;
+  overflow: auto;
   margin: 0.25rem 0 0;
   padding-left: 1rem;
   display: flex;

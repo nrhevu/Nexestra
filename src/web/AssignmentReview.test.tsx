@@ -159,6 +159,32 @@ afterEach(() => {
 });
 
 describe("Assignment review UI", () => {
+  it("makes every file from the bounded snapshot available in the file lists", async () => {
+    const review = snapshot();
+    if (!review.tracked) throw new Error("Expected a tracked comparison.");
+    const changes = {
+      files: Array.from({ length: 12 }, (_, index) => ({
+        path: `change-${index}.txt`,
+        insertions: 1,
+        deletions: 0,
+      })),
+      insertions: 12,
+      deletions: 0,
+      truncated: false,
+    };
+    review.tracked.committed = changes;
+    review.tracked.baseToWorktree = changes;
+    review.untracked = {
+      files: Array.from({ length: 12 }, (_, index) => `note-${index}.md`),
+      truncated: false,
+    };
+    const { user, dialog } = await openProcess(async () => json(review));
+    await user.click(within(dialog).getByRole("button", { name: "Review worker changes" }));
+    await within(dialog).findByText("Snapshot loaded");
+    expect(within(dialog).getAllByText("change-11.txt")).toHaveLength(2);
+    expect(within(dialog).getByText("note-11.md")).toBeInTheDocument();
+  });
+
   it("loads only on request, shows changes and untracked files, and refreshes the snapshot explicitly", async () => {
     const review = vi.fn(async () =>
       json(snapshot(assignment, `patch version ${review.mock.calls.length}`)),

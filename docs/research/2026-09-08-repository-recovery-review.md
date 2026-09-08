@@ -58,6 +58,34 @@ acceptance criteria; the existing verification command remains the task's comple
 
 ## Verification checkpoints
 
+The integrated branch passed `pnpm check`: lint, typecheck, 261 tests across 22 files, and production
+builds. Node 26 needed the command-local `NODE_OPTIONS=--no-experimental-webstorage` flag for jsdom;
+no project or global runtime setting was changed. Tests use temporary local Git repositories and
+fake runners, with no live providers or credentials.
+
 The shared numstat parser has six passing tests with stored protocol fixtures, including binary
 counts, filenames containing tabs/newlines, malformed records, bounded file lists, and incomplete
-output. Feature-level and browser verification results will be recorded after integration.
+output. Recovery tests cover identity, concurrency, destination preservation, provenance, failed
+state writes, and startup rollback. Review tests cover the captured base, safe paths and Git
+configuration, redaction, output limits, and stale UI results. A UI regression test ensures files
+after the tenth entry remain accessible; all server-bounded rows now appear in scrollable lists.
+
+An in-app browser check against the integrated server and SPA exercised this sequence:
+
+1. Retry a failed clone while its local source is still absent; retain the visible failure and
+   enabled retry action.
+2. Make the local source available and retry again; retain the Knowledge identity and creation
+   time, change the card and open details to `ready`, and keep that state after a page reload.
+3. Select the recovered repository immediately when delegating a task to a fake Worker. The
+   Worker creates a real isolated worktree, commits one file, modifies another, and leaves an
+   untracked file.
+4. Open Git review and verify the recorded base and HEAD, committed/staged/dirty/base-to-worktree
+   summaries, untracked list, and unified patch. An explicit Refresh includes a subsequent local
+   edit. The expanded patch was also inspected visually in the process dialog.
+
+The implementation decisions and remaining limits are recorded in
+[ADR 0029](../adr/0029-repository-clone-retry.md) and
+[ADR 0030](../adr/0030-read-only-assignment-git-review.md). Review remains a non-atomic bounded
+snapshot; legacy assignments have no guessed base, custom Git filters disable review, and nested
+submodule contents are excluded. Interrupted clone staging directories are retained because their
+ownership is not yet journaled. A persistent state-write outage can require restart recovery.
