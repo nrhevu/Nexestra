@@ -6,6 +6,7 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { ZodError } from "zod";
 import { type BootstrapData, ToolAnswersSchema } from "../shared/contracts.js";
+import { workspaceActivity } from "./attention.js";
 import { ChatGptAuthManager } from "./auth.js";
 import { AgentDispatcher, ChatService } from "./dispatcher.js";
 import { type AssignmentRepositoryManager, RepositoryManager } from "./repository-manager.js";
@@ -56,12 +57,19 @@ export function createApp(options: CreateAppOptions) {
   app.get("/api/health", (context) => context.json({ ok: true, version: "0.1.0" }));
 
   app.get("/api/bootstrap", async (context) => {
-    const runtime = await runner.runtimeStatus();
     const workspaces = options.store.listWorkspaces();
     const requestedWorkspaceId = context.req.query("workspaceId");
     const workspace =
-      (requestedWorkspaceId && options.store.getWorkspace(requestedWorkspaceId)) ?? workspaces[0];
+      requestedWorkspaceId === undefined
+        ? workspaces[0]
+        : options.store.getWorkspace(requestedWorkspaceId);
     if (!workspace) throw new StoreError("not_found", "Workspace not found.");
+    const runtime = await runner.runtimeStatus();
+    const activity = workspaceActivity(
+      options.store,
+      workspace.id,
+      dispatcher.activeRuns(workspace.id),
+    );
     const data: BootstrapData = {
       workspaces,
       workspace,
@@ -72,7 +80,8 @@ export function createApp(options: CreateAppOptions) {
       tasks: options.store.listTasks(workspace.id),
       knowledge: options.store.listKnowledge(workspace.id),
       assignments: options.store.listAssignments(workspace.id),
-      activeRuns: dispatcher.activeRuns(workspace.id),
+      activeRuns: activity.activeRuns,
+      attention: activity.attention,
       runtime,
       workspacePath: options.store.workspacePath,
       dataPath: options.store.root,
@@ -83,10 +92,13 @@ export function createApp(options: CreateAppOptions) {
   app.get("/api/activity", (context) => {
     const requestedWorkspaceId = context.req.query("workspaceId");
     const workspace =
-      (requestedWorkspaceId && options.store.getWorkspace(requestedWorkspaceId)) ??
-      options.store.listWorkspaces()[0];
+      requestedWorkspaceId === undefined
+        ? options.store.listWorkspaces()[0]
+        : options.store.getWorkspace(requestedWorkspaceId);
     if (!workspace) throw new StoreError("not_found", "Workspace not found.");
-    return context.json({ activeRuns: dispatcher.activeRuns(workspace.id) });
+    return context.json(
+      workspaceActivity(options.store, workspace.id, dispatcher.activeRuns(workspace.id)),
+    );
   });
 
   app.post("/api/workspaces", async (context) => {

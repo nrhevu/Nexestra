@@ -7,7 +7,8 @@ communicates over HTTP, and the server invokes configured coding harnesses or pr
 primary navigation areas are Threads and Surfaces; the initial surfaces are Taskboard, Knowledge,
 and Agents.
 The far-left rail switches between workspaces, while the adjacent panel owns the Threads, Surfaces,
-and Settings navigation.
+and Settings navigation. **Needs attention** is available directly from workspace navigation and
+collects pending decisions and task failures across the selected workspace.
 
 ## Components
 
@@ -39,9 +40,11 @@ thread has queued, running, approval-waiting, or input-waiting work, it opens on
 connection. The dispatcher publishes phase changes, runtime-emitted reasoning, and accumulated
 response text directly, and marks events that require the browser to reload durable messages, runs,
 or tools. Browsers without
-EventSource retain the one-second active-thread polling fallback. If work continues after the user
-navigates elsewhere, a lightweight activity endpoint is polled instead; the full workspace
-bootstrap is refreshed once when activity finishes. The dispatcher keeps the live run and response
+EventSource retain the one-second active-thread polling fallback. A lightweight workspace activity
+endpoint is polled for other active runs, including while the selected thread streams. Each snapshot
+updates run status and attention items; when any observed run disappears, the browser refreshes
+durable workspace metadata even if other work remains. Delayed results from a previous workspace
+are discarded. The dispatcher keeps the live run and response
 projection in memory, while JSONL run and tool events remain the durable source used for restart
 recovery.
 
@@ -49,6 +52,21 @@ Harness installation and ChatGPT login status are cached for 30 seconds and expl
 by the login flow. In React, search input owns its local state and the transcript is a memoized render
 boundary. Runs are grouped by trigger in one pass, so typing does not rebuild message rows and a
 transcript refresh does not perform a messages-by-runs nested scan.
+
+Global search uses an editable combobox with keyboard selection and an `aria-activedescendant`
+listbox. It searches the current bootstrap data. Thread results navigate to the thread, while task
+and knowledge results open their existing detail dialogs directly.
+
+The attention projection uses active dispatcher runs plus current task, assignment, agent, and
+thread metadata. Bootstrap and the activity endpoint return the same shared item shape. Waiting
+approval/input runs are listed first. Tasks contribute at most one item based on their status and
+latest assignment; done tasks and superseded failures are omitted. Building the projection does not
+read transcripts or persist another queue. See [ADR 0024](adr/0024-workspace-attention-projection.md).
+If a new task appears in attention before the cached task list is refreshed, Inspect loads that task
+by ID before opening its process dialog. The result is discarded if the user switches workspaces.
+An invalid saved workspace selection is cleared once during initial startup so a replaced local data
+directory cannot leave the browser stuck at a missing-workspace error; explicit switch failures
+remain visible.
 
 Message content is stored and transported as unchanged Markdown. The browser renders it with
 GitHub Flavored Markdown and KaTeX inside the memoized transcript boundary. Raw HTML parsing is not
@@ -258,6 +276,11 @@ access may use the current OS user's existing SSH and Git configuration; Nexestr
 credentials.
 
 ## Known gaps
+
+- Needs attention reflects the selected workspace's current conditions. It has no historical
+  notification log, read markers, snoozing, dismissal, desktop notifications, or cross-workspace
+  monitoring. Ordinary failed chat turns remain in their thread. An idle browser does not discover
+  work started by another client until a normal refresh.
 
 - App-native `plan` and `delegate` are currently available to custom OpenAI-compatible Masters.
   ChatGPT OAuth Masters run through Codex CLI and do not yet receive this bridge.

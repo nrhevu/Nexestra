@@ -14,6 +14,15 @@ Workspaces are selected from the far-left rail. Each workspace has its own threa
 tasks; Threads, Surfaces, and Settings live in the navigation panel beside that rail. Creating a
 workspace also creates its initial `general` thread.
 
+**Needs attention** gathers agents waiting for your answer or approval and tasks that are blocked,
+failed, or interrupted. Open an item to return to its thread or task process controls. Thread rows
+show current agent activity, including work in other threads while your current conversation runs.
+Items disappear when the underlying condition is resolved; this view does not start or approve work.
+
+Press **Cmd/Ctrl+K** to focus search, use **↑/↓** to select a result, **Enter** to open it, and
+**Escape** to dismiss suggestions. Task and knowledge results open the exact item. Start a query
+with `/` to find commands, including opening Needs attention.
+
 ## Run locally
 
 Requires Node.js 24+ and pnpm 11.

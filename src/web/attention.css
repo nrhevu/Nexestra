@@ -1,0 +1,125 @@
+.attention-count {
+  margin-left: auto;
+  min-width: 21px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--active-nav-bg);
+  color: var(--text);
+  font-size: 11px;
+  text-align: center;
+}
+
+.thread-row-status {
+  margin-left: auto;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.thread-run-badge {
+  border-radius: 4px;
+  padding: 2px 5px;
+  font-size: 9px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #d4c5d6;
+}
+
+.thread-run-badge.waiting {
+  background: rgba(248, 190, 83, 0.17);
+  color: #ffd586;
+}
+
+.thread-run-badge.running {
+  background: rgba(135, 224, 197, 0.12);
+  color: #a7eddb;
+}
+
+[data-theme="light"] .thread-run-badge {
+  background: rgba(78, 37, 90, 0.08);
+  color: #66516c;
+}
+
+[data-theme="light"] .thread-run-badge.waiting {
+  background: #fff0cf;
+  color: #765119;
+}
+
+[data-theme="light"] .thread-run-badge.running {
+  background: #e2f4ed;
+  color: #28634b;
+}
+
+.attention-total {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.attention-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 30px 30px;
+  display: grid;
+  gap: 12px;
+}
+
+.attention-item {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.attention-icon {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.attention-content {
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+.attention-reason {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.attention-content h2 {
+  margin: 5px 0;
+  font-size: 14px;
+}
+
+.attention-content p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.attention-item button {
+  flex-shrink: 0;
+}
+
+@media (max-width: 760px) {
+  .attention-list {
+    padding: 0 14px 20px;
+  }
+
+  .attention-item {
+    flex-wrap: wrap;
+  }
+
+  .attention-content {
+    flex-basis: calc(100% - 40px);
+  }
+
+  .attention-item button {
+    margin-left: 33px;
+  }
+}

@@ -4,7 +4,15 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgentView, BootstrapData, ThreadData } from "../shared/contracts.js";
+import type {
+  AgentRun,
+  AgentView,
+  BootstrapData,
+  Thread,
+  ThreadData,
+  WorkspaceActivityData,
+} from "../shared/contracts.js";
+import { runAttentionItem } from "../shared/contracts.js";
 import { App } from "./App.js";
 
 const now = "2026-09-02T12:00:00.000Z";
@@ -50,6 +58,7 @@ const bootstrapData: BootstrapData = {
   knowledge: [],
   assignments: [],
   activeRuns: [],
+  attention: [],
   runtime: {
     chatgpt: { installed: true, connected: true, message: "Connected." },
     harnesses: {
@@ -67,6 +76,91 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
+
+function activityThread(id: string, name: string): Thread {
+  return {
+    id,
+    name,
+    slug: name,
+    workspaceId: workspace.id,
+    createdAt: now,
+    updatedAt: now,
+    messageCount: 1,
+    lastMessageAt: now,
+  };
+}
+
+function activityRun(thread: Thread, status: AgentRun["status"] = "running"): AgentRun {
+  return {
+    id: `run-${thread.id}`,
+    threadId: thread.id,
+    triggerMessageId: "trigger",
+    agentId: workerAgent.id,
+    attempt: 1,
+    status,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function threadSnapshot(thread: Thread, runs: AgentRun[]): ThreadData {
+  return { thread, runs, messages: [], artifacts: [], toolCalls: [] };
+}
+
+function installActivityTimers() {
+  let nextId = 0;
+  const callbacks = new Map<number, () => void>();
+  const intervals = vi.spyOn(window, "setInterval").mockImplementation((handler, delay) => {
+    const id = ++nextId;
+    if (typeof handler === "function" && delay === 1_000) callbacks.set(id, handler);
+    return id as unknown as ReturnType<typeof window.setInterval>;
+  });
+  vi.spyOn(window, "clearInterval").mockImplementation((id) => {
+    callbacks.delete(Number(id));
+  });
+  return {
+    intervals,
+    callbacks,
+    tick: async () => {
+      await act(async () => {
+        for (const callback of callbacks.values()) callback();
+      });
+    },
+  };
+}
+
+function installEventSources() {
+  const sources: MockSource[] = [];
+  class MockSource {
+    private readonly listeners = new Map<string, Set<EventListener>>();
+    close = vi.fn();
+    constructor(readonly url: string) {
+      sources.push(this);
+    }
+    addEventListener(type: string, listener: EventListener) {
+      const listeners = this.listeners.get(type) ?? new Set();
+      listeners.add(listener);
+      this.listeners.set(type, listeners);
+    }
+    removeEventListener(type: string, listener: EventListener) {
+      this.listeners.get(type)?.delete(listener);
+    }
+    emit(data: unknown) {
+      const event = new MessageEvent("thread", { data: JSON.stringify(data) });
+      for (const listener of this.listeners.get("thread") ?? []) listener(event);
+    }
+  }
+  vi.stubGlobal("EventSource", MockSource);
+  return sources;
+}
+
+function deferredResponse() {
+  let resolve: (response: Response) => void = () => {};
+  const promise = new Promise<Response>((finish) => {
+    resolve = finish;
+  });
+  return { promise, resolve };
+}
 
 describe("Activity-aware refresh", () => {
   it("does not schedule background polling while the workspace is idle", async () => {
@@ -329,7 +423,401 @@ describe("Activity-aware refresh", () => {
   });
 });
 
+describe("Workspace attention supervision", () => {
+  it("updates a background question while the selected thread streams and opens its thread", async () => {
+    const selected = activityThread("thread-selected", "current");
+    const background = activityThread("thread-background", "research");
+    const selectedRun = activityRun(selected);
+    const backgroundRun = activityRun(background);
+    const waitingRun = { ...backgroundRun, status: "waiting_input" as const };
+    const pending = runAttentionItem(waitingRun, workerAgent.name, background.name);
+    const timers = installActivityTimers();
+    const sources = installEventSources();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap"))
+        return jsonResponse({
+          ...bootstrapData,
+          agents: [workerAgent],
+          threads: [selected, background],
+          activeRuns: [selectedRun, backgroundRun],
+        });
+      if (path === `/api/threads/${selected.id}`)
+        return jsonResponse(threadSnapshot(selected, [selectedRun]));
+      if (path === `/api/threads/${background.id}`)
+        return jsonResponse(threadSnapshot(background, [waitingRun]));
+      if (path.startsWith("/api/activity"))
+        return jsonResponse({
+          workspaceId: workspace.id,
+          activeRuns: [selectedRun, waitingRun],
+          attention: [pending],
+        });
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${selected.id}`);
+    render(<App />);
+    await waitFor(() => expect(sources).toHaveLength(1));
+    expect(timers.callbacks.size).toBe(1);
+
+    await timers.tick();
+    expect(screen.getByRole("button", { name: /#research/ })).toHaveTextContent("Waiting");
+    expect(screen.getByRole("button", { name: /#current/ })).toHaveTextContent("Running");
+    expect(screen.getByRole("button", { name: /Needs attention/ })).toHaveTextContent("1");
+    expect(timers.intervals.mock.calls.filter(([, delay]) => delay === 1_000)).toHaveLength(1);
+
+    await userEvent.click(screen.getByRole("button", { name: /Needs attention/ }));
+    expect(await screen.findByText("Answer needed")).toBeVisible();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Open thread: Planner in #research" }),
+    );
+    await screen.findByRole("combobox", { name: "Message" });
+    expect(window.location.pathname).toBe(`/threads/${background.id}`);
+    expect(fetchMock.mock.calls.every(([, init]) => !init || !("method" in init))).toBe(true);
+  });
+
+  it("refreshes completed work once while another background run remains and retains newer activity", async () => {
+    const finished = activityThread("thread-finished", "finished");
+    const ongoing = activityThread("thread-ongoing", "ongoing");
+    const finishedRun = activityRun(finished);
+    const ongoingRun = activityRun(ongoing);
+    const waitingRun = { ...ongoingRun, status: "waiting_approval" as const };
+    const pending = runAttentionItem(waitingRun, workerAgent.name, ongoing.name);
+    const delayedBootstrap = deferredResponse();
+    const timers = installActivityTimers();
+    let bootstrapReads = 0;
+    let activity: WorkspaceActivityData = {
+      workspaceId: workspace.id,
+      activeRuns: [ongoingRun],
+      attention: [],
+    };
+    const initial = {
+      ...bootstrapData,
+      agents: [workerAgent],
+      threads: [finished, ongoing],
+      activeRuns: [finishedRun, ongoingRun],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        bootstrapReads += 1;
+        return bootstrapReads === 1 ? jsonResponse(initial) : delayedBootstrap.promise;
+      }
+      if (path.startsWith("/api/activity")) return jsonResponse(activity);
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", "/surfaces/attention");
+    render(<App />);
+    await screen.findByRole("heading", { name: "Needs attention" });
+
+    await timers.tick();
+    expect(bootstrapReads).toBe(2);
+    expect(timers.callbacks.size).toBe(1);
+    activity = { ...activity, activeRuns: [waitingRun], attention: pending ? [pending] : [] };
+    await timers.tick();
+    expect(await screen.findByText("Approval requested")).toBeVisible();
+    await act(async () => {
+      delayedBootstrap.resolve(
+        jsonResponse({
+          ...initial,
+          agents: [{ ...workerAgent, name: "Updated planner" }],
+          activeRuns: [ongoingRun],
+        }),
+      );
+    });
+    expect(screen.getByText("Approval requested")).toBeVisible();
+    await timers.tick();
+    expect(bootstrapReads).toBe(2);
+    expect(timers.intervals.mock.calls.filter(([, delay]) => delay === 1_000)).toHaveLength(1);
+    await userEvent.click(screen.getByRole("button", { name: "Surfaces" }));
+    await userEvent.click(screen.getByRole("button", { name: /Agent management/ }));
+    expect(await screen.findByText("Updated planner")).toBeVisible();
+  });
+
+  it("synchronizes streamed run completion and preserves task attention for that thread", async () => {
+    const selected = activityThread("thread-selected", "current");
+    const background = activityThread("thread-background", "research");
+    const selectedRun = activityRun(selected, "waiting_input");
+    const backgroundRun = activityRun(background);
+    const task = {
+      id: "task-blocked",
+      workspaceId: workspace.id,
+      title: "Needs repository access",
+      description: "",
+      status: "blocked" as const,
+      assigneeId: null,
+      labels: [],
+      threadId: selected.id,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const taskAttention = {
+      id: `task:${task.id}`,
+      kind: "task_blocked" as const,
+      title: task.title,
+      detail: "Repository access is missing.",
+      taskId: task.id,
+      runId: selectedRun.id,
+      threadId: selected.id,
+      updatedAt: "2026-09-03T12:00:00.000Z",
+    };
+    const pending = runAttentionItem(selectedRun, workerAgent.name, selected.name);
+    const initial = {
+      ...bootstrapData,
+      agents: [workerAgent],
+      threads: [selected, background],
+      tasks: [task],
+      activeRuns: [selectedRun, backgroundRun],
+      attention: [taskAttention, ...(pending ? [pending] : [])],
+    };
+    const sources = installEventSources();
+    const timers = installActivityTimers();
+    let transcript = threadSnapshot(selected, [selectedRun]);
+    let bootstrapReads = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path.startsWith("/api/bootstrap")) {
+          bootstrapReads += 1;
+          return jsonResponse(
+            bootstrapReads === 1
+              ? initial
+              : { ...initial, activeRuns: [backgroundRun], attention: [taskAttention] },
+          );
+        }
+        if (path === `/api/threads/${selected.id}`) return jsonResponse(transcript);
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      }),
+    );
+    window.history.replaceState({}, "", `/threads/${selected.id}`);
+    render(<App />);
+    await waitFor(() => expect(sources).toHaveLength(1));
+    expect(screen.getByRole("button", { name: /Needs attention/ })).toHaveTextContent("2");
+    transcript = threadSnapshot(selected, [{ ...selectedRun, status: "completed" }]);
+    await act(async () => {
+      sources[0]?.emit({ revision: 2, refresh: true, activities: [] });
+    });
+    await waitFor(() => expect(bootstrapReads).toBe(2));
+    expect(screen.getByRole("button", { name: /Needs attention/ })).toHaveTextContent("1");
+    expect(sources[0]?.close).toHaveBeenCalledTimes(1);
+    expect(timers.callbacks.size).toBe(1);
+    await userEvent.click(screen.getByRole("button", { name: /Needs attention/ }));
+    expect(screen.getByText("Repository access is missing.")).toBeVisible();
+  });
+
+  it.each([false, true])(
+    "loads an uncached attention task and guards workspace switching: %s",
+    async (switchWorkspace) => {
+      const thread = activityThread("thread-master", "master");
+      const run = activityRun(thread);
+      const nextWorkspace = { ...workspace, id: "workspace-product", name: "Product" };
+      const task = {
+        id: "task-new",
+        workspaceId: workspace.id,
+        title: "New worker task",
+        description: "Repository access is missing.",
+        status: "blocked" as const,
+        assigneeId: null,
+        labels: [],
+        threadId: thread.id,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const pending = {
+        id: `task:${task.id}`,
+        kind: "task_failed" as const,
+        title: task.title,
+        detail: task.description,
+        taskId: task.id,
+        threadId: thread.id,
+        updatedAt: now,
+      };
+      const delayedTask = deferredResponse();
+      const timers = installActivityTimers();
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/bootstrap")
+          return jsonResponse({
+            ...bootstrapData,
+            workspaces: [workspace, nextWorkspace],
+            threads: [thread],
+            activeRuns: [run],
+          });
+        if (path === `/api/bootstrap?workspaceId=${nextWorkspace.id}`)
+          return jsonResponse({
+            ...bootstrapData,
+            workspaces: [workspace, nextWorkspace],
+            workspace: nextWorkspace,
+          });
+        if (path.startsWith("/api/activity"))
+          return jsonResponse({
+            workspaceId: workspace.id,
+            activeRuns: [run],
+            attention: [pending],
+          });
+        if (path === `/api/tasks/${task.id}`) return delayedTask.promise;
+        if (path === `/api/tasks/${task.id}/process`)
+          return jsonResponse({ task, assignments: [], toolCalls: [] });
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.replaceState({}, "", "/surfaces/attention");
+      render(<App />);
+      await screen.findByRole("heading", { name: "Needs attention" });
+      await timers.tick();
+      await userEvent.click(screen.getByRole("button", { name: "Inspect task: New worker task" }));
+      expect(fetchMock).toHaveBeenCalledWith(`/api/tasks/${task.id}`, { headers: {} });
+      if (switchWorkspace) {
+        await userEvent.click(screen.getByRole("button", { name: "Switch to Product" }));
+        await waitFor(() =>
+          expect(screen.getByRole("button", { name: "Switch to Product" })).toHaveAttribute(
+            "aria-current",
+            "page",
+          ),
+        );
+      }
+      await act(async () => {
+        delayedTask.resolve(jsonResponse(task));
+      });
+      if (switchWorkspace) {
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+        expect(screen.getByRole("heading", { name: "Nothing needs your attention" })).toBeVisible();
+      } else {
+        const dialog = await screen.findByRole("dialog", { name: "New worker task" });
+        expect(await within(dialog).findByText("Repository access is missing.")).toBeVisible();
+        expect(fetchMock).toHaveBeenCalledWith(`/api/tasks/${task.id}/process`, { headers: {} });
+      }
+    },
+  );
+
+  it.each(["activity", "bootstrap", "thread"] as const)(
+    "ignores a delayed %s response after switching workspaces",
+    async (delayedKind) => {
+      const oldThread = activityThread("thread-old", "old-thread");
+      const oldRun = activityRun(oldThread);
+      const productWorkspace = {
+        ...workspace,
+        id: "workspace-product",
+        name: "Product",
+        slug: "product",
+      };
+      const initial = {
+        ...bootstrapData,
+        workspaces: [workspace, productWorkspace],
+        agents: [workerAgent],
+        threads: [oldThread],
+        activeRuns: [oldRun],
+      };
+      const next = {
+        ...bootstrapData,
+        workspaces: [workspace, productWorkspace],
+        workspace: productWorkspace,
+      };
+      const delayed = deferredResponse();
+      const timers = installActivityTimers();
+      let oldBootstrapReads = 0;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === `/api/bootstrap?workspaceId=${productWorkspace.id}`) return jsonResponse(next);
+        if (path.startsWith("/api/bootstrap")) {
+          oldBootstrapReads += 1;
+          return oldBootstrapReads === 1 ? jsonResponse(initial) : delayed.promise;
+        }
+        if (path.startsWith("/api/threads")) return delayed.promise;
+        if (path.startsWith("/api/activity"))
+          return delayedKind === "activity"
+            ? delayed.promise
+            : jsonResponse({ workspaceId: workspace.id, activeRuns: [], attention: [] });
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.replaceState(
+        {},
+        "",
+        delayedKind === "thread" ? `/threads/${oldThread.id}` : "/surfaces/attention",
+      );
+      render(<App />);
+      await screen.findByRole("button", { name: "Switch to Product" });
+      if (delayedKind === "thread") {
+        await waitFor(() =>
+          expect(fetchMock).toHaveBeenCalledWith(`/api/threads/${oldThread.id}`, { headers: {} }),
+        );
+      } else {
+        await timers.tick();
+        if (delayedKind === "bootstrap") expect(oldBootstrapReads).toBe(2);
+      }
+      await userEvent.click(screen.getByRole("button", { name: "Switch to Product" }));
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Switch to Product" })).toHaveAttribute(
+          "aria-current",
+          "page",
+        ),
+      );
+      const waitingRun = { ...oldRun, status: "waiting_input" as const };
+      const pending = runAttentionItem(waitingRun, workerAgent.name, oldThread.name);
+      await act(async () => {
+        delayed.resolve(
+          jsonResponse(
+            delayedKind === "thread"
+              ? threadSnapshot(oldThread, [waitingRun])
+              : delayedKind === "bootstrap"
+                ? { ...initial, activeRuns: [waitingRun], attention: [pending] }
+                : { workspaceId: workspace.id, activeRuns: [waitingRun], attention: [pending] },
+          ),
+        );
+      });
+      expect(screen.getByRole("button", { name: "Switch to Product" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+      expect(screen.getByRole("button", { name: /Needs attention/ })).toHaveTextContent("0");
+      expect(window.localStorage.getItem("nexestra.workspaceId")).toBe(productWorkspace.id);
+      expect(timers.callbacks.size).toBe(0);
+      await userEvent.click(screen.getByRole("button", { name: /Needs attention/ }));
+      expect(screen.getByRole("heading", { name: "Nothing needs your attention" })).toBeVisible();
+    },
+  );
+});
+
 describe("Workspace navigation", () => {
+  it("recovers a removed saved workspace once through the default bootstrap", async () => {
+    window.localStorage.setItem("nexestra.workspaceId", "workspace-removed");
+    window.history.replaceState({}, "", "/surfaces/attention");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+      String(input) === "/api/bootstrap"
+        ? jsonResponse(bootstrapData)
+        : jsonResponse({ error: { code: "not_found", message: "Workspace not found." } }, 404),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+    await screen.findByRole("heading", { name: "Nothing needs your attention" });
+    expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
+      "/api/bootstrap?workspaceId=workspace-removed",
+      "/api/bootstrap",
+    ]);
+    expect(window.localStorage.getItem("nexestra.workspaceId")).toBe(workspace.id);
+  });
+
+  it("keeps an explicit workspace-switch failure visible without falling back", async () => {
+    const missing = { ...workspace, id: "workspace-removed", name: "Removed" };
+    window.history.replaceState({}, "", "/surfaces/attention");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+      String(input) === "/api/bootstrap"
+        ? jsonResponse({ ...bootstrapData, workspaces: [workspace, missing] })
+        : jsonResponse({ error: { code: "not_found", message: "Workspace not found." } }, 404),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: "Switch to Removed" }));
+    expect(await screen.findByText("Workspace not found.")).toBeVisible();
+    expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
+      "/api/bootstrap",
+      "/api/bootstrap?workspaceId=workspace-removed",
+    ]);
+  });
+
   it("uses the left rail for workspaces and creates a newly scoped workspace", async () => {
     window.history.replaceState({}, "", "/surfaces/agents");
     const productWorkspace = {
@@ -388,6 +876,31 @@ describe("Workspace navigation", () => {
 });
 
 describe("Thread navigation", () => {
+  it("keeps the initial idle transcript request when the selected thread is clicked again", async () => {
+    const thread = activityThread("thread-reselected", "waiting");
+    const pending = deferredResponse();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).startsWith("/api/bootstrap"))
+        return jsonResponse({ ...bootstrapData, threads: [thread] });
+      return pending.promise;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: /^#waiting/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Threads" }));
+    await act(async () => {
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await act(async () => {
+      pending.resolve(jsonResponse(threadSnapshot(thread, [])));
+    });
+    expect(await screen.findByRole("combobox", { name: "Message" })).toBeVisible();
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/threads")),
+    ).toHaveLength(1);
+  });
+
   it("keeps an older thread request from replacing the selected transcript", async () => {
     const firstThread = {
       id: "thread-first",

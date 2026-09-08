@@ -21,7 +21,6 @@ import {
   ListOrdered,
   LoaderCircle,
   MessageSquareMore,
-  Moon,
   Paperclip,
   Pencil,
   Plus,
@@ -34,7 +33,6 @@ import {
   Square,
   SquareCode,
   Strikethrough,
-  Sun,
   TerminalSquare,
   Trash2,
   Unplug,
@@ -59,6 +57,7 @@ import type {
   AgentRun,
   AgentView,
   Artifact,
+  AttentionItem,
   BootstrapData,
   KnowledgeItem,
   Message,
@@ -71,14 +70,22 @@ import type {
   ToolCall,
   WorkAssignment,
   Workspace,
+  WorkspaceActivityData,
 } from "../shared/contracts.js";
-import { extractMentionHandles, handleFromName } from "../shared/contracts.js";
-import { api } from "./api.js";
+import {
+  compareAttentionItems,
+  extractMentionHandles,
+  handleFromName,
+  runAttentionItem,
+} from "../shared/contracts.js";
+import { AttentionView } from "./AttentionView.js";
+import { ApiError, api } from "./api.js";
+import { TopBar, type TopBarSurface } from "./TopBar.js";
 
 const RichMessage = lazy(() => import("./RichMessage.js"));
 
 type PrimaryView = "threads" | "surfaces";
-type Surface = "taskboard" | "agents" | "knowledge";
+type Surface = TopBarSurface;
 type ModalName = "workspace" | "thread" | "agent" | "task" | "knowledge" | "settings" | null;
 
 interface RouteState {
@@ -119,6 +126,26 @@ export function App() {
     window.localStorage.getItem("nexestra.workspaceId") ?? undefined,
   );
   const latestThreadRequestRef = useRef(0);
+  const latestTaskInspectionRequestRef = useRef(0);
+  const latestBootstrapRequestRef = useRef(0);
+  const workspaceGenerationRef = useRef(0);
+  const activityRevisionRef = useRef(0);
+  const workspaceActivityRevisionRef = useRef(0);
+  const threadActivityRevisionRef = useRef<{ threadId: string; revision: number } | undefined>(
+    undefined,
+  );
+  const dataRef = useRef<BootstrapData | undefined>(undefined);
+  const routeRef = useRef(route);
+  const updateData = useCallback(
+    (
+      update: BootstrapData | ((current: BootstrapData | undefined) => BootstrapData | undefined),
+    ) => {
+      const next = typeof update === "function" ? update(dataRef.current) : update;
+      dataRef.current = next;
+      setData(next);
+    },
+    [],
+  );
 
   // Apply theme to document
   useEffect(() => {
@@ -148,45 +175,164 @@ export function App() {
   }, []);
 
   const navigate = useCallback((nextPath: string, nextRoute: RouteState, replace = false) => {
+    if (
+      nextRoute.view !== routeRef.current.view ||
+      nextRoute.threadId !== routeRef.current.threadId
+    ) {
+      latestThreadRequestRef.current += 1;
+    }
+    routeRef.current = nextRoute;
     window.history[replace ? "replaceState" : "pushState"]({}, "", nextPath);
     setRoute(nextRoute);
   }, []);
 
-  const refresh = useCallback(async (quiet = false, workspaceId = workspaceIdRef.current) => {
-    try {
-      const query = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
-      const next = await api<BootstrapData>(`/api/bootstrap${query}`);
-      workspaceIdRef.current = next.workspace.id;
-      window.localStorage.setItem("nexestra.workspaceId", next.workspace.id);
-      setData(next);
-      if (!quiet) setError(undefined);
-      return next;
-    } catch (caught) {
-      if (!quiet) setError(messageFrom(caught));
-      return undefined;
-    }
-  }, []);
+  const refresh = useCallback(
+    async (quiet = false, workspaceId = workspaceIdRef.current) => {
+      const generation = workspaceGenerationRef.current;
+      if (workspaceId !== workspaceIdRef.current) return undefined;
+      const requestId = ++latestBootstrapRequestRef.current;
+      const activityRevision = activityRevisionRef.current;
+      try {
+        const query = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
+        let next: BootstrapData;
+        try {
+          next = await api<BootstrapData>(`/api/bootstrap${query}`);
+        } catch (caught) {
+          if (
+            !(caught instanceof ApiError) ||
+            caught.status !== 404 ||
+            !workspaceId ||
+            dataRef.current ||
+            generation !== workspaceGenerationRef.current ||
+            requestId !== latestBootstrapRequestRef.current
+          )
+            throw caught;
+          // A saved workspace may have disappeared after the local data directory changed.
+          workspaceIdRef.current = undefined;
+          window.localStorage.removeItem("nexestra.workspaceId");
+          next = await api<BootstrapData>("/api/bootstrap");
+        }
+        if (
+          generation !== workspaceGenerationRef.current ||
+          requestId !== latestBootstrapRequestRef.current
+        )
+          return undefined;
+        workspaceIdRef.current = next.workspace.id;
+        window.localStorage.setItem("nexestra.workspaceId", next.workspace.id);
+        const current = dataRef.current;
+        let fresh = next;
+        if (current?.workspace.id === next.workspace.id) {
+          if (workspaceActivityRevisionRef.current > activityRevision) {
+            // Keep a workspace snapshot that arrived after this bootstrap request began.
+            fresh = { ...next, activeRuns: current.activeRuns, attention: current.attention };
+          } else {
+            const threadRevision = threadActivityRevisionRef.current;
+            if (threadRevision && threadRevision.revision > activityRevision) {
+              fresh = {
+                ...next,
+                ...preserveThreadActivity(next, current, threadRevision.threadId),
+              };
+            }
+          }
+        }
+        updateData(fresh);
+        if (!quiet) setError(undefined);
+        return fresh;
+      } catch (caught) {
+        if (
+          generation === workspaceGenerationRef.current &&
+          requestId === latestBootstrapRequestRef.current &&
+          !quiet
+        )
+          setError(messageFrom(caught));
+        return undefined;
+      }
+    },
+    [updateData],
+  );
 
-  const loadThread = useCallback(async (threadId: string, quiet = false) => {
-    const requestId = ++latestThreadRequestRef.current;
-    try {
-      const next = await api<ThreadData>(`/api/threads/${threadId}`);
-      if (requestId !== latestThreadRequestRef.current) return undefined;
-      setThreadData(next);
-      if (!quiet) setError(undefined);
-      return next;
-    } catch (caught) {
-      if (requestId === latestThreadRequestRef.current && !quiet) setError(messageFrom(caught));
-      return undefined;
-    }
-  }, []);
+  const loadThread = useCallback(
+    async (threadId: string, quiet = false) => {
+      const generation = workspaceGenerationRef.current;
+      const workspaceId = workspaceIdRef.current;
+      const isCurrent = () =>
+        generation === workspaceGenerationRef.current &&
+        routeRef.current.view === "threads" &&
+        routeRef.current.threadId === threadId &&
+        dataRef.current?.workspace.id === workspaceId;
+      if (!isCurrent()) return undefined;
+      const requestId = ++latestThreadRequestRef.current;
+      try {
+        const next = await api<ThreadData>(`/api/threads/${encodeURIComponent(threadId)}`);
+        if (
+          !isCurrent() ||
+          requestId !== latestThreadRequestRef.current ||
+          next.thread.workspaceId !== workspaceId
+        )
+          return undefined;
+        setThreadData(next);
+        const current = dataRef.current;
+        if (current) {
+          const activeRuns = [
+            ...current.activeRuns.filter((run) => run.threadId !== threadId),
+            ...next.runs.filter(isActiveRun),
+          ];
+          const activeIds = new Set(activeRuns.map((run) => run.id));
+          const runDisappeared = current.activeRuns.some((run) => !activeIds.has(run.id));
+          const attention = [
+            ...current.attention.filter(
+              (item) => !isRunAttention(item) || item.threadId !== threadId,
+            ),
+            ...next.runs.flatMap((run) => {
+              const agent = current.agents.find((entry) => entry.id === run.agentId);
+              const item = runAttentionItem(run, agent?.name ?? "Agent", next.thread.name);
+              return item ? [item] : [];
+            }),
+          ].sort(compareAttentionItems);
+          activityRevisionRef.current += 1;
+          threadActivityRevisionRef.current = { threadId, revision: activityRevisionRef.current };
+          updateData({
+            ...current,
+            threads: current.threads.map((thread) =>
+              thread.id === threadId ? next.thread : thread,
+            ),
+            activeRuns,
+            attention,
+          });
+          if (runDisappeared) void refresh(true, workspaceId);
+        }
+        if (!quiet) setError(undefined);
+        return next;
+      } catch (caught) {
+        if (isCurrent() && requestId === latestThreadRequestRef.current && !quiet) {
+          setError(messageFrom(caught));
+        }
+        return undefined;
+      }
+    },
+    [refresh, updateData],
+  );
 
   useEffect(() => {
     void refresh();
+    return () => {
+      workspaceGenerationRef.current += 1;
+      latestThreadRequestRef.current += 1;
+    };
   }, [refresh]);
 
   useEffect(() => {
-    const onPopState = () => setRoute(routeFromLocation());
+    const onPopState = () => {
+      const nextRoute = routeFromLocation();
+      if (
+        nextRoute.view !== routeRef.current.view ||
+        nextRoute.threadId !== routeRef.current.threadId
+      ) {
+        latestThreadRequestRef.current += 1;
+      }
+      routeRef.current = nextRoute;
+      setRoute(nextRoute);
+    };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
@@ -209,24 +355,16 @@ export function App() {
     void loadThread(route.threadId);
   }, [loadThread, route.threadId, route.view, routeThreadExists]);
 
-  const hasActiveThreadRuns = threadData?.runs.some(
-    (run) =>
-      run.status === "queued" ||
-      run.status === "running" ||
-      run.status === "waiting_approval" ||
-      run.status === "waiting_input",
-  );
+  const hasActiveThreadRuns = threadData?.runs.some(isActiveRun);
   const isWatchingActiveThread = Boolean(
     hasActiveThreadRuns &&
+      data?.workspace.id === workspaceIdRef.current &&
       route.view === "threads" &&
       route.threadId &&
       route.threadId === threadData?.thread.id,
   );
   const supportsThreadStreaming = typeof window.EventSource === "function";
   const isPollingActiveThread = isWatchingActiveThread && !supportsThreadStreaming;
-  const isLoadingCurrentThread = Boolean(
-    route.view === "threads" && route.threadId && route.threadId !== threadData?.thread.id,
-  );
   const visibleThreadData = route.threadId === threadData?.thread.id ? threadData : undefined;
   useEffect(() => {
     if (!isPollingActiveThread || !route.threadId) return;
@@ -235,56 +373,38 @@ export function App() {
     const timer = window.setInterval(() => {
       if (requestInFlight) return;
       requestInFlight = true;
-      void loadThread(threadId, true)
-        .then((next) => {
-          const stillActive = next?.runs.some(
-            (run) =>
-              run.status === "queued" ||
-              run.status === "running" ||
-              run.status === "waiting_approval" ||
-              run.status === "waiting_input",
-          );
-          if (next && !stillActive) void refresh(true);
-        })
-        .finally(() => {
-          requestInFlight = false;
-        });
+      void loadThread(threadId, true).finally(() => {
+        requestInFlight = false;
+      });
     }, 1_000);
     return () => window.clearInterval(timer);
-  }, [isPollingActiveThread, loadThread, refresh, route.threadId]);
+  }, [isPollingActiveThread, loadThread, route.threadId]);
 
   useEffect(() => {
     if (!isWatchingActiveThread || !supportsThreadStreaming || !route.threadId) return;
     const threadId = route.threadId;
+    const generation = workspaceGenerationRef.current;
     const source = new window.EventSource(`/api/threads/${encodeURIComponent(threadId)}/events`);
+    let cancelled = false;
     let requestInFlight = false;
     let refreshQueued = false;
     const reload = () => {
+      if (cancelled || generation !== workspaceGenerationRef.current) return;
       if (requestInFlight) {
         refreshQueued = true;
         return;
       }
       requestInFlight = true;
-      void loadThread(threadId, true)
-        .then((next) => {
-          const stillActive = next?.runs.some(
-            (run) =>
-              run.status === "queued" ||
-              run.status === "running" ||
-              run.status === "waiting_approval" ||
-              run.status === "waiting_input",
-          );
-          if (next && !stillActive) void refresh(true);
-        })
-        .finally(() => {
-          requestInFlight = false;
-          if (refreshQueued) {
-            refreshQueued = false;
-            reload();
-          }
-        });
+      void loadThread(threadId, true).finally(() => {
+        requestInFlight = false;
+        if (refreshQueued) {
+          refreshQueued = false;
+          reload();
+        }
+      });
     };
     const onThreadEvent = (raw: Event) => {
+      if (cancelled || generation !== workspaceGenerationRef.current) return;
       try {
         const event = JSON.parse((raw as MessageEvent<string>).data) as ThreadStreamEvent;
         setRunActivities(event.activities);
@@ -295,49 +415,143 @@ export function App() {
     };
     source.addEventListener("thread", onThreadEvent);
     return () => {
+      cancelled = true;
       source.removeEventListener("thread", onThreadEvent);
       source.close();
     };
-  }, [isWatchingActiveThread, loadThread, refresh, route.threadId, supportsThreadStreaming]);
+  }, [isWatchingActiveThread, loadThread, route.threadId, supportsThreadStreaming]);
 
-  const hasBackgroundRuns =
-    Boolean(data?.activeRuns.length) && !isWatchingActiveThread && !isLoadingCurrentThread;
+  // The selected thread has its own durable reload and stream. Other active threads
+  // still need metadata supervision while that stream is open.
+  const selectedThreadId =
+    route.view === "threads" && routeThreadExists ? route.threadId : undefined;
+  const hasBackgroundRuns = Boolean(
+    data?.workspace.id === workspaceIdRef.current &&
+      data?.activeRuns.some((run) => run.threadId !== selectedThreadId),
+  );
+  const activeWorkspaceId = data?.workspace.id;
   useEffect(() => {
-    if (!hasBackgroundRuns || !data) return;
-    const workspaceId = data.workspace.id;
+    if (!hasBackgroundRuns || !activeWorkspaceId) return;
+    const workspaceId = activeWorkspaceId;
+    const generation = workspaceGenerationRef.current;
+    let cancelled = false;
     let requestInFlight = false;
     const timer = window.setInterval(() => {
-      if (requestInFlight) return;
+      if (cancelled || generation !== workspaceGenerationRef.current || requestInFlight) return;
       requestInFlight = true;
-      void api<{ activeRuns: AgentRun[] }>(
+      const revision = activityRevisionRef.current;
+      void api<WorkspaceActivityData>(
         `/api/activity?workspaceId=${encodeURIComponent(workspaceId)}`,
       )
         .then((activity) => {
-          if (activity.activeRuns.length === 0) void refresh(true, workspaceId);
+          if (
+            cancelled ||
+            generation !== workspaceGenerationRef.current ||
+            workspaceIdRef.current !== workspaceId ||
+            activity.workspaceId !== workspaceId
+          )
+            return;
+          const current = dataRef.current;
+          if (!current || current.workspace.id !== workspaceId) return;
+          const threadRevision = threadActivityRevisionRef.current;
+          // A stream reload may have resolved a prompt while this snapshot was in flight.
+          const newerThreadId =
+            threadRevision && threadRevision.revision > revision
+              ? threadRevision.threadId
+              : undefined;
+          const { activeRuns, attention } = newerThreadId
+            ? preserveThreadActivity(activity, current, newerThreadId)
+            : activity;
+          const activeIds = new Set(activeRuns.map((run) => run.id));
+          const runDisappeared = current.activeRuns.some((run) => !activeIds.has(run.id));
+          activityRevisionRef.current += 1;
+          workspaceActivityRevisionRef.current = activityRevisionRef.current;
+          updateData({ ...current, activeRuns, attention });
+          if (runDisappeared) void refresh(true, workspaceId);
         })
         .catch(() => undefined)
         .finally(() => {
           requestInFlight = false;
         });
     }, 1_000);
-    return () => window.clearInterval(timer);
-  }, [data, hasBackgroundRuns, refresh]);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeWorkspaceId, hasBackgroundRuns, refresh, updateData]);
 
   const openThread = (threadId: string) =>
     navigate(`/threads/${threadId}`, { view: "threads", surface: route.surface, threadId });
   const openSurface = (surface: Surface) =>
     navigate(`/surfaces/${surface}`, { view: "surfaces", surface });
 
-  const selectWorkspace = async (workspaceId: string) => {
-    if (workspaceId === data?.workspace.id) return;
+  const beginWorkspaceSwitch = (workspaceId: string) => {
+    workspaceGenerationRef.current += 1;
+    latestThreadRequestRef.current += 1;
+    workspaceIdRef.current = workspaceId;
+    threadActivityRevisionRef.current = undefined;
     setThreadData(undefined);
+    setRunActivities([]);
+    setModal(null);
+    setTaskToInspect(undefined);
+    setTaskToEdit(undefined);
+    setTaskToDelete(undefined);
+    setKnowledgeToInspect(undefined);
+    setKnowledgeToEdit(undefined);
+    setKnowledgeToDelete(undefined);
+    setAgentToDelete(undefined);
+    setError(undefined);
+    setNotice(undefined);
+  };
+
+  const selectWorkspace = async (workspaceId: string) => {
+    if (workspaceId === workspaceIdRef.current) return;
+    beginWorkspaceSwitch(workspaceId);
     const next = await refresh(false, workspaceId);
     if (!next) return;
-    if (route.view === "threads") {
+    if (routeRef.current.view === "threads") {
       const threadId = next.threads[0]?.id;
       if (threadId) {
-        navigate(`/threads/${threadId}`, { ...route, view: "threads", threadId });
+        navigate(`/threads/${threadId}`, { ...routeRef.current, view: "threads", threadId });
       }
+    }
+  };
+
+  const inspectTask = async (taskId: string) => {
+    const generation = workspaceGenerationRef.current;
+    const workspaceId = workspaceIdRef.current;
+    const requestId = ++latestTaskInspectionRequestRef.current;
+    const current = dataRef.current;
+    if (!current || current.workspace.id !== workspaceId) return;
+    const known = current.tasks.find((task) => task.id === taskId);
+    if (known) {
+      setTaskToInspect(known);
+      return;
+    }
+    try {
+      // A worker can create and finish a task between activity snapshots.
+      const task = await api<Task>(`/api/tasks/${encodeURIComponent(taskId)}`);
+      if (
+        generation !== workspaceGenerationRef.current ||
+        requestId !== latestTaskInspectionRequestRef.current ||
+        task.workspaceId !== workspaceId
+      )
+        return;
+      updateData((latest) =>
+        latest
+          ? {
+              ...latest,
+              tasks: [...latest.tasks.filter((entry) => entry.id !== task.id), task],
+            }
+          : latest,
+      );
+      setTaskToInspect(task);
+    } catch (caught) {
+      if (
+        generation === workspaceGenerationRef.current &&
+        requestId === latestTaskInspectionRequestRef.current
+      )
+        setError(messageFrom(caught));
     }
   };
 
@@ -347,8 +561,10 @@ export function App() {
   };
 
   const mutate = async (operation: () => Promise<unknown>, success: string) => {
+    const generation = workspaceGenerationRef.current;
     try {
       await operation();
+      if (generation !== workspaceGenerationRef.current) return;
       await refresh();
       if (route.threadId) await loadThread(route.threadId, true);
       flash(success);
@@ -382,6 +598,8 @@ export function App() {
         onThread={openThread}
         onSurface={openSurface}
         onSettings={() => setModal("settings")}
+        onTask={(id) => void inspectTask(id)}
+        onKnowledge={(id) => setKnowledgeToInspect(data.knowledge.find((item) => item.id === id))}
       />
       <WorkspaceRail
         workspaces={data.workspaces}
@@ -402,7 +620,7 @@ export function App() {
         onCreate={() => {
           if (route.view === "threads") setModal("thread");
           else if (route.surface === "agents") setModal("agent");
-          else if (route.surface === "taskboard") {
+          else if (route.surface === "taskboard" || route.surface === "attention") {
             setTaskStatus("todo");
             setModal("task");
           } else setModal("knowledge");
@@ -448,6 +666,12 @@ export function App() {
               });
               if (route.threadId) await loadThread(route.threadId, true);
             }}
+          />
+        ) : route.surface === "attention" ? (
+          <AttentionView
+            items={data.attention}
+            onThread={openThread}
+            onTask={(id) => void inspectTask(id)}
           />
         ) : route.surface === "agents" ? (
           <AgentsView
@@ -533,6 +757,7 @@ export function App() {
                 method: "POST",
                 body: JSON.stringify({ name }),
               });
+              beginWorkspaceSwitch(workspace.id);
               const next = await refresh(false, workspace.id);
               setModal(null);
               const threadId = next?.threads[0]?.id;
@@ -680,7 +905,7 @@ export function App() {
           agent={agentToDelete}
           onClose={() => setAgentToDelete(undefined)}
           onDeleted={async () => {
-            setData((current) =>
+            updateData((current) =>
               current
                 ? {
                     ...current,
@@ -720,193 +945,47 @@ export function App() {
   );
 }
 
-function TopBar(props: {
-  data: BootstrapData;
-  theme: "dark" | "light";
-  onThemeToggle: () => void;
-  onThread: (id: string) => void;
-  onSurface: (surface: Surface) => void;
-  onSettings: () => void;
-}) {
-  const [queryText, setQueryText] = useState("");
-  const deferredQueryText = useDeferredValue(queryText);
-  const searchRef = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    const onShortcut = (event: globalThis.KeyboardEvent) => {
-      if (event.key.toLowerCase() !== "k" || (!event.metaKey && !event.ctrlKey)) return;
-      event.preventDefault();
-      searchRef.current?.focus();
-      searchRef.current?.select();
-    };
-    window.addEventListener("keydown", onShortcut);
-    return () => window.removeEventListener("keydown", onShortcut);
-  }, []);
-  const query = deferredQueryText.trim().toLowerCase();
+function isRunAttention(item: AttentionItem): boolean {
+  return item.kind === "approval" || item.kind === "input";
+}
 
-  // Command palette actions (shown when query starts with /)
-  const isCommand = query.startsWith("/");
-  const commandResults = isCommand
-    ? [
-        {
-          id: "new-thread",
-          label: "New thread",
-          description: "Create a new conversation thread",
-          action: () => {
-            setQueryText("");
-            // Trigger new thread dialog via keyboard shortcut simulation
-            document.dispatchEvent(new CustomEvent("nexestra:new-thread"));
-          },
-        },
-        {
-          id: "new-task",
-          label: "New task",
-          description: "Create a new task on the board",
-          action: () => {
-            setQueryText("");
-            document.dispatchEvent(new CustomEvent("nexestra:new-task"));
-          },
-        },
-        {
-          id: "taskboard",
-          label: "Go to Taskboard",
-          description: "Open the task management surface",
-          action: () => {
-            props.onSurface("taskboard");
-            setQueryText("");
-          },
-        },
-        {
-          id: "agents",
-          label: "Go to Agents",
-          description: "Manage your agents",
-          action: () => {
-            props.onSurface("agents");
-            setQueryText("");
-          },
-        },
-        {
-          id: "knowledge",
-          label: "Go to Knowledge",
-          description: "Manage your documents and repositories",
-          action: () => {
-            props.onSurface("knowledge");
-            setQueryText("");
-          },
-        },
-        {
-          id: "settings",
-          label: "Open Settings",
-          description: "Configure your workspace",
-          action: () => {
-            props.onSettings();
-            setQueryText("");
-          },
-        },
-      ].filter((cmd) => cmd.label.toLowerCase().includes(query.slice(1)))
-    : [];
+function preserveThreadActivity(
+  snapshot: Pick<BootstrapData, "activeRuns" | "attention">,
+  current: Pick<BootstrapData, "activeRuns" | "attention">,
+  threadId: string,
+): Pick<BootstrapData, "activeRuns" | "attention"> {
+  return {
+    activeRuns: [
+      ...snapshot.activeRuns.filter((run) => run.threadId !== threadId),
+      ...current.activeRuns.filter((run) => run.threadId === threadId),
+    ],
+    attention: [
+      ...snapshot.attention.filter((item) => !isRunAttention(item) || item.threadId !== threadId),
+      ...current.attention.filter((item) => isRunAttention(item) && item.threadId === threadId),
+    ].sort(compareAttentionItems),
+  };
+}
 
-  const searchResults =
-    query && !isCommand
-      ? [
-          ...props.data.threads
-            .filter((thread) => thread.name.toLowerCase().includes(query))
-            .map((thread) => ({
-              id: thread.id,
-              label: `# ${thread.name}`,
-              type: "Thread",
-              action: () => props.onThread(thread.id),
-            })),
-          ...props.data.agents
-            .filter((agent) => `${agent.name} ${agent.handle}`.toLowerCase().includes(query))
-            .map((agent) => ({
-              id: agent.id,
-              label: `@${agent.handle}`,
-              type: "Agent",
-              action: () => props.onSurface("agents" as const),
-            })),
-          ...props.data.tasks
-            .filter((task) => task.title.toLowerCase().includes(query))
-            .map((task) => ({
-              id: task.id,
-              label: task.title,
-              type: "Task",
-              action: () => props.onSurface("taskboard" as const),
-            })),
-          ...props.data.knowledge
-            .filter((item) => `${item.name} ${item.handle}`.toLowerCase().includes(query))
-            .map((item) => ({
-              id: item.id,
-              label: `#${item.handle}`,
-              type: item.kind === "document" ? "Document" : "Repository",
-              action: () => props.onSurface("knowledge" as const),
-            })),
-        ].slice(0, 8)
-      : [];
-
-  const results = isCommand ? commandResults : searchResults;
+function isActiveRun(run: AgentRun): boolean {
   return (
-    <header className="topbar">
-      <div className="global-search">
-        <Search size={16} />
-        <input
-          ref={searchRef}
-          aria-label="Search threads, tasks, agents, or knowledge"
-          value={queryText}
-          onChange={(event) => setQueryText(event.target.value)}
-          placeholder={
-            isCommand ? "Type a command..." : "Search threads, tasks, agents, or knowledge"
-          }
-        />
-        <kbd>⌘/Ctrl K</kbd>
-        {query && (
-          <div className="search-results">
-            {results.length === 0 ? (
-              <p>{isCommand ? "No commands found." : "No results found."}</p>
-            ) : (
-              results.map((result) => (
-                <button
-                  type="button"
-                  key={`${"type" in result ? result.type : "command"}-${result.id}`}
-                  onClick={() => {
-                    result.action();
-                    setQueryText("");
-                  }}
-                >
-                  <span>{result.label}</span>
-                  <small>
-                    {"description" in result
-                      ? result.description
-                      : "type" in result
-                        ? result.type
-                        : ""}
-                  </small>
-                </button>
-              ))
-            )}
-          </div>
-        )}
-      </div>
-      <div className="topbar-actions">
-        <button
-          className="theme-toggle"
-          type="button"
-          aria-label={`Switch to ${props.theme === "dark" ? "light" : "dark"} theme`}
-          onClick={props.onThemeToggle}
-        >
-          {props.theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
-        </button>
-        <button
-          className="profile-button"
-          type="button"
-          aria-label="Open settings"
-          onClick={props.onSettings}
-        >
-          ME
-          <span />
-        </button>
-      </div>
-    </header>
+    run.status === "queued" ||
+    run.status === "running" ||
+    run.status === "waiting_approval" ||
+    run.status === "waiting_input"
   );
+}
+
+function ThreadRunBadge({ runs }: { runs: AgentRun[] }) {
+  if (runs.length === 0) return null;
+  const status = runs.some(
+    (run) => run.status === "waiting_approval" || run.status === "waiting_input",
+  )
+    ? "waiting"
+    : runs.some((run) => run.status === "running")
+      ? "running"
+      : "queued";
+  const label = status === "waiting" ? "Waiting" : status === "running" ? "Running" : "Queued";
+  return <span className={`thread-run-badge ${status}`}>{label}</span>;
 }
 
 function WorkspaceRail(props: {
@@ -985,13 +1064,30 @@ function Sidebar(props: {
         </button>
         <button
           className={
-            props.route.view === "surfaces" ? "primary-nav-item active" : "primary-nav-item"
+            props.route.view === "surfaces" && props.route.surface !== "attention"
+              ? "primary-nav-item active"
+              : "primary-nav-item"
           }
           type="button"
-          onClick={() => props.onSurface(props.route.surface)}
+          onClick={() =>
+            props.onSurface(props.route.surface === "attention" ? "taskboard" : props.route.surface)
+          }
         >
           <Sparkles size={17} />
           Surfaces
+        </button>
+        <button
+          className={
+            props.route.view === "surfaces" && props.route.surface === "attention"
+              ? "primary-nav-item active"
+              : "primary-nav-item"
+          }
+          type="button"
+          onClick={() => props.onSurface("attention")}
+        >
+          <CircleAlert size={17} />
+          Needs attention
+          <span className="attention-count">{props.data.attention.length}</span>
         </button>
       </nav>
       <div className="sidebar-content">
@@ -1019,7 +1115,14 @@ function Sidebar(props: {
                 >
                   <span className="hash">#</span>
                   <span className="row-label">{thread.name}</span>
-                  {thread.messageCount > 0 && <span className="count">{thread.messageCount}</span>}
+                  <span className="thread-row-status">
+                    <ThreadRunBadge
+                      runs={props.data.activeRuns.filter((run) => run.threadId === thread.id)}
+                    />
+                    {thread.messageCount > 0 && (
+                      <span className="count">{thread.messageCount}</span>
+                    )}
+                  </span>
                 </button>
               ))}
             </div>
@@ -4926,7 +5029,10 @@ function messageFrom(error: unknown): string {
 function routeFromLocation(): RouteState {
   const parts = window.location.pathname.split("/").filter(Boolean);
   if (parts[0] === "surfaces") {
-    const surface = parts[1] === "taskboard" || parts[1] === "knowledge" ? parts[1] : "agents";
+    const surface =
+      parts[1] === "taskboard" || parts[1] === "knowledge" || parts[1] === "attention"
+        ? parts[1]
+        : "agents";
     return { view: "surfaces", surface };
   }
   return { view: "threads", surface: "agents", ...(parts[1] ? { threadId: parts[1] } : {}) };

@@ -458,6 +458,53 @@ export interface RuntimeStatus {
   harnesses: Record<"codex" | "opencode", { installed: boolean; version: string | null }>;
 }
 
+export interface AttentionItem {
+  id: string;
+  kind: "approval" | "input" | "task_blocked" | "task_failed" | "task_interrupted";
+  title: string;
+  detail: string;
+  threadId?: string;
+  runId?: string;
+  taskId?: string;
+  updatedAt: string;
+}
+
+export interface WorkspaceActivityData {
+  workspaceId: string;
+  activeRuns: AgentRun[];
+  attention: AttentionItem[];
+}
+
+export function compareAttentionItems(left: AttentionItem, right: AttentionItem): number {
+  const leftGroup = left.kind === "approval" || left.kind === "input" ? 0 : 1;
+  const rightGroup = right.kind === "approval" || right.kind === "input" ? 0 : 1;
+  return (
+    leftGroup - rightGroup ||
+    right.updatedAt.localeCompare(left.updatedAt) ||
+    left.id.localeCompare(right.id)
+  );
+}
+
+export function runAttentionItem(
+  run: AgentRun,
+  agentName: string,
+  threadName: string,
+): AttentionItem | undefined {
+  if (run.status !== "waiting_approval" && run.status !== "waiting_input") return undefined;
+  return {
+    id: `run:${run.id}`,
+    kind: run.status === "waiting_approval" ? "approval" : "input",
+    title: `${agentName} in #${threadName}`,
+    detail:
+      run.status === "waiting_approval"
+        ? "Approve or deny the pending tool request to continue."
+        : "Answer the pending question to continue.",
+    threadId: run.threadId,
+    runId: run.id,
+    updatedAt: run.updatedAt,
+  };
+}
+
 export interface BootstrapData {
   workspaces: Workspace[];
   workspace: Workspace;
@@ -467,6 +514,7 @@ export interface BootstrapData {
   knowledge: KnowledgeItem[];
   assignments: WorkAssignment[];
   activeRuns: AgentRun[];
+  attention: AttentionItem[];
   runtime: RuntimeStatus;
   workspacePath: string;
   dataPath: string;

@@ -144,6 +144,12 @@ describe("HTTP app", () => {
       instructions: "",
       harness: "codex",
     });
+    await store.createTask({ title: "Other workspace blocker", status: "blocked" });
+    const task = await store.createTask({
+      workspaceId: workspace.id,
+      title: "Product decision",
+      status: "blocked",
+    });
     const bootstrap = await app.request(`/api/bootstrap?workspaceId=${workspace.id}`);
 
     await expect(bootstrap.json()).resolves.toMatchObject({
@@ -151,9 +157,29 @@ describe("HTTP app", () => {
       workspaces: [{ name: "Nexestra" }, { id: workspace.id, name: "Product Team" }],
       agents: [{ workspaceId: workspace.id, handle: "planner" }],
       threads: [{ workspaceId: workspace.id, name: "general" }],
-      tasks: [],
+      tasks: [{ id: task.id, workspaceId: workspace.id }],
+      attention: [{ id: `task:${task.id}`, kind: "task_blocked", title: task.title }],
+    });
+    const activity = await app.request(`/api/activity?workspaceId=${workspace.id}`);
+    await expect(activity.json()).resolves.toMatchObject({
+      workspaceId: workspace.id,
+      activeRuns: [],
+      attention: [{ id: `task:${task.id}`, kind: "task_blocked", title: task.title }],
     });
   });
+
+  it.each(["bootstrap", "activity"])(
+    "rejects an explicitly unknown workspace for %s instead of returning another workspace",
+    async (endpoint) => {
+      for (const workspaceId of ["missing-workspace", ""]) {
+        const response = await app.request(`/api/${endpoint}?workspaceId=${workspaceId}`);
+        expect(response.status).toBe(404);
+        await expect(response.json()).resolves.toMatchObject({
+          error: { code: "not_found", message: "Workspace not found." },
+        });
+      }
+    },
+  );
 
   it("creates an agent and dispatches only an explicit mention", async () => {
     const agentResponse = await app.request("/api/agents", {
@@ -358,15 +384,31 @@ describe("HTTP app", () => {
     });
     expect(sent.status).toBe(201);
 
+    await vi.waitFor(() => expect(runner.lastInvocation).toBeDefined());
+    const transcript = vi.spyOn(store, "threadData").mockRejectedValue(new Error("No transcript"));
+
     const active = await app.request(`/api/activity?workspaceId=${workspace.id}`);
     await expect(active.json()).resolves.toMatchObject({
+      workspaceId: workspace.id,
       activeRuns: [{ agentId: agent.id, threadId: thread.id }],
+      attention: [],
     });
+    const bootstrap = await app.request(`/api/bootstrap?workspaceId=${workspace.id}`);
+    await expect(bootstrap.json()).resolves.toMatchObject({
+      activeRuns: [{ agentId: agent.id, threadId: thread.id }],
+      attention: [],
+    });
+    expect(transcript).not.toHaveBeenCalled();
+    transcript.mockRestore();
 
     releaseRunner();
     await app.dispatcher.waitForIdle();
     const idle = await app.request(`/api/activity?workspaceId=${workspace.id}`);
-    await expect(idle.json()).resolves.toEqual({ activeRuns: [] });
+    await expect(idle.json()).resolves.toEqual({
+      workspaceId: workspace.id,
+      activeRuns: [],
+      attention: [],
+    });
   });
 
   it("returns the persisted Worker process for a Taskboard task", async () => {
@@ -517,6 +559,13 @@ describe("HTTP app", () => {
     });
     await runner.approvalRequested;
 
+    await vi.waitFor(async () => {
+      const pending = await app.request(`/api/activity?workspaceId=${thread.workspaceId}`);
+      expect(await pending.json()).toMatchObject({
+        attention: [{ kind: "approval", threadId: thread.id, title: "Maya in #general" }],
+      });
+    });
+
     const approval = await app.request("/api/tool-calls/tool-approval/approve", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -524,6 +573,9 @@ describe("HTTP app", () => {
     });
     expect(approval.status).toBe(204);
     await app.dispatcher.waitForIdle();
+
+    const cleared = await app.request(`/api/activity?workspaceId=${thread.workspaceId}`);
+    await expect(cleared.json()).resolves.toMatchObject({ attention: [] });
 
     const data = await store.threadData(thread.id);
     expect(data.runs).toMatchObject([{ status: "completed" }]);
@@ -558,6 +610,13 @@ describe("HTTP app", () => {
     });
     await runner.questionRequested;
 
+    await vi.waitFor(async () => {
+      const pending = await app.request(`/api/activity?workspaceId=${thread.workspaceId}`);
+      expect(await pending.json()).toMatchObject({
+        attention: [{ kind: "input", threadId: thread.id, title: "Maya in #general" }],
+      });
+    });
+
     const response = await app.request("/api/tool-calls/tool-question/respond", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -565,6 +624,9 @@ describe("HTTP app", () => {
     });
     expect(response.status).toBe(204);
     await app.dispatcher.waitForIdle();
+
+    const cleared = await app.request(`/api/activity?workspaceId=${thread.workspaceId}`);
+    await expect(cleared.json()).resolves.toMatchObject({ attention: [] });
 
     const data = await store.threadData(thread.id);
     expect(data.runs).toMatchObject([{ status: "completed" }]);

@@ -1,0 +1,14 @@
+.global-search:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.search-results button[aria-selected="true"] {
+  background: var(--panel-raised);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.search-results button {
+  gap: 12px;
+  text-align: left;
+}

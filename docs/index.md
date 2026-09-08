@@ -4,3 +4,5 @@
 2. [Architecture](ARCHITECTURE.md): data flow, persistence, runtime, and known gaps.
 3. [ADR index](adr/0000-index.md): architecture decisions for the rebuild.
 4. [Contributing](../CONTRIBUTING.md): development loop and change rules.
+5. [Attention and navigation research](research/2026-09-08-attention-navigation.md): source-backed
+   ideas, selected scope, and follow-up candidates.
