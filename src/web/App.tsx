@@ -96,17 +96,17 @@ import { AttentionView } from "./AttentionView.js";
 import { ApiError, api } from "./api.js";
 import { ConversationState, readBrowserValue, writeBrowserValue } from "./conversationState.js";
 import {
-  SubmissionState,
-  fingerprintSubmission,
-  newRequestId,
-  type PendingSubmission,
-} from "./submissionState.js";
-import {
   KnowledgeDocumentPreview,
   type KnowledgeDocumentPreviewHandle,
 } from "./KnowledgeDocumentPreview.js";
 import { MessageSearchDialog } from "./MessageSearchDialog.js";
 import { RepositoryBranchPicker } from "./RepositoryBranchPicker.js";
+import {
+  fingerprintSubmission,
+  newRequestId,
+  type PendingSubmission,
+  SubmissionState,
+} from "./submissionState.js";
 import { TopBar, type TopBarSurface } from "./TopBar.js";
 
 const RichMessage = lazy(() => import("./RichMessage.js"));
@@ -142,12 +142,18 @@ interface LoginSession {
   connected: boolean;
 }
 
+interface SubmissionOptions {
+  sendAsNew?: boolean;
+  requireOriginalAttachments?: boolean;
+}
+
 export function App() {
   const [route, setRoute] = useState<RouteState>(() => routeFromLocation());
   const [conversations] = useState(() => new ConversationState());
   const [submissions] = useState(() => new SubmissionState());
   const [, setDraftRevision] = useState(0);
-  const [pendingNotice, setPendingNotice] = useState<string>();
+  const [pendingNotices, setPendingNotices] = useState<Record<string, string>>({});
+  const submissionOrderRef = useRef(new Map<string, number>());
   const [data, setData] = useState<BootstrapData>();
   const [historyPage, setHistoryPage] = useState<ThreadHistoryPage>();
   const [historyWindow, setHistoryWindow] = useState<HistoryIntent>();
@@ -1085,18 +1091,28 @@ export function App() {
     }
   };
 
+  const setSubmissionNotice = (workspaceId: string, threadId: string, message?: string) => {
+    setPendingNotices((current) => {
+      const next = { ...current };
+      const key = `${workspaceId}:${threadId}`;
+      if (message) next[key] = message;
+      else delete next[key];
+      return next;
+    });
+  };
+
   const sendMessage = async (
     threadId: string,
     content: string,
     files: File[],
-    sendAsNew = false,
+    options: SubmissionOptions = {},
   ) => {
     const workspaceId = workspaceIdRef.current;
     if (!workspaceId) throw new Error("No active workspace.");
     const pending = submissions.pendingFor(workspaceId, threadId);
-    if (sendAsNew && pending) {
-      submissions.retire(workspaceId, threadId, pending.requestId);
-    }
+    const scope = `${workspaceId}:${threadId}`;
+    const order = (submissionOrderRef.current.get(scope) ?? 0) + 1;
+    submissionOrderRef.current.set(scope, order);
     const generation = workspaceGenerationRef.current;
     const draftRevision =
       routeRef.current.threadId === threadId
@@ -1106,7 +1122,22 @@ export function App() {
       (dataRef.current?.agents ?? []).map((agent) => [agent.handle, agent] as const),
     );
     const key = await fingerprintSubmission(content, files);
-    const retrying = pending?.key === key;
+    if (submissionOrderRef.current.get(scope) !== order) {
+      throw new Error(
+        "Another send started while this message was being prepared. Check your draft before sending again.",
+      );
+    }
+    if (
+      options.requireOriginalAttachments &&
+      pending &&
+      pending.key !== key &&
+      !options.sendAsNew
+    ) {
+      throw new Error(
+        "The text or files differ from the unconfirmed send. Reattach the original files in the same order, or choose Send as new message.",
+      );
+    }
+    const retrying = !options.sendAsNew && pending?.key === key;
     if (!retrying) {
       const unavailable = extractMentionHandles(content)
         .map((handle) => agentsByHandle.get(handle))
@@ -1127,12 +1158,15 @@ export function App() {
       createdAt: new Date().toISOString(),
     };
     const remembered = submissions.remember(workspaceId, threadId, submission);
+    setDraftRevision((revision) => revision + 1);
     if (!remembered) {
-      setPendingNotice(
+      setSubmissionNotice(
+        workspaceId,
+        threadId,
         "Browser storage is unavailable. This send can still be retried in this tab, but a reload would not restore it.",
       );
     } else {
-      setPendingNotice(undefined);
+      setSubmissionNotice(workspaceId, threadId);
     }
     const body = new FormData();
     body.append("requestId", requestId);
@@ -1151,13 +1185,18 @@ export function App() {
       setDraftRevision((revision) => revision + 1);
     }
     const retired = submissions.retire(workspaceId, threadId, requestId);
+    if (retired.matched) setDraftRevision((revision) => revision + 1);
     if (!retired.persisted) {
-      setPendingNotice(
+      setSubmissionNotice(
+        workspaceId,
+        threadId,
         "The send was confirmed, but this tab could not clear the retry identity from browser storage. A reload may prompt about it once.",
       );
     }
     if (generation !== workspaceGenerationRef.current) return;
-    if (routeRef.current.messageTarget && routeRef.current.threadId === threadId) {
+    const currentThread =
+      routeRef.current.view === "threads" && routeRef.current.threadId === threadId;
+    if (currentThread && routeRef.current.messageTarget) {
       routeLoadSuppressedRef.current = true;
       navigate(`/threads/${encodeURIComponent(threadId)}`, {
         view: "threads",
@@ -1165,12 +1204,13 @@ export function App() {
         threadId,
       });
     }
-    setLatestScrollRequest((revision) => revision + 1);
+    if (currentThread) setLatestScrollRequest((revision) => revision + 1);
     await Promise.all([
-      refresh(true),
+      refresh(true, workspaceId),
       loadHistoryPage(threadId, { threadId, kind: "latest" }),
     ]);
-  };  if (!data) {
+  };
+  if (!data) {
     return (
       <div className="boot-screen">
         <div className="brand-mark">N</div>
@@ -1292,16 +1332,16 @@ export function App() {
                 conversations.updateDraft(data.workspace.id, route.threadId, value);
                 setDraftRevision((revision) => revision + 1);
               }}
-              onSend={async (content, files, sendAsNew) => {
+              onSend={async (content, files, options) => {
                 if (!route.threadId) return;
-                await sendMessage(route.threadId, content, files, sendAsNew);
+                await sendMessage(route.threadId, content, files, options);
               }}
-              pendingNotice={pendingNotice}
-              onCloseSubmitNotice={() => setPendingNotice(undefined)}
+              pendingNotice={pendingNotices[`${data.workspace.id}:${route.threadId}`]}
+              onCloseSubmitNotice={() => {
+                if (route.threadId) setSubmissionNotice(data.workspace.id, route.threadId);
+              }}
               pendingSubmission={
-                route.threadId
-                  ? submissions.pendingFor(data.workspace.id, route.threadId)
-                  : null
+                route.threadId ? submissions.pendingFor(data.workspace.id, route.threadId) : null
               }
               onRequestRename={setThreadToRename}
               onArchive={archiveThread}
@@ -2067,7 +2107,7 @@ function ThreadView(props: {
   pendingNotice?: string;
   onCloseSubmitNotice: () => void;
   onDraftChange: (value: string) => void;
-  onSend: (content: string, files: File[], sendAsNew?: boolean) => Promise<void>;
+  onSend: (content: string, files: File[], options?: SubmissionOptions) => Promise<void>;
   pendingSubmission: PendingSubmission | null;
   onRetry: (runId: string) => Promise<unknown>;
   onToolDecision: (toolCallId: string, approved: boolean) => Promise<void>;
@@ -2079,13 +2119,10 @@ function ThreadView(props: {
   const { draft, onDraftChange: setDraft } = props;
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
-  const [sendAsNew, setSendAsNew] = useState(false);
+  const [recoveringAttachments, setRecoveringAttachments] = useState(
+    () => (props.pendingSubmission?.files.length ?? 0) > 0,
+  );
   const [localError, setLocalError] = useState<string>();
-  const pendingIdentity = props.pendingSubmission?.requestId;
-
-  useEffect(() => {
-    setSendAsNew(false);
-  }, [props.threadData?.thread.id, pendingIdentity]);
   const [mentionMenuOpen, setMentionMenuOpen] = useState(true);
   const [activeSuggestion, setActiveSuggestion] = useState(0);
   const [activeTab, setActiveTab] = useState<"messages" | "artifacts">("messages");
@@ -2222,28 +2259,25 @@ function ThreadView(props: {
         ? activeSuggestion
         : suggestions.findIndex(canCallAgent);
 
-  const send = async () => {
+  const send = async (sendAsNew = false) => {
     const content = draft.trim();
-    if (
-      ((!content && attachments.length === 0) || sendingRef.current) &&
-      !pendingRewarning
-    ) {
+    if ((!content && attachments.length === 0) || sendingRef.current) return;
+    if (recoveringAttachments && !sendAsNew && attachments.length === 0) {
+      setLocalError("Reattach the original files, or choose Send as new message.");
       return;
     }
-    if (pendingRewarning && !sendAsNew && attachments.length === 0) return;
     sendingRef.current = true;
     setSending(true);
     setLocalError(undefined);
     const sentFiles = attachments;
     try {
-      await props.onSend(content, sentFiles, sendAsNew);
-      setSendAsNew(false);
-      const sentIdentity = new Set(
-        sentFiles.map((file) => `${file.name}\u0000${file.type}\u0000${file.size}`),
-      );
-      setAttachments((current) =>
-        current.filter((file) => !sentIdentity.has(`${file.name}\u0000${file.type}\u0000${file.size}`)),
-      );
+      await props.onSend(content, sentFiles, {
+        sendAsNew,
+        requireOriginalAttachments: recoveringAttachments,
+      });
+      setRecoveringAttachments(false);
+      const sentIdentity = new Set(sentFiles);
+      setAttachments((current) => current.filter((file) => !sentIdentity.has(file)));
       setMentionMenuOpen(true);
       setAddMenuOpen(false);
     } catch (caught) {
@@ -2253,7 +2287,7 @@ function ThreadView(props: {
       sendingRef.current = false;
     }
   };
-    const addAttachments = (files: File[]) => {
+  const addAttachments = (files: File[]) => {
     const next = [...attachments, ...files];
     if (next.length > 10) {
       setLocalError("Attach no more than 10 files at once.");
@@ -2358,16 +2392,8 @@ function ThreadView(props: {
   }
   const archived = thread.archived;
   const hasActiveRuns = props.threadData.activeRuns.some(isActiveRun);
-  const pendingFilesMatch =
-    !props.pendingSubmission ||
-    (props.pendingSubmission.files.length === attachments.length &&
-      props.pendingSubmission.files.every((expected, index) =>
-        expected.name === attachments[index]?.name &&
-        expected.type === attachments[index]?.type &&
-        expected.size === attachments[index]?.size,
-      ));
   const pendingRewarning =
-    !sending && props.pendingSubmission !== null && props.pendingSubmission.files.length > 0 && !pendingFilesMatch;
+    !sending && recoveringAttachments && (props.pendingSubmission?.files.length ?? 0) > 0;
   return (
     <div className="thread-view">
       <header className="workspace-header">
@@ -2848,13 +2874,20 @@ function ThreadView(props: {
           )}
           {pendingRewarning && (
             <div className="pending-submission-note" role="status">
-              <p>The previous send was not confirmed. Reattach the original files (same
-              order) to retry that message, or send as a new message without them.</p>
+              <p>
+                The previous send was not confirmed. Reattach the original files in the same order
+                to retry that message, or send the current draft as a new message.
+              </p>
+              <p>{props.pendingSubmission?.files.map((file) => file.name).join(", ")}</p>
               <div className="pending-submission-actions">
                 <button type="button" onClick={() => fileInputRef.current?.click()}>
                   Reattach original files
                 </button>
-                <button type="button" onClick={() => setSendAsNew(true)}>
+                <button
+                  type="button"
+                  onClick={() => void send(true)}
+                  disabled={!draft.trim() && attachments.length === 0}
+                >
                   Send as new message
                 </button>
               </div>

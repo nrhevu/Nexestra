@@ -591,25 +591,31 @@ describe("recoverable submission dispatch", () => {
     };
     await store.updateRun(queued);
     await store.updateAgent(agent.id, { enabled: false });
-    const entered = Promise.withResolvers<void>();
-    const gate = Promise.withResolvers<void>();
+    let markEntered = () => {};
+    const entered = new Promise<void>((resolve) => {
+      markEntered = resolve;
+    });
+    let releaseWrite = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
     const updateRun = store.updateRun.bind(store);
     vi.spyOn(store, "updateRun").mockImplementation(async (run) => {
       if (run.id === queued.id && run.status === "failed") {
-        entered.resolve();
-        await gate.promise;
+        markEntered();
+        await gate;
       }
       return updateRun(run);
     });
     const reconciliation = dispatcher.reconcileQueuedRun(queued, message);
-    await entered.promise;
+    await entered;
     let mutationAcquired = false;
     try {
       mutationAcquired = dispatcher.beginAgentMutation(agent.id);
       expect(mutationAcquired).toBe(false);
     } finally {
       if (mutationAcquired) dispatcher.finishAgentMutation(agent.id);
-      gate.resolve();
+      releaseWrite();
       await reconciliation;
     }
     expect(dispatcher.beginAgentMutation(agent.id)).toBe(true);
