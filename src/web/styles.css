@@ -1666,6 +1666,12 @@ kbd {
   color: #e28e91;
   font-size: 11px;
 }
+
+.draft-storage-note {
+  margin: 6px 4px 0;
+  color: var(--muted);
+  font-size: 11px;
+}
 .artifacts-view {
   flex: 1;
   min-height: 0;

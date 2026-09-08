@@ -1185,6 +1185,215 @@ describe("Thread navigation", () => {
   });
 });
 
+describe("Last thread per workspace", () => {
+  it("remembers the last thread and lets an explicit URL take precedence", async () => {
+    const user = userEvent.setup();
+    const first = activityThread("thread-last-first", "general");
+    const second = activityThread("thread-last-second", "notes");
+    window.history.replaceState({}, "", `/threads/${second.id}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/bootstrap") {
+          return jsonResponse({ ...bootstrapData, threads: [first, second] });
+        }
+        if (path === `/api/threads/${first.id}`) {
+          return jsonResponse(threadSnapshot(first, []));
+        }
+        if (path === `/api/threads/${second.id}`) {
+          return jsonResponse(threadSnapshot(second, []));
+        }
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      }),
+    );
+    render(<App />);
+
+    await screen.findByRole("combobox", { name: "Message" });
+    expect(window.location.pathname).toBe(`/threads/${second.id}`);
+    expect(window.localStorage.getItem(`nexestra.lastThread.${workspace.id}`)).toBe(second.id);
+
+    await user.click(screen.getByRole("button", { name: /#general/ }));
+    await waitFor(() =>
+      expect(window.localStorage.getItem(`nexestra.lastThread.${workspace.id}`)).toBe(first.id),
+    );
+
+    act(() => {
+      window.history.replaceState({}, "", `/threads/${second.id}`);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Message" })).toHaveValue(""));
+    expect(window.location.pathname).toBe(`/threads/${second.id}`);
+    expect(window.localStorage.getItem(`nexestra.lastThread.${workspace.id}`)).toBe(second.id);
+  });
+
+  it("restores the last thread on reload and returns to it from any surface", async () => {
+    const user = userEvent.setup();
+    const first = activityThread("thread-relaid-first", "general");
+    const second = activityThread("thread-relaid-second", "notes");
+    window.localStorage.setItem(`nexestra.lastThread.${workspace.id}`, second.id);
+    window.history.replaceState({}, "", "/surfaces/agents");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/bootstrap") {
+          return jsonResponse({ ...bootstrapData, threads: [first, second] });
+        }
+        if (path === `/api/threads/${second.id}`) {
+          return jsonResponse(threadSnapshot(second, []));
+        }
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      }),
+    );
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Agent management" });
+    await user.click(screen.getByRole("button", { name: "Threads" }));
+    await screen.findByRole("combobox", { name: "Message" });
+    expect(window.location.pathname).toBe(`/threads/${second.id}`);
+    expect(window.localStorage.getItem(`nexestra.lastThread.${workspace.id}`)).toBe(second.id);
+  });
+
+  it("falls back to the remembered thread when the URL names a missing thread", async () => {
+    const first = activityThread("thread-fallback-first", "general");
+    const second = activityThread("thread-fallback-second", "notes");
+    window.localStorage.setItem(`nexestra.lastThread.${workspace.id}`, second.id);
+    window.history.replaceState({}, "", "/threads/thread-vanished");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/bootstrap") {
+          return jsonResponse({ ...bootstrapData, threads: [first, second] });
+        }
+        if (path === `/api/threads/${second.id}`) {
+          return jsonResponse(threadSnapshot(second, []));
+        }
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      }),
+    );
+    render(<App />);
+
+    await screen.findByRole("combobox", { name: "Message" });
+    expect(window.location.pathname).toBe(`/threads/${second.id}`);
+  });
+
+  it("opens an explicit URL in another workspace before route fallback runs", async () => {
+    const productWorkspace = { ...workspace, id: "workspace-product", name: "Product" };
+    const deep = { ...activityThread("thread-deep", "notes"), workspaceId: productWorkspace.id };
+    const local = activityThread("thread-local", "general");
+    window.localStorage.setItem("nexestra.workspaceId", workspace.id);
+    window.localStorage.setItem(`nexestra.lastThread.${workspace.id}`, local.id);
+    window.history.replaceState({}, "", `/threads/${deep.id}?workspace=${productWorkspace.id}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === `/api/bootstrap?workspaceId=${workspace.id}`) {
+          return jsonResponse({
+            ...bootstrapData,
+            workspaces: [workspace, productWorkspace],
+            threads: [local],
+          });
+        }
+        if (path === `/api/bootstrap?workspaceId=${productWorkspace.id}`) {
+          return jsonResponse({
+            ...bootstrapData,
+            workspaces: [workspace, productWorkspace],
+            workspace: productWorkspace,
+            threads: [deep],
+          });
+        }
+        if (path === `/api/threads/${deep.id}`) return jsonResponse(threadSnapshot(deep, []));
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      }),
+    );
+    render(<App />);
+
+    await screen.findByRole("combobox", { name: "Message" });
+    expect(window.location.pathname).toBe(`/threads/${deep.id}`);
+    expect(window.location.search).toBe(`?workspace=${productWorkspace.id}`);
+    expect(window.localStorage.getItem(`nexestra.lastThread.${productWorkspace.id}`)).toBe(deep.id);
+    expect(window.localStorage.getItem("nexestra.workspaceId")).toBe(productWorkspace.id);
+    expect(screen.getByRole("button", { name: "Switch to Product" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+});
+
+describe("Workspace switch during send", () => {
+  it("does not let the previous workspace response overwrite the new workspace", async () => {
+    const user = userEvent.setup();
+    const productWorkspace = { ...workspace, id: "workspace-product", name: "Product" };
+    const first = activityThread("thread-send-old", "general");
+    const second = {
+      ...activityThread("thread-send-new", "notes"),
+      workspaceId: productWorkspace.id,
+    };
+    const pending = deferredResponse();
+    let oldThreadReads = 0;
+    window.history.replaceState({}, "", `/threads/${first.id}`);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/bootstrap" || path === `/api/bootstrap?workspaceId=${workspace.id}`) {
+        return jsonResponse({
+          ...bootstrapData,
+          workspaces: [workspace, productWorkspace],
+          threads: [first],
+        });
+      }
+      if (path === `/api/bootstrap?workspaceId=${productWorkspace.id}`) {
+        return jsonResponse({
+          ...bootstrapData,
+          workspaces: [workspace, productWorkspace],
+          workspace: productWorkspace,
+          threads: [second],
+        });
+      }
+      if (path === `/api/threads/${first.id}/messages` && init?.method === "POST") {
+        return pending.promise;
+      }
+      if (path === `/api/threads/${first.id}`) {
+        oldThreadReads += 1;
+        return jsonResponse(threadSnapshot(first, []));
+      }
+      if (path === `/api/threads/${second.id}`) {
+        return jsonResponse(threadSnapshot(second, []));
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+
+    let composer = await screen.findByRole("combobox", { name: "Message" });
+    await user.type(composer, "Old workspace note");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.click(screen.getByRole("button", { name: "Switch to Product" }));
+    composer = await screen.findByRole("combobox", { name: "Message" });
+    expect(composer).toHaveValue("");
+    await user.type(composer, "New workspace note");
+
+    const bootstrapCalls = () =>
+      fetchMock.mock.calls.filter(([input]) => String(input).startsWith("/api/bootstrap"));
+    await act(async () => {
+      pending.resolve(jsonResponse({ message: {}, runs: [] }, 201));
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitFor(() => expect(bootstrapCalls()).toHaveLength(2));
+    expect(oldThreadReads).toBe(1);
+    expect(screen.getByRole("combobox", { name: "Message" })).toHaveValue("New workspace note");
+    expect(window.localStorage.getItem(`nexestra.lastThread.${productWorkspace.id}`)).toBe(
+      second.id,
+    );
+    expect(window.localStorage.getItem(`nexestra.draft.${workspace.id}:${first.id}`)).toBe("");
+    expect(window.localStorage.getItem(`nexestra.draft.${productWorkspace.id}:${second.id}`)).toBe(
+      "New workspace note",
+    );
+  });
+});
+
 describe("Knowledge surface", () => {
   it("lists #references and uploads a document into the active workspace", async () => {
     window.history.replaceState({}, "", "/surfaces/knowledge");
@@ -2411,6 +2620,317 @@ describe("Thread composer", () => {
     await user.click(fileItem);
     expect(fileInputClick).toHaveBeenCalledOnce();
     expect(screen.queryByRole("menu", { name: "Add to message" })).not.toBeInTheDocument();
+  });
+
+  it("restores per-thread drafts across navigation and marks thread rows", async () => {
+    const user = userEvent.setup();
+    const first = activityThread("thread-draft-first", "general");
+    const second = activityThread("thread-draft-second", "notes");
+    const transcriptOf = (thread: Thread): ThreadData => threadSnapshot(thread, []);
+    window.history.replaceState({}, "", `/threads/${first.id}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/bootstrap") {
+          return jsonResponse({ ...bootstrapData, threads: [first, second] });
+        }
+        if (path === `/api/threads/${first.id}`) return jsonResponse(transcriptOf(first));
+        if (path === `/api/threads/${second.id}`) return jsonResponse(transcriptOf(second));
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      }),
+    );
+    render(<App />);
+
+    let composer = await screen.findByRole("combobox", { name: "Message" });
+    await user.type(composer, "Plan next steps");
+    expect(screen.getByRole("button", { name: /#general/ })).toHaveTextContent("Draft");
+
+    await user.click(screen.getByRole("button", { name: /#notes/ }));
+    composer = await screen.findByRole("combobox", { name: "Message" });
+    await user.type(composer, "Second ideas");
+    expect(screen.getByRole("button", { name: /#general/ })).toHaveTextContent("Draft");
+    expect(screen.getByRole("button", { name: /#notes/ })).toHaveTextContent("Draft");
+
+    await user.click(screen.getByRole("button", { name: /#general/ }));
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Message" })).toHaveValue("Plan next steps"),
+    );
+    await user.click(screen.getByRole("button", { name: /#notes/ }));
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Message" })).toHaveValue("Second ideas"),
+    );
+    expect(window.localStorage.getItem(`nexestra.draft.${workspace.id}:${first.id}`)).toBe(
+      "Plan next steps",
+    );
+    expect(window.localStorage.getItem(`nexestra.draft.${workspace.id}:${second.id}`)).toBe(
+      "Second ideas",
+    );
+  });
+
+  it("keeps drafts separate when two workspaces share a thread id", async () => {
+    const productWorkspace = { ...workspace, id: "workspace-product", name: "Product" };
+    const shared = activityThread("thread-shared", "general");
+    const sharedInProduct: Thread = { ...shared, workspaceId: productWorkspace.id };
+    let activeThread = shared;
+    window.history.replaceState({}, "", `/threads/${shared.id}`);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/bootstrap" || path === `/api/bootstrap?workspaceId=${workspace.id}`) {
+        activeThread = shared;
+        return jsonResponse({
+          ...bootstrapData,
+          workspaces: [workspace, productWorkspace],
+          threads: [shared],
+        });
+      }
+      if (path === `/api/bootstrap?workspaceId=${productWorkspace.id}`) {
+        activeThread = sharedInProduct;
+        return jsonResponse({
+          ...bootstrapData,
+          workspaces: [workspace, productWorkspace],
+          workspace: productWorkspace,
+          threads: [sharedInProduct],
+        });
+      }
+      if (path === `/api/threads/${shared.id}`) {
+        return jsonResponse(threadSnapshot(activeThread, []));
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+
+    let composer = await screen.findByRole("combobox", { name: "Message" });
+    await user.type(composer, "Nexestra draft");
+    await user.click(screen.getByRole("button", { name: "Switch to Product" }));
+    composer = await screen.findByRole("combobox", { name: "Message" });
+    expect(composer).toHaveValue("");
+    await user.type(composer, "Product draft");
+
+    await user.click(screen.getByRole("button", { name: "Switch to Nexestra" }));
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Message" })).toHaveValue("Nexestra draft"),
+    );
+    expect(window.localStorage.getItem(`nexestra.draft.${workspace.id}:${shared.id}`)).toBe(
+      "Nexestra draft",
+    );
+    expect(window.localStorage.getItem(`nexestra.draft.${productWorkspace.id}:${shared.id}`)).toBe(
+      "Product draft",
+    );
+  });
+
+  it("keeps a draft in memory and explains when browser storage is denied", async () => {
+    const user = userEvent.setup();
+    const thread = activityThread("thread-draft-denied", "general");
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => null);
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("Storage denied", "SecurityError");
+    });
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+      throw new DOMException("Storage denied", "SecurityError");
+    });
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/bootstrap") {
+          return jsonResponse({ ...bootstrapData, threads: [thread] });
+        }
+        if (path === `/api/threads/${thread.id}`) return jsonResponse(threadSnapshot(thread, []));
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      }),
+    );
+    render(<App />);
+
+    const composer = await screen.findByRole("combobox", { name: "Message" });
+    await user.type(composer, "Keep me in this tab");
+    expect(composer).toHaveValue("Keep me in this tab");
+    expect(
+      await screen.findByText(
+        "Browser storage is unavailable. Draft changes stay in this tab until you close it.",
+      ),
+    ).toBeVisible();
+    vi.restoreAllMocks();
+  });
+  it("restores a stored draft on hydration without clearing it", async () => {
+    const thread = activityThread("thread-draft-hydrated", "general");
+    const key = `nexestra.draft.${workspace.id}:${thread.id}`;
+    window.localStorage.setItem(key, "Saved across reload");
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/bootstrap") {
+          return jsonResponse({ ...bootstrapData, threads: [thread] });
+        }
+        if (path === `/api/threads/${thread.id}`) return jsonResponse(threadSnapshot(thread, []));
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      }),
+    );
+    render(<App />);
+
+    const composer = await screen.findByRole("combobox", { name: "Message" });
+    expect(composer).toHaveValue("Saved across reload");
+    expect(screen.getByRole("button", { name: /#general/ })).toHaveTextContent("Draft");
+    expect(window.localStorage.getItem(key)).toBe("Saved across reload");
+  });
+
+  it("keeps the draft and shows an error when sending fails", async () => {
+    const user = userEvent.setup();
+    const thread = activityThread("thread-draft-failed", "general");
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/bootstrap") {
+          return jsonResponse({ ...bootstrapData, threads: [thread] });
+        }
+        if (path === `/api/threads/${thread.id}/messages` && init?.method === "POST") {
+          return jsonResponse({ error: { message: "Unavailable" } }, 503);
+        }
+        if (path === `/api/threads/${thread.id}`) return jsonResponse(threadSnapshot(thread, []));
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      }),
+    );
+    render(<App />);
+
+    const composer = await screen.findByRole("combobox", { name: "Message" });
+    await user.type(composer, "Keep me after failure");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText("Unavailable");
+    expect(composer).toHaveValue("Keep me after failure");
+    expect(screen.getByRole("button", { name: /#general/ })).toHaveTextContent("Draft");
+    expect(window.localStorage.getItem(`nexestra.draft.${workspace.id}:${thread.id}`)).toBe(
+      "Keep me after failure",
+    );
+  });
+
+  it("retires the sent legacy draft so a reload does not resurrect it", async () => {
+    const user = userEvent.setup();
+    const thread = activityThread("thread-draft-legacy", "general");
+    const legacyKey = `nexestra.draft.${thread.id}`;
+    window.localStorage.setItem(legacyKey, "Sent long ago");
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/bootstrap") {
+        return jsonResponse({ ...bootstrapData, threads: [thread] });
+      }
+      if (path === `/api/threads/${thread.id}/messages` && init?.method === "POST") {
+        return jsonResponse({ message: {}, runs: [] }, 201);
+      }
+      if (path === `/api/threads/${thread.id}`) return jsonResponse(threadSnapshot(thread, []));
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const first = render(<App />);
+    let composer = await screen.findByRole("combobox", { name: "Message" });
+    expect(composer).toHaveValue("Sent long ago");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() =>
+      expect(window.localStorage.getItem(`nexestra.draft.${workspace.id}:${thread.id}`)).toBe(""),
+    );
+    first.unmount();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input).startsWith("/api/bootstrap")) {
+          return jsonResponse({ ...bootstrapData, threads: [thread] });
+        }
+        if (String(input) === `/api/threads/${thread.id}`) {
+          return jsonResponse(threadSnapshot(thread, []));
+        }
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      }),
+    );
+    render(<App />);
+    composer = await screen.findByRole("combobox", { name: "Message" });
+    expect(composer).toHaveValue("");
+    expect(screen.getByRole("button", { name: /#general/ })).not.toHaveTextContent("Draft");
+  });
+
+  it("keeps revisions monotonic when the composer is cleared and retyped during flight", async () => {
+    const user = userEvent.setup();
+    const thread = activityThread("thread-draft-aba", "general");
+    const pending = deferredResponse();
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/bootstrap") {
+          return jsonResponse({ ...bootstrapData, threads: [thread] });
+        }
+        if (path === `/api/threads/${thread.id}/messages` && init?.method === "POST") {
+          return pending.promise;
+        }
+        if (path === `/api/threads/${thread.id}`) return jsonResponse(threadSnapshot(thread, []));
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      }),
+    );
+    render(<App />);
+
+    const composer = await screen.findByRole("combobox", { name: "Message" });
+    await user.type(composer, "Old");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.clear(composer);
+    await user.type(composer, "Newer");
+    expect(composer).toHaveValue("Newer");
+    await act(async () => {
+      pending.resolve(jsonResponse({ message: {}, runs: [] }, 201));
+    });
+    await waitFor(() => expect(composer).toHaveValue("Newer"));
+    expect(window.localStorage.getItem(`nexestra.draft.${workspace.id}:${thread.id}`)).toBe(
+      "Newer",
+    );
+  });
+
+  it("clears only the sent revision when the composer is edited during flight", async () => {
+    const user = userEvent.setup();
+    const thread = activityThread("thread-draft-revision", "general");
+    const pending = deferredResponse();
+    let threadReads = 0;
+    const posted: unknown[] = [];
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/bootstrap") {
+        return jsonResponse({ ...bootstrapData, threads: [thread] });
+      }
+      if (path === `/api/threads/${thread.id}/messages` && init?.method === "POST") {
+        posted.push(JSON.parse(String(init?.body)));
+        return pending.promise;
+      }
+      if (path === `/api/threads/${thread.id}`) {
+        threadReads += 1;
+        return jsonResponse(threadSnapshot(thread, []));
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+
+    const composer = await screen.findByRole("combobox", { name: "Message" });
+    await user.type(composer, "First revision");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.type(composer, " Second");
+    expect(composer).toHaveValue("First revision Second");
+
+    await act(async () => {
+      pending.resolve(jsonResponse({ message: {}, runs: [] }, 201));
+    });
+    await waitFor(() => expect(threadReads).toBe(2));
+    expect(posted).toEqual([{ content: "First revision" }]);
+    expect(composer).toHaveValue("First revision Second");
+    expect(window.localStorage.getItem(`nexestra.draft.${workspace.id}:${thread.id}`)).toBe(
+      "First revision Second",
+    );
   });
 });
 

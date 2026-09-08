@@ -35,9 +35,23 @@
   color: #a7eddb;
 }
 
+.thread-draft-badge {
+  border-radius: 4px;
+  padding: 2px 5px;
+  font-size: 9px;
+  letter-spacing: 0.03em;
+  background: rgba(215, 170, 255, 0.14);
+  color: #d9b8ff;
+}
+
 [data-theme="light"] .thread-run-badge {
   background: rgba(78, 37, 90, 0.08);
   color: #66516c;
+}
+
+[data-theme="light"] .thread-draft-badge {
+  background: #f3e8ff;
+  color: #6d4f84;
 }
 
 [data-theme="light"] .thread-run-badge.waiting {

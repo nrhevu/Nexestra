@@ -82,6 +82,7 @@ import {
 } from "../shared/contracts.js";
 import { AttentionView } from "./AttentionView.js";
 import { ApiError, api } from "./api.js";
+import { ConversationState, readBrowserValue, writeBrowserValue } from "./conversationState.js";
 import { TopBar, type TopBarSurface } from "./TopBar.js";
 
 const RichMessage = lazy(() => import("./RichMessage.js"));
@@ -94,6 +95,7 @@ interface RouteState {
   view: PrimaryView;
   surface: Surface;
   threadId?: string;
+  workspaceId?: string;
 }
 
 interface LoginSession {
@@ -105,6 +107,8 @@ interface LoginSession {
 
 export function App() {
   const [route, setRoute] = useState<RouteState>(() => routeFromLocation());
+  const [conversations] = useState(() => new ConversationState());
+  const [, setDraftRevision] = useState(0);
   const [data, setData] = useState<BootstrapData>();
   const [threadData, setThreadData] = useState<ThreadData>();
   const [runActivities, setRunActivities] = useState<RunActivity[]>([]);
@@ -121,12 +125,11 @@ export function App() {
   const [agentToDelete, setAgentToDelete] = useState<AgentView>();
   const [agentToEdit, setAgentToEdit] = useState<AgentView>();
   const [theme, setTheme] = useState<"dark" | "light">(() => {
-    const stored = window.localStorage.getItem("nexestra.theme") as "dark" | "light" | null;
-    return stored ?? "dark";
+    return readBrowserValue("nexestra.theme") === "light" ? "light" : "dark";
   });
   const deferredRunActivities = useDeferredValue(runActivities);
   const workspaceIdRef = useRef<string | undefined>(
-    window.localStorage.getItem("nexestra.workspaceId") ?? undefined,
+    readBrowserValue("nexestra.workspaceId") ?? undefined,
   );
   const latestThreadRequestRef = useRef(0);
   const latestTaskInspectionRequestRef = useRef(0);
@@ -153,7 +156,7 @@ export function App() {
   // Apply theme to document
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    window.localStorage.setItem("nexestra.theme", theme);
+    writeBrowserValue("nexestra.theme", theme);
   }, [theme]);
 
   const toggleTheme = useCallback(() => {
@@ -212,7 +215,7 @@ export function App() {
             throw caught;
           // A saved workspace may have disappeared after the local data directory changed.
           workspaceIdRef.current = undefined;
-          window.localStorage.removeItem("nexestra.workspaceId");
+          writeBrowserValue("nexestra.workspaceId", null);
           next = await api<BootstrapData>("/api/bootstrap");
         }
         if (
@@ -221,7 +224,7 @@ export function App() {
         )
           return undefined;
         workspaceIdRef.current = next.workspace.id;
-        window.localStorage.setItem("nexestra.workspaceId", next.workspace.id);
+        writeBrowserValue("nexestra.workspaceId", next.workspace.id);
         const current = dataRef.current;
         let fresh = next;
         if (current?.workspace.id === next.workspace.id) {
@@ -341,16 +344,26 @@ export function App() {
   }, []);
 
   const routeThreadExists = Boolean(
-    route.threadId && data?.threads.some((thread) => thread.id === route.threadId),
+    route.threadId &&
+      data?.threads.some(
+        (thread) => thread.id === route.threadId && thread.workspaceId === data.workspace.id,
+      ),
   );
   useEffect(() => {
-    if (route.view !== "threads") return;
-    const threadId = routeThreadExists ? route.threadId : data?.threads[0]?.id;
+    if (route.view !== "threads" || !data || data.workspace.id !== workspaceIdRef.current) return;
+    const threadId = conversations.resolveThread(data.workspace.id, data.threads, route.threadId);
     if (!threadId) return;
+    conversations.rememberThread(data.workspace.id, threadId);
     if (threadId !== route.threadId) {
-      navigate(`/threads/${threadId}`, { view: "threads", surface: route.surface, threadId }, true);
+      const next = {
+        view: "threads" as const,
+        surface: route.surface,
+        threadId,
+        workspaceId: route.workspaceId,
+      };
+      navigate(pathFromRoute(next), next, true);
     }
-  }, [data?.threads, navigate, route, routeThreadExists]);
+  }, [conversations, data, navigate, route]);
 
   useEffect(() => {
     if (route.view !== "threads" || !route.threadId || !routeThreadExists) return;
@@ -483,12 +496,21 @@ export function App() {
     };
   }, [activeWorkspaceId, hasBackgroundRuns, refresh, updateData]);
 
-  const openThread = (threadId: string) =>
-    navigate(`/threads/${threadId}`, { view: "threads", surface: route.surface, threadId });
-  const openSurface = (surface: Surface) =>
-    navigate(`/surfaces/${surface}`, { view: "surfaces", surface });
+  const openThread = (threadId: string) => {
+    const next = {
+      view: "threads" as const,
+      surface: route.surface,
+      threadId,
+      workspaceId: route.workspaceId,
+    };
+    navigate(pathFromRoute(next), next);
+  };
+  const openSurface = (surface: Surface) => {
+    const next = { view: "surfaces" as const, surface, workspaceId: route.workspaceId };
+    navigate(pathFromRoute(next), next);
+  };
 
-  const beginWorkspaceSwitch = (workspaceId: string) => {
+  const beginWorkspaceSwitch = useCallback((workspaceId: string) => {
     workspaceGenerationRef.current += 1;
     latestThreadRequestRef.current += 1;
     workspaceIdRef.current = workspaceId;
@@ -505,7 +527,14 @@ export function App() {
     setAgentToDelete(undefined);
     setError(undefined);
     setNotice(undefined);
-  };
+  }, []);
+
+  useEffect(() => {
+    const workspaceId = route.workspaceId;
+    if (!workspaceId || workspaceId === workspaceIdRef.current) return;
+    beginWorkspaceSwitch(workspaceId);
+    void refresh(false, workspaceId);
+  }, [beginWorkspaceSwitch, refresh, route.workspaceId]);
 
   const selectWorkspace = async (workspaceId: string) => {
     if (workspaceId === workspaceIdRef.current) return;
@@ -513,9 +542,24 @@ export function App() {
     const next = await refresh(false, workspaceId);
     if (!next) return;
     if (routeRef.current.view === "threads") {
-      const threadId = next.threads[0]?.id;
+      const threadId = conversations.resolveThread(next.workspace.id, next.threads);
       if (threadId) {
-        navigate(`/threads/${threadId}`, { ...routeRef.current, view: "threads", threadId });
+        const previousThreadId = routeRef.current.threadId;
+        const nextRoute = {
+          ...routeRef.current,
+          view: "threads" as const,
+          threadId,
+          workspaceId,
+        };
+        navigate(pathFromRoute(nextRoute), nextRoute);
+        if (threadId === previousThreadId) void loadThread(threadId);
+      } else {
+        const nextRoute = {
+          view: "threads" as const,
+          surface: routeRef.current.surface,
+          workspaceId,
+        };
+        navigate(pathFromRoute(nextRoute), nextRoute);
       }
     }
   };
@@ -655,10 +699,13 @@ export function App() {
       <Sidebar
         data={data}
         route={route}
+        hasDraft={(threadId) =>
+          Boolean(conversations.draft(data.workspace.id, threadId).text.trim())
+        }
         onThread={openThread}
         onSurface={openSurface}
         onThreads={() => {
-          const threadId = route.threadId ?? data.threads[0]?.id;
+          const threadId = conversations.resolveThread(data.workspace.id, data.threads);
           if (threadId) openThread(threadId);
         }}
         onSettings={() => setModal("settings")}
@@ -678,18 +725,37 @@ export function App() {
             data={data}
             threadData={visibleThreadData}
             runActivities={deferredRunActivities}
+            draft={
+              route.threadId ? conversations.draft(data.workspace.id, route.threadId).text : ""
+            }
+            draftSaved={
+              route.threadId ? conversations.draft(data.workspace.id, route.threadId).saved : true
+            }
+            onDraftChange={(value) => {
+              if (!route.threadId) return;
+              conversations.updateDraft(data.workspace.id, route.threadId, value);
+              setDraftRevision((revision) => revision + 1);
+            }}
             onSend={async (content, files) => {
               if (!route.threadId) return;
+              const threadId = route.threadId;
+              const generation = workspaceGenerationRef.current;
+              const workspaceId = data.workspace.id;
+              const draftRevision = conversations.draft(workspaceId, threadId).revision;
               const body = new FormData();
               body.append("content", content);
               for (const file of files) body.append("files", file);
               await api(
-                `/api/threads/${route.threadId}/messages`,
+                `/api/threads/${threadId}/messages`,
                 files.length > 0
                   ? { method: "POST", body }
                   : { method: "POST", body: JSON.stringify({ content }) },
               );
-              await Promise.all([refresh(true), loadThread(route.threadId)]);
+              if (conversations.clearSentDraft(workspaceId, threadId, draftRevision)) {
+                setDraftRevision((revision) => revision + 1);
+              }
+              if (generation !== workspaceGenerationRef.current) return;
+              await Promise.all([refresh(true), loadThread(threadId)]);
             }}
             onRetry={(runId) =>
               mutate(
@@ -809,7 +875,7 @@ export function App() {
               const threadId = next?.threads[0]?.id;
               if (threadId) {
                 navigate(`/threads/${threadId}`, {
-                  view: "threads",
+                  view: "threads" as const,
                   surface: route.surface,
                   threadId,
                 });
@@ -1106,6 +1172,7 @@ function WorkspaceRail(props: {
 function Sidebar(props: {
   data: BootstrapData;
   route: RouteState;
+  hasDraft: (threadId: string) => boolean;
   onThread: (id: string) => void;
   onSurface: (surface: Surface) => void;
   onThreads: () => void;
@@ -1191,6 +1258,7 @@ function Sidebar(props: {
                   <span className="hash">#</span>
                   <span className="row-label">{thread.name}</span>
                   <span className="thread-row-status">
+                    {props.hasDraft(thread.id) && <span className="thread-draft-badge">Draft</span>}
                     <ThreadRunBadge
                       runs={props.data.activeRuns.filter((run) => run.threadId === thread.id)}
                     />
@@ -1295,12 +1363,15 @@ function ThreadView(props: {
   data: BootstrapData;
   threadData?: ThreadData;
   runActivities: RunActivity[];
+  draft: string;
+  draftSaved: boolean;
+  onDraftChange: (value: string) => void;
   onSend: (content: string, files: File[]) => Promise<void>;
   onRetry: (runId: string) => Promise<unknown>;
   onToolDecision: (toolCallId: string, approved: boolean) => Promise<void>;
   onToolResponse: (toolCallId: string, answers: string[][]) => Promise<void>;
 }) {
-  const [draft, setDraft] = useState("");
+  const { draft, onDraftChange: setDraft } = props;
   const [sending, setSending] = useState(false);
   const [localError, setLocalError] = useState<string>();
   const [mentionMenuOpen, setMentionMenuOpen] = useState(true);
@@ -1316,26 +1387,6 @@ function ThreadView(props: {
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const addFileButtonRef = useRef<HTMLButtonElement>(null);
   const pendingSelectionRef = useRef<{ start: number; end: number } | null>(null);
-
-  // Load draft from localStorage when thread changes
-  useEffect(() => {
-    const threadId = props.threadData?.thread?.id;
-    if (!threadId) return;
-    const stored = window.localStorage.getItem(`nexestra.draft.${threadId}`);
-    if (stored) setDraft(stored);
-    else setDraft("");
-  }, [props.threadData?.thread?.id]);
-
-  // Save draft to localStorage when it changes
-  const threadId = props.threadData?.thread?.id;
-  useEffect(() => {
-    if (!threadId) return;
-    if (draft) {
-      window.localStorage.setItem(`nexestra.draft.${threadId}`, draft);
-    } else {
-      window.localStorage.removeItem(`nexestra.draft.${threadId}`);
-    }
-  }, [draft, threadId]);
 
   useEffect(() => {
     const selection = pendingSelectionRef.current;
@@ -1471,13 +1522,9 @@ function ThreadView(props: {
     setLocalError(undefined);
     try {
       await props.onSend(content, attachments);
-      setDraft("");
       setAttachments([]);
       setMentionMenuOpen(true);
       setAddMenuOpen(false);
-      // Clear draft from localStorage after sending
-      const threadId = props.threadData?.thread.id;
-      if (threadId) window.localStorage.removeItem(`nexestra.draft.${threadId}`);
     } catch (caught) {
       setLocalError(messageFrom(caught));
     } finally {
@@ -1967,6 +2014,11 @@ function ThreadView(props: {
               </button>
             </div>
           </fieldset>
+          {!props.draftSaved && (
+            <p className="draft-storage-note" role="status">
+              Browser storage is unavailable. Draft changes stay in this tab until you close it.
+            </p>
+          )}
           {localError && (
             <p className="inline-error">
               <CircleAlert size={13} />
@@ -5406,12 +5458,26 @@ function messageFrom(error: unknown): string {
 
 function routeFromLocation(): RouteState {
   const parts = window.location.pathname.split("/").filter(Boolean);
+  const workspaceId = new URLSearchParams(window.location.search).get("workspace") ?? undefined;
   if (parts[0] === "surfaces") {
     const surface =
       parts[1] === "taskboard" || parts[1] === "knowledge" || parts[1] === "attention"
         ? parts[1]
         : "agents";
-    return { view: "surfaces", surface };
+    return { view: "surfaces", surface, ...(workspaceId ? { workspaceId } : {}) };
   }
-  return { view: "threads", surface: "agents", ...(parts[1] ? { threadId: parts[1] } : {}) };
+  return {
+    view: "threads",
+    surface: "agents",
+    ...(parts[1] ? { threadId: parts[1] } : {}),
+    ...(workspaceId ? { workspaceId } : {}),
+  };
+}
+
+function pathFromRoute(route: RouteState): string {
+  const view =
+    route.view === "threads" && route.threadId
+      ? `/threads/${encodeURIComponent(route.threadId)}`
+      : `/surfaces/${route.surface}`;
+  return route.workspaceId ? `${view}?workspace=${encodeURIComponent(route.workspaceId)}` : view;
 }

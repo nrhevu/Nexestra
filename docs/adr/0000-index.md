@@ -26,6 +26,7 @@
 | [0022](0022-visible-assignment-history.md) | Accepted | Show every task assignment attempt in the process dialog |
 | [0023](0023-safe-assignment-branch-cleanup.md) | Accepted | Delete merged assignment branches explicitly without force |
 | [0024](0024-workspace-attention-projection.md) | Accepted | Derive workspace attention from current runs and latest task assignments |
+| [0025](0025-app-scoped-conversation-state.md) | Accepted | Own drafts and last-thread browser state at the App root |
 | [0026](0026-agent-profile-editing.md) | Accepted | Editable agent profiles with write-only credential rotation |
 | [0027](0027-workspace-rename-and-reorder.md) | Accepted | Rename workspaces and persist an explicit rail order |
 | [0028](0028-shared-worker-assignment-lifecycle.md) | Accepted | Share the canonical queued Worker lifecycle between manual and Master delegation |

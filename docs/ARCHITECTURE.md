@@ -58,6 +58,14 @@ Global search uses an editable combobox with keyboard selection and an `aria-act
 listbox. It searches the current bootstrap data. Thread results navigate to the thread, while task
 and knowledge results open their existing detail dialogs directly.
 
+Draft text, the theme, and the saved workspace are the only browser-persisted UI state. An
+App-owned `ConversationState` keeps drafts under `nexestra.draft.<workspaceId>:<threadId>`, reads
+only on first access, and clears only the sent revision after a successful send; the empty value is a tombstone that also retires legacy thread-only keys. The sidebar shows a **Draft**
+badge per thread, and each workspace remembers its last opened thread under
+`nexestra.lastThread.<workspaceId>` so the Threads entry returns to the active conversation. Guarded
+storage calls degrade to in-memory text with a visible note instead of interrupting the composer.
+See [ADR 0025](adr/0025-app-scoped-conversation-state.md).
+
 The attention projection uses active dispatcher runs plus current task, assignment, agent, and
 thread metadata. Bootstrap and the activity endpoint return the same shared item shape. Waiting
 approval/input runs are listed first. Tasks contribute at most one item based on their status and

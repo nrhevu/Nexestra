@@ -25,6 +25,11 @@ Press **Cmd/Ctrl+K** to focus search, use **↑/↓** to select a result, **Ente
 **Escape** to dismiss suggestions. Task and knowledge results open the exact item. Start a query
 with `/` to find commands, including opening Needs attention.
 
+Composer drafts are stored per workspace and thread, so switching threads or reloading the tab
+restores what you were typing. Thread rows show a **Draft** badge while a draft exists, and the
+Threads entry returns to the last thread you had open in that workspace. Drafts stay browser-only;
+if browser storage is unavailable they remain in the tab with a short note.
+
 ## Run locally
 
 Requires Node.js 24+ and pnpm 11.
