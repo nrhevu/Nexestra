@@ -15,6 +15,7 @@ import {
   Copy,
   Download,
   ExternalLink,
+  Eye,
   FileText,
   GitBranch,
   History,
@@ -90,6 +91,10 @@ import {
 import { AttentionView } from "./AttentionView.js";
 import { ApiError, api } from "./api.js";
 import { ConversationState, readBrowserValue, writeBrowserValue } from "./conversationState.js";
+import {
+  KnowledgeDocumentPreview,
+  type KnowledgeDocumentPreviewHandle,
+} from "./KnowledgeDocumentPreview.js";
 import { MessageSearchDialog } from "./MessageSearchDialog.js";
 import { TopBar, type TopBarSurface } from "./TopBar.js";
 
@@ -5055,6 +5060,7 @@ function KnowledgeDetailDialog({
   const [replaceError, setReplaceError] = useState<string>();
   const [restoringRevisionId, setRestoringRevisionId] = useState<string>();
   const [restoreError, setRestoreError] = useState<string>();
+  const previewRef = useRef<KnowledgeDocumentPreviewHandle>(null);
   const documentItem = item.kind === "document" ? item : undefined;
   useEffect(() => {
     if (!documentItem) return;
@@ -5183,6 +5189,15 @@ function KnowledgeDetailDialog({
                       </a>
                       <button
                         type="button"
+                        disabled={replacing || restoringRevisionId !== undefined}
+                        aria-label={`Preview ${revision.fileName}`}
+                        onClick={() => previewRef.current?.selectRevision(revision.id)}
+                      >
+                        <Eye size={14} />
+                        Preview
+                      </button>
+                      <button
+                        type="button"
                         disabled={current || replacing || restoringRevisionId !== undefined}
                         aria-label={
                           current ? `Current ${revision.fileName}` : `Restore ${revision.fileName}`
@@ -5212,6 +5227,12 @@ function KnowledgeDetailDialog({
                   {restoreError}
                 </p>
               )}
+              <KnowledgeDocumentPreview
+                ref={previewRef}
+                document={item}
+                revisions={revisions}
+                disabled={replacing || restoringRevisionId !== undefined}
+              />
               <div className="replace-file">
                 <strong>Replace file</strong>
                 <small>The current file stays downloadable while a new version is published.</small>

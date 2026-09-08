@@ -8,7 +8,7 @@ import type { Agent, RuntimeStatus } from "../shared/contracts.js";
 import { createApp } from "./app.js";
 import type { AssignmentRepositoryManager } from "./repository-manager.js";
 import type { AgentInvocation, AgentRunner } from "./runtime.js";
-import { FileStore } from "./store.js";
+import { FileStore, PREVIEW_BUDGET_BYTES } from "./store.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -481,6 +481,95 @@ describe("HTTP app", () => {
         error: { code: "invalid", message: "Document revision content is corrupted." },
       });
     }
+  });
+
+  it("serves bounded current and historical previews without writes or provider calls", async () => {
+    const created = await store.createKnowledgeDocument(
+      { name: "Preview guide", handle: "preview-guide", description: "" },
+      {
+        name: "preview.md",
+        mediaType: "text/markdown",
+        bytes: new TextEncoder().encode("# Preview v1"),
+      },
+    );
+    const firstRevisionId = created.currentRevisionId;
+    const largeBytes = Buffer.concat([
+      Buffer.alloc(PREVIEW_BUDGET_BYTES, 0x41),
+      Buffer.from("😀"),
+      Buffer.from("tail"),
+    ]);
+    await store.replaceKnowledgeDocument(
+      created.id,
+      { expectedRevisionId: firstRevisionId },
+      { name: "preview-large.md", mediaType: "text/plain", bytes: largeBytes },
+    );
+    const binary = await store.createKnowledgeDocument(
+      { name: "Diagram", handle: "preview-diagram", description: "" },
+      {
+        name: "diagram.png",
+        mediaType: "image/png",
+        bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+      },
+    );
+    const stateBefore = await readFile(store.stateFile, "utf8");
+
+    const currentResponse = await app.request(`/api/knowledge/${created.id}/preview`);
+    expect(currentResponse.status).toBe(200);
+    const current = (await currentResponse.json()) as {
+      fileName: string;
+      supported: boolean;
+      truncated: boolean;
+      text?: string;
+    };
+    expect(current).toMatchObject({
+      fileName: "preview-large.md",
+      supported: true,
+      truncated: true,
+    });
+    expect(current.text).not.toContain("😀");
+    expect(Buffer.byteLength(current.text ?? "", "utf8")).toBe(PREVIEW_BUDGET_BYTES);
+    expect(JSON.stringify(current)).not.toContain("workspaces");
+
+    const oldResponse = await app.request(
+      `/api/knowledge/${created.id}/preview?revisionId=${firstRevisionId}`,
+    );
+    expect(oldResponse.status).toBe(200);
+    await expect(oldResponse.json()).resolves.toMatchObject({
+      fileName: "preview.md",
+      supported: true,
+      truncated: false,
+      text: "# Preview v1",
+      isCurrent: false,
+    });
+
+    const unsupported = await app.request(`/api/knowledge/${binary.id}/preview`);
+    expect(unsupported.status).toBe(200);
+    await expect(unsupported.json()).resolves.toMatchObject({
+      supported: false,
+      fileName: "diagram.png",
+      reason: expect.stringContaining("cannot be previewed"),
+    });
+    const missing = await app.request(`/api/knowledge/${created.id}/preview?revisionId=missing`);
+    expect(missing.status).toBe(404);
+    expect(await readFile(store.stateFile, "utf8")).toBe(stateBefore);
+    expect(runner.invocations).toBe(0);
+  });
+
+  it("reports a corrupted revision before invalid UTF-8 in previews", async () => {
+    const item = await store.createKnowledgeDocument(
+      { name: "Broken preview", handle: "broken-preview", description: "" },
+      {
+        name: "broken.txt",
+        mediaType: "text/plain",
+        bytes: new TextEncoder().encode("ok"),
+      },
+    );
+    await writeFile(store.knowledgePath(item), Buffer.from([0x6f, 0x6b, 0xff]));
+    const response = await app.request(`/api/knowledge/${item.id}/preview`);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "invalid", message: "Document revision content is corrupted." },
+    });
   });
 
   it("rejects replacement uploads with too many files before buffering", async () => {

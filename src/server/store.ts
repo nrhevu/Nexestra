@@ -30,6 +30,8 @@ import {
   CreateThreadSchema,
   CreateWorkspaceSchema,
   type KnowledgeDocument,
+  type KnowledgeDocumentPreview,
+  KnowledgeDocumentPreviewSchema,
   type KnowledgeDocumentRevisions,
   KnowledgeDocumentSchema,
   type KnowledgeItem,
@@ -162,6 +164,11 @@ export const MESSAGE_SEARCH_DEFAULT_BUDGETS: MessageSearchBudgets = {
   maxScanLines: 200_000,
   maxLineBytes: 1 * 1024 * 1024,
 };
+export const PREVIEW_BUDGET_BYTES = 128 * 1024;
+export const MAX_CREDENTIAL_UTF8_BYTES = 4_096 * 4;
+export const PREVIEW_OVERREAD_BYTES = 4;
+export const MAX_PREVIEW_REDACTION_LOOKAHEAD_BYTES =
+  MAX_CREDENTIAL_UTF8_BYTES + PREVIEW_OVERREAD_BYTES;
 
 export interface UploadArtifactInput {
   name: string;
@@ -371,6 +378,29 @@ export class FileStore {
       redacted = redacted.replace(token, (_match, prefix: string) => `${prefix}[REDACTED]`);
     }
     return redacted;
+  }
+
+  redactPreviewText(previewText: string, lookaheadText: string): string {
+    const credentials = Object.values(this.credentials).filter((value) => value.length > 0);
+    if (credentials.length === 0) return this.redactSecrets(previewText);
+    const boundaryChars = previewText.length;
+    let earliestCut: number | undefined;
+    for (const credential of credentials) {
+      let fromIndex = 0;
+      for (;;) {
+        const start = lookaheadText.indexOf(credential, fromIndex);
+        if (start === -1) break;
+        const end = start + credential.length;
+        if (start < boundaryChars && end > boundaryChars) {
+          earliestCut = earliestCut === undefined ? start : Math.min(earliestCut, start);
+        }
+        fromIndex = start + 1;
+      }
+    }
+    if (earliestCut !== undefined) {
+      return this.redactSecrets(lookaheadText.slice(0, earliestCut));
+    }
+    return this.redactSecrets(previewText);
   }
 
   transcriptPath(threadId: string): string {
@@ -708,6 +738,81 @@ export class FileStore {
       throw new StoreError("invalid", "Document revision content is corrupted.");
     }
     return { revision: structuredClone(revision), bytes: Uint8Array.from(bytes) };
+  }
+
+  async previewKnowledgeDocument(
+    id: string,
+    revisionId?: string,
+  ): Promise<KnowledgeDocumentPreview> {
+    const item = this.getKnowledge(id);
+    if (item?.kind !== "document") {
+      throw new StoreError("not_found", "Knowledge document not found.");
+    }
+    const revision = revisionId
+      ? item.revisions.find((entry) => entry.id === revisionId)
+      : item.currentRevisionId
+        ? item.revisions.find((entry) => entry.id === item.currentRevisionId)
+        : undefined;
+    if (revisionId && !revision) {
+      throw new StoreError("not_found", "Document revision not found.");
+    }
+    if (!revisionId && item.currentRevisionId && !revision) {
+      throw new StoreError("invalid", "Document revision content is corrupted.");
+    }
+    const isCurrent = revisionId === undefined || revision?.id === item.currentRevisionId;
+    const base = revision
+      ? {
+          revisionId: revision.id,
+          fileName: this.redactSecrets(revision.fileName),
+          mediaType: this.redactSecrets(revision.mediaType),
+          size: revision.size,
+          sha256: revision.sha256,
+          createdAt: revision.createdAt,
+        }
+      : {
+          fileName: this.redactSecrets(item.fileName),
+          mediaType: this.redactSecrets(item.mediaType),
+          size: item.size,
+        };
+    if (!isTextMediaType(base.mediaType)) {
+      return KnowledgeDocumentPreviewSchema.parse({
+        ...base,
+        isCurrent,
+        supported: false,
+        truncated: false,
+        reason: "This file type cannot be previewed as plain text. Download it instead.",
+      });
+    }
+    const file = revision ? this.managedPath(revision.storagePath) : this.knowledgePath(item);
+    const redactionLookaheadBytes = Math.min(
+      MAX_PREVIEW_REDACTION_LOOKAHEAD_BYTES,
+      Math.max(
+        PREVIEW_OVERREAD_BYTES,
+        ...Object.values(this.credentials).map((value) => Buffer.byteLength(value)),
+      ),
+    );
+    let streamed: Awaited<ReturnType<typeof hashAndBoundPreview>>;
+    try {
+      streamed = await hashAndBoundPreview(file, revision?.sha256, redactionLookaheadBytes);
+    } catch (error) {
+      if (error instanceof InvalidUtf8PreviewError) {
+        return KnowledgeDocumentPreviewSchema.parse({
+          ...base,
+          isCurrent,
+          supported: false,
+          truncated: false,
+          reason: "This file is not valid UTF-8. Download it instead.",
+        });
+      }
+      throw error;
+    }
+    return KnowledgeDocumentPreviewSchema.parse({
+      ...base,
+      isCurrent,
+      supported: true,
+      text: this.redactPreviewText(streamed.text, streamed.redactionText),
+      truncated: streamed.truncated,
+    });
   }
 
   async createKnowledgeRepository(rawInput: unknown): Promise<KnowledgeRepository> {
@@ -2266,6 +2371,113 @@ function isTextMediaType(mediaType: string): boolean {
     mediaType.startsWith("text/") ||
     ["application/json", "application/yaml", "application/xml"].includes(mediaType)
   );
+}
+
+class InvalidUtf8PreviewError extends Error {}
+
+interface BoundedPreview {
+  sha256: string;
+  text: string;
+  redactionText: string;
+  truncated: boolean;
+}
+
+async function hashAndBoundPreview(
+  file: string,
+  expectedHash?: string,
+  redactionLookaheadBytes = PREVIEW_OVERREAD_BYTES,
+): Promise<BoundedPreview> {
+  const hash = createHash("sha256");
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const retained: Buffer[] = [];
+  let retainedBytes = 0;
+  let totalReadBytes = 0;
+  let invalidUtf8 = false;
+  let overflow = false;
+  const retainLimit = PREVIEW_BUDGET_BYTES + redactionLookaheadBytes;
+  const tooLargeMessage = "Knowledge document file is too large.";
+  let fileSize: number | undefined;
+  try {
+    fileSize = (await stat(file)).size;
+    if (fileSize > MAX_UPLOAD_BYTES) {
+      throw new StoreError("invalid", tooLargeMessage);
+    }
+    for await (const chunk of createReadStream(file, { highWaterMark: 64 * 1024 })) {
+      const remaining = MAX_UPLOAD_BYTES + 1 - totalReadBytes;
+      if (remaining <= 0) {
+        overflow = true;
+        break;
+      }
+      const source = chunk as Buffer;
+      const bytes = remaining < source.length ? source.subarray(0, remaining) : source;
+      hash.update(bytes);
+      if (!invalidUtf8) {
+        try {
+          decoder.decode(bytes, { stream: true });
+        } catch {
+          invalidUtf8 = true;
+        }
+      }
+      totalReadBytes += bytes.length;
+      if (totalReadBytes > MAX_UPLOAD_BYTES) {
+        overflow = true;
+        break;
+      }
+      if (retainedBytes < retainLimit) {
+        const keep = bytes.subarray(0, retainLimit - retainedBytes);
+        retained.push(keep);
+        retainedBytes += keep.length;
+      }
+    }
+    if (!invalidUtf8) {
+      try {
+        decoder.decode();
+      } catch {
+        invalidUtf8 = true;
+      }
+    }
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) {
+      throw new StoreError("invalid", "Knowledge document file is missing.");
+    }
+    throw error;
+  }
+  if (overflow) {
+    throw new StoreError("invalid", tooLargeMessage);
+  }
+  const sha256 = hash.digest("hex");
+  if (expectedHash && expectedHash !== sha256) {
+    throw new StoreError("invalid", "Document revision content is corrupted.");
+  }
+  if (invalidUtf8) {
+    throw new InvalidUtf8PreviewError();
+  }
+  const allRetained = Buffer.concat(retained);
+  const previewBoundary = utf8SafeBoundary(
+    allRetained.subarray(0, PREVIEW_BUDGET_BYTES),
+    PREVIEW_BUDGET_BYTES,
+  );
+  const redactionEnd = Math.min(allRetained.length, PREVIEW_BUDGET_BYTES + redactionLookaheadBytes);
+  const redactionBoundary = utf8SafeBoundary(allRetained.subarray(0, redactionEnd), redactionEnd);
+  return {
+    sha256,
+    text: new TextDecoder("utf-8").decode(previewBoundary),
+    redactionText: new TextDecoder("utf-8").decode(redactionBoundary),
+    truncated: (fileSize ?? totalReadBytes) > PREVIEW_BUDGET_BYTES,
+  };
+}
+
+function utf8SafeBoundary(bytes: Uint8Array, maxBytes: number): Uint8Array {
+  let end = Math.min(bytes.length, maxBytes);
+  for (;;) {
+    try {
+      new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, end));
+      return bytes.subarray(0, end);
+    } catch {
+      if (end === 0) return bytes.subarray(0, 0);
+      end -= 1;
+    }
+  }
 }
 
 function extractWebUrls(content: string): string[] {

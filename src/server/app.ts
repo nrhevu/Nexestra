@@ -241,6 +241,16 @@ export function createApp(options: CreateAppOptions) {
     );
   });
 
+  app.get("/api/knowledge/:id/preview", async (context) => {
+    const revisionId = context.req.query("revisionId");
+    return context.json(
+      await options.store.previewKnowledgeDocument(
+        context.req.param("id"),
+        revisionId === undefined || revisionId === "" ? undefined : revisionId,
+      ),
+    );
+  });
+
   app.get("/api/knowledge/:id/revisions/:revisionId/content", async (context) => {
     const { revision, bytes } = await options.store.documentRevisionContent(
       context.req.param("id"),

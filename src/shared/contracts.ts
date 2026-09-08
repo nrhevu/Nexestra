@@ -304,6 +304,21 @@ export const KnowledgeDocumentRevisionsSchema = z.object({
 });
 export type KnowledgeDocumentRevisions = z.infer<typeof KnowledgeDocumentRevisionsSchema>;
 
+export const KnowledgeDocumentPreviewSchema = z.object({
+  revisionId: z.string().optional(),
+  isCurrent: z.boolean(),
+  fileName: z.string(),
+  mediaType: z.string(),
+  size: z.number().int().nonnegative(),
+  sha256: z.string().optional(),
+  createdAt: z.string().optional(),
+  supported: z.boolean(),
+  text: z.string().optional(),
+  truncated: z.boolean(),
+  reason: z.string().optional(),
+});
+export type KnowledgeDocumentPreview = z.infer<typeof KnowledgeDocumentPreviewSchema>;
+
 export const MessageAuthorSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("user"), id: z.literal("local-user"), name: z.string() }),
   z.object({

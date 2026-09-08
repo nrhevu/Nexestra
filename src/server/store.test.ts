@@ -2,7 +2,7 @@ import { appendFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "no
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { FileStore, StoreError } from "./store.js";
+import { FileStore, MAX_UPLOAD_BYTES, PREVIEW_BUDGET_BYTES, StoreError } from "./store.js";
 
 async function openStore() {
   const root = await mkdtemp(join(tmpdir(), "nexestra-store-"));
@@ -1112,6 +1112,255 @@ describe("FileStore", () => {
     expect(await readdir(join(store.root, revisionDirectory))).toEqual([item.currentRevisionId]);
   });
 
+  it("previews current and historical revisions with bounded UTF-8 text and redaction", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-preview-store-"));
+    const secret = "sk-preview-secret-abc123";
+    await writeFile(
+      join(root, "credentials.json"),
+      JSON.stringify({ version: 1, credentials: { worker: secret } }),
+    );
+    const store = await FileStore.open({ root, workspacePath: root });
+    const oldBytes = new TextEncoder().encode(`# Old\nBearer ${secret}\n`);
+    const item = await store.createKnowledgeDocument(
+      { name: "Preview guide", handle: "preview-guide", description: "" },
+      { name: "preview.md", mediaType: "text/markdown", bytes: oldBytes },
+    );
+    const firstRevisionId = item.currentRevisionId;
+    const largeBytes = Buffer.concat([
+      Buffer.alloc(PREVIEW_BUDGET_BYTES, 0x41),
+      Buffer.from("😀"),
+      Buffer.from("tail"),
+    ]);
+    const replaced = await store.replaceKnowledgeDocument(
+      item.id,
+      { expectedRevisionId: firstRevisionId },
+      { name: "preview-large.md", mediaType: "text/plain", bytes: largeBytes },
+    );
+    if (replaced.kind !== "document") throw new Error("expected document");
+
+    const current = await store.previewKnowledgeDocument(item.id);
+    expect(current).toMatchObject({
+      revisionId: replaced.currentRevisionId,
+      isCurrent: true,
+      fileName: "preview-large.md",
+      mediaType: "text/plain",
+      supported: true,
+      truncated: true,
+    });
+    expect(current.text).not.toContain("😀");
+    expect(Buffer.byteLength(current.text ?? "", "utf8")).toBe(PREVIEW_BUDGET_BYTES);
+    expect(JSON.stringify(current)).not.toContain("workspaces");
+
+    const old = await store.previewKnowledgeDocument(item.id, firstRevisionId);
+    expect(old).toMatchObject({
+      revisionId: firstRevisionId,
+      isCurrent: false,
+      fileName: "preview.md",
+      supported: true,
+      truncated: false,
+    });
+    expect(old.text).toContain("# Old");
+    expect(old.text).not.toContain(secret);
+    expect(old.text).toContain("[REDACTED]");
+  });
+
+  it("keeps an intact final multibyte character and cuts a split one at the preview budget", async () => {
+    const store = await openStore();
+    const small = await store.createKnowledgeDocument(
+      { name: "Emoji", handle: "emoji-preview", description: "" },
+      { name: "emoji.txt", mediaType: "text/plain", bytes: new TextEncoder().encode("Hello 😀") },
+    );
+    const smallPreview = await store.previewKnowledgeDocument(small.id);
+    expect(smallPreview).toMatchObject({ supported: true, truncated: false });
+    expect(smallPreview.text).toBe("Hello 😀");
+    const split = await store.createKnowledgeDocument(
+      { name: "Split", handle: "split-preview", description: "" },
+      {
+        name: "split.txt",
+        mediaType: "text/plain",
+        bytes: Buffer.concat([Buffer.alloc(PREVIEW_BUDGET_BYTES, 0x41), Buffer.from("😀tail")]),
+      },
+    );
+    const splitPreview = await store.previewKnowledgeDocument(split.id);
+    expect(splitPreview).toMatchObject({ supported: true, truncated: true });
+    expect(splitPreview.text).toBe("A".repeat(PREVIEW_BUDGET_BYTES));
+    expect(splitPreview.text).not.toContain("😀");
+    expect(Buffer.byteLength(splitPreview.text ?? "", "utf8")).toBe(PREVIEW_BUDGET_BYTES);
+  });
+
+  it("rejects previewing a revision grown past the upload cap after creation", async () => {
+    const store = await openStore();
+    const exact = Buffer.alloc(MAX_UPLOAD_BYTES, 0x41);
+    const item = await store.createKnowledgeDocument(
+      { name: "Exact cap", handle: "exact-preview-cap", description: "" },
+      { name: "exact.txt", mediaType: "text/plain", bytes: exact },
+    );
+    await appendFile(store.knowledgePath(item), Buffer.from("x"));
+    await expect(store.previewKnowledgeDocument(item.id)).rejects.toMatchObject({
+      code: "invalid",
+      message: "Knowledge document file is too large.",
+    });
+  });
+
+  it("redacts preview metadata and cuts before a secret split at the preview budget", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-preview-secret-"));
+    const metadataSecret = "sk-preview-meta-secret";
+    const splitSecret = `sk-split-secret-${"x".repeat(1024)}`;
+    await writeFile(
+      join(root, "credentials.json"),
+      JSON.stringify({ version: 1, credentials: { meta: metadataSecret, split: splitSecret } }),
+    );
+    const store = await FileStore.open({ root, workspacePath: root });
+    const binary = await store.createKnowledgeDocument(
+      { name: "Secret diagram", handle: "secret-diagram", description: "" },
+      {
+        name: `${metadataSecret}.png`,
+        mediaType: "image/png",
+        bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+      },
+    );
+    const unsupported = await store.previewKnowledgeDocument(binary.id);
+    expect(unsupported.supported).toBe(false);
+    expect(unsupported.fileName).not.toContain(metadataSecret);
+    expect(JSON.stringify(unsupported)).not.toContain(metadataSecret);
+    const textItem = await store.createKnowledgeDocument(
+      { name: "Secret notes", handle: "secret-notes", description: "" },
+      {
+        name: `${metadataSecret}.txt`,
+        mediaType: "text/plain",
+        bytes: new TextEncoder().encode("plain"),
+      },
+    );
+    const supported = await store.previewKnowledgeDocument(textItem.id);
+    expect(supported.supported).toBe(true);
+    expect(supported.fileName).not.toContain(metadataSecret);
+    expect(JSON.stringify(supported)).not.toContain(metadataSecret);
+    const secretStart = PREVIEW_BUDGET_BYTES - 512;
+    const splitItem = await store.createKnowledgeDocument(
+      { name: "Split secret", handle: "split-secret", description: "" },
+      {
+        name: "split-secret.txt",
+        mediaType: "text/plain",
+        bytes: Buffer.concat([
+          Buffer.alloc(secretStart, 0x41),
+          Buffer.from(splitSecret, "utf8"),
+          Buffer.from("\ntail"),
+        ]),
+      },
+    );
+    const emojiItem = await store.createKnowledgeDocument(
+      { name: "Emoji split secret", handle: "emoji-split-secret", description: "" },
+      {
+        name: "emoji-split-secret.txt",
+        mediaType: "text/plain",
+        bytes: Buffer.concat([
+          Buffer.alloc(PREVIEW_BUDGET_BYTES - 4 - 512, 0x41),
+          Buffer.from("😀"),
+          Buffer.from(splitSecret, "utf8"),
+          Buffer.from("\ntail"),
+        ]),
+      },
+    );
+    const emojiPreview = await store.previewKnowledgeDocument(emojiItem.id);
+    expect(emojiPreview.supported).toBe(true);
+    expect(emojiPreview.text).toContain("😀");
+    expect(Buffer.byteLength(emojiPreview.text ?? "", "utf8")).toBeLessThanOrEqual(
+      PREVIEW_BUDGET_BYTES,
+    );
+    expect(emojiPreview.text).not.toContain(splitSecret.slice(0, 32));
+    expect(emojiPreview.text).not.toContain("tail");
+    const preview = await store.previewKnowledgeDocument(splitItem.id);
+    expect(preview.supported).toBe(true);
+    expect(Buffer.byteLength(preview.text ?? "", "utf8")).toBeLessThanOrEqual(PREVIEW_BUDGET_BYTES);
+    expect(preview.text).not.toContain(splitSecret.slice(0, 32));
+    expect(preview.text).not.toContain("tail");
+    expect(JSON.stringify(preview)).not.toContain(splitSecret);
+  });
+
+  it("previews a legacy unpinned document without inventing revision metadata", async () => {
+    const store = await openStore();
+    const item = await store.createKnowledgeDocument(
+      { name: "Legacy preview", handle: "legacy-preview", description: "" },
+      {
+        name: "legacy.txt",
+        mediaType: "text/plain",
+        bytes: new TextEncoder().encode("Legacy plain text."),
+      },
+    );
+    const internal = store as unknown as {
+      state: { knowledge: Array<Record<string, unknown>> };
+    };
+    internal.state.knowledge = internal.state.knowledge.map((entry) =>
+      entry.id === item.id ? { ...entry, revisions: [], currentRevisionId: undefined } : entry,
+    );
+
+    const preview = await store.previewKnowledgeDocument(item.id);
+    expect(preview.revisionId).toBeUndefined();
+    expect(preview).toMatchObject({
+      isCurrent: true,
+      fileName: "legacy.txt",
+      supported: true,
+      truncated: false,
+      text: "Legacy plain text.",
+    });
+    const captured = store.getKnowledge(item.id);
+    if (captured?.kind !== "document") throw new Error("expected document");
+    expect(captured.revisions).toHaveLength(0);
+    expect(captured.currentRevisionId).toBeUndefined();
+  });
+
+  it("rejects unsupported, invalid UTF-8, corrupted, missing, and foreign previews", async () => {
+    const store = await openStore();
+    const binary = await store.createKnowledgeDocument(
+      { name: "Diagram", handle: "diagram", description: "" },
+      {
+        name: "diagram.png",
+        mediaType: "image/png",
+        bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+      },
+    );
+    const invalidBytes = Buffer.concat([Buffer.from("ok"), Buffer.from([0xff])]);
+    const invalid = await store.createKnowledgeDocument(
+      { name: "Invalid UTF-8", handle: "invalid-utf8", description: "" },
+      { name: "broken.txt", mediaType: "text/plain", bytes: invalidBytes },
+    );
+    const other = await store.createKnowledgeDocument(
+      { name: "Other", handle: "other-preview", description: "" },
+      {
+        name: "other.txt",
+        mediaType: "text/plain",
+        bytes: new TextEncoder().encode("Other"),
+      },
+    );
+    const repository = await store.createKnowledgeRepository({
+      name: "Repo",
+      handle: "preview-repo",
+      description: "",
+      source: "/tmp/source",
+    });
+
+    const unsupported = await store.previewKnowledgeDocument(binary.id);
+    expect(unsupported.supported).toBe(false);
+    expect(unsupported.text).toBeUndefined();
+    expect(unsupported.reason).toContain("cannot be previewed");
+    const invalidPreview = await store.previewKnowledgeDocument(invalid.id);
+    expect(invalidPreview.supported).toBe(false);
+    expect(invalidPreview.reason).toContain("valid UTF-8");
+
+    await writeFile(store.knowledgePath(other), "tampered");
+    await expect(store.previewKnowledgeDocument(other.id)).rejects.toMatchObject({
+      code: "invalid",
+    });
+    await expect(store.previewKnowledgeDocument(invalid.id, "missing")).rejects.toMatchObject({
+      code: "not_found",
+    });
+    await expect(
+      store.previewKnowledgeDocument(invalid.id, other.revisions[0]?.id ?? ""),
+    ).rejects.toMatchObject({ code: "not_found" });
+    await expect(store.previewKnowledgeDocument(repository.id)).rejects.toMatchObject({
+      code: "not_found",
+    });
+  });
   it("rejects duplicate handles case-insensitively", async () => {
     const store = await openStore();
     await store.createAgent({

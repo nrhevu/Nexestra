@@ -214,6 +214,72 @@ describe("Knowledge document revisions", () => {
     expect(bootstraps).toBe(1);
   });
 
+  it("previews current and prior versions from the detail dialog", async () => {
+    window.localStorage.setItem("nexestra.workspaceId", workspace.id);
+    window.history.replaceState({}, "", "/surfaces/knowledge");
+    const doc = documentItem();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        return jsonResponse({ ...bootstrapData, knowledge: [doc] });
+      }
+      if (path === `/api/knowledge/${doc.id}/revisions`) {
+        return jsonResponse(revisionsPayload(doc));
+      }
+      if (path === `/api/knowledge/${doc.id}/preview?revisionId=rev-1`) {
+        return jsonResponse({
+          revisionId: "rev-1",
+          isCurrent: false,
+          fileName: "architecture.md",
+          mediaType: "text/markdown",
+          size: 17,
+          sha256: "old-hash",
+          createdAt: now,
+          supported: true,
+          truncated: false,
+          text: "# Architecture v1",
+        });
+      }
+      if (path === `/api/knowledge/${doc.id}/preview`) {
+        return jsonResponse({
+          revisionId: "rev-2",
+          isCurrent: true,
+          fileName: "architecture-v2.md",
+          mediaType: "text/markdown",
+          size: 17,
+          sha256: "new-hash",
+          createdAt: later,
+          supported: true,
+          truncated: false,
+          text: "# Architecture v2",
+        });
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+
+    const details = await openDocumentDetails(user, doc.name);
+    const history = within(details).getByRole("region", {
+      name: "Version history list",
+    });
+    await user.click(within(history).getByRole("button", { name: "Preview architecture.md" }));
+
+    expect(await within(details).findByText("# Architecture v1")).toBeVisible();
+    expect(within(details).getByText(/Prior version/)).toBeVisible();
+    expect(
+      within(details).getByRole("link", { name: "Download previewed architecture.md" }),
+    ).toHaveAttribute("href", `/api/knowledge/${doc.id}/revisions/rev-1/content`);
+
+    await user.click(within(details).getByRole("button", { name: "Preview current" }));
+    expect(await within(details).findByText("# Architecture v2")).toBeVisible();
+    expect(within(details).getByText(/Current version/)).toBeVisible();
+    expect(
+      within(details).getByRole("link", { name: "Download previewed architecture-v2.md" }),
+    ).toHaveAttribute("href", `/api/knowledge/${doc.id}/revisions/rev-2/content`);
+  });
+
   it("replaces the document with a real uploaded file and updates file and history without bootstrap", async () => {
     window.localStorage.setItem("nexestra.workspaceId", workspace.id);
     window.history.replaceState({}, "", "/surfaces/knowledge");
