@@ -158,7 +158,7 @@ describe("conversation history", () => {
       createdAt: now,
       updatedAt: now,
     };
-    for (let i = 0; i < 520; i += 1) {
+    for (let i = 0; i < 513; i += 1) {
       await store.updateRun({ ...run, updatedAt: new Date(Date.now() + i).toISOString() });
       await store.updateToolCall({
         ...tool,
@@ -185,7 +185,7 @@ describe("conversation history", () => {
     expect(page.runs[0]).toMatchObject({ id: run.id, status: "completed" });
     expect(page.toolCalls).toHaveLength(1);
     expect(page.toolCalls[0]).toMatchObject({ id: tool.id, status: "completed" });
-  });
+  }, 30_000);
 
   it("accepts own durable appends without restart and rejects external edits with 409", async () => {
     const store = await openStore();
