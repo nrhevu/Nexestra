@@ -3,6 +3,7 @@
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   AgentRun,
@@ -264,6 +265,31 @@ describe("RunHistoryView race and refresh behavior", () => {
     expect(screen.queryByLabelText("Run run-stale")).not.toBeInTheDocument();
   });
 
+  it("starts exactly one live request under React StrictMode remount replay", async () => {
+    const initial = deferred<Response>();
+    const fetchMock = vi.fn(() => initial.promise);
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <StrictMode>
+        <RunHistoryView
+          workspaceId={workspaceId}
+          agents={[makeAgent("agent-a", "Planner")]}
+          threads={[makeThread("thread-a", "Planning")]}
+          onOpenRun={vi.fn()}
+        />
+      </StrictMode>,
+    );
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("status")).toHaveTextContent("Loading run history…");
+
+    await act(async () => {
+      initial.resolve(jsonResponse(makePage([makeItem(makeRun("run-strict"))])));
+    });
+    expect(await screen.findByLabelText("Run run-strict")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("switches workspaces, aborts the old request, and never shows foreign rows", async () => {
     const foreign = deferred<Response>();
     const current = deferred<Response>();
@@ -383,6 +409,13 @@ describe("RunHistoryView race and refresh behavior", () => {
     const fetchMock = vi.fn(() => never);
     vi.stubGlobal("fetch", fetchMock);
     renderView();
+    // The initial effect defers dispatch by one microtask so StrictMode teardown
+    // can cancel the first setup; flush it before advancing the timeout timer.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       vi.advanceTimersByTime(30_000);

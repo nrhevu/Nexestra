@@ -172,6 +172,10 @@ export function RunHistoryView({
     const controller = new AbortController();
     controllerRef.current = controller;
     inFlightRef.current = true;
+    // Let StrictMode effect replay (setup -> cleanup -> setup) settle before
+    // dispatching a network request; the first setup is cancelled by teardown.
+    await Promise.resolve();
+    if (requestId !== requestRef.current || controller.signal.aborted) return;
     updateView((current) => ({
       ...current,
       page: null,
@@ -321,6 +325,9 @@ export function RunHistoryView({
       controllerRef.current?.abort();
       controllerRef.current = null;
       inFlightRef.current = false;
+      // Reset dedupe state so a StrictMode remount replay starts a fresh request.
+      filtersKeyRef.current = null;
+      revisionRef.current = undefined;
     },
     [],
   );
