@@ -108,6 +108,19 @@ badge per thread, and each workspace remembers its last opened thread under
 storage calls degrade to in-memory text with a visible note instead of interrupting the composer. Foreign bare deep links are resolved once through `/api/threads/:id/metadata` with workspace and route generation guards, never by polling or loading a transcript.
 See [ADR 0025](adr/0025-app-scoped-conversation-state.md).
 
+An App-owned `ReadState` stores versioned read-through message counts under
+`nexestra.readState.1.<workspaceId>`. A workspace with no valid saved marker baselines existing
+threads to current counts. Restored workspaces retain their markers; newly discovered conversations
+start at zero. Unread badges subtract these counts from current thread metadata, including archived
+threads in the workspace total. Automatic acknowledgement uses the loaded latest page's
+`lastMessageIndex`, gated by current transcript-bottom geometry, document visibility, focus and
+covering dialogs. Reading older or linked pages and Files & links does not advance the marker.
+Explicit mark-all batches the currently known counts into one write without navigation or API calls.
+Storage contains only identities and counts, bounded to 5,000 threads and 256 KiB per workspace.
+Tabs merge markers monotonically and repair stale snapshots through same-origin storage events;
+failed storage leaves the current session's markers in memory. See
+[ADR 0041](adr/0041-browser-local-conversation-read-state.md).
+
 `SubmissionState` owns pending message request IDs independently of a mounted conversation. Its
 workspace/thread-scoped entry records a UUID, payload fingerprint, timestamp and bounded file
 descriptors. WebCrypto hashes file bytes before a send; the bytes themselves stay in browser `File`
@@ -431,10 +444,16 @@ credentials.
   pages replace their predecessor; the app does not virtualize one continuous transcript.
 
 - Needs attention reflects the selected workspace's current conditions. It has no historical
-  notification log, read markers, snoozing, dismissal, desktop notifications, or cross-workspace
+  notification log, snoozing, dismissal, desktop notifications, or cross-workspace
   monitoring. Ordinary failed chat turns remain in their thread. Changes from another client are
   discovered on return, a visible online event or explicit refresh; idle clients do not continuously
   exchange updates.
+
+- Conversation unread state belongs to one browser profile and origin. It counts all canonical
+  messages and uses a read-through count, not a per-message receipt or proof of attention. Existing
+  history is baselined on first use; browser storage loss can reset those markers. Cross-tab merges
+  are best effort because localStorage read/write is not an atomic transaction. Markers do not
+  synchronize between devices or recover a data directory replaced with shorter history.
 
 - App-native `plan` and `delegate` are currently available to custom OpenAI-compatible Masters.
   ChatGPT OAuth Masters run through Codex CLI and do not yet receive this bridge.

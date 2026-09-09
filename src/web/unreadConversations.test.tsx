@@ -73,7 +73,7 @@ afterEach(() => {
 });
 
 describe("latestReadThrough", () => {
-  const base: LatestReadEligibility = {
+  const base = {
     workspaceId: "workspace-a",
     routeThreadId: "thread-1",
     modalOpen: false,
@@ -85,7 +85,7 @@ describe("latestReadThrough", () => {
       windowKind: "latest",
       lastMessageIndex: 7,
     },
-  };
+  } satisfies LatestReadEligibility;
 
   it("returns the loaded latest count only when every viewport gate passes", () => {
     expect(latestReadThrough(base)).toBe(7);
@@ -94,15 +94,15 @@ describe("latestReadThrough", () => {
     expect(latestReadThrough({ ...base, windowFocused: false })).toBeUndefined();
     expect(latestReadThrough({ ...base, bottomVisible: false })).toBeUndefined();
     expect(
-      latestReadThrough({ ...base, history: { ...base.history!, windowKind: "before" } }),
+      latestReadThrough({ ...base, history: { ...base.history, windowKind: "before" } }),
     ).toBeUndefined();
     expect(
-      latestReadThrough({ ...base, history: { ...base.history!, threadId: "thread-other" } }),
+      latestReadThrough({ ...base, history: { ...base.history, threadId: "thread-other" } }),
     ).toBeUndefined();
     expect(
       latestReadThrough({
         ...base,
-        history: { ...base.history!, lastMessageIndex: 0 },
+        history: { ...base.history, lastMessageIndex: 0 },
       }),
     ).toBeUndefined();
     expect(
@@ -142,7 +142,8 @@ describe("useLatestBottomVisibility", () => {
     const onChange = vi.fn();
     const view = render(<Harness onChange={onChange} />);
     geometry();
-    const callback = observerCallbacks.at(-1)!;
+    const callback = observerCallbacks.at(-1);
+    if (!callback) throw new Error("Transcript observer did not mount");
     act(() => callback([{ isIntersecting: true }]));
     expect(onChange).toHaveBeenLastCalledWith(true);
     view.unmount();
@@ -154,7 +155,8 @@ describe("useLatestBottomVisibility", () => {
     const onChange = vi.fn();
     const view = render(<Harness onChange={onChange} />);
     geometry();
-    const callback = observerCallbacks.at(-1)!;
+    const callback = observerCallbacks.at(-1);
+    if (!callback) throw new Error("Transcript observer did not mount");
     view.unmount();
     const callsAfterUnmount = onChange.mock.calls.length;
     act(() => callback([{ isIntersecting: true }]));
@@ -167,7 +169,8 @@ describe("useLatestBottomVisibility", () => {
     const onChange = vi.fn();
     render(<Harness onChange={onChange} />);
     const { sentinel } = geometry();
-    const callback = observerCallbacks.at(-1)!;
+    const callback = observerCallbacks.at(-1);
+    if (!callback) throw new Error("Transcript observer did not mount");
     act(() => callback([{ isIntersecting: true }]));
     expect(onChange).toHaveBeenLastCalledWith(true);
     // A newer page finished loading and moved the sentinel down before the old

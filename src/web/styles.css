@@ -611,6 +611,8 @@ kbd {
 .section-label .mark-all-read,
 .section-label .create-thread {
   margin-left: 0;
+  min-width: 24px;
+  min-height: 24px;
   padding: 4px;
   border-radius: 5px;
   color: var(--muted);
@@ -4143,6 +4145,10 @@ kbd {
 }
 
 .sidebar-row.archived.selected {
+  opacity: 1;
+}
+
+.sidebar-row.archived:has(.thread-unread-badge) {
   opacity: 1;
 }
 

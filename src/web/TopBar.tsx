@@ -114,7 +114,12 @@ export function TopBar(props: TopBarProps) {
           description: "Configure your workspace",
           action: props.onSettings,
         },
-      ].filter((command) => command.label.toLowerCase().includes(query.slice(1)))
+      ].filter((command) =>
+        [
+          command.label.toLowerCase(),
+          command.id.slice("command:".length).replaceAll("-", " "),
+        ].some((name) => name.includes(query.slice(1).trim())),
+      )
     : [];
 
   const searchResults: SearchResult[] =

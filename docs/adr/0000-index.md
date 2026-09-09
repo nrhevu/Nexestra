@@ -42,3 +42,4 @@
 | [0038](0038-bounded-conversation-history-pagination.md) | Accepted | Read finite message pages through an in-memory canonical JSONL offset index |
 | [0039](0039-recoverable-message-submission.md) | Accepted | Confirm saved sends by stable request identity and reconcile only unstarted agent work |
 | [0040](0040-workspace-resume-revalidation.md) | Accepted | Revalidate the selected workspace on return without losing drafts or history position |
+| [0041](0041-browser-local-conversation-read-state.md) | Accepted | Track unread conversations through browser-local counts and visible latest-page acknowledgement |

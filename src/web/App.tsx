@@ -113,6 +113,7 @@ import { TopBar, type TopBarSurface } from "./TopBar.js";
 import {
   latestReadThrough,
   ReadState,
+  threadUnread,
   totalUnread,
   useLatestBottomVisibility,
 } from "./unreadConversations.js";
@@ -199,7 +200,7 @@ export function App() {
   });
   const deferredRunActivities = useDeferredValue(runActivities);
   const [readState] = useState(() => new ReadState());
-  const [readStateRevision, setReadStateRevision] = useState(0);
+  const [, setReadStateRevision] = useState(0);
   const [readPersistenceNote, setReadPersistenceNote] = useState(false);
   const readThroughReportedRef = useRef(new Map<string, number>());
   const modalRef = useRef<ModalName>(null);
@@ -235,7 +236,7 @@ export function App() {
       const next = typeof update === "function" ? update(dataRef.current) : update;
       if (next) {
         readState.observe(next.workspace.id, next.threads);
-        if (!readState.persistenceAvailable()) setReadPersistenceNote(true);
+        setReadPersistenceNote(!readState.persistenceAvailable());
       }
       dataRef.current = next;
       setData(next);
@@ -244,17 +245,12 @@ export function App() {
   );
 
   const refreshReadState = useCallback(() => {
-    if (!readState.persistenceAvailable()) setReadPersistenceNote(true);
+    setReadPersistenceNote(!readState.persistenceAvailable());
     setReadStateRevision((revision) => revision + 1);
   }, [readState]);
 
   const unreadFor = useCallback(
-    (threadId: string): number => {
-      const current = dataRef.current;
-      if (!current) return 0;
-      const thread = current.threads.find((entry) => entry.id === threadId);
-      return thread ? readState.unread(current.workspace.id, threadId, thread.messageCount) : 0;
-    },
+    (thread: Thread): number => threadUnread(readState, dataRef.current?.workspace.id, thread),
     [readState],
   );
 
@@ -306,7 +302,7 @@ export function App() {
       ) {
         return;
       }
-      const key = current.workspace.id + ":" + threadId;
+      const key = `${current.workspace.id}:${threadId}`;
       if (readThrough <= (readThroughReportedRef.current.get(key) ?? 0)) return;
       readThroughReportedRef.current.set(key, readThrough);
       if (readState.markRead(current.workspace.id, threadId, readThrough)) {
@@ -322,14 +318,25 @@ export function App() {
     const workspaceId = current.workspace.id;
     const changed = readState.markAllRead(workspaceId, current.threads);
     for (const thread of current.threads) {
-      readThroughReportedRef.current.set(workspaceId + ":" + thread.id, thread.messageCount);
+      readThroughReportedRef.current.set(`${workspaceId}:${thread.id}`, thread.messageCount);
     }
     if (changed) refreshReadState();
   }, [readState, refreshReadState]);
 
-  const unreadTotal = useMemo(
-    () => totalUnread(readState, data?.workspace.id, data?.threads ?? []),
-    [data, readState, readStateRevision],
+  // ReadState mutates in place; its revision rerenders App without changing data's identity.
+  const unreadTotal = totalUnread(readState, data?.workspace.id, data?.threads ?? []);
+  const readModalOpen = Boolean(
+    modal ||
+      messageSearch ||
+      threadToRename ||
+      agentToEdit ||
+      agentToDelete ||
+      taskToInspect ||
+      taskToEdit ||
+      taskToDelete ||
+      knowledgeToInspect ||
+      knowledgeToEdit ||
+      knowledgeToDelete,
   );
 
   useEffect(() => {
@@ -357,23 +364,8 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    setReadRecheckRequest((request) => request + 1);
-  }, [
-    modal,
-    messageSearch,
-    threadToRename,
-    agentToEdit,
-    agentToDelete,
-    taskToInspect,
-    taskToEdit,
-    taskToDelete,
-    knowledgeToInspect,
-    knowledgeToEdit,
-    knowledgeToDelete,
-    route.messageTarget,
-    route.threadId,
-    data?.workspace.id,
-  ]);
+    if (!readModalOpen) setReadRecheckRequest((request) => request + 1);
+  }, [readModalOpen]);
 
   // Apply theme to document
   useEffect(() => {
@@ -2081,7 +2073,7 @@ function Sidebar(props: {
   data: BootstrapData;
   route: RouteState;
   hasDraft: (threadId: string) => boolean;
-  unreadFor: (threadId: string) => number;
+  unreadFor: (thread: Thread) => number;
   totalUnread: number;
   onMarkAllRead: () => void;
   showReadStorageNote: boolean;
@@ -2197,14 +2189,14 @@ function Sidebar(props: {
                   <span className="hash">#</span>
                   <span className="row-label">{thread.name}</span>
                   <span className="thread-row-status">
-                    {props.unreadFor(thread.id) > 0 && (
+                    {props.unreadFor(thread) > 0 && (
                       <span
                         className="thread-unread-badge"
                         role="img"
-                        aria-label={props.unreadFor(thread.id) + " unread messages"}
-                        title={props.unreadFor(thread.id) + " unread messages"}
+                        aria-label={`${props.unreadFor(thread)} unread messages`}
+                        title={`${props.unreadFor(thread)} unread messages`}
                       >
-                        <span aria-hidden="true">{props.unreadFor(thread.id)}</span>
+                        <span aria-hidden="true">{props.unreadFor(thread)}</span>
                       </span>
                     )}
                     {props.hasDraft(thread.id) && <span className="thread-draft-badge">Draft</span>}
@@ -2246,14 +2238,14 @@ function Sidebar(props: {
                       <span className="hash">#</span>
                       <span className="row-label">{thread.name}</span>
                       <span className="thread-row-status">
-                        {props.unreadFor(thread.id) > 0 && (
+                        {props.unreadFor(thread) > 0 && (
                           <span
                             className="thread-unread-badge"
                             role="img"
-                            aria-label={props.unreadFor(thread.id) + " unread messages"}
-                            title={props.unreadFor(thread.id) + " unread messages"}
+                            aria-label={`${props.unreadFor(thread)} unread messages`}
+                            title={`${props.unreadFor(thread)} unread messages`}
                           >
-                            <span aria-hidden="true">{props.unreadFor(thread.id)}</span>
+                            <span aria-hidden="true">{props.unreadFor(thread)}</span>
                           </span>
                         )}
                         {props.hasDraft(thread.id) && (
@@ -3300,16 +3292,11 @@ const ThreadTranscript = memo(function ThreadTranscript({
     node.addEventListener("scroll", update, { passive: true });
     return () => node.removeEventListener("scroll", update);
   }, []);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Page and lifecycle revisions must re-measure layout even when the callback identity is unchanged.
   useEffect(() => {
     if (historyWindowKind !== "latest") return;
     measureLatestBottom();
-  }, [
-    historyWindowKind,
-    lastMessageIndex,
-    measureLatestBottom,
-    readRecheckRequest,
-    messages.length,
-  ]);
+  }, [historyWindowKind, lastMessageIndex, measureLatestBottom, readRecheckRequest, messages]);
   const targetAvailable = Boolean(
     messageTarget && messages.some((message) => message.id === messageTarget.id),
   );
@@ -3451,7 +3438,14 @@ const ThreadTranscript = memo(function ThreadTranscript({
     if (forced || nearBottom) {
       bottomRef.current?.scrollIntoView?.({ block: "end" });
     }
-  }, [historyWindowKind, messageTarget, nearBottom, scrollToLatestRequest, transcriptVersion]);
+  }, [
+    historyWindowKind,
+    messageTarget,
+    nearBottom,
+    scrollToLatestRequest,
+    transcriptVersion,
+    bottomRef,
+  ]);
 
   return (
     <div className="message-scroll" ref={scrollRef}>

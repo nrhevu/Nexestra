@@ -5005,7 +5005,7 @@ describe("Unread conversation UI", () => {
   });
 
   function unreadKey(workspaceId: string): string {
-    return "nexestra.readState.1." + workspaceId;
+    return `nexestra.readState.1.${workspaceId}`;
   }
 
   function storedReadCount(threadId: string): number | undefined {
@@ -5025,11 +5025,11 @@ describe("Unread conversation UI", () => {
     const messages = Array.from({ length: loaded }, (_, offset) => {
       const sequence = firstMessageIndex + offset;
       return {
-        id: "message-unread-" + sequence,
+        id: `message-unread-${sequence}`,
         threadId: thread.id,
         sequence,
         author: { kind: "user" as const, id: "local-user" as const, name: "You" },
-        content: offset === 0 ? content : content + " " + sequence,
+        content: offset === 0 ? content : `${content} ${sequence}`,
         mentions: [],
         knowledgeReferences: [],
         artifactIds: [],
@@ -5147,7 +5147,7 @@ describe("Unread conversation UI", () => {
     expect(screen.getByText("notes.md")).toBeInTheDocument();
   });
 
-  it("never acknowledges hidden, unfocused, older-page, or newer-unloaded counts", async () => {
+  it("never acknowledges hidden, unfocused, or newer-unloaded counts", async () => {
     const thread = { ...activityThread("thread-unread-gated", "Alpha"), messageCount: 5 };
     window.localStorage.setItem(
       unreadKey(workspace.id),
@@ -5172,6 +5172,7 @@ describe("Unread conversation UI", () => {
     await screen.findByRole("combobox", { name: "Message" });
     await screen.findByRole("button", { name: "Older messages" });
 
+    sentinelTop = 50;
     Object.defineProperty(document, "visibilityState", {
       configurable: true,
       value: "hidden",
@@ -5197,7 +5198,7 @@ describe("Unread conversation UI", () => {
       observerCallbacks.at(-1)?.([{ isIntersecting: true }]);
     });
     await waitFor(() => expect(storedReadCount(thread.id)).toBe(1));
-    expect(screen.getByRole("img", { name: "4 unread messages" })).toBeInTheDocument();
+    expect(screen.getAllByRole("img", { name: "4 unread messages" })).toHaveLength(2);
   });
 
   it("does not acknowledge an around page opened by a deep link", async () => {
@@ -5228,11 +5229,12 @@ describe("Unread conversation UI", () => {
       return jsonResponse({ error: { message: "Not found" } }, 404);
     });
     vi.stubGlobal("fetch", fetchMock);
-    window.history.replaceState({}, "", "/threads/" + thread.id + "?message=message-unread-1");
+    window.history.replaceState({}, "", `/threads/${thread.id}?message=message-unread-1`);
     render(<App />);
     await screen.findByRole("combobox", { name: "Message" });
     await screen.findByText("Viewing a linked message.");
 
+    sentinelTop = 50;
     await act(async () => {
       observerCallbacks.at(-1)?.([{ isIntersecting: true }]);
     });
@@ -5272,7 +5274,7 @@ describe("Unread conversation UI", () => {
       return jsonResponse({ error: { message: "Not found" } }, 404);
     });
     vi.stubGlobal("fetch", fetchMock);
-    window.history.replaceState({}, "", "/threads/" + thread.id);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
     render(<App />);
     await screen.findByRole("combobox", { name: "Message" });
     sentinelTop = 50;
@@ -5285,25 +5287,35 @@ describe("Unread conversation UI", () => {
 
   it("shows a tab-only note when read-state storage is unavailable", async () => {
     const thread = activityThread("thread-unread-storage", "Alpha");
+    const threads = [thread];
     const page = latestMessagePage(thread);
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
       if (path.startsWith("/api/bootstrap")) {
-        return jsonResponse({ ...bootstrapData, agents: [workerAgent], threads: [thread] });
+        return jsonResponse({ ...bootstrapData, agents: [workerAgent], threads });
       }
       if (path === historyUrl(thread)) return jsonResponse(page);
       return jsonResponse({ error: { message: "Not found" } }, 404);
     });
     vi.stubGlobal("fetch", fetchMock);
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    const write = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
       throw new Error("Quota exceeded");
     });
-    window.history.replaceState({}, "", "/threads/" + thread.id);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
     render(<App />);
     await screen.findByRole("combobox", { name: "Message" });
     expect(
       screen.getByText(/Unread counts stay in this tab until you close it/i),
     ).toBeInTheDocument();
+    write.mockRestore();
+    threads.push(activityThread("thread-storage-recovered", "Recovered"));
+    await userEvent.click(screen.getByRole("button", { name: "Refresh workspace" }));
+    await waitFor(() => {
+      expect(
+        screen.queryByText(/Unread counts stay in this tab until you close it/i),
+      ).not.toBeInTheDocument();
+      expect(storedReadCount("thread-storage-recovered")).toBe(0);
+    });
   });
 
   it("waits for a modal to close before acknowledging the visible bottom", async () => {
@@ -5333,6 +5345,7 @@ describe("Unread conversation UI", () => {
 
     await user.click(screen.getByRole("button", { name: "Create thread" }));
     expect(screen.getByRole("dialog")).toBeInTheDocument();
+    sentinelTop = 50;
     await act(async () => {
       observerCallbacks.at(-1)?.([{ isIntersecting: true }]);
     });
@@ -5359,7 +5372,7 @@ describe("Unread conversation UI", () => {
       }),
     );
     const firstPage = latestMessagePage(first, "First");
-    const secondPage = latestMessagePage(second, "Second");
+    let secondPage = latestMessagePage(second, "Second");
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
       if (path.startsWith("/api/bootstrap")) {
@@ -5367,6 +5380,7 @@ describe("Unread conversation UI", () => {
       }
       if (path === historyUrl(first)) return jsonResponse(firstPage);
       if (path === historyUrl(second)) return jsonResponse(secondPage);
+      if (path === `/api/threads/${second.id}`) return jsonResponse(secondPage);
       return jsonResponse({ error: { message: "Not found" } }, 404);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -5374,11 +5388,14 @@ describe("Unread conversation UI", () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByRole("combobox", { name: "Message" });
-    const oldCallback = observerCallbacks.at(-1)!;
+    const oldCallback = observerCallbacks.at(-1);
+    if (!oldCallback) throw new Error("The first transcript observer did not mount");
 
     await user.click(screen.getByRole("button", { name: /#Beta/ }));
     await screen.findByRole("heading", { name: "# Beta" });
-    const newCallback = observerCallbacks.at(-1)!;
+    const newCallback = observerCallbacks.at(-1);
+    if (!newCallback) throw new Error("The second transcript observer did not mount");
+    sentinelTop = 50;
     await act(async () => {
       oldCallback([{ isIntersecting: true }]);
     });
@@ -5393,10 +5410,25 @@ describe("Unread conversation UI", () => {
     expect(storedReadCount(first.id)).toBe(0);
 
     await user.click(screen.getByRole("button", { name: /Files & links/ }));
+    await screen.findByText("No files or links yet");
+    second.messageCount = 2;
+    secondPage = latestMessagePage(second, "New message in Files view", 2, 1, 2);
+    await user.click(screen.getByRole("button", { name: "Refresh workspace" }));
+    await waitFor(() => {
+      expect(
+        within(screen.getByRole("button", { name: /#Beta/ })).getByRole("img", {
+          name: "1 unread messages",
+        }),
+      ).toBeInTheDocument();
+    });
     await act(async () => {
-      window.dispatchEvent(new Event("focus"));
+      newCallback([{ isIntersecting: true }]);
     });
     expect(storedReadCount(second.id)).toBe(1);
-    await screen.findByText("No files or links yet");
+    expect(
+      within(screen.getByRole("button", { name: /#Beta/ })).getByRole("img", {
+        name: "1 unread messages",
+      }),
+    ).toBeInTheDocument();
   });
 });

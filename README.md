@@ -21,6 +21,13 @@ failed, or interrupted. Open an item to return to its thread or task process con
 show current agent activity, including work in other threads while your current conversation runs.
 Items disappear when the underlying condition is resolved; this view does not start or approve work.
 
+Thread rows also show **unread messages**, with a total on Threads. Reading the bottom of the
+latest Messages page in a focused window marks that loaded page read. Older pages, message links
+and Files & links keep newer messages unread. Choose **Mark all conversations read** beside the
+Threads list or use `/mark all read` to acknowledge the currently known counts, including archived
+threads. These markers are saved in this browser and shared with its other tabs on the same local
+origin. Existing history starts read on first use; the feature does not reconstruct earlier reading.
+
 Returning to the workspace refreshes its metadata and the conversation page you were reading.
 You can also choose **Refresh** beside search or the `/refresh workspace` command. Drafts and
 selected files stay in place, including an unconfirmed send. A failed refresh offers **Retry**;

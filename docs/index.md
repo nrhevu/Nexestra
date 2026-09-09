@@ -28,3 +28,5 @@
     message rows, clipboard confirmation and manual fallback on the existing local route.
 16. [Workspace resume research](research/2026-09-09-workspace-resume-revalidation.md): refresh on
     return, bounded read cycles, retained drafts and pending sends, and archived-notice contrast.
+17. [Conversation unread research](research/2026-09-09-conversation-unread-state.md): browser-local
+    read markers, visible latest-page acknowledgement, archived totals and cross-tab merging.

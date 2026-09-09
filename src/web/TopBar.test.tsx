@@ -327,7 +327,7 @@ describe("Workspace refresh action", () => {
     const props = makeProps();
     render(<TopBar {...props} />);
     const input = screen.getByRole("combobox");
-    await user.type(input, "/mark all");
+    await user.type(input, "/mark all read");
     const option = screen.getByRole("option", { name: /Mark all conversations read/ });
     await user.keyboard("{Enter}");
     expect(option).not.toBeInTheDocument();
