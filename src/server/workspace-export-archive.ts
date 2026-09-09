@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync } from "node:fs";
-import { open, rm } from "node:fs/promises";
+import { mkdtemp, open, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { strToU8, Zip, ZipPassThrough } from "fflate";
@@ -50,6 +49,7 @@ const DATA_DESCRIPTOR_BYTES = 16;
 const CENTRAL_DIRECTORY_BYTES = 46;
 const END_OF_CENTRAL_DIRECTORY_BYTES = 22;
 const PER_ENTRY_OVERHEAD = LOCAL_HEADER_BYTES + DATA_DESCRIPTOR_BYTES + CENTRAL_DIRECTORY_BYTES;
+const CLEANUP_GRACE_MS = 100;
 const SOURCE_KINDS = new Set(["metadata", "transcript", "upload", "document"]);
 
 const NOTICE_TEXT = `Nexestra workspace export
@@ -144,31 +144,73 @@ export async function buildWorkspaceExportArchive(input: {
     throw invalid("Workspace export limits are invalid.");
   }
 
-  const tempDir = mkdtempSync(join(tmpdir(), TEMP_DIR_PREFIX));
-  const archivePath = join(tempDir, ARCHIVE_FILE_NAME);
+  let tempDir: string | undefined;
   let disposePromise: Promise<void> | null = null;
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  let closePromise: Promise<void> | undefined;
+  let deadlineHit = false;
+  let cancelled = false;
 
   function dispose(): Promise<void> {
+    const ownedDir = tempDir;
+    if (!ownedDir) return Promise.resolve();
     if (!disposePromise) {
-      disposePromise = rm(tempDir, { recursive: true, force: true }).catch((error: unknown) => {
-        disposePromise = null;
-        throw error instanceof WorkspaceExportArchiveError ? error : invalid(CLEANUP_ERROR);
-      });
+      disposePromise = Promise.resolve()
+        .then(() => rm(ownedDir, { recursive: true, force: true }))
+        .catch(() => {
+          disposePromise = null;
+          throw invalid(CLEANUP_ERROR);
+        });
     }
     return disposePromise;
   }
 
-  let deadlineHit = false;
+  function closeHandle(): Promise<void> {
+    const ownedHandle = handle;
+    if (!ownedHandle) return Promise.resolve();
+    closePromise ??= Promise.resolve().then(() => ownedHandle.close());
+    return closePromise;
+  }
+
+  function startCleanup(): Promise<void> {
+    const closing = closeHandle().catch(() => {});
+    // Removal must start even when close never settles. Retry after close if
+    // removal failed while the file was still open; observe every late result.
+    const removing = dispose().catch(() => {});
+    void Promise.all([closing, removing])
+      .then(() => dispose())
+      .catch(() => {});
+    return removing;
+  }
+
+  async function cleanupWithinGrace(): Promise<void> {
+    let cleanupTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        startCleanup(),
+        new Promise<void>((resolve) => {
+          cleanupTimer = setTimeout(resolve, CLEANUP_GRACE_MS);
+        }),
+      ]);
+    } finally {
+      clearTimeout(cleanupTimer);
+    }
+  }
+
   let rejectDeadline!: (error: WorkspaceExportArchiveError) => void;
   const deadlinePromise = new Promise<never>((_, reject) => {
     rejectDeadline = reject;
   });
   const deadlineTimer = setTimeout(() => {
     deadlineHit = true;
+    cancelled = true;
     rejectDeadline(conflict(TIMEOUT));
   }, timeoutMs);
 
-  const onAbort = () => rejectDeadline(conflict(CANCELLED));
+  const onAbort = () => {
+    cancelled = true;
+    rejectDeadline(conflict(CANCELLED));
+  };
   if (input.signal) {
     if (input.signal.aborted) onAbort();
     else input.signal.addEventListener("abort", onAbort, { once: true });
@@ -176,194 +218,200 @@ export async function buildWorkspaceExportArchive(input: {
 
   function assertActive(): void {
     if (deadlineHit) throw conflict(TIMEOUT);
-    if (input.signal?.aborted) throw conflict(CANCELLED);
+    if (cancelled || input.signal?.aborted) throw conflict(CANCELLED);
   }
 
-  let handle: Awaited<ReturnType<typeof open>> | undefined;
   try {
     const workPromise = (async () => {
-      handle = await open(archivePath, "wx", 0o600);
-
-      const budget = {
-        projectedBytes: END_OF_CENTRAL_DIRECTORY_BYTES,
-        archiveBytesWritten: 0,
-        writeChain: Promise.resolve(),
-        writeError: undefined as WorkspaceExportArchiveError | undefined,
-      };
-
-      function ensureEntryCapacity(path: string): void {
-        const overhead = entryOverheadBytes(path);
-        if (budget.projectedBytes + overhead > maxArchiveBytes) throw invalid(LIMIT_ARCHIVE);
-        budget.projectedBytes += overhead;
-      }
-
-      function ensureChunkCapacity(length: number): void {
-        if (budget.projectedBytes + length > maxArchiveBytes) throw invalid(LIMIT_ARCHIVE);
-        budget.projectedBytes += length;
-      }
-
-      async function writeChunk(chunk: Uint8Array): Promise<void> {
+      let prepared = false;
+      try {
         assertActive();
-        if (!handle) throw invalid(WRITE_ERROR);
-        if (budget.archiveBytesWritten + chunk.byteLength > maxArchiveBytes)
-          throw invalid(LIMIT_ARCHIVE);
-        let offset = 0;
-        while (offset < chunk.byteLength) {
-          const result = await handle.write(chunk.subarray(offset));
-          if (result.bytesWritten === 0) throw invalid(WRITE_ERROR);
-          offset += result.bytesWritten;
-          budget.archiveBytesWritten += result.bytesWritten;
+        tempDir = await mkdtemp(join(tmpdir(), TEMP_DIR_PREFIX));
+        assertActive();
+        const archivePath = join(tempDir, ARCHIVE_FILE_NAME);
+        handle = await open(archivePath, "wx", 0o600);
+        assertActive();
+
+        const budget = {
+          projectedBytes: END_OF_CENTRAL_DIRECTORY_BYTES,
+          archiveBytesWritten: 0,
+          writeChain: Promise.resolve(),
+          writeError: undefined as WorkspaceExportArchiveError | undefined,
+        };
+
+        function ensureEntryCapacity(path: string): void {
+          const overhead = entryOverheadBytes(path);
+          if (budget.projectedBytes + overhead > maxArchiveBytes) throw invalid(LIMIT_ARCHIVE);
+          budget.projectedBytes += overhead;
         }
-      }
 
-      const zip = new Zip((error, chunk, _final) => {
-        if (budget.writeError) return;
-        if (error) {
-          budget.writeError = invalid(ENCODE_ERROR);
-          return;
+        function ensureChunkCapacity(length: number): void {
+          if (budget.projectedBytes + length > maxArchiveBytes) throw invalid(LIMIT_ARCHIVE);
+          budget.projectedBytes += length;
         }
-        budget.writeChain = budget.writeChain
-          .then(() => writeChunk(chunk))
-          .catch((cause: unknown) => {
-            budget.writeError = toPublicError(cause);
-            throw budget.writeError;
-          });
-      });
 
-      async function flushWrites(): Promise<void> {
-        await budget.writeChain;
-        if (budget.writeError) throw budget.writeError;
-      }
+        async function writeChunk(chunk: Uint8Array): Promise<void> {
+          assertActive();
+          if (!handle) throw invalid(WRITE_ERROR);
+          if (budget.archiveBytesWritten + chunk.byteLength > maxArchiveBytes)
+            throw invalid(LIMIT_ARCHIVE);
+          let offset = 0;
+          while (offset < chunk.byteLength) {
+            assertActive();
+            const result = await handle.write(chunk.subarray(offset));
+            if (result.bytesWritten === 0) throw invalid(WRITE_ERROR);
+            offset += result.bytesWritten;
+            budget.archiveBytesWritten += result.bytesWritten;
+          }
+        }
 
-      const buildPromise = (async () => {
-        const manifestEntries: WorkspaceExportEntry[] = [];
-        const seenPaths = new Set<string>();
-        let sourceBytesTotal = 0;
-
-        const noticeBytes = strToU8(NOTICE_TEXT);
-        ensureEntryCapacity(NOTICE_PATH);
-        ensureChunkCapacity(noticeBytes.byteLength);
-        const noticeStream = new ZipPassThrough(NOTICE_PATH);
-        zip.add(noticeStream);
-        await flushWrites();
-        noticeStream.push(noticeBytes, true);
-        await flushWrites();
-        manifestEntries.push({
-          path: NOTICE_PATH,
-          kind: "notice",
-          bytes: noticeBytes.byteLength,
-          sha256: hashBytes(noticeBytes),
+        const zip = new Zip((error, chunk, _final) => {
+          if (budget.writeError) return;
+          if (error) {
+            budget.writeError = invalid(ENCODE_ERROR);
+            return;
+          }
+          budget.writeChain = budget.writeChain
+            .then(() => writeChunk(chunk))
+            .catch((cause: unknown) => {
+              budget.writeError = toPublicError(cause);
+              throw budget.writeError;
+            });
         });
 
-        for await (const sourceEntry of input.entries) {
-          assertActive();
-          if (
-            !sourceEntry ||
-            typeof sourceEntry.path !== "string" ||
-            !isSourceKind(sourceEntry.kind)
-          ) {
-            throw invalid(INVALID_ENTRY);
-          }
-          if (manifestEntries.length + 1 >= maxEntries) throw invalid(LIMIT_ENTRIES);
-          if (seenPaths.has(sourceEntry.path)) throw invalid(DUPLICATE_PATH);
-          if (!isValidArchivePath(sourceEntry.path)) throw invalid(INVALID_PATH);
-          seenPaths.add(sourceEntry.path);
-
-          ensureEntryCapacity(sourceEntry.path);
-          const entryStream = new ZipPassThrough(sourceEntry.path);
-          zip.add(entryStream);
-          await flushWrites();
-
-          const hash = createHash("sha256");
-          let bytes = 0;
-          for await (const chunk of sourceEntry.chunks) {
-            assertActive();
-            if (!(chunk instanceof Uint8Array)) throw invalid(INVALID_ENTRY);
-            if (
-              chunk.byteLength > maxSourceBytes ||
-              chunk.byteLength > maxSourceBytes - sourceBytesTotal
-            ) {
-              throw invalid(LIMIT_SOURCE);
-            }
-            ensureChunkCapacity(chunk.byteLength);
-            hash.update(chunk);
-            bytes += chunk.byteLength;
-            sourceBytesTotal += chunk.byteLength;
-            entryStream.push(chunk, false);
-            await flushWrites();
-          }
-
-          entryStream.push(new Uint8Array(), true);
-          await flushWrites();
-
-          manifestEntries.push({
-            path: sourceEntry.path,
-            kind: sourceEntry.kind,
-            bytes,
-            sha256: hash.digest("hex"),
-          });
+        async function flushWrites(): Promise<void> {
+          await budget.writeChain;
+          if (budget.writeError) throw budget.writeError;
         }
 
-        const manifest = {
-          format: "nexestra.workspace-export",
-          version: 1,
-          createdAt: input.createdAt,
-          workspace: input.workspace,
-          stateVersion: 7,
-          redaction: "known-credentials",
-          importSupported: false,
-          excluded: [
-            "credentials",
-            "harness-auth",
-            "repository-files",
-            "browser-state",
-            "unreferenced-files",
-          ],
-          entries: manifestEntries,
-        };
-        const parsedManifest = WorkspaceExportManifestSchema.safeParse(manifest);
-        if (!parsedManifest.success) throw invalid(MANIFEST_ERROR);
+        const buildPromise = (async () => {
+          const manifestEntries: WorkspaceExportEntry[] = [];
+          const seenPaths = new Set<string>();
+          let sourceBytesTotal = 0;
 
-        const manifestBytes = strToU8(JSON.stringify(parsedManifest.data, null, 2));
-        ensureEntryCapacity(MANIFEST_PATH);
-        ensureChunkCapacity(manifestBytes.byteLength);
-        const manifestStream = new ZipPassThrough(MANIFEST_PATH);
-        zip.add(manifestStream);
-        await flushWrites();
-        manifestStream.push(manifestBytes, true);
-        await flushWrites();
+          const noticeBytes = strToU8(NOTICE_TEXT);
+          ensureEntryCapacity(NOTICE_PATH);
+          ensureChunkCapacity(noticeBytes.byteLength);
+          const noticeStream = new ZipPassThrough(NOTICE_PATH);
+          zip.add(noticeStream);
+          await flushWrites();
+          noticeStream.push(noticeBytes, true);
+          await flushWrites();
+          manifestEntries.push({
+            path: NOTICE_PATH,
+            kind: "notice",
+            bytes: noticeBytes.byteLength,
+            sha256: hashBytes(noticeBytes),
+          });
 
-        zip.end();
-        await flushWrites();
+          for await (const sourceEntry of input.entries) {
+            assertActive();
+            if (
+              !sourceEntry ||
+              typeof sourceEntry.path !== "string" ||
+              !isSourceKind(sourceEntry.kind)
+            ) {
+              throw invalid(INVALID_ENTRY);
+            }
+            if (manifestEntries.length + 1 >= maxEntries) throw invalid(LIMIT_ENTRIES);
+            if (seenPaths.has(sourceEntry.path)) throw invalid(DUPLICATE_PATH);
+            if (!isValidArchivePath(sourceEntry.path)) throw invalid(INVALID_PATH);
+            seenPaths.add(sourceEntry.path);
 
-        return parsedManifest.data;
-      })();
+            ensureEntryCapacity(sourceEntry.path);
+            const entryStream = new ZipPassThrough(sourceEntry.path);
+            zip.add(entryStream);
+            await flushWrites();
 
-      const manifest = await Promise.race([buildPromise, deadlinePromise]);
-      assertActive();
-      await handle.sync();
-      const stats = await handle.stat();
-      if (stats.size > maxArchiveBytes) throw invalid(LIMIT_ARCHIVE);
-      await handle.close();
-      assertActive();
-      handle = undefined;
-      return { path: archivePath, size: stats.size, manifest, dispose };
+            const hash = createHash("sha256");
+            let bytes = 0;
+            for await (const chunk of sourceEntry.chunks) {
+              assertActive();
+              if (!(chunk instanceof Uint8Array)) throw invalid(INVALID_ENTRY);
+              if (
+                chunk.byteLength > maxSourceBytes ||
+                chunk.byteLength > maxSourceBytes - sourceBytesTotal
+              ) {
+                throw invalid(LIMIT_SOURCE);
+              }
+              ensureChunkCapacity(chunk.byteLength);
+              hash.update(chunk);
+              bytes += chunk.byteLength;
+              sourceBytesTotal += chunk.byteLength;
+              entryStream.push(chunk, false);
+              await flushWrites();
+            }
+
+            entryStream.push(new Uint8Array(), true);
+            await flushWrites();
+
+            manifestEntries.push({
+              path: sourceEntry.path,
+              kind: sourceEntry.kind,
+              bytes,
+              sha256: hash.digest("hex"),
+            });
+          }
+
+          const manifest = {
+            format: "nexestra.workspace-export",
+            version: 1,
+            createdAt: input.createdAt,
+            workspace: input.workspace,
+            stateVersion: 7,
+            redaction: "known-credentials",
+            importSupported: false,
+            excluded: [
+              "credentials",
+              "harness-auth",
+              "repository-files",
+              "browser-state",
+              "unreferenced-files",
+            ],
+            entries: manifestEntries,
+          };
+          const parsedManifest = WorkspaceExportManifestSchema.safeParse(manifest);
+          if (!parsedManifest.success) throw invalid(MANIFEST_ERROR);
+
+          const manifestBytes = strToU8(JSON.stringify(parsedManifest.data, null, 2));
+          ensureEntryCapacity(MANIFEST_PATH);
+          ensureChunkCapacity(manifestBytes.byteLength);
+          const manifestStream = new ZipPassThrough(MANIFEST_PATH);
+          zip.add(manifestStream);
+          await flushWrites();
+          manifestStream.push(manifestBytes, true);
+          await flushWrites();
+
+          zip.end();
+          await flushWrites();
+
+          return parsedManifest.data;
+        })();
+
+        const manifest = await Promise.race([buildPromise, deadlinePromise]);
+        assertActive();
+        await handle.sync();
+        assertActive();
+        const stats = await handle.stat();
+        assertActive();
+        if (stats.size > maxArchiveBytes) throw invalid(LIMIT_ARCHIVE);
+        await closeHandle();
+        assertActive();
+        prepared = true;
+        return { path: archivePath, size: stats.size, manifest, dispose };
+      } finally {
+        if (!prepared) {
+          cancelled = true;
+          // This finally also owns resources that resolve after the outer race.
+          void startCleanup();
+        }
+      }
     })();
 
     return await Promise.race([workPromise, deadlinePromise]);
   } catch (error) {
-    if (handle) {
-      try {
-        await handle.close();
-      } catch {
-        // The original failure is more useful than a close failure.
-      }
-    }
-    try {
-      await dispose();
-    } catch {
-      // The original failure is more useful than a cleanup failure.
-    }
+    cancelled = true;
+    await cleanupWithinGrace();
     throw toPublicError(error);
   } finally {
     clearTimeout(deadlineTimer);

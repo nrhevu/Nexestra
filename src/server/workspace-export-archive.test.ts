@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { FlateError, ZipInputFile } from "fflate";
 import { unzipSync } from "fflate";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceExportManifestSchema } from "../shared/contracts.js";
 import type { WorkspaceExportSourceEntry } from "./workspace-export-archive.js";
 import {
@@ -16,7 +16,12 @@ import {
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
-  return { ...actual, open: vi.fn(actual.open) };
+  return {
+    ...actual,
+    open: vi.fn(actual.open),
+    mkdtemp: vi.fn(actual.mkdtemp),
+    rm: vi.fn(actual.rm),
+  };
 });
 
 const workspace = { id: "export-workspace", name: "Export workspace" };
@@ -74,6 +79,10 @@ async function disposeArchive(archive: { dispose(): Promise<void> } | null): Pro
 async function tempExportDirs(): Promise<string[]> {
   return (await readdir(tmpdir())).filter((name) => name.startsWith("nexestra-workspace-export-"));
 }
+
+beforeEach(() => {
+  vi.resetAllMocks();
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -291,7 +300,12 @@ describe("buildWorkspaceExportArchive", () => {
 
   it("aborts a hung source iterator and cleans up", async () => {
     const controller = new AbortController();
+    let enteredSource!: () => void;
+    const sourceStarted = new Promise<void>((resolve) => {
+      enteredSource = resolve;
+    });
     const hung = (async function* () {
+      enteredSource();
       await new Promise<void>(() => {});
       yield source("transcripts/never.jsonl", []);
     })();
@@ -303,6 +317,7 @@ describe("buildWorkspaceExportArchive", () => {
       signal: controller.signal,
       limits: { timeoutMs: 60_000 },
     });
+    await sourceStarted;
     controller.abort();
     await expect(pending).rejects.toMatchObject({ code: "conflict" });
     expect(await tempExportDirs()).toEqual(before);
@@ -358,10 +373,24 @@ describe("buildWorkspaceExportArchive", () => {
     expect(await tempExportDirs()).toEqual(before);
   });
 
-  it("honors abort while the archive file is still being opened", async () => {
+  it("closes a handle that resolves only after abort and cleans up", async () => {
     const controller = new AbortController();
     const openMock = vi.mocked(fsPromises.open);
-    openMock.mockReturnValueOnce(new Promise<never>(() => {}));
+    let releaseOpen!: (handle: FileHandle) => void;
+    openMock.mockImplementationOnce(
+      () =>
+        new Promise<FileHandle>((resolve) => {
+          releaseOpen = resolve;
+        }),
+    );
+    const fakeHandle = {
+      write: vi.fn().mockImplementation(async (chunk: Uint8Array) => ({
+        bytesWritten: chunk.byteLength,
+      })),
+      sync: vi.fn().mockResolvedValue(undefined),
+      stat: vi.fn().mockResolvedValue({ size: 1 }),
+      close: vi.fn().mockResolvedValue(undefined),
+    } as unknown as FileHandle;
     const before = await tempExportDirs();
     const pending = buildWorkspaceExportArchive({
       workspace,
@@ -370,13 +399,116 @@ describe("buildWorkspaceExportArchive", () => {
       signal: controller.signal,
       limits: { timeoutMs: 60_000 },
     });
+    await vi.waitFor(() => expect(releaseOpen).toBeTypeOf("function"));
     controller.abort();
     await expect(pending).rejects.toMatchObject({ code: "conflict" });
+    releaseOpen(fakeHandle);
+    await vi.waitFor(() => expect(fakeHandle.close).toHaveBeenCalledExactlyOnceWith());
+    expect(fakeHandle.write).not.toHaveBeenCalled();
+    expect(await tempExportDirs()).toEqual(before);
+  });
+
+  it("settles on deadline and cleans up when a prepared handle close hangs", async () => {
+    const openMock = vi.mocked(fsPromises.open);
+    const fakeHandle = {
+      write: vi.fn().mockImplementation(async (chunk: Uint8Array) => ({
+        bytesWritten: chunk.byteLength,
+      })),
+      sync: vi.fn().mockResolvedValue(undefined),
+      stat: vi.fn().mockResolvedValue({ size: 1 }),
+      close: vi.fn().mockReturnValue(new Promise<void>(() => {})),
+    } as unknown as FileHandle;
+    openMock.mockResolvedValueOnce(fakeHandle);
+    const before = await tempExportDirs();
+    await expect(build([], { limits: { timeoutMs: 200 } })).rejects.toMatchObject({
+      code: "conflict",
+      message: "Workspace export timed out.",
+    });
+    expect(fakeHandle.close).toHaveBeenCalledExactlyOnceWith();
+    expect(await tempExportDirs()).toEqual(before);
+  });
+
+  it("maps temp-directory creation failures to safe public errors", async () => {
+    const mkdtempMock = vi.mocked(fsPromises.mkdtemp);
+    mkdtempMock.mockRejectedValueOnce(new Error("private temp failure"));
+    const before = await tempExportDirs();
+    await expect(build([], { limits: { timeoutMs: 60_000 } })).rejects.toMatchObject({
+      code: "invalid",
+      message: "Workspace export archive could not be built.",
+    });
+    mkdtempMock.mockImplementationOnce(() => {
+      throw new Error("private synchronous temp failure");
+    });
+    await expect(build([])).rejects.toMatchObject({
+      code: "invalid",
+      message: "Workspace export archive could not be built.",
+    });
+    expect(mkdtempMock).toHaveBeenCalledTimes(2);
+    expect(await tempExportDirs()).toEqual(before);
+  });
+
+  it("removes a temp directory created after cancellation without opening a file", async () => {
+    const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    const controller = new AbortController();
+    let releaseTemp!: (directory: string) => void;
+    vi.mocked(fsPromises.mkdtemp).mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          releaseTemp = resolve;
+        }),
+    );
+    const before = await tempExportDirs();
+    const pending = build([], { signal: controller.signal, limits: { timeoutMs: 60_000 } });
+    await vi.waitFor(() => expect(releaseTemp).toBeTypeOf("function"));
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ code: "conflict" });
+    const lateDir = await actual.mkdtemp(join(tmpdir(), "nexestra-workspace-export-"));
+    releaseTemp(lateDir);
+    await vi.waitFor(async () => expect(await tempExportDirs()).toEqual(before));
+    expect(fsPromises.open).not.toHaveBeenCalled();
+  });
+
+  it("settles when removal hangs and observes eventual cleanup", async () => {
+    const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    let releaseRemoval!: () => void;
+    const removalGate = new Promise<void>((resolve) => {
+      releaseRemoval = resolve;
+    });
+    vi.mocked(fsPromises.rm).mockImplementationOnce(async (...args) => {
+      await removalGate;
+      await actual.rm(...args);
+    });
+    const before = await tempExportDirs();
+    try {
+      await expect(build([source("../invalid")])).rejects.toMatchObject({
+        code: "invalid",
+        message: "Workspace export entry path is invalid.",
+      });
+      expect(fsPromises.rm).toHaveBeenCalledTimes(1);
+    } finally {
+      releaseRemoval();
+    }
+    await vi.waitFor(async () => expect(await tempExportDirs()).toEqual(before));
+  }, 1_000);
+
+  it("does not create a directory when already cancelled", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const before = await tempExportDirs();
+    await expect(build([], { signal: controller.signal })).rejects.toMatchObject({
+      code: "conflict",
+      message: "Workspace export was cancelled.",
+    });
+    expect(fsPromises.mkdtemp).not.toHaveBeenCalled();
     expect(await tempExportDirs()).toEqual(before);
   });
 
   it("rejects an oversized emitted ZIP chunk before writing it", async () => {
     vi.resetModules();
+    vi.doMock("node:fs/promises", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("node:fs/promises")>();
+      return { ...actual, open: vi.fn(), mkdtemp: vi.fn(actual.mkdtemp) };
+    });
     vi.doMock("fflate", async (importOriginal) => {
       const actual = await importOriginal<typeof import("fflate")>();
       class OversizedZip {
@@ -399,6 +531,8 @@ describe("buildWorkspaceExportArchive", () => {
       }
       return { ...actual, Zip: OversizedZip as unknown as typeof actual.Zip };
     });
+    const fsPromisesMocked = await import("node:fs/promises");
+    const openMock = vi.mocked(fsPromisesMocked.open);
     const { buildWorkspaceExportArchive: buildMocked } = await import(
       "./workspace-export-archive.js"
     );
@@ -410,7 +544,6 @@ describe("buildWorkspaceExportArchive", () => {
       stat: vi.fn().mockResolvedValue({ size: 999 }),
       close: vi.fn().mockResolvedValue(undefined),
     } as unknown as FileHandle;
-    const openMock = vi.mocked(fsPromises.open);
     openMock.mockResolvedValueOnce(fakeHandle);
     const before = await tempExportDirs();
     await expect(
