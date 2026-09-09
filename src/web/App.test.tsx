@@ -5287,13 +5287,19 @@ describe("Return to workspace revalidation", () => {
     await screen.findByRole("heading", { name: "Knowledge" });
     expect(bootstrapReads).toBe(1);
 
-    await act(async () => {
-      window.dispatchEvent(new Event("focus"));
-    });
-    await waitFor(() => expect(bootstrapReads).toBe(2));
-    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/api/threads/"))).toBe(
-      false,
-    );
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        window.dispatchEvent(new Event("focus"));
+        await vi.advanceTimersByTimeAsync(400);
+      });
+      expect(bootstrapReads).toBe(2);
+      expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/api/threads/"))).toBe(
+        false,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not load the captured page after the user navigates during a slow revalidation", async () => {
