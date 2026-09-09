@@ -9,6 +9,7 @@ import {
   BookOpen,
   Bot,
   Check,
+  CheckCheck,
   CircleAlert,
   CodeXml,
   Columns3,
@@ -109,6 +110,12 @@ import {
   SubmissionState,
 } from "./submissionState.js";
 import { TopBar, type TopBarSurface } from "./TopBar.js";
+import {
+  latestReadThrough,
+  ReadState,
+  totalUnread,
+  useLatestBottomVisibility,
+} from "./unreadConversations.js";
 import { type RefreshOutcome, useWorkspaceRefresh } from "./workspaceRefresh.js";
 
 const RichMessage = lazy(() => import("./RichMessage.js"));
@@ -191,6 +198,12 @@ export function App() {
     return readBrowserValue("nexestra.theme") === "light" ? "light" : "dark";
   });
   const deferredRunActivities = useDeferredValue(runActivities);
+  const [readState] = useState(() => new ReadState());
+  const [readStateRevision, setReadStateRevision] = useState(0);
+  const [readPersistenceNote, setReadPersistenceNote] = useState(false);
+  const readThroughReportedRef = useRef(new Map<string, number>());
+  const modalRef = useRef<ModalName>(null);
+  const [readRecheckRequest, setReadRecheckRequest] = useState(0);
   const workspaceIdRef = useRef<string | undefined>(
     readBrowserValue("nexestra.workspaceId") ?? undefined,
   );
@@ -198,6 +211,7 @@ export function App() {
   const historyAbortRef = useRef<AbortController | null>(null);
   const historyIntentRef = useRef<HistoryIntent | undefined>(undefined);
   const historyPageRef = useRef<ThreadHistoryPage | undefined>(undefined);
+  const historyPageRequestIdRef = useRef(0);
   const routeLoadSuppressedRef = useRef(false);
   const fullThreadRequestRef = useRef(0);
   const fullThreadAbortRef = useRef<AbortController | null>(null);
@@ -219,11 +233,147 @@ export function App() {
       update: BootstrapData | ((current: BootstrapData | undefined) => BootstrapData | undefined),
     ) => {
       const next = typeof update === "function" ? update(dataRef.current) : update;
+      if (next) {
+        readState.observe(next.workspace.id, next.threads);
+        if (!readState.persistenceAvailable()) setReadPersistenceNote(true);
+      }
       dataRef.current = next;
       setData(next);
     },
-    [],
+    [readState],
   );
+
+  const refreshReadState = useCallback(() => {
+    if (!readState.persistenceAvailable()) setReadPersistenceNote(true);
+    setReadStateRevision((revision) => revision + 1);
+  }, [readState]);
+
+  const unreadFor = useCallback(
+    (threadId: string): number => {
+      const current = dataRef.current;
+      if (!current) return 0;
+      const thread = current.threads.find((entry) => entry.id === threadId);
+      return thread ? readState.unread(current.workspace.id, threadId, thread.messageCount) : 0;
+    },
+    [readState],
+  );
+
+  const acknowledgeLatestRead = useCallback(
+    (threadId: string, bottomVisible: boolean, loadedCount?: number) => {
+      if (!bottomVisible || loadedCount === undefined) return;
+      const generation = workspaceGenerationRef.current;
+      const routeNow = routeRef.current;
+      const current = dataRef.current;
+      const page = historyPageRef.current;
+      const intent = historyIntentRef.current;
+      if (
+        !current ||
+        routeNow.view !== "threads" ||
+        routeNow.threadId !== threadId ||
+        routeNow.messageTarget !== undefined ||
+        !page ||
+        !intent ||
+        page.thread.id !== threadId ||
+        page.thread.workspaceId !== current.workspace.id ||
+        page.page.lastMessageIndex !== loadedCount ||
+        intent.threadId !== threadId ||
+        intent.kind !== "latest" ||
+        historyPageRequestIdRef.current !== historyRequestRef.current
+      ) {
+        return;
+      }
+      const readThrough = latestReadThrough({
+        workspaceId: current.workspace.id,
+        routeThreadId: threadId,
+        modalOpen:
+          modalRef.current !== null ||
+          Boolean(document.querySelector('[role="dialog"][aria-modal="true"]')),
+        documentVisible: document.visibilityState === "visible",
+        windowFocused: document.hasFocus(),
+        bottomVisible,
+        history: {
+          threadId: page.thread.id,
+          windowKind: intent.kind,
+          lastMessageIndex: page.page.lastMessageIndex,
+        },
+      });
+      if (
+        readThrough === undefined ||
+        generation !== workspaceGenerationRef.current ||
+        routeRef.current.view !== "threads" ||
+        routeRef.current.threadId !== threadId ||
+        routeRef.current.messageTarget !== undefined
+      ) {
+        return;
+      }
+      const key = current.workspace.id + ":" + threadId;
+      if (readThrough <= (readThroughReportedRef.current.get(key) ?? 0)) return;
+      readThroughReportedRef.current.set(key, readThrough);
+      if (readState.markRead(current.workspace.id, threadId, readThrough)) {
+        refreshReadState();
+      }
+    },
+    [readState, refreshReadState],
+  );
+
+  const markAllConversationsRead = useCallback(() => {
+    const current = dataRef.current;
+    if (!current) return;
+    const workspaceId = current.workspace.id;
+    const changed = readState.markAllRead(workspaceId, current.threads);
+    for (const thread of current.threads) {
+      readThroughReportedRef.current.set(workspaceId + ":" + thread.id, thread.messageCount);
+    }
+    if (changed) refreshReadState();
+  }, [readState, refreshReadState]);
+
+  const unreadTotal = useMemo(
+    () => totalUnread(readState, data?.workspace.id, data?.threads ?? []),
+    [data, readState, readStateRevision],
+  );
+
+  useEffect(() => {
+    modalRef.current = modal;
+  }, [modal]);
+
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (readState.syncStorage(event.key, event.newValue)) refreshReadState();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [readState, refreshReadState]);
+
+  useEffect(() => {
+    const check = () => {
+      setReadRecheckRequest((request) => request + 1);
+    };
+    window.addEventListener("focus", check);
+    document.addEventListener("visibilitychange", check);
+    return () => {
+      window.removeEventListener("focus", check);
+      document.removeEventListener("visibilitychange", check);
+    };
+  }, []);
+
+  useEffect(() => {
+    setReadRecheckRequest((request) => request + 1);
+  }, [
+    modal,
+    messageSearch,
+    threadToRename,
+    agentToEdit,
+    agentToDelete,
+    taskToInspect,
+    taskToEdit,
+    taskToDelete,
+    knowledgeToInspect,
+    knowledgeToEdit,
+    knowledgeToDelete,
+    route.messageTarget,
+    route.threadId,
+    data?.workspace.id,
+  ]);
 
   // Apply theme to document
   useEffect(() => {
@@ -388,6 +538,7 @@ export function App() {
         )
           return undefined;
         historyPageRef.current = next;
+        historyPageRequestIdRef.current = requestId;
         historyIntentRef.current = intent;
         setHistoryWindow(intent);
         setHistoryPage(next);
@@ -1310,6 +1461,7 @@ export function App() {
         refreshError={workspaceRefresh.error}
         onRefresh={workspaceRefresh.requestRefresh}
         onThemeToggle={toggleTheme}
+        onMarkAllRead={markAllConversationsRead}
         onThread={openThread}
         onSurface={openSurface}
         onSettings={() => setModal("settings")}
@@ -1339,6 +1491,10 @@ export function App() {
         hasDraft={(threadId) =>
           Boolean(conversations.draft(data.workspace.id, threadId).text.trim())
         }
+        unreadFor={unreadFor}
+        totalUnread={unreadTotal}
+        onMarkAllRead={markAllConversationsRead}
+        showReadStorageNote={readPersistenceNote}
         onThread={openThread}
         onSurface={openSurface}
         onThreads={() => {
@@ -1399,6 +1555,8 @@ export function App() {
               onClearMessageTarget={() => {
                 if (route.threadId) openThread(route.threadId);
               }}
+              onLatestBottomVisible={acknowledgeLatestRead}
+              readRecheckRequest={readRecheckRequest}
               draft={
                 route.threadId ? conversations.draft(data.workspace.id, route.threadId).text : ""
               }
@@ -1923,6 +2081,10 @@ function Sidebar(props: {
   data: BootstrapData;
   route: RouteState;
   hasDraft: (threadId: string) => boolean;
+  unreadFor: (threadId: string) => number;
+  totalUnread: number;
+  onMarkAllRead: () => void;
+  showReadStorageNote: boolean;
   onThread: (id: string) => void;
   onSurface: (surface: Surface) => void;
   onThreads: () => void;
@@ -1955,6 +2117,16 @@ function Sidebar(props: {
         >
           <MessageSquareMore size={17} />
           Threads
+          {props.totalUnread > 0 && (
+            <span
+              className="thread-unread-total"
+              role="img"
+              aria-label={`${props.totalUnread} unread messages`}
+              title={`${props.totalUnread} unread messages`}
+            >
+              <span aria-hidden="true">{props.totalUnread}</span>
+            </span>
+          )}
         </button>
         <button
           className={
@@ -1993,7 +2165,22 @@ function Sidebar(props: {
             </div>
             <div className="section-label">
               <span>Threads</span>
-              <button type="button" onClick={props.onCreate} aria-label="Create thread">
+              <button
+                className="mark-all-read"
+                type="button"
+                onClick={props.onMarkAllRead}
+                disabled={props.totalUnread === 0}
+                aria-label="Mark all conversations read"
+                title="Mark all conversations read"
+              >
+                <CheckCheck size={15} />
+              </button>
+              <button
+                className="create-thread"
+                type="button"
+                onClick={props.onCreate}
+                aria-label="Create thread"
+              >
                 <Plus size={15} />
               </button>
             </div>
@@ -2010,6 +2197,16 @@ function Sidebar(props: {
                   <span className="hash">#</span>
                   <span className="row-label">{thread.name}</span>
                   <span className="thread-row-status">
+                    {props.unreadFor(thread.id) > 0 && (
+                      <span
+                        className="thread-unread-badge"
+                        role="img"
+                        aria-label={props.unreadFor(thread.id) + " unread messages"}
+                        title={props.unreadFor(thread.id) + " unread messages"}
+                      >
+                        <span aria-hidden="true">{props.unreadFor(thread.id)}</span>
+                      </span>
+                    )}
                     {props.hasDraft(thread.id) && <span className="thread-draft-badge">Draft</span>}
                     <ThreadRunBadge
                       runs={props.data.activeRuns.filter((run) => run.threadId === thread.id)}
@@ -2049,6 +2246,16 @@ function Sidebar(props: {
                       <span className="hash">#</span>
                       <span className="row-label">{thread.name}</span>
                       <span className="thread-row-status">
+                        {props.unreadFor(thread.id) > 0 && (
+                          <span
+                            className="thread-unread-badge"
+                            role="img"
+                            aria-label={props.unreadFor(thread.id) + " unread messages"}
+                            title={props.unreadFor(thread.id) + " unread messages"}
+                          >
+                            <span aria-hidden="true">{props.unreadFor(thread.id)}</span>
+                          </span>
+                        )}
                         {props.hasDraft(thread.id) && (
                           <span className="thread-draft-badge">Draft</span>
                         )}
@@ -2130,6 +2337,11 @@ function Sidebar(props: {
           </>
         )}
       </div>
+      {props.showReadStorageNote && (
+        <p className="read-storage-note" role="status">
+          Browser storage is unavailable. Unread counts stay in this tab until you close it.
+        </p>
+      )}
       <button className="sidebar-settings" type="button" onClick={props.onSettings}>
         <Settings size={17} />
         Settings
@@ -2180,6 +2392,8 @@ function ThreadView(props: {
   runActivities: RunActivity[];
   messageTarget?: { id: string };
   onClearMessageTarget: () => void;
+  onLatestBottomVisible: (threadId: string, visible: boolean, loadedCount?: number) => void;
+  readRecheckRequest: number;
   draft: string;
   draftSaved: boolean;
   pendingNotice?: string;
@@ -2602,6 +2816,9 @@ function ThreadView(props: {
           readOnly={archived}
           messageTarget={props.messageTarget}
           historyWindowKind={props.history.intent?.kind ?? "latest"}
+          lastMessageIndex={props.history.lastMessageIndex}
+          readRecheckRequest={props.readRecheckRequest}
+          onLatestBottomVisible={props.onLatestBottomVisible}
           historyFocusTarget={props.historyFocusTarget}
           onHistoryFocusHandled={props.onHistoryFocusHandled}
           scrollToLatestRequest={props.scrollToLatestRequest}
@@ -3029,6 +3246,9 @@ const ThreadTranscript = memo(function ThreadTranscript({
   readOnly,
   messageTarget,
   historyWindowKind,
+  lastMessageIndex,
+  readRecheckRequest,
+  onLatestBottomVisible,
   historyFocusTarget,
   onHistoryFocusHandled,
   scrollToLatestRequest,
@@ -3047,11 +3267,24 @@ const ThreadTranscript = memo(function ThreadTranscript({
   readOnly: boolean;
   messageTarget?: { id: string };
   historyWindowKind: HistoryWindowKind;
+  lastMessageIndex: number;
+  readRecheckRequest: number;
+  onLatestBottomVisible: (threadId: string, visible: boolean, loadedCount?: number) => void;
   historyFocusTarget?: HistoryFocusTarget;
   onHistoryFocusHandled: () => void;
   scrollToLatestRequest: number;
 }) {
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const reportBottom = useCallback(
+    (visible: boolean) => {
+      onLatestBottomVisible(
+        thread.id,
+        visible,
+        historyWindowKind === "latest" ? lastMessageIndex : undefined,
+      );
+    },
+    [historyWindowKind, lastMessageIndex, onLatestBottomVisible, thread.id],
+  );
+  const { ref: bottomRef, measure: measureLatestBottom } = useLatestBottomVisibility(reportBottom);
   const scrollRef = useRef<HTMLDivElement>(null);
   const targetRef = useRef<HTMLElement>(null);
   const messageElementsRef = useRef(new Map<string, HTMLElement>());
@@ -3067,6 +3300,16 @@ const ThreadTranscript = memo(function ThreadTranscript({
     node.addEventListener("scroll", update, { passive: true });
     return () => node.removeEventListener("scroll", update);
   }, []);
+  useEffect(() => {
+    if (historyWindowKind !== "latest") return;
+    measureLatestBottom();
+  }, [
+    historyWindowKind,
+    lastMessageIndex,
+    measureLatestBottom,
+    readRecheckRequest,
+    messages.length,
+  ]);
   const targetAvailable = Boolean(
     messageTarget && messages.some((message) => message.id === messageTarget.id),
   );
@@ -3276,7 +3519,7 @@ const ThreadTranscript = memo(function ThreadTranscript({
           </Fragment>
         );
       })}
-      <div ref={bottomRef} />
+      <div ref={bottomRef} aria-hidden="true" className="latest-bottom-sentinel" />
     </div>
   );
 });

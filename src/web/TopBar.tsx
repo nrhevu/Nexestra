@@ -12,6 +12,7 @@ export interface TopBarProps {
   refreshStatus: WorkspaceRefreshStatus;
   refreshError?: string;
   onRefresh: () => void;
+  onMarkAllRead: () => void;
   onThemeToggle: () => void;
   onThread: (id: string) => void;
   onSurface: (surface: TopBarSurface) => void;
@@ -100,6 +101,12 @@ export function TopBar(props: TopBarProps) {
           label: "Refresh workspace",
           description: "Refresh workspace details and this conversation",
           action: props.onRefresh,
+        },
+        {
+          id: "command:mark-all-read",
+          label: "Mark all conversations read",
+          description: "Clear unread counts for every known conversation",
+          action: props.onMarkAllRead,
         },
         {
           id: "command:settings",

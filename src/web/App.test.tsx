@@ -3,7 +3,7 @@
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AgentRun,
   AgentView,
@@ -4936,5 +4936,467 @@ describe("Revalidation failure handling", () => {
     expect(screen.getByText("Updated planner")).toBeInTheDocument();
     expect(screen.queryByText("Could not refresh the workspace.")).not.toBeInTheDocument();
     vi.useRealTimers();
+  });
+});
+
+describe("Unread conversation UI", () => {
+  type VisibilityEntry = { isIntersecting: boolean };
+  type VisibilityCallback = (entries: VisibilityEntry[]) => void;
+  const observerCallbacks: VisibilityCallback[] = [];
+  const previousVisibility = document.visibilityState;
+
+  class MockIntersectionObserver {
+    observe = vi.fn();
+    disconnect = vi.fn();
+    constructor(readonly callback: VisibilityCallback) {
+      observerCallbacks.push(callback);
+    }
+  }
+
+  let originalGetBoundingClientRect: typeof HTMLElement.prototype.getBoundingClientRect;
+  let sentinelTop = 0;
+  function testRect(top: number, bottom: number): DOMRect {
+    return {
+      top,
+      bottom,
+      left: 0,
+      right: 100,
+      width: 100,
+      height: Math.max(0, bottom - top),
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect;
+  }
+
+  beforeEach(() => {
+    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    sentinelTop = 400;
+    originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+    HTMLElement.prototype.getBoundingClientRect = function exactRect() {
+      if (this.classList.contains("message-scroll")) {
+        return testRect(0, 100);
+      }
+      if (this.classList.contains("latest-bottom-sentinel")) {
+        return testRect(sentinelTop, sentinelTop);
+      }
+      return testRect(0, 0);
+    };
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "visible",
+    });
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    observerCallbacks.length = 0;
+    sentinelTop = 400;
+    HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: previousVisibility,
+    });
+  });
+
+  function unreadKey(workspaceId: string): string {
+    return "nexestra.readState.1." + workspaceId;
+  }
+
+  function storedReadCount(threadId: string): number | undefined {
+    const raw = window.localStorage.getItem(unreadKey(workspace.id));
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as { counts?: Record<string, number> };
+    return parsed.counts?.[threadId];
+  }
+
+  function latestMessagePage(
+    thread: Thread,
+    content = "Hello",
+    total = 1,
+    firstMessageIndex = 1,
+    loaded = 1,
+  ): ThreadHistoryPage {
+    const messages = Array.from({ length: loaded }, (_, offset) => {
+      const sequence = firstMessageIndex + offset;
+      return {
+        id: "message-unread-" + sequence,
+        threadId: thread.id,
+        sequence,
+        author: { kind: "user" as const, id: "local-user" as const, name: "You" },
+        content: offset === 0 ? content : content + " " + sequence,
+        mentions: [],
+        knowledgeReferences: [],
+        artifactIds: [],
+        createdAt: now,
+      };
+    });
+    return {
+      thread,
+      messages,
+      artifacts: [],
+      runs: [],
+      activeRuns: [],
+      toolCalls: [],
+      page: {
+        totalMessages: total,
+        totalArtifacts: 0,
+        firstMessageIndex: total > 0 ? firstMessageIndex : 0,
+        lastMessageIndex: total > 0 ? Math.min(total, firstMessageIndex + loaded - 1) : 0,
+        targetFound: true,
+        beforeCursor: null,
+        afterCursor: null,
+      },
+    };
+  }
+
+  it("shows per-thread and aggregate unread counts and marks all conversations read", async () => {
+    const first = { ...activityThread("thread-unread-first", "Alpha"), messageCount: 5 };
+    const second = { ...activityThread("thread-unread-second", "Beta"), messageCount: 3 };
+    const archived = {
+      ...activityThread("thread-unread-archived", "Gamma"),
+      messageCount: 2,
+      archived: true,
+    };
+    const key = unreadKey(workspace.id);
+    window.localStorage.setItem(
+      key,
+      JSON.stringify({
+        version: 1,
+        workspaceId: workspace.id,
+        counts: { [first.id]: 0, [second.id]: 0, [archived.id]: 0 },
+      }),
+    );
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        return jsonResponse({
+          ...bootstrapData,
+          agents: [workerAgent],
+          threads: [first, second, archived],
+        });
+      }
+      if (path === historyUrl(first)) return jsonResponse(threadSnapshot(first, []));
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${first.id}`);
+    render(<App />);
+    await screen.findByRole("combobox", { name: "Message" });
+
+    expect(screen.getByRole("img", { name: "5 unread messages" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "3 unread messages" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "2 unread messages" })).toBeInTheDocument();
+    const markAll = screen.getByRole("button", { name: "Mark all conversations read" });
+    expect(markAll).toBeEnabled();
+
+    await userEvent.click(markAll);
+    await waitFor(() => {
+      expect(screen.queryByRole("img", { name: "5 unread messages" })).not.toBeInTheDocument();
+      expect(storedReadCount(first.id)).toBe(5);
+      expect(storedReadCount(second.id)).toBe(3);
+      expect(storedReadCount(archived.id)).toBe(2);
+    });
+  });
+
+  it("acknowledges the loaded latest bottom and preserves draft and attachments", async () => {
+    const thread = activityThread("thread-unread-ack", "Alpha");
+    window.localStorage.setItem(
+      unreadKey(workspace.id),
+      JSON.stringify({
+        version: 1,
+        workspaceId: workspace.id,
+        counts: { [thread.id]: 0 },
+      }),
+    );
+    const page = latestMessagePage(thread);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        return jsonResponse({ ...bootstrapData, agents: [workerAgent], threads: [thread] });
+      }
+      if (path === historyUrl(thread)) return jsonResponse(page);
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    const user = userEvent.setup();
+    render(<App />);
+    const composer = await screen.findByRole("combobox", { name: "Message" });
+    await user.type(composer, "Draft before ack");
+    const fileInput = screen.getByLabelText("Choose files or images");
+    await user.upload(fileInput, new File(["# Notes"], "notes.md", { type: "text/markdown" }));
+    expect(screen.getByText("notes.md")).toBeInTheDocument();
+
+    await act(async () => {
+      observerCallbacks.at(-1)?.([{ isIntersecting: false }]);
+    });
+    expect(storedReadCount(thread.id)).toBe(0);
+    sentinelTop = 50;
+    await act(async () => {
+      observerCallbacks.at(-1)?.([{ isIntersecting: true }]);
+    });
+    await waitFor(() => expect(storedReadCount(thread.id)).toBe(1));
+    expect(screen.queryByRole("img", { name: "1 unread messages" })).not.toBeInTheDocument();
+    expect(composer).toHaveValue("Draft before ack");
+    expect(screen.getByText("notes.md")).toBeInTheDocument();
+  });
+
+  it("never acknowledges hidden, unfocused, older-page, or newer-unloaded counts", async () => {
+    const thread = { ...activityThread("thread-unread-gated", "Alpha"), messageCount: 5 };
+    window.localStorage.setItem(
+      unreadKey(workspace.id),
+      JSON.stringify({
+        version: 1,
+        workspaceId: workspace.id,
+        counts: { [thread.id]: 0 },
+      }),
+    );
+    const page = latestMessagePage(thread, "Hello", 5);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        return jsonResponse({ ...bootstrapData, agents: [workerAgent], threads: [thread] });
+      }
+      if (path === historyUrl(thread)) return jsonResponse(page);
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    render(<App />);
+    await screen.findByRole("combobox", { name: "Message" });
+    await screen.findByRole("button", { name: "Older messages" });
+
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "hidden",
+    });
+    await act(async () => {
+      observerCallbacks.at(-1)?.([{ isIntersecting: true }]);
+    });
+    expect(storedReadCount(thread.id)).toBe(0);
+
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "visible",
+    });
+    vi.mocked(document.hasFocus).mockReturnValue(false);
+    await act(async () => {
+      observerCallbacks.at(-1)?.([{ isIntersecting: true }]);
+    });
+    expect(storedReadCount(thread.id)).toBe(0);
+
+    vi.mocked(document.hasFocus).mockReturnValue(true);
+    sentinelTop = 50;
+    await act(async () => {
+      observerCallbacks.at(-1)?.([{ isIntersecting: true }]);
+    });
+    await waitFor(() => expect(storedReadCount(thread.id)).toBe(1));
+    expect(screen.getByRole("img", { name: "4 unread messages" })).toBeInTheDocument();
+  });
+
+  it("does not acknowledge an around page opened by a deep link", async () => {
+    const thread = { ...activityThread("thread-unread-around", "Alpha"), messageCount: 2 };
+    window.localStorage.setItem(
+      unreadKey(workspace.id),
+      JSON.stringify({
+        version: 1,
+        workspaceId: workspace.id,
+        counts: { [thread.id]: 0 },
+      }),
+    );
+    const aroundPage = latestMessagePage(thread, "Linked", 2, 1, 1);
+    const latestPage = latestMessagePage(thread, "Latest", 2, 1, 2);
+    let resolveLatest: (value: ThreadHistoryPage) => void = () => {};
+    const latestResponse = new Promise<ThreadHistoryPage>((resolve) => {
+      resolveLatest = resolve;
+    });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        return jsonResponse({ ...bootstrapData, agents: [workerAgent], threads: [thread] });
+      }
+      if (path === historyUrl(thread, "message-unread-1")) {
+        return jsonResponse(aroundPage);
+      }
+      if (path === historyUrl(thread)) return jsonResponse(await latestResponse);
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", "/threads/" + thread.id + "?message=message-unread-1");
+    render(<App />);
+    await screen.findByRole("combobox", { name: "Message" });
+    await screen.findByText("Viewing a linked message.");
+
+    await act(async () => {
+      observerCallbacks.at(-1)?.([{ isIntersecting: true }]);
+    });
+    expect(storedReadCount(thread.id)).toBe(0);
+    await userEvent.click(screen.getByRole("button", { name: "Show latest" }));
+    await act(async () => {
+      observerCallbacks.at(-1)?.([{ isIntersecting: true }]);
+    });
+    expect(storedReadCount(thread.id)).toBe(0);
+    sentinelTop = 50;
+    await act(async () => {
+      resolveLatest(latestPage);
+    });
+    await waitFor(() => expect(storedReadCount(thread.id)).toBe(2));
+  });
+
+  it("acknowledges a full latest page spanning more than one scroll window", async () => {
+    const thread = {
+      ...activityThread("thread-unread-seventy", "Alpha"),
+      messageCount: 70,
+    };
+    window.localStorage.setItem(
+      unreadKey(workspace.id),
+      JSON.stringify({
+        version: 1,
+        workspaceId: workspace.id,
+        counts: { [thread.id]: 0 },
+      }),
+    );
+    const page = latestMessagePage(thread, "Seventy", 70, 21, 50);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        return jsonResponse({ ...bootstrapData, agents: [workerAgent], threads: [thread] });
+      }
+      if (path === historyUrl(thread)) return jsonResponse(page);
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", "/threads/" + thread.id);
+    render(<App />);
+    await screen.findByRole("combobox", { name: "Message" });
+    sentinelTop = 50;
+    await act(async () => {
+      observerCallbacks.at(-1)?.([{ isIntersecting: true }]);
+    });
+    await waitFor(() => expect(storedReadCount(thread.id)).toBe(70));
+    expect(screen.queryByRole("img", { name: /unread messages/ })).not.toBeInTheDocument();
+  });
+
+  it("shows a tab-only note when read-state storage is unavailable", async () => {
+    const thread = activityThread("thread-unread-storage", "Alpha");
+    const page = latestMessagePage(thread);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        return jsonResponse({ ...bootstrapData, agents: [workerAgent], threads: [thread] });
+      }
+      if (path === historyUrl(thread)) return jsonResponse(page);
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("Quota exceeded");
+    });
+    window.history.replaceState({}, "", "/threads/" + thread.id);
+    render(<App />);
+    await screen.findByRole("combobox", { name: "Message" });
+    expect(
+      screen.getByText(/Unread counts stay in this tab until you close it/i),
+    ).toBeInTheDocument();
+  });
+
+  it("waits for a modal to close before acknowledging the visible bottom", async () => {
+    const thread = activityThread("thread-unread-modal", "Alpha");
+    window.localStorage.setItem(
+      unreadKey(workspace.id),
+      JSON.stringify({
+        version: 1,
+        workspaceId: workspace.id,
+        counts: { [thread.id]: 0 },
+      }),
+    );
+    const page = latestMessagePage(thread);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        return jsonResponse({ ...bootstrapData, agents: [workerAgent], threads: [thread] });
+      }
+      if (path === historyUrl(thread)) return jsonResponse(page);
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("combobox", { name: "Message" });
+
+    await user.click(screen.getByRole("button", { name: "Create thread" }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    await act(async () => {
+      observerCallbacks.at(-1)?.([{ isIntersecting: true }]);
+    });
+    expect(storedReadCount(thread.id)).toBe(0);
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    sentinelTop = 50;
+    await act(async () => {
+      observerCallbacks.at(-1)?.([{ isIntersecting: true }]);
+    });
+    await waitFor(() => expect(storedReadCount(thread.id)).toBe(1));
+  });
+
+  it("ignores an old observer after switching threads and Files & links", async () => {
+    const first = activityThread("thread-unread-old", "Alpha");
+    const second = activityThread("thread-unread-new", "Beta");
+    window.localStorage.setItem(
+      unreadKey(workspace.id),
+      JSON.stringify({
+        version: 1,
+        workspaceId: workspace.id,
+        counts: { [first.id]: 0, [second.id]: 0 },
+      }),
+    );
+    const firstPage = latestMessagePage(first, "First");
+    const secondPage = latestMessagePage(second, "Second");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        return jsonResponse({ ...bootstrapData, agents: [workerAgent], threads: [first, second] });
+      }
+      if (path === historyUrl(first)) return jsonResponse(firstPage);
+      if (path === historyUrl(second)) return jsonResponse(secondPage);
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${first.id}`);
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("combobox", { name: "Message" });
+    const oldCallback = observerCallbacks.at(-1)!;
+
+    await user.click(screen.getByRole("button", { name: /#Beta/ }));
+    await screen.findByRole("heading", { name: "# Beta" });
+    const newCallback = observerCallbacks.at(-1)!;
+    await act(async () => {
+      oldCallback([{ isIntersecting: true }]);
+    });
+    expect(storedReadCount(first.id)).toBe(0);
+    expect(storedReadCount(second.id)).toBe(0);
+
+    sentinelTop = 50;
+    await act(async () => {
+      newCallback([{ isIntersecting: true }]);
+    });
+    await waitFor(() => expect(storedReadCount(second.id)).toBe(1));
+    expect(storedReadCount(first.id)).toBe(0);
+
+    await user.click(screen.getByRole("button", { name: /Files & links/ }));
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(storedReadCount(second.id)).toBe(1);
+    await screen.findByText("No files or links yet");
   });
 });

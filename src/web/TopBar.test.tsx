@@ -72,6 +72,7 @@ function makeProps(overrides: Partial<TopBarProps> = {}): TopBarProps {
     theme: "dark",
     refreshStatus: "idle" as const,
     onRefresh: vi.fn(),
+    onMarkAllRead: vi.fn(),
     onThemeToggle: vi.fn(),
     onThread: vi.fn(),
     onSurface: vi.fn(),
@@ -319,5 +320,17 @@ describe("Workspace refresh action", () => {
     await user.keyboard("{Enter}");
     expect(option).not.toBeInTheDocument();
     expect(props.onRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("exposes a /mark all read command from the palette", async () => {
+    const user = userEvent.setup();
+    const props = makeProps();
+    render(<TopBar {...props} />);
+    const input = screen.getByRole("combobox");
+    await user.type(input, "/mark all");
+    const option = screen.getByRole("option", { name: /Mark all conversations read/ });
+    await user.keyboard("{Enter}");
+    expect(option).not.toBeInTheDocument();
+    expect(props.onMarkAllRead).toHaveBeenCalledTimes(1);
   });
 });
