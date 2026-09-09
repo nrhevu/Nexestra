@@ -141,6 +141,164 @@ describe("conversation history", () => {
     expect(resumed.messages.map((entry) => entry.id)).toEqual([added.id]);
   });
 
+  it("pages around first, middle, and last at ordinals with targetMessageIndex", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    const [thread] = store.listThreads();
+    if (!workspace || !thread) throw new Error("expected seeded workspace");
+    const messageIds: string[] = [];
+    for (let i = 0; i < 150; i += 1) {
+      const message = await store.createUserMessage(thread.id, `message ${i}`, []);
+      messageIds.push(message.id);
+    }
+    const expectations = [
+      { at: 1, start: 0, end: 50 },
+      { at: 100, start: 75, end: 125 },
+      { at: 150, start: 100, end: 150 },
+    ];
+    for (const { at, start, end } of expectations) {
+      const page = await store.historyPage(
+        workspace.id,
+        thread.id,
+        parsed({ workspaceId: workspace.id, limit: 50, at }),
+      );
+      expect(page.page).toMatchObject({
+        targetMessageId: messageIds[at - 1],
+        targetFound: true,
+        targetMessageIndex: at,
+        firstMessageIndex: start + 1,
+        lastMessageIndex: end,
+      });
+      expect(page.messages.map((entry) => entry.id)).toEqual(messageIds.slice(start, end));
+    }
+  });
+
+  it("resolves at ordinals from the index without reading the full log", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    const [thread] = store.listThreads();
+    if (!workspace || !thread) throw new Error("expected seeded workspace");
+    for (let i = 0; i < 60; i += 1) {
+      await store.createUserMessage(thread.id, `message ${i}`, []);
+    }
+    const spy = vi.spyOn(
+      FileStore.prototype as unknown as {
+        readEvents: (...args: unknown[]) => Promise<unknown[]>;
+      },
+      "readEvents",
+    );
+    const page = await store.historyPage(
+      workspace.id,
+      thread.id,
+      parsed({ workspaceId: workspace.id, limit: 50, at: 13 }),
+    );
+    expect(spy).not.toHaveBeenCalled();
+    expect(page.page).toMatchObject({ targetMessageIndex: 13, targetFound: true });
+    expect(page.messages.map((entry) => entry.id)).toHaveLength(50);
+  });
+
+  it("falls back to the latest bounded page for out-of-range and empty at ordinals", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    const [thread] = store.listThreads();
+    if (!workspace || !thread) throw new Error("expected seeded workspace");
+    const messageIds: string[] = [];
+    for (let i = 0; i < 30; i += 1) {
+      const message = await store.createUserMessage(thread.id, `message ${i}`, []);
+      messageIds.push(message.id);
+    }
+    const pastEnd = await store.historyPage(
+      workspace.id,
+      thread.id,
+      parsed({ workspaceId: workspace.id, limit: 50, at: 31 }),
+    );
+    expect(pastEnd.page).toMatchObject({
+      totalMessages: 30,
+      targetMessageIndex: 31,
+      targetFound: false,
+    });
+    expect(pastEnd.page.targetMessageId).toBeUndefined();
+    expect(pastEnd.messages.map((entry) => entry.id)).toEqual(messageIds.slice(0, 30));
+    const far = await store.historyPage(
+      workspace.id,
+      thread.id,
+      parsed({ workspaceId: workspace.id, limit: 10, at: 999 }),
+    );
+    expect(far.page).toMatchObject({
+      targetMessageIndex: 999,
+      targetFound: false,
+      firstMessageIndex: 21,
+      lastMessageIndex: 30,
+    });
+    expect(far.page.targetMessageId).toBeUndefined();
+    expect(far.messages.map((entry) => entry.id)).toEqual(messageIds.slice(20, 30));
+    const fresh = await store.createThread({ name: "Empty at" });
+    const empty = await store.historyPage(
+      workspace.id,
+      fresh.id,
+      parsed({ workspaceId: workspace.id, at: 1 }),
+    );
+    expect(empty.page).toMatchObject({
+      totalMessages: 0,
+      targetMessageIndex: 1,
+      targetFound: false,
+    });
+    expect(empty.page.targetMessageId).toBeUndefined();
+    expect(empty.messages).toEqual([]);
+  });
+
+  it("keeps at ordinals stable across appends and reopen", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    const [thread] = store.listThreads();
+    if (!workspace || !thread) throw new Error("expected seeded workspace");
+    await store.createUserMessage(thread.id, "first", []);
+    const second = await store.createUserMessage(thread.id, "second", []);
+    const reopened = await FileStore.open({ root: store.root, workspacePath: store.workspacePath });
+    const page = await reopened.historyPage(
+      workspace.id,
+      thread.id,
+      parsed({ workspaceId: workspace.id, limit: 10, at: 2 }),
+    );
+    expect(page.page).toMatchObject({
+      targetMessageId: second.id,
+      targetMessageIndex: 2,
+      targetFound: true,
+    });
+    const third = await reopened.createUserMessage(thread.id, "third", []);
+    const afterAppend = await reopened.historyPage(
+      workspace.id,
+      thread.id,
+      parsed({ workspaceId: workspace.id, limit: 10, at: 2 }),
+    );
+    expect(afterAppend.page).toMatchObject({
+      targetMessageId: second.id,
+      targetMessageIndex: 2,
+      targetFound: true,
+    });
+    const afterTail = await reopened.historyPage(
+      workspace.id,
+      thread.id,
+      parsed({ workspaceId: workspace.id, limit: 10, at: 3 }),
+    );
+    expect(afterTail.page).toMatchObject({
+      targetMessageId: third.id,
+      targetMessageIndex: 3,
+      targetFound: true,
+    });
+    const reagain = await FileStore.open({ root: store.root, workspacePath: store.workspacePath });
+    const again = await reagain.historyPage(
+      workspace.id,
+      thread.id,
+      parsed({ workspaceId: workspace.id, limit: 10, at: 2 }),
+    );
+    expect(again.page).toMatchObject({
+      targetMessageId: second.id,
+      targetMessageIndex: 2,
+      targetFound: true,
+    });
+  });
+
   it("keeps canonical final run/toolCall state beyond any fixed update window", async () => {
     const store = await openStore();
     const [workspace] = store.listWorkspaces();

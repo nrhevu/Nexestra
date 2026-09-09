@@ -86,6 +86,7 @@ import {
   HISTORY_MAX_PAGE_BYTES,
   type HistoryAnchorMode,
   planHistoryPage,
+  planHistoryPageAt,
   type RawTranscriptEvent,
   readTranscriptPageLines,
   scanTranscriptHistoryFile,
@@ -2540,7 +2541,9 @@ export class FileStore {
           ? "after"
           : input.around
             ? "around"
-            : "latest";
+            : input.at !== undefined
+              ? "at"
+              : "latest";
       const anchor = input.before ?? input.after ?? input.around;
       if (index.missing) {
         const emptyThread = thread.messageCount === 0 && thread.lastMessageAt === null;
@@ -2586,6 +2589,9 @@ export class FileStore {
             beforeCursor: null,
             afterCursor: null,
             ...(mode === "around" ? { targetMessageId: anchor, targetFound: false } : {}),
+            ...(mode === "at" && input.at !== undefined
+              ? { targetMessageIndex: input.at, targetFound: false }
+              : {}),
           },
         });
       }
@@ -2601,7 +2607,10 @@ export class FileStore {
           "Transcript identity is unavailable; restart Nexestra before requesting history.",
         );
       }
-      const result = planHistoryPage(index, mode, anchor, input.limit);
+      const result =
+        mode === "at" && input.at !== undefined
+          ? planHistoryPageAt(index, input.at, input.limit)
+          : planHistoryPage(index, mode, anchor, input.limit);
       if (!result.ok) {
         throw new StoreError("invalid", result.reason ?? "Unknown message anchor.");
       }
@@ -2698,6 +2707,9 @@ export class FileStore {
           afterCursor: plan.afterCursor,
           ...(plan.targetMessageId ? { targetMessageId: plan.targetMessageId } : {}),
           ...(plan.targetFound !== undefined ? { targetFound: plan.targetFound } : {}),
+          ...(plan.targetMessageIndex !== undefined
+            ? { targetMessageIndex: plan.targetMessageIndex }
+            : {}),
         },
       });
     });

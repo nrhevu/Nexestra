@@ -1595,6 +1595,30 @@ describe("conversation history HTTP routes", () => {
       `/api/threads/${thread.id}/history?workspaceId=${workspace.id}&before=${message.id}&after=${message.id}`,
     );
     expect(multiple.status).toBe(400);
+    const atOk = await app.request(
+      `/api/threads/${thread.id}/history?workspaceId=${workspace.id}&at=1`,
+    );
+    expect(atOk.status).toBe(200);
+    await expect(atOk.json()).resolves.toMatchObject({
+      messages: [{ id: message.id }],
+      page: { targetMessageId: message.id, targetFound: true, targetMessageIndex: 1 },
+    });
+    const mixedAt = await app.request(
+      `/api/threads/${thread.id}/history?workspaceId=${workspace.id}&at=1&before=${message.id}`,
+    );
+    expect(mixedAt.status).toBe(400);
+    const zeroAt = await app.request(
+      `/api/threads/${thread.id}/history?workspaceId=${workspace.id}&at=0`,
+    );
+    expect(zeroAt.status).toBe(400);
+    const pastAt = await app.request(
+      `/api/threads/${thread.id}/history?workspaceId=${workspace.id}&at=999`,
+    );
+    expect(pastAt.status).toBe(200);
+    await expect(pastAt.json()).resolves.toMatchObject({
+      messages: [{ id: message.id }],
+      page: { targetFound: false, targetMessageIndex: 999 },
+    });
     const unknownBefore = await app.request(
       `/api/threads/${thread.id}/history?workspaceId=${workspace.id}&before=unknown-anchor`,
     );

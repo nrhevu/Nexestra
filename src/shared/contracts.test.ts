@@ -5,6 +5,7 @@ import {
   extractMentionHandles,
   handleFromName,
   ReorderWorkspacesSchema,
+  ThreadHistoryRequestSchema,
   UpdateAgentSchema,
 } from "./contracts.js";
 
@@ -118,5 +119,28 @@ describe("UpdateAgentSchema", () => {
     expect(result.error.issues[0]?.message).toBe(
       "Choose either a new API key or Remove credential.",
     );
+  });
+});
+
+describe("ThreadHistoryRequestSchema", () => {
+  const base = { workspaceId: "workspace" };
+  it("accepts positive safe integer at ordinals and rejects unsafe or mixed anchors", () => {
+    expect(ThreadHistoryRequestSchema.safeParse({ ...base, at: 1 }).success).toBe(true);
+    expect(
+      ThreadHistoryRequestSchema.safeParse({ ...base, at: Number.MAX_SAFE_INTEGER }).success,
+    ).toBe(true);
+    for (const at of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(ThreadHistoryRequestSchema.safeParse({ ...base, at }).success).toBe(false);
+    }
+    expect(ThreadHistoryRequestSchema.safeParse({ ...base, at: 1, before: "m" }).success).toBe(
+      false,
+    );
+    expect(ThreadHistoryRequestSchema.safeParse({ ...base, at: 1, after: "m" }).success).toBe(
+      false,
+    );
+    expect(ThreadHistoryRequestSchema.safeParse({ ...base, at: 1, around: "m" }).success).toBe(
+      false,
+    );
+    expect(ThreadHistoryRequestSchema.safeParse({ ...base, at: "7" }).success).toBe(true);
   });
 });

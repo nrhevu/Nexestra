@@ -868,12 +868,13 @@ export const ThreadHistoryRequestSchema = z
     before: z.string().trim().min(1).max(200).optional(),
     after: z.string().trim().min(1).max(200).optional(),
     around: z.string().trim().min(1).max(200).optional(),
+    at: z.coerce.number().int().positive().safe().optional(),
   })
   .refine(
     (value) =>
-      [value.before, value.after, value.around].filter((id): id is string => id !== undefined)
-        .length <= 1,
-    { message: "Use at most one of before, after, or around." },
+      [value.before, value.after, value.around, value.at].filter((id) => id !== undefined).length <=
+      1,
+    { message: "Use at most one of before, after, around, or at." },
   );
 export type ThreadHistoryRequest = z.infer<typeof ThreadHistoryRequestSchema>;
 
@@ -893,6 +894,7 @@ export const ThreadHistoryPageSchema = z.object({
     afterCursor: z.string().nullable(),
     targetMessageId: z.string().optional(),
     targetFound: z.boolean().optional(),
+    targetMessageIndex: z.number().int().positive().optional(),
   }),
 });
 export type ThreadHistoryPage = z.infer<typeof ThreadHistoryPageSchema>;

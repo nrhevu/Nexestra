@@ -11,7 +11,7 @@ import { TextDecoder } from "node:util";
 export const HISTORY_MAX_EVENT_BYTES = 1 * 1024 * 1024;
 export const HISTORY_MAX_PAGE_BYTES = 8 * 1024 * 1024;
 
-export type HistoryAnchorMode = "latest" | "before" | "after" | "around";
+export type HistoryAnchorMode = "latest" | "before" | "after" | "around" | "at";
 
 export type RawTranscriptEvent = {
   type: string;
@@ -317,6 +317,7 @@ export interface HistoryPageSelection {
   afterCursor: string | null;
   targetMessageId?: string;
   targetFound?: boolean;
+  targetMessageIndex?: number;
 }
 
 export function planHistoryPage(
@@ -370,6 +371,38 @@ export function planHistoryPage(
   const plan = completePlan(index, start, start + limit, total, emptyPlan);
   plan.targetMessageId = anchorMessageId;
   plan.targetFound = true;
+  return { ok: true, plan };
+}
+
+export function planHistoryPageAt(
+  index: TranscriptHistoryIndex,
+  at: number,
+  limit: number,
+): { plan: HistoryPageSelection; ok: boolean; reason?: string } {
+  const total = index.messages.length;
+  const emptyPlan: HistoryPageSelection = {
+    messageEntries: [],
+    artifactEntries: [],
+    runEntries: [],
+    toolEntries: [],
+    firstMessageIndex: 0,
+    lastMessageIndex: 0,
+    beforeCursor: null,
+    afterCursor: null,
+  };
+  const anchorMessageId = index.messages[at - 1]?.id;
+  if (anchorMessageId === undefined) {
+    const plan = completePlan(index, Math.max(0, total - limit), total, total, emptyPlan);
+    plan.targetMessageIndex = at;
+    plan.targetFound = false;
+    return { ok: true, plan };
+  }
+  const half = Math.floor((limit - 1) / 2);
+  const start = Math.min(Math.max(0, total - limit), Math.max(0, at - 1 - half));
+  const plan = completePlan(index, start, start + limit, total, emptyPlan);
+  plan.targetMessageId = anchorMessageId;
+  plan.targetFound = true;
+  plan.targetMessageIndex = at;
   return { ok: true, plan };
 }
 
