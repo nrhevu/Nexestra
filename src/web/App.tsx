@@ -107,6 +107,7 @@ import {
 import { MessageLinkButton } from "./MessageLinkButton.js";
 import { MessageSearchDialog } from "./MessageSearchDialog.js";
 import { RepositoryBranchPicker } from "./RepositoryBranchPicker.js";
+import { RunHistoryView } from "./RunHistoryView.js";
 import {
   fingerprintSubmission,
   newRequestId,
@@ -171,6 +172,7 @@ interface SubmissionOptions {
 export function App() {
   const [route, setRoute] = useState<RouteState>(() => routeFromLocation());
   const [historyNavigationRevision, setHistoryNavigationRevision] = useState(0);
+  const [runHistoryRefreshRevision, setRunHistoryRefreshRevision] = useState(0);
   const [conversations] = useState(() => new ConversationState());
   const [submissions] = useState(() => new SubmissionState());
   const [, setDraftRevision] = useState(0);
@@ -668,6 +670,9 @@ export function App() {
       }
       if (next === null) return "failed";
       const routeNow = routeRef.current;
+      if (routeNow.view === "surfaces" && routeNow.surface === "runs") {
+        setRunHistoryRefreshRevision((revision) => revision + 1);
+      }
       if (
         routeNow.view === "threads" &&
         threadAtStart &&
@@ -873,6 +878,7 @@ export function App() {
     latestForeignLookupRequestRef.current += 1;
     foreignLookupThreadRef.current = undefined;
     workspaceIdRef.current = workspaceId;
+    setRunHistoryRefreshRevision((revision) => revision + 1);
     threadActivityRevisionRef.current = undefined;
     setHistoryPage(undefined);
     setHistoryWindow(undefined);
@@ -1287,9 +1293,26 @@ export function App() {
 
   const selectWorkspace = async (workspaceId: string) => {
     if (workspaceId === workspaceIdRef.current) return;
+    const previousWorkspaceId = dataRef.current?.workspace.id;
     beginWorkspaceSwitch(workspaceId);
+    const generation = workspaceGenerationRef.current;
     const next = await refresh(false, workspaceId);
-    if (!next) return;
+    if (!next) {
+      if (
+        next === null &&
+        previousWorkspaceId &&
+        generation === workspaceGenerationRef.current &&
+        workspaceIdRef.current === workspaceId
+      ) {
+        // Restore the last loaded workspace so a failed switch can be retried.
+        // Retain refresh's visible error and invalidate any work from the failed switch.
+        workspaceGenerationRef.current += 1;
+        workspaceIdRef.current = previousWorkspaceId;
+        setRunHistoryRefreshRevision((revision) => revision + 1);
+        setHistoryNavigationRevision((revision) => revision + 1);
+      }
+      return;
+    }
     if (routeRef.current.view === "threads") {
       const threadId = conversations.resolveThread(next.workspace.id, activeThreads(next.threads));
       if (threadId) {
@@ -1842,6 +1865,32 @@ export function App() {
           ) : (
             <EmptyThreads onCreate={() => setModal("thread")} />
           )
+        ) : route.surface === "runs" ? (
+          data.workspace.id === workspaceIdRef.current ? (
+            <RunHistoryView
+              key={data.workspace.id}
+              workspaceId={data.workspace.id}
+              agents={data.agents}
+              threads={data.threads}
+              refreshRevision={runHistoryRefreshRevision}
+              onOpenRun={(item) => {
+                if (data.workspace.id !== workspaceIdRef.current) return;
+                const thread = dataRef.current?.threads.find(
+                  (entry) =>
+                    entry.id === item.run.threadId && entry.workspaceId === data.workspace.id,
+                );
+                if (!thread) {
+                  flash("This run's conversation is no longer available.");
+                  return;
+                }
+                openMessage(thread.id, item.run.triggerMessageId);
+              }}
+            />
+          ) : (
+            <div className="surface-view" role="status">
+              Opening workspace…
+            </div>
+          )
         ) : route.surface === "attention" ? (
           <AttentionView
             items={data.attention}
@@ -2335,14 +2384,16 @@ function Sidebar(props: {
     <aside className="sidebar">
       <div className="workspace-title">
         <div title={props.data.workspace.name}>{props.data.workspace.name}</div>
-        <button
-          className="icon-button"
-          type="button"
-          onClick={props.onCreate}
-          aria-label="Create new"
-        >
-          <Plus size={18} />
-        </button>
+        {props.route.view !== "surfaces" || props.route.surface !== "runs" ? (
+          <button
+            className="icon-button"
+            type="button"
+            onClick={props.onCreate}
+            aria-label="Create new"
+          >
+            <Plus size={18} />
+          </button>
+        ) : null}
       </div>
       <nav className="primary-navigation" aria-label="Workspace navigation">
         <button
@@ -2549,6 +2600,14 @@ function Sidebar(props: {
           <>
             <p className="sidebar-kicker">Workspace</p>
             <div className="sidebar-list surface-list">
+              <button
+                className={props.route.surface === "runs" ? "sidebar-row selected" : "sidebar-row"}
+                type="button"
+                onClick={() => props.onSurface("runs")}
+              >
+                <History size={17} />
+                <span className="row-label">Run history</span>
+              </button>
               <button
                 className={
                   props.route.surface === "taskboard" ? "sidebar-row selected" : "sidebar-row"
@@ -7679,7 +7738,10 @@ function routeFromLocation(): RouteState {
   const parts = window.location.pathname.split("/").filter(Boolean);
   if (parts[0] === "surfaces") {
     const surface =
-      parts[1] === "taskboard" || parts[1] === "knowledge" || parts[1] === "attention"
+      parts[1] === "taskboard" ||
+      parts[1] === "knowledge" ||
+      parts[1] === "attention" ||
+      parts[1] === "runs"
         ? parts[1]
         : "agents";
     return { view: "surfaces", surface };

@@ -21,6 +21,14 @@ failed, or interrupted. Open an item to return to its thread or task process con
 show current agent activity, including work in other threads while your current conversation runs.
 Items disappear when the underlying condition is resolved; this view does not start or approve work.
 
+Open **Run history** under Surfaces, or use `/runs` or `/run history`, to find earlier agent runs
+across the current workspace. Filter by status, agent or conversation, including archived threads.
+**Older runs** and **Newer runs** replace the current 50-row page. **Open run** returns to the message
+that started it and keeps your drafts and selected files. Use **Refresh run history** or the global
+**Refresh** to update statuses and return to the newest page; leaving the surface resets its filters.
+Returning to the app also refreshes this list from the newest page with the current filters.
+If some conversations cannot be read, the list shows that its coverage is incomplete.
+
 Thread rows also show **unread messages**, with a total on Threads. Reading the bottom of the
 latest Messages page in a focused window marks that loaded page read. Older pages, message links
 and Files & links keep newer messages unread. Choose **Mark all conversations read** beside the

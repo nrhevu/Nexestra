@@ -160,6 +160,16 @@ An invalid saved workspace selection is cleared once during initial startup so a
 directory cannot leave the browser stuck at a missing-workspace error; explicit switch failures
 remain visible.
 
+Run history lists the latest durable lifecycle summary per run from the canonical transcript
+indices, including ordinary terminal chat runs and archived conversations. `/api/runs` validates
+workspace-owned filters and uses creation-order keyset cursors bound to those filters and the
+bounded page size. Invalid or unavailable conversations are omitted with explicit coverage. The
+in-memory summary projection is rebuilt at startup and extended after durable appends; warm listing
+sorts cached summaries without reading whole transcripts. The surface retains one page of run
+objects plus previous cursors. Open run uses the canonical trigger message link, with app-owned
+draft/file retention and immediate invalidation on workspace switches. Global Refresh/resume also
+refreshes the mounted listing. See [ADR 0045](adr/0045-workspace-run-history.md).
+
 Message content is stored and transported as unchanged Markdown. The browser renders it with
 GitHub Flavored Markdown and KaTeX inside the memoized transcript boundary. Raw HTML parsing is not
 enabled, the Markdown renderer removes unsafe URL schemes, and HTTP(S) links use isolated tabs.
@@ -480,9 +490,16 @@ credentials.
 
 - Needs attention reflects the selected workspace's current conditions. It has no historical
   notification log, snoozing, dismissal, desktop notifications, or cross-workspace
-  monitoring. Ordinary failed chat turns remain in their thread. Changes from another client are
+  monitoring. Run history separately lists ordinary failed chat turns and links to their thread.
+  Changes from another client are
   discovered on return, a visible online event or explicit refresh; idle clients do not continuously
   exchange updates.
+
+- Run history adds O(runs) summary memory and sorts matching runs per request under the store's
+  write serialization. Its coverage describes the cached index; external transcript edits require
+  a restart. Filtered pages are live and can change as statuses update. Filters/page position reset
+  after leaving the surface, and deleted agents are labeled Unknown. It has no background polling,
+  run error/output search, cross-workspace aggregation or new run action controls.
 
 - Conversation unread state belongs to one browser profile and origin. It counts all canonical
   messages and uses a read-through count, not a per-message receipt or proof of attention. Existing

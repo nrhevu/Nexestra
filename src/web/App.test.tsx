@@ -9,6 +9,7 @@ import type {
   AgentView,
   BootstrapData,
   KnowledgeDocument,
+  RunHistoryPage,
   Thread,
   ThreadData,
   ThreadHistoryPage,
@@ -773,8 +774,10 @@ describe("Workspace attention supervision", () => {
           }),
         );
       } else {
+        // Wait for supervision to mount before ticking its interval, then for its async refresh.
+        await waitFor(() => expect(timers.callbacks.size).toBe(1));
         await timers.tick();
-        if (delayedKind === "bootstrap") expect(oldBootstrapReads).toBe(2);
+        if (delayedKind === "bootstrap") await waitFor(() => expect(oldBootstrapReads).toBe(2));
       }
       await userEvent.click(screen.getByRole("button", { name: "Switch to Product" }));
       await waitFor(() =>
@@ -4936,6 +4939,290 @@ describe("Revalidation failure handling", () => {
     expect(screen.getByText("Updated planner")).toBeInTheDocument();
     expect(screen.queryByText("Could not refresh the workspace.")).not.toBeInTheDocument();
     vi.useRealTimers();
+  });
+});
+
+describe("Run history navigation", () => {
+  function listing(thread: Thread, run: AgentRun, agentName = workerAgent.name): RunHistoryPage {
+    return {
+      workspaceId: thread.workspaceId,
+      items: [
+        {
+          run,
+          agentName,
+          agentHandle: workerAgent.handle,
+          threadName: thread.name,
+          threadArchived: thread.archived,
+        },
+      ],
+      page: { nextCursor: null },
+      coverage: { complete: true, unavailableThreads: 0 },
+    };
+  }
+
+  function runMessagePage(thread: Thread, run: AgentRun): ThreadHistoryPage {
+    const page = threadSnapshot(thread, [run]);
+    page.messages = [
+      {
+        id: run.triggerMessageId,
+        threadId: thread.id,
+        sequence: 1,
+        author: { kind: "user", id: "local-user", name: "You" },
+        content: "Inspect this failed run",
+        mentions: [],
+        knowledgeReferences: [],
+        artifactIds: [],
+        createdAt: now,
+      },
+    ];
+    page.page = {
+      ...page.page,
+      totalMessages: thread.messageCount,
+      firstMessageIndex: 1,
+      lastMessageIndex: 1,
+      targetMessageId: run.triggerMessageId,
+      targetFound: true,
+    };
+    return page;
+  }
+
+  it("opens an archived run's trigger, returns through Back, and retains the original draft and files", async () => {
+    const current = activityThread("run-history-current", "Current conversation");
+    const archived = {
+      ...activityThread("run-history-archive", "Archived worker"),
+      archived: true,
+      messageCount: 75,
+    };
+    const failed = activityRun(archived, "failed");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap"))
+        return jsonResponse({
+          ...bootstrapData,
+          agents: [workerAgent],
+          threads: [current, archived],
+        });
+      if (path.startsWith("/api/runs?")) return jsonResponse(listing(archived, failed));
+      if (path === historyUrl(current)) return jsonResponse(threadSnapshot(current, []));
+      if (path === historyUrl(archived, failed.triggerMessageId))
+        return jsonResponse(runMessagePage(archived, failed));
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${current.id}`);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(
+      await screen.findByRole("combobox", { name: "Message" }),
+      "Keep this run review draft",
+    );
+    await user.upload(
+      screen.getByLabelText("Choose files or images"),
+      new File(["context"], "run-context.txt"),
+    );
+    await user.click(screen.getByRole("button", { name: "Surfaces" }));
+    await user.click(screen.getByRole("button", { name: "Run history" }));
+    await screen.findByRole("heading", { name: "Run history" });
+    expect(screen.queryByRole("button", { name: "Create new" })).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: /Open run/ }));
+    const selected = await screen.findByRole("region", { name: "Selected message" });
+    expect(selected).toHaveTextContent("Inspect this failed run");
+    await waitFor(() => expect(selected).toHaveFocus());
+    expect(window.location.pathname).toBe(`/threads/${archived.id}`);
+    expect(window.location.search).toBe(`?message=${failed.triggerMessageId}`);
+    expect(screen.getByRole("button", { name: "Restore" })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Message" })).not.toBeInTheDocument();
+    await act(async () => {
+      window.history.back();
+    });
+    await screen.findByRole("heading", { name: "Run history" });
+    expect(window.location.pathname).toBe("/surfaces/runs");
+    await user.click(screen.getByRole("button", { name: "Threads" }));
+    expect(await screen.findByRole("combobox", { name: "Message" })).toHaveValue(
+      "Keep this run review draft",
+    );
+    expect(screen.getByText("run-context.txt")).toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls
+        .map(([input]) => String(input))
+        .filter((path) => path.includes("/history")),
+    ).toEqual([
+      historyUrl(current),
+      historyUrl(archived, failed.triggerMessageId),
+      historyUrl(current),
+    ]);
+  });
+
+  it("refreshes the current run list from global Refresh while retaining its status filter", async () => {
+    const thread = activityThread("run-history-refresh", "History refresh");
+    const run = activityRun(thread, "failed");
+    let bootstrapReads = 0;
+    const requests: string[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        bootstrapReads += 1;
+        return jsonResponse({ ...bootstrapData, agents: [workerAgent], threads: [thread] });
+      }
+      if (path.startsWith("/api/runs?")) {
+        requests.push(path);
+        return jsonResponse(
+          listing(thread, run, bootstrapReads > 1 ? "Updated runner" : "Original runner"),
+        );
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", "/surfaces/runs");
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("button", { name: /Open run/ });
+    await user.selectOptions(screen.getByRole("combobox", { name: "Run status" }), "failed");
+    await waitFor(() => expect(requests).toHaveLength(2));
+    await user.click(screen.getByRole("button", { name: "Refresh workspace" }));
+    await screen.findByRole("button", { name: /Open run.*Updated runner/ });
+    expect(requests).toHaveLength(3);
+    expect(new URL(requests[2] ?? "", "http://localhost").searchParams.get("status")).toBe(
+      "failed",
+    );
+    expect(screen.getByRole("combobox", { name: "Run status" })).toHaveValue("failed");
+    expect(bootstrapReads).toBe(2);
+  });
+
+  it("recovers the previous run history after a failed workspace switch and allows another attempt", async () => {
+    const secondWorkspace = { ...workspace, id: "workspace-recovery-second", name: "Second" };
+    const first = activityThread("run-switch-recovery-first", "First history");
+    const second = {
+      ...activityThread("run-switch-recovery-second", "Second history"),
+      workspaceId: secondWorkspace.id,
+    };
+    const secondAgent = {
+      ...workerAgent,
+      id: "second-recovery-runner",
+      workspaceId: secondWorkspace.id,
+      name: "Second runner",
+    };
+    let secondAttempts = 0;
+    let firstBootstrapReads = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        if (path.includes(secondWorkspace.id)) {
+          secondAttempts += 1;
+          if (secondAttempts === 1)
+            return jsonResponse({ error: { message: "Second workspace unavailable" } }, 503);
+          return jsonResponse({
+            ...bootstrapData,
+            workspaces: [workspace, secondWorkspace],
+            workspace: secondWorkspace,
+            agents: [secondAgent],
+            threads: [second],
+          });
+        }
+        firstBootstrapReads += 1;
+        return jsonResponse({
+          ...bootstrapData,
+          workspaces: [workspace, secondWorkspace],
+          agents: [workerAgent],
+          threads: [first],
+        });
+      }
+      if (path.startsWith("/api/runs?")) {
+        return jsonResponse(
+          path.includes(secondWorkspace.id)
+            ? listing(
+                second,
+                { ...activityRun(second, "completed"), agentId: secondAgent.id },
+                secondAgent.name,
+              )
+            : listing(first, activityRun(first, "failed"), "Original runner"),
+        );
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", "/surfaces/runs");
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("button", { name: /Open run.*Original runner/ });
+    await user.click(screen.getByRole("button", { name: "Switch to Second" }));
+    await screen.findByText("Second workspace unavailable");
+    await screen.findByRole("button", { name: /Open run.*Original runner/ });
+    expect(screen.queryByText("Opening workspace…")).not.toBeInTheDocument();
+    expect(window.localStorage.getItem("nexestra.workspaceId")).toBe(workspace.id);
+    await user.click(screen.getByRole("button", { name: "Refresh workspace" }));
+    await waitFor(() => expect(firstBootstrapReads).toBe(2));
+    await screen.findByRole("button", { name: /Open run.*Original runner/ });
+    await user.click(screen.getByRole("button", { name: "Switch to Second" }));
+    await screen.findByRole("button", { name: /Open run.*Second runner/ });
+    expect(secondAttempts).toBe(2);
+    expect(window.localStorage.getItem("nexestra.workspaceId")).toBe(secondWorkspace.id);
+    expect(screen.queryByText("Second workspace unavailable")).not.toBeInTheDocument();
+  });
+
+  it("aborts run history immediately on a workspace switch and ignores the old response", async () => {
+    const first = activityThread("run-history-workspace-first", "First history");
+    const secondWorkspace = { ...workspace, id: "run-history-second-workspace", name: "Second" };
+    const second = {
+      ...activityThread("run-history-workspace-second", "Second history"),
+      workspaceId: secondWorkspace.id,
+    };
+    const secondAgent = {
+      ...workerAgent,
+      id: "second-runner",
+      workspaceId: secondWorkspace.id,
+      name: "Second runner",
+    };
+    const firstRun = activityRun(first, "failed");
+    const secondRun = { ...activityRun(second, "interrupted"), agentId: secondAgent.id };
+    const firstRequest = deferredResponse();
+    const secondBootstrap = deferredResponse();
+    let firstSignal: AbortSignal | null | undefined;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        if (path.includes(secondWorkspace.id)) return secondBootstrap.promise;
+        return jsonResponse({
+          ...bootstrapData,
+          workspaces: [workspace, secondWorkspace],
+          agents: [workerAgent],
+          threads: [first],
+        });
+      }
+      if (path.startsWith("/api/runs?")) {
+        if (path.includes(secondWorkspace.id))
+          return jsonResponse(listing(second, secondRun, secondAgent.name));
+        firstSignal = init?.signal;
+        return firstRequest.promise;
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", "/surfaces/runs");
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => expect(firstSignal).toBeDefined());
+    await user.click(screen.getByRole("button", { name: "Switch to Second" }));
+    expect(firstSignal?.aborted).toBe(true);
+    expect(screen.getByText("Opening workspace…")).toBeInTheDocument();
+    await act(async () => {
+      firstRequest.resolve(jsonResponse(listing(first, firstRun, "Stale first runner")));
+    });
+    expect(screen.queryByText("Stale first runner")).not.toBeInTheDocument();
+    await act(async () => {
+      secondBootstrap.resolve(
+        jsonResponse({
+          ...bootstrapData,
+          workspaces: [workspace, secondWorkspace],
+          workspace: secondWorkspace,
+          agents: [secondAgent],
+          threads: [second],
+        }),
+      );
+    });
+    await screen.findByRole("button", { name: /Open run.*Second runner/ });
+    expect(window.location.pathname).toBe("/surfaces/runs");
+    expect(screen.queryByText("Stale first runner")).not.toBeInTheDocument();
   });
 });
 

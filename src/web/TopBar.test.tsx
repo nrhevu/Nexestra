@@ -90,6 +90,19 @@ afterEach(() => {
 });
 
 describe("Global search", () => {
+  it.each(["/runs", "/run history"])("opens workspace run history with %s", async (command) => {
+    const user = userEvent.setup();
+    const props = makeProps();
+    render(<TopBar {...props} />);
+    const input = screen.getByRole("combobox");
+    await user.type(input, command);
+    expect(screen.getByRole("option", { name: /Run history/ })).toBeInTheDocument();
+    await user.keyboard("{Enter}");
+    expect(props.onSurface).toHaveBeenCalledExactlyOnceWith("runs");
+    expect(props.onThread).not.toHaveBeenCalled();
+    expect(input).toHaveValue("");
+  });
+
   it("supports the shortcut and wraps keyboard selection while focus stays in the combobox", async () => {
     const user = userEvent.setup();
     const props = makeProps();
