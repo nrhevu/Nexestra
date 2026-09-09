@@ -3755,6 +3755,15 @@ kbd {
   font-size: 11px;
   line-height: 1.5;
 }
+.settings-archive-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.settings-archive-actions .secondary-button {
+  border-color: var(--border);
+  color: var(--text);
+}
 .workspace-order {
   margin: 0;
   padding: 0;

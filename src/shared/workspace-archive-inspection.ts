@@ -286,7 +286,13 @@ async function inspectWorkspaceArchiveImpl(
 
   const cancellable = async <T>(operation: () => Promise<T>): Promise<T> => {
     try {
-      return await Promise.race([Promise.resolve().then(operation), cancelledPromise]);
+      return await Promise.race([
+        Promise.resolve().then(() => {
+          assertActive();
+          return operation();
+        }),
+        cancelledPromise,
+      ]);
     } catch (error) {
       assertActive();
       throw toInspectionError(error);
@@ -678,6 +684,7 @@ export async function inspectWorkspaceArchive(
 ): Promise<WorkspaceArchiveInspectionReport> {
   const signal = options?.signal;
   if (signal?.aborted) throw cancelled(MSG_CANCELLED);
+  if (!Number.isSafeInteger(file.size) || file.size < 0) throw invalid(MSG_STRUCTURE);
   const active: ActiveState = {
     deadlineFired: false,
     signalAborted: false,

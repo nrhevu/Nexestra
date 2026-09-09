@@ -16,7 +16,13 @@ import type {
   WorkspaceActivityData,
 } from "../shared/contracts.js";
 import { runAttentionItem } from "../shared/contracts.js";
+import type { WorkspaceArchiveInspectionReport } from "../shared/workspace-archive-inspection-contracts.js";
 import { App } from "./App.js";
+import { inspectArchiveInWorker } from "./workspace-archive-inspection-client.js";
+
+vi.mock("./workspace-archive-inspection-client.js", () => ({
+  inspectArchiveInWorker: vi.fn(),
+}));
 
 const now = "2026-09-02T12:00:00.000Z";
 
@@ -1216,6 +1222,151 @@ describe("Workspace export navigation", () => {
     expect(fetchMock.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(
       true,
     );
+  });
+});
+
+describe("Workspace archive inspection navigation", () => {
+  beforeEach(() => {
+    vi.mocked(inspectArchiveInWorker).mockReset();
+  });
+
+  it("opens from Settings and command without work and preserves the conversation draft and files", async () => {
+    const thread = activityThread("inspect-draft-thread", "Inspect draft");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap"))
+        return jsonResponse({ ...bootstrapData, threads: [thread] });
+      if (path === historyUrl(thread)) return jsonResponse(threadSnapshot(thread, []));
+      return jsonResponse({ error: { message: "Unexpected request" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(
+      await screen.findByRole("combobox", { name: "Message" }),
+      "Keep inspector draft",
+    );
+    await user.upload(
+      screen.getByLabelText("Choose files or images"),
+      new File(["selected bytes"], "inspector-context.txt"),
+    );
+    await user.click(screen.getByRole("button", { name: "Open settings" }));
+    await user.click(screen.getByRole("button", { name: "Inspect workspace ZIP" }));
+    expect(screen.getByRole("dialog", { name: "Inspect workspace ZIP" })).toBeVisible();
+    expect(screen.queryByRole("dialog", { name: "Local workspace" })).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await user.type(screen.getByRole("combobox", { name: /Search/ }), "/inspect workspace zip");
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("dialog", { name: "Inspect workspace ZIP" })).toBeVisible();
+    await user.keyboard("{Escape}");
+    expect(inspectArchiveInWorker).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe(`/threads/${thread.id}`);
+    expect(screen.getByRole("combobox", { name: "Message" })).toHaveValue("Keep inspector draft");
+    expect(screen.getByText("inspector-context.txt")).toBeVisible();
+    expect(
+      fetchMock.mock.calls.every(([input]) => {
+        const path = String(input);
+        return path.startsWith("/api/bootstrap") || path === historyUrl(thread);
+      }),
+    ).toBe(true);
+  });
+
+  it("aborts local inspection on workspace switch and discards a late archive report", async () => {
+    const secondWorkspace = {
+      ...workspace,
+      id: "workspace-inspector-second",
+      name: "Second inspector",
+    };
+    const secondBootstrap = deferredResponse();
+    let resolveInspection!: (report: WorkspaceArchiveInspectionReport) => void;
+    const inspection = new Promise<WorkspaceArchiveInspectionReport>((resolve) => {
+      resolveInspection = resolve;
+    });
+    vi.mocked(inspectArchiveInWorker).mockReturnValueOnce(inspection);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        if (path.includes(secondWorkspace.id)) return secondBootstrap.promise;
+        return jsonResponse({ ...bootstrapData, workspaces: [workspace, secondWorkspace] });
+      }
+      return jsonResponse({ error: { message: "Unexpected request" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", "/surfaces/agents");
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(
+      await screen.findByRole("combobox", { name: /Search/ }),
+      "/inspect workspace zip",
+    );
+    await user.keyboard("{Enter}");
+    const selected = new File(["PK fixture"], "selected-workspace.zip", {
+      type: "application/zip",
+    });
+    await user.upload(screen.getByLabelText("Choose ZIP"), selected);
+    expect(inspectArchiveInWorker).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Check ZIP" }));
+    expect(inspectArchiveInWorker).toHaveBeenCalledOnce();
+    const [file, options] = vi.mocked(inspectArchiveInWorker).mock.calls[0] ?? [];
+    expect(file).toBe(selected);
+    expect(options?.signal?.aborted).toBe(false);
+    await user.click(screen.getByRole("button", { name: "Switch to Second inspector" }));
+    expect(options?.signal?.aborted).toBe(true);
+    expect(screen.queryByRole("dialog", { name: "Inspect workspace ZIP" })).not.toBeInTheDocument();
+    await user.type(screen.getByRole("combobox", { name: /Search/ }), "/inspect workspace zip");
+    await user.keyboard("{Enter}");
+    expect(screen.queryByRole("dialog", { name: "Inspect workspace ZIP" })).not.toBeInTheDocument();
+    await act(async () => {
+      resolveInspection({
+        archiveBytes: 500,
+        payloadBytes: 0,
+        manifest: {
+          format: "nexestra.workspace-export",
+          version: 1,
+          stateVersion: 7,
+          workspace: { id: "archived-workspace", name: "Stale archive report" },
+          createdAt: now,
+          redaction: "known-credentials",
+          importSupported: false,
+          excluded: [
+            "credentials",
+            "harness-auth",
+            "repository-files",
+            "browser-state",
+            "unreferenced-files",
+          ],
+          entries: [
+            { path: "NOTICE.txt", kind: "notice", bytes: 0, sha256: "a".repeat(64) },
+            { path: "state.json", kind: "metadata", bytes: 0, sha256: "a".repeat(64) },
+          ],
+        },
+      });
+      secondBootstrap.resolve(
+        jsonResponse({
+          ...bootstrapData,
+          workspace: secondWorkspace,
+          workspaces: [workspace, secondWorkspace],
+        }),
+      );
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Switch to Second inspector" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      ),
+    );
+    await user.type(screen.getByRole("combobox", { name: /Search/ }), "/inspect workspace zip");
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("dialog", { name: "Inspect workspace ZIP" })).toBeVisible();
+    expect(screen.queryByText("Stale archive report")).not.toBeInTheDocument();
+    expect(inspectArchiveInWorker).toHaveBeenCalledOnce();
+    expect(
+      fetchMock.mock.calls.every(
+        ([input, init]) =>
+          String(input).startsWith("/api/bootstrap") && (!init?.method || init.method === "GET"),
+      ),
+    ).toBe(true);
   });
 });
 

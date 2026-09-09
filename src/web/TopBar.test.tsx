@@ -81,6 +81,7 @@ function makeProps(overrides: Partial<TopBarProps> = {}): TopBarProps {
     onSearchMessages: vi.fn(),
     onSettings: vi.fn(),
     onExportWorkspace: vi.fn(),
+    onInspectWorkspaceArchive: vi.fn(),
     ...overrides,
   };
 }
@@ -91,6 +92,19 @@ afterEach(() => {
 });
 
 describe("Global search", () => {
+  it("opens local archive inspection from its command", async () => {
+    const user = userEvent.setup();
+    const props = makeProps();
+    render(<TopBar {...props} />);
+    await user.type(screen.getByRole("combobox"), "/inspect workspace zip");
+    expect(screen.getByRole("option", { name: /Inspect workspace ZIP/ })).toBeInTheDocument();
+    await user.keyboard("{Enter}");
+    expect(props.onInspectWorkspaceArchive).toHaveBeenCalledOnce();
+    expect(props.onExportWorkspace).not.toHaveBeenCalled();
+    expect(props.onThread).not.toHaveBeenCalled();
+    expect(screen.getByRole("combobox")).toHaveValue("");
+  });
+
   it("opens the export dialog from the workspace command", async () => {
     const user = userEvent.setup();
     const props = makeProps();

@@ -24,6 +24,7 @@ export interface TopBarProps {
   onSearchMessages: (query: string) => void;
   onSettings: () => void;
   onExportWorkspace: () => void;
+  onInspectWorkspaceArchive: () => void;
 }
 
 interface SearchResult {
@@ -142,6 +143,12 @@ export function TopBar(props: TopBarProps) {
           label: "Export workspace",
           description: "Download this workspace as a ZIP",
           action: props.onExportWorkspace,
+        },
+        {
+          id: "command:inspect-workspace-zip",
+          label: "Inspect workspace ZIP",
+          description: "Check a local workspace archive's file hashes",
+          action: props.onInspectWorkspaceArchive,
         },
         {
           id: "command:settings",

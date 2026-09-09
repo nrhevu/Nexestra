@@ -373,8 +373,13 @@ describe("WorkspaceArchiveInspectionDialog", () => {
       pending.resolve(report([entry("focus.txt")]));
     });
     expect(await screen.findByText("Integrity verified")).toBeInTheDocument();
+    screen.getByRole("button", { name: "Choose ZIP" }).focus();
     await user.tab();
-    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+    expect(
+      screen.getByRole("region", { name: "Verified files, scroll for more columns" }),
+    ).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Check another ZIP" })).toHaveFocus();
     await user.tab({ shift: true });
     expect(dialog).toContainElement(document.activeElement as HTMLElement);
 

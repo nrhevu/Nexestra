@@ -127,6 +127,7 @@ import {
   nextUnreadConversation,
   selectConversationList,
 } from "./unreadNavigation.js";
+import { WorkspaceArchiveInspectionDialog } from "./WorkspaceArchiveInspectionDialog.js";
 import { WorkspaceExportDialog } from "./WorkspaceExportDialog.js";
 import { type RefreshOutcome, useWorkspaceRefresh } from "./workspaceRefresh.js";
 
@@ -142,6 +143,7 @@ type ModalName =
   | "knowledge"
   | "settings"
   | "export"
+  | "archive-inspection"
   | null;
 
 interface RouteState {
@@ -1192,6 +1194,11 @@ export function App() {
     setModal("export");
   };
 
+  const openWorkspaceArchiveInspection = () => {
+    if (dataRef.current?.workspace.id !== workspaceIdRef.current) return;
+    setModal("archive-inspection");
+  };
+
   const currentConversation = (): Thread | undefined => {
     const current = dataRef.current;
     const routeNow = routeRef.current;
@@ -1695,6 +1702,7 @@ export function App() {
         onSurface={openSurface}
         onSettings={() => setModal("settings")}
         onExportWorkspace={openWorkspaceExport}
+        onInspectWorkspaceArchive={openWorkspaceArchiveInspection}
         onTask={(id) => void inspectTask(id)}
         onSearchMessages={(query) => {
           if (data.workspace.id !== workspaceIdRef.current) return;
@@ -2210,6 +2218,7 @@ export function App() {
           data={data}
           onClose={() => setModal(null)}
           onExport={openWorkspaceExport}
+          onInspectArchive={openWorkspaceArchiveInspection}
           onRename={async (workspaceId, name) => {
             await renameWorkspace(workspaceId, name);
             flash("Workspace renamed.");
@@ -2230,6 +2239,9 @@ export function App() {
           workspace={data.workspace}
           onClose={() => setModal(null)}
         />
+      )}
+      {modal === "archive-inspection" && data.workspace.id === workspaceIdRef.current && (
+        <WorkspaceArchiveInspectionDialog key={data.workspace.id} onClose={() => setModal(null)} />
       )}
       {agentToDelete && (
         <DeleteAgentDialog
@@ -7344,6 +7356,7 @@ function SettingsDialog({
   onReorder,
   onReload,
   onExport,
+  onInspectArchive,
 }: {
   data: BootstrapData;
   onClose: () => void;
@@ -7351,6 +7364,7 @@ function SettingsDialog({
   onReorder: (workspaceIds: string[]) => Promise<void>;
   onReload: () => Promise<void>;
   onExport: () => void;
+  onInspectArchive: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const [draftName, setDraftName] = useState(data.workspace.name);
@@ -7521,13 +7535,18 @@ function SettingsDialog({
         </button>
       </div>
       <div className="settings-workspaces">
-        <span className="settings-section-title">Export</span>
+        <span className="settings-section-title">Workspace archives</span>
         <p className="settings-hint">
-          Download the selected workspace's conversations, uploaded files and documents.
+          Download this workspace or check the file hashes of a ZIP already on your device.
         </p>
-        <button type="button" className="secondary-button" onClick={onExport}>
-          Export selected workspace
-        </button>
+        <div className="settings-archive-actions">
+          <button type="button" className="secondary-button" onClick={onExport}>
+            Export selected workspace
+          </button>
+          <button type="button" className="secondary-button" onClick={onInspectArchive}>
+            Inspect workspace ZIP
+          </button>
+        </div>
       </div>
       <div className="modal-actions">
         <button type="button" className="primary-button" onClick={onClose}>

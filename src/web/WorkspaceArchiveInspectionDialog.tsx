@@ -306,6 +306,7 @@ export function WorkspaceArchiveInspectionDialog({
               ref={fileInputRef}
               className="workspace-archive-file-input"
               type="file"
+              hidden
               accept=".zip,application/zip"
               aria-label="Choose ZIP"
               onChange={handleFileSelected}
@@ -365,7 +366,12 @@ export function WorkspaceArchiveInspectionDialog({
                   <dd>{formatBytes(report.payloadBytes)}</dd>
                 </div>
               </dl>
-              <div className="workspace-archive-table-scroll">
+              <section
+                className="workspace-archive-table-scroll"
+                aria-label="Verified files, scroll for more columns"
+                // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users need to scroll the file table vertically and horizontally.
+                tabIndex={0}
+              >
                 <table className="workspace-archive-table" aria-label="Verified archive entries">
                   <thead>
                     <tr>
@@ -388,7 +394,7 @@ export function WorkspaceArchiveInspectionDialog({
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </section>
               {totalPages > 1 && (
                 <nav className="workspace-archive-pagination" aria-label="Archive entries pages">
                   <button

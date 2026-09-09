@@ -27,6 +27,14 @@ change during preparation. **Cancel export** stops a pending request; changing w
 cancels it. Import and restore are not supported. See
 [the export design and limits](docs/adr/0046-portable-workspace-export.md).
 
+Choose **Inspect workspace ZIP** in Settings or `/inspect workspace zip` to check a saved Nexestra
+export. Select a ZIP and click **Check ZIP** to verify its manifest, file sizes, CRC and SHA-256
+hashes. The file stays in your browser; the report names the workspace inside that archive and lists
+its payloads. Cancel or close to stop checking. Only Nexestra's stored ZIP v1 profile is supported;
+recompressed or encrypted archives are unsupported. A matching manifest does not prove authenticity,
+completeness or the ability to restore the data. See
+[the inspection design](docs/adr/0047-local-workspace-archive-inspection.md).
+
 **Needs attention** gathers agents waiting for your answer or approval and tasks that are blocked,
 failed, or interrupted. Open an item to return to its thread or task process controls. Thread rows
 show current agent activity, including work in other threads while your current conversation runs.

@@ -214,6 +214,15 @@ blocks export. Credential/auth files, repository/worktree contents, browser stat
 files are excluded. Settings and `/export workspace` open an inert dialog before explicit download.
 See [ADR 0046](adr/0046-portable-workspace-export.md) for ownership, snapshot and format details.
 
+Workspace archive inspection runs entirely in a browser module Worker. An explicit local File is
+checked against the ZIP records and export manifest; no inspection upload/API or persisted state is
+created. The client owns cancellation, a 45-second deadline and stale-result guards. The shared
+engine supports the stored ZIP v1 profile, validates layout and bounds, and checks CRC/SHA-256 one
+payload at a time. The report identifies the archive's workspace and paginates its verified files.
+WebCrypto requires one complete capped entry per digest. Matching hashes do not validate deep
+state/transcript semantics or establish authenticity, completeness or the ability to restore the data. See
+[ADR 0047](adr/0047-local-workspace-archive-inspection.md) for the supported profile and limitations.
+
 Permanent agent deletion removes the profile and its custom credential, clears matching task
 assignments, and releases the handle for reuse. Credential removal is persisted before public state
 so an interrupted multi-file write favors removing the secret. Thread JSONL files are never rewritten

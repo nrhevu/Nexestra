@@ -754,6 +754,39 @@ describe("workspace archive inspection engine", () => {
     expect(blob.reads).toBe(0);
   });
 
+  it("rejects invalid Blob sizes before slicing or scheduling a read", async () => {
+    for (const size of [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      -1,
+      30.5,
+      Number.MAX_SAFE_INTEGER + 1,
+    ]) {
+      const blob = new FakeBlob(null, null, size);
+      await expect(inspectWorkspaceArchive(blob as unknown as Blob)).rejects.toMatchObject({
+        code: "invalid",
+      });
+      expect(blob.reads).toBe(0);
+    }
+  });
+
+  it("does not start a queued file read after an immediate cancellation", async () => {
+    const fixture = buildFixture(baseSources());
+    const blob = new FakeBlob(fixture.bytes);
+    const controller = new AbortController();
+    const read = vi.spyOn(FakeBlob.prototype, "arrayBuffer");
+    try {
+      const pending = inspectWorkspaceArchive(blob as unknown as Blob, {
+        signal: controller.signal,
+      });
+      controller.abort();
+      await expect(pending).rejects.toMatchObject({ code: "cancelled" });
+      expect(read).not.toHaveBeenCalled();
+    } finally {
+      read.mockRestore();
+    }
+  });
+
   it("settles on signal cancellation while a read hangs", async () => {
     const fixture = buildFixture(baseSources());
     const manifestLocation = locateEntry(fixture.bytes, MANIFEST_PATH);
