@@ -127,13 +127,22 @@ import {
   nextUnreadConversation,
   selectConversationList,
 } from "./unreadNavigation.js";
+import { WorkspaceExportDialog } from "./WorkspaceExportDialog.js";
 import { type RefreshOutcome, useWorkspaceRefresh } from "./workspaceRefresh.js";
 
 const RichMessage = lazy(() => import("./RichMessage.js"));
 
 type PrimaryView = "threads" | "surfaces";
 type Surface = TopBarSurface;
-type ModalName = "workspace" | "thread" | "agent" | "task" | "knowledge" | "settings" | null;
+type ModalName =
+  | "workspace"
+  | "thread"
+  | "agent"
+  | "task"
+  | "knowledge"
+  | "settings"
+  | "export"
+  | null;
 
 interface RouteState {
   view: PrimaryView;
@@ -1178,6 +1187,11 @@ export function App() {
   const openThread = (threadId: string) =>
     navigate(`/threads/${threadId}`, { view: "threads", surface: route.surface, threadId });
 
+  const openWorkspaceExport = () => {
+    if (dataRef.current?.workspace.id !== workspaceIdRef.current) return;
+    setModal("export");
+  };
+
   const currentConversation = (): Thread | undefined => {
     const current = dataRef.current;
     const routeNow = routeRef.current;
@@ -1680,6 +1694,7 @@ export function App() {
         onThread={openThread}
         onSurface={openSurface}
         onSettings={() => setModal("settings")}
+        onExportWorkspace={openWorkspaceExport}
         onTask={(id) => void inspectTask(id)}
         onSearchMessages={(query) => {
           if (data.workspace.id !== workspaceIdRef.current) return;
@@ -2194,6 +2209,7 @@ export function App() {
         <SettingsDialog
           data={data}
           onClose={() => setModal(null)}
+          onExport={openWorkspaceExport}
           onRename={async (workspaceId, name) => {
             await renameWorkspace(workspaceId, name);
             flash("Workspace renamed.");
@@ -2206,6 +2222,13 @@ export function App() {
             await reloadWorkspaces();
             flash("Workspace list reloaded.");
           }}
+        />
+      )}
+      {modal === "export" && data.workspace.id === workspaceIdRef.current && (
+        <WorkspaceExportDialog
+          key={data.workspace.id}
+          workspace={data.workspace}
+          onClose={() => setModal(null)}
         />
       )}
       {agentToDelete && (
@@ -7320,12 +7343,14 @@ function SettingsDialog({
   onRename,
   onReorder,
   onReload,
+  onExport,
 }: {
   data: BootstrapData;
   onClose: () => void;
   onRename: (workspaceId: string, name: string) => Promise<void>;
   onReorder: (workspaceIds: string[]) => Promise<void>;
   onReload: () => Promise<void>;
+  onExport: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const [draftName, setDraftName] = useState(data.workspace.name);
@@ -7493,6 +7518,15 @@ function SettingsDialog({
           onClick={() => void reload()}
         >
           Reload workspace list
+        </button>
+      </div>
+      <div className="settings-workspaces">
+        <span className="settings-section-title">Export</span>
+        <p className="settings-hint">
+          Download the selected workspace's conversations, uploaded files and documents.
+        </p>
+        <button type="button" className="secondary-button" onClick={onExport}>
+          Export selected workspace
         </button>
       </div>
       <div className="modal-actions">

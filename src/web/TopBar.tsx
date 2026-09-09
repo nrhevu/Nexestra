@@ -23,6 +23,7 @@ export interface TopBarProps {
   onKnowledge: (id: string) => void;
   onSearchMessages: (query: string) => void;
   onSettings: () => void;
+  onExportWorkspace: () => void;
 }
 
 interface SearchResult {
@@ -135,6 +136,12 @@ export function TopBar(props: TopBarProps) {
           label: "Mark conversation read",
           description: "Mark all messages in this conversation read",
           action: () => props.onMarkRead?.(),
+        },
+        {
+          id: "command:export-workspace",
+          label: "Export workspace",
+          description: "Download this workspace as a ZIP",
+          action: props.onExportWorkspace,
         },
         {
           id: "command:settings",

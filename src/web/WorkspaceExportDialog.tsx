@@ -370,9 +370,9 @@ export function WorkspaceExportDialog({ workspace, onClose }: WorkspaceExportDia
           <p className="workspace-export-description">
             The ZIP contains workspace metadata, all conversations, uploaded files, and every
             document version, with a SHA-256 manifest. Repository files, harness authentication, and
-            browser drafts are excluded. Known credentials are redacted from messages, and an upload
-            that still contains them blocks the export. This archive is portable only; importing or
-            restoring it is not available.
+            browser drafts are excluded. Known credentials are redacted from metadata and messages;
+            a document or upload containing one blocks the export. Other secrets may remain.
+            Importing or restoring this archive is not available.
           </p>
           <p className="workspace-export-scope">
             Workspace: <strong>{workspace.name}</strong>

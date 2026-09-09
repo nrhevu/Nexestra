@@ -80,6 +80,7 @@ function makeProps(overrides: Partial<TopBarProps> = {}): TopBarProps {
     onKnowledge: vi.fn(),
     onSearchMessages: vi.fn(),
     onSettings: vi.fn(),
+    onExportWorkspace: vi.fn(),
     ...overrides,
   };
 }
@@ -90,6 +91,19 @@ afterEach(() => {
 });
 
 describe("Global search", () => {
+  it("opens the export dialog from the workspace command", async () => {
+    const user = userEvent.setup();
+    const props = makeProps();
+    render(<TopBar {...props} />);
+    await user.type(screen.getByRole("combobox"), "/export workspace");
+    expect(screen.getByRole("option", { name: /Export workspace/ })).toBeInTheDocument();
+    await user.keyboard("{Enter}");
+    expect(props.onExportWorkspace).toHaveBeenCalledOnce();
+    expect(props.onThread).not.toHaveBeenCalled();
+    expect(props.onSurface).not.toHaveBeenCalled();
+    expect(screen.getByRole("combobox")).toHaveValue("");
+  });
+
   it.each(["/runs", "/run history"])("opens workspace run history with %s", async (command) => {
     const user = userEvent.setup();
     const props = makeProps();

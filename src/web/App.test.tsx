@@ -1101,6 +1101,121 @@ describe("Workspace settings", () => {
   });
 });
 
+describe("Workspace export navigation", () => {
+  it("opens from Settings or the command without exporting and preserves the conversation draft and files", async () => {
+    const thread = activityThread("export-draft-thread", "Export draft");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap"))
+        return jsonResponse({ ...bootstrapData, threads: [thread] });
+      if (path === historyUrl(thread)) return jsonResponse(threadSnapshot(thread, []));
+      return jsonResponse({ error: { message: "Unexpected request" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(await screen.findByRole("combobox", { name: "Message" }), "Keep export draft");
+    await user.upload(
+      screen.getByLabelText("Choose files or images"),
+      new File(["selected bytes"], "export-context.txt"),
+    );
+    await user.click(screen.getByRole("button", { name: "Open settings" }));
+    await user.click(screen.getByRole("button", { name: "Export selected workspace" }));
+    expect(screen.getByRole("dialog", { name: "Export workspace" })).toHaveTextContent(
+      workspace.name,
+    );
+    expect(screen.queryByRole("dialog", { name: "Local workspace" })).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    await user.type(screen.getByRole("combobox", { name: /Search/ }), "/export workspace");
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("dialog", { name: "Export workspace" })).toBeVisible();
+    await user.keyboard("{Escape}");
+    expect(window.location.pathname).toBe(`/threads/${thread.id}`);
+    expect(screen.getByRole("combobox", { name: "Message" })).toHaveValue("Keep export draft");
+    expect(screen.getByText("export-context.txt")).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/export"))).toBe(false);
+  });
+
+  it("cancels a pending export immediately on workspace switch and scopes the next download", async () => {
+    const secondWorkspace = { ...workspace, id: "workspace-export-second", name: "Second export" };
+    const firstExport = deferredResponse();
+    const secondBootstrap = deferredResponse();
+    const requests: { path: string; signal: AbortSignal | null | undefined }[] = [];
+    const createObjectURL = vi.fn(() => "blob:stale-export");
+    vi.stubGlobal(
+      "URL",
+      class extends URL {
+        static createObjectURL = createObjectURL;
+        static revokeObjectURL = vi.fn();
+      },
+    );
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        if (path.includes(secondWorkspace.id)) return secondBootstrap.promise;
+        return jsonResponse({ ...bootstrapData, workspaces: [workspace, secondWorkspace] });
+      }
+      if (path.endsWith("/export")) {
+        requests.push({ path, signal: init?.signal });
+        if (path.includes(secondWorkspace.id))
+          return jsonResponse({ error: { message: "Second export fixture conflict" } }, 409);
+        return firstExport.promise;
+      }
+      return jsonResponse({ error: { message: "Unexpected request" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", "/surfaces/agents");
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(await screen.findByRole("combobox", { name: /Search/ }), "/export workspace");
+    await user.keyboard("{Enter}");
+    await user.click(screen.getByRole("button", { name: "Download ZIP" }));
+    await waitFor(() => expect(requests).toHaveLength(1));
+    expect(requests[0]?.path).toBe(`/api/workspaces/${workspace.id}/export`);
+    await user.click(screen.getByRole("button", { name: "Switch to Second export" }));
+    expect(requests[0]?.signal?.aborted).toBe(true);
+    expect(screen.queryByRole("dialog", { name: "Export workspace" })).not.toBeInTheDocument();
+    // The old bootstrap is still rendered while the next workspace loads.
+    await user.type(screen.getByRole("combobox", { name: /Search/ }), "/export workspace");
+    await user.keyboard("{Enter}");
+    expect(screen.queryByRole("dialog", { name: "Export workspace" })).not.toBeInTheDocument();
+    await act(async () => {
+      firstExport.resolve(
+        new Response("PK stale", { headers: { "Content-Type": "application/zip" } }),
+      );
+      secondBootstrap.resolve(
+        jsonResponse({
+          ...bootstrapData,
+          workspace: secondWorkspace,
+          workspaces: [workspace, secondWorkspace],
+        }),
+      );
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Switch to Second export" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      ),
+    );
+    await user.type(screen.getByRole("combobox", { name: /Search/ }), "/export workspace");
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("dialog", { name: "Export workspace" })).toHaveTextContent(
+      secondWorkspace.name,
+    );
+    await user.click(screen.getByRole("button", { name: "Download ZIP" }));
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests[1]?.path).toBe(`/api/workspaces/${secondWorkspace.id}/export`);
+    expect(createObjectURL).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe("/surfaces/agents");
+    expect(fetchMock.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(
+      true,
+    );
+  });
+});
+
 describe("Thread navigation", () => {
   it("keeps the initial idle transcript request when the selected thread is clicked again", async () => {
     const thread = activityThread("thread-reselected", "waiting");

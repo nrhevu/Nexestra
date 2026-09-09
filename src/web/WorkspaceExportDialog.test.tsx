@@ -187,7 +187,7 @@ describe("WorkspaceExportDialog", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(screen.getByRole("dialog", { name: "Export workspace" })).toBeInTheDocument();
     expect(screen.getByText(/SHA-256 manifest/)).toBeInTheDocument();
-    expect(screen.getByText(/cannot be imported|importing or restoring/)).toBeInTheDocument();
+    expect(screen.getByText(/cannot be imported|importing or restoring/i)).toBeInTheDocument();
 
     click(screen.getByRole("button", { name: "Download ZIP" }));
     expect(await screen.findByText("Download started.")).toBeInTheDocument();
