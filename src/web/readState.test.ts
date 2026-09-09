@@ -226,6 +226,59 @@ describe("ReadState", () => {
     ).toBe(false);
   });
 
+  it("returns counts merged from the current disk snapshot during repair", () => {
+    const ws = "workspace-a";
+    const tabA = new ReadState();
+    tabA.observe(ws, [thread("t1", ws, 0), thread("t2", ws, 0)]);
+    tabA.markRead(ws, "t1", 5);
+
+    const tabB = new ReadState();
+    tabB.observe(ws, [thread("t1", ws, 0), thread("t2", ws, 0)]);
+    expect(tabB.unread(ws, "t2", 7)).toBe(7);
+
+    // A stale event payload was queued before another tab wrote both markers.
+    window.localStorage.setItem(
+      readStateKey(ws),
+      JSON.stringify({ version: 1, workspaceId: ws, counts: { t1: 5, t2: 7 } }),
+    );
+    const staleEvent = JSON.stringify({
+      version: 1,
+      workspaceId: ws,
+      counts: { t1: 4, t2: 0 },
+    });
+
+    expect(tabB.syncStorage(readStateKey(ws), staleEvent)).toBe(true);
+    expect(tabB.unread(ws, "t2", 7)).toBe(0);
+    expect(window.localStorage.getItem(readStateKey(ws))).toBe(
+      JSON.stringify({ version: 1, workspaceId: ws, counts: { t1: 5, t2: 7 } }),
+    );
+  });
+
+  it("does not rewrite disk that already contains the merged union", () => {
+    const ws = "workspace-a";
+    const tabA = new ReadState();
+    tabA.observe(ws, [thread("t1", ws, 0), thread("t2", ws, 0)]);
+    tabA.markRead(ws, "t1", 5);
+
+    const tabB = new ReadState();
+    tabB.observe(ws, [thread("t1", ws, 0), thread("t2", ws, 0)]);
+    tabB.markRead(ws, "t2", 3);
+
+    const setSpy = vi.spyOn(Storage.prototype, "setItem");
+    const staleEvent = JSON.stringify({
+      version: 1,
+      workspaceId: ws,
+      counts: { t1: 4, t2: 0 },
+    });
+    expect(tabB.syncStorage(readStateKey(ws), staleEvent)).toBe(false);
+    expect(setSpy).not.toHaveBeenCalled();
+    expect(tabB.unread(ws, "t2", 3)).toBe(0);
+    expect(JSON.parse(window.localStorage.getItem(readStateKey(ws)) as string).counts).toEqual({
+      t1: 5,
+      t2: 3,
+    });
+    setSpy.mockRestore();
+  });
   it("keeps in-memory acknowledgements when browser storage is unavailable", () => {
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
       throw new DOMException("Storage denied", "SecurityError");

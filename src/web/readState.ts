@@ -3,11 +3,12 @@ import type { Thread } from "../shared/contracts.js";
 // Browser-persisted read state for conversation lists. Storage contains only thread IDs and
 // whole-message counts, never message text, attachments, or workspace internals. Counts are
 // monotone within one tab lifetime: hydration, cross-tab storage events, and metadata updates
-// can only raise a marker, never roll it back. Every persist melds the current valid disk
-// snapshot so two tabs writing independent marks cannot overwrite each other; storage events
-// additionally repair a stale lower/missing disk snapshot once. Storage deletion/corruption
-// never discards in-memory acknowledgements during the current session; a reload before the
-// next successful persist loses marks that were only held in memory.
+// can only raise a marker, never roll it back. Every persist best-effort melds the current valid
+// disk snapshot before writing so two tabs marking different threads converge; because
+// localStorage read+write is not an atomic cross-tab transaction, storage events additionally
+// repair a stale lower/missing disk snapshot when they arrive. Storage deletion/corruption never
+// discards in-memory acknowledgements during the current session; a reload before the next
+// successful persist loses marks that were only held in memory.
 
 export const READ_STATE_VERSION = 1;
 export const READ_STATE_PREFIX = "nexestra.readState.1.";
@@ -136,26 +137,32 @@ export class ReadState {
     return state;
   }
 
-  // Merges the current valid disk snapshot into memory so independent markers written by another
-  // tab are never lost when this tab persists. Invalid or missing disk data is left alone.
-  private meldFromStorage(state: WorkspaceState): void {
-    const saved = this.readValue(state.storageKey);
-    if (saved === null) return;
-    const parsed = parseStoredPayload(saved, state.workspaceId);
-    if (!parsed) return;
-    for (const [threadId, count] of parsed) {
+  // Merges one validated count map into memory, returning whether any marker was added or raised.
+  private mergeCounts(state: WorkspaceState, counts: Map<string, number>): boolean {
+    let changed = false;
+    for (const [threadId, count] of counts) {
       state.known.add(threadId);
       const current = state.counts.get(threadId);
-      if (current === undefined) {
+      if (current === undefined || count > current) {
         state.counts.set(threadId, count);
-      } else if (count > current) {
-        state.counts.set(threadId, count);
+        changed = true;
       }
     }
+    return changed;
   }
 
-  private persist(state: WorkspaceState): void {
-    this.meldFromStorage(state);
+  // Best-effort merge of the current valid disk snapshot into memory. localStorage read+write is
+  // not an atomic cross-tab transaction, so this cannot guarantee convergence by itself; storage
+  // events repair remaining stale snapshots. Invalid or missing disk data is left alone.
+  private meldFromStorage(state: WorkspaceState): boolean {
+    const saved = this.readValue(state.storageKey);
+    if (saved === null) return false;
+    const parsed = parseStoredPayload(saved, state.workspaceId);
+    if (!parsed) return false;
+    return this.mergeCounts(state, parsed);
+  }
+
+  private writeUnion(state: WorkspaceState): void {
     if (state.counts.size > READ_STATE_MAX_THREADS) {
       this.storageOk = false;
       return;
@@ -174,6 +181,11 @@ export class ReadState {
     this.writeValue(state.storageKey, payload);
   }
 
+  private persist(state: WorkspaceState): void {
+    this.meldFromStorage(state);
+    this.writeUnion(state);
+  }
+
   // First valid observation distinguishes a fresh workspace (no saved marker) from a restored
   // initialized workspace (valid saved marker). Fresh conversations are baselined to their
   // current message counts so a new install does not flood the sidebar with retroactive unread.
@@ -190,17 +202,7 @@ export class ReadState {
       const saved = this.readValue(state.storageKey);
       const parsed = saved !== null ? parseStoredPayload(saved, workspaceId) : null;
       const restored = parsed !== null;
-      if (parsed) {
-        for (const [threadId, count] of parsed) {
-          state.known.add(threadId);
-          const current = state.counts.get(threadId);
-          if (current === undefined) {
-            state.counts.set(threadId, count);
-          } else if (count > current) {
-            state.counts.set(threadId, count);
-          }
-        }
-      }
+      if (parsed) this.mergeCounts(state, parsed);
       state.baselined = true;
       for (const thread of threads) {
         if (thread.workspaceId !== workspaceId || !validId(thread.id)) continue;
@@ -271,42 +273,46 @@ export class ReadState {
     return changed;
   }
 
-  // Merges a same-origin storage event for this app's read-state key. Counts only ever move
+  // Handles a same-origin storage event for this app's read-state key. Counts only ever move
   // upward; lower stale events cannot resurrect unread. New thread keys from the other tab are
-  // preserved. Deletion/corruption/unrelated keys are ignored so in-memory acknowledgements
-  // survive this session. When the event payload is stale lower or missing markers this tab
-  // already holds, the disk snapshot is repaired once with the merged union; a repaired snapshot
-  // matches both tabs' memory, so no echo ping-pong continues.
+  // preserved. Because local read+write is not atomic across tabs, the event payload can be stale
+  // while the current disk snapshot already holds the merged union; that union is absorbed into
+  // memory here, and the disk is rewritten only when it is missing counts this tab already holds.
+  // Deletion/corruption/unrelated keys are ignored so in-memory acknowledgements survive.
   syncStorage(key: string | null, newValue: string | null): boolean {
     if (typeof key !== "string" || newValue === null) return false;
     const workspaceId = parseReadStateKey(key);
     if (!workspaceId) return false;
     const state = this.sessions.get(workspaceId);
     if (!state) return false;
-    const parsed = parseStoredPayload(newValue, workspaceId);
-    if (!parsed) return false;
-    let changed = false;
-    for (const [threadId, count] of parsed) {
-      const current = state.counts.get(threadId);
-      if (current === undefined) {
-        state.counts.set(threadId, count);
-        state.known.add(threadId);
-        changed = true;
-      } else if (count > current) {
-        state.counts.set(threadId, count);
-        state.known.add(threadId);
-        changed = true;
-      }
-    }
+    const eventCounts = parseStoredPayload(newValue, workspaceId);
+    if (!eventCounts) return false;
+    let changed = this.mergeCounts(state, eventCounts);
     let needsRepair = false;
     for (const [threadId, count] of state.counts) {
-      const diskCount = parsed.get(threadId);
-      if (diskCount === undefined || diskCount < count) {
+      const eventCount = eventCounts.get(threadId);
+      if (eventCount === undefined || eventCount < count) {
         needsRepair = true;
         break;
       }
     }
-    if (needsRepair) this.persist(state);
+    if (!needsRepair) return changed;
+    const saved = this.readValue(state.storageKey);
+    const actual = saved !== null ? parseStoredPayload(saved, state.workspaceId) : null;
+    if (actual) {
+      changed = this.mergeCounts(state, actual) || changed;
+      let diskCurrent = true;
+      for (const [threadId, count] of state.counts) {
+        const diskCount = actual.get(threadId);
+        if (diskCount === undefined || diskCount < count) {
+          diskCurrent = false;
+          break;
+        }
+      }
+      if (!diskCurrent) this.writeUnion(state);
+    } else {
+      this.writeUnion(state);
+    }
     return changed;
   }
 }
