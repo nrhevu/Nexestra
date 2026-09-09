@@ -58,8 +58,14 @@ const InspectionDialog: WorkspaceArchiveDialogComponent = ({ workspace, onClose 
 
 function FocusHandlingDialog({ onClose }: { onClose: () => void }) {
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const previousActiveRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
+    previousActiveRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
     buttonRef.current?.focus();
+    return () => {
+      previousActiveRef.current?.focus();
+    };
   }, []);
   return (
     <div>
@@ -96,23 +102,49 @@ afterEach(() => {
 });
 
 describe("WorkspaceArchiveDialog", () => {
-  it("shows the loading shell and hands off to the loaded dialog with current props", async () => {
+  it("shows the loading shell and hands off with current workspace and close props", async () => {
     const { promise, resolve } = deferredComponent();
     loaderMock.loadWorkspaceArchiveDialog.mockReturnValue(promise);
-    const onClose = vi.fn();
+    const firstClose = vi.fn();
 
-    render(<WorkspaceArchiveDialog {...baseProps} onClose={onClose} />);
+    const view = render(
+      <WorkspaceArchiveDialog
+        kind="export"
+        workspace={{ id: "workspace-a", name: "Alpha" }}
+        onClose={firstClose}
+      />,
+    );
     expect(screen.getByRole("dialog", { name: /export workspace/i })).toBeInTheDocument();
     expect(screen.getByText(/loading export dialog/i)).toBeInTheDocument();
     expect(loaderMock.loadWorkspaceArchiveDialog).toHaveBeenCalledWith("export");
 
+    const secondClose = vi.fn();
+    view.rerender(
+      <WorkspaceArchiveDialog
+        kind="export"
+        workspace={{ id: "workspace-a", name: "Alpha renamed" }}
+        onClose={secondClose}
+      />,
+    );
     await act(async () => {
       resolve(ExportDialog);
       await promise;
     });
-    expect(screen.getByText("export-ready:workspace-a:Alpha")).toBeInTheDocument();
+    expect(screen.getByText("export-ready:workspace-a:Alpha renamed")).toBeInTheDocument();
+
+    const thirdClose = vi.fn();
+    view.rerender(
+      <WorkspaceArchiveDialog
+        kind="export"
+        workspace={{ id: "workspace-a", name: "Alpha latest" }}
+        onClose={thirdClose}
+      />,
+    );
+    expect(screen.getByText("export-ready:workspace-a:Alpha latest")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "close export" }));
-    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(firstClose).not.toHaveBeenCalled();
+    expect(secondClose).not.toHaveBeenCalled();
+    expect(thirdClose).toHaveBeenCalledTimes(1);
   });
 
   it("shows a load failure and retries with a new attempt", async () => {
@@ -277,6 +309,28 @@ describe("WorkspaceArchiveDialog", () => {
     await waitFor(() => {
       expect(trigger).toHaveFocus();
     });
+    trigger.remove();
+  });
+
+  it("does not steal focus from a connected outside control focused while open", async () => {
+    const trigger = document.createElement("button");
+    document.body.appendChild(trigger);
+    trigger.focus();
+    const rail = document.createElement("button");
+    document.body.appendChild(rail);
+    const { promise } = deferredComponent();
+    loaderMock.loadWorkspaceArchiveDialog.mockReturnValue(promise);
+
+    const { unmount } = render(<WorkspaceArchiveDialog {...baseProps} />);
+    rail.focus();
+    expect(rail).toHaveFocus();
+    unmount();
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    });
+    expect(rail).toHaveFocus();
+    expect(trigger).not.toHaveFocus();
+    rail.remove();
     trigger.remove();
   });
 });

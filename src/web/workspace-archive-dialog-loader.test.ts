@@ -6,8 +6,20 @@ import {
 
 const exportFixture: WorkspaceArchiveDialogComponent = () => null;
 const inspectionFixture: WorkspaceArchiveDialogComponent = () => null;
+const staleFixture: WorkspaceArchiveDialogComponent = () => null;
+const retriedFixture: WorkspaceArchiveDialogComponent = () => null;
 
 type MockModule = Record<string, unknown>;
+
+function deferredModule() {
+  let resolveModule!: (module: MockModule) => void;
+  let rejectModule!: (error: unknown) => void;
+  const modulePromise = new Promise<MockModule>((resolve, reject) => {
+    resolveModule = resolve;
+    rejectModule = reject;
+  });
+  return { modulePromise, resolveModule, rejectModule };
+}
 
 async function loadLoader() {
   const { loadWorkspaceArchiveDialog, WorkspaceArchiveDialogLoadError } = await import(
@@ -148,6 +160,71 @@ describe("workspace archive dialog loader", () => {
     resolveModule({ WorkspaceExportDialog: exportFixture });
     await Promise.resolve();
     await expect(loadWorkspaceArchiveDialog("export")).resolves.toBe(exportFixture);
+  });
+
+  it("lets a retry supersede a timed-out attempt and caches only the retried module result", async () => {
+    vi.useFakeTimers();
+    let readsFirst = true;
+    const exportModule = {
+      get WorkspaceExportDialog() {
+        const component = readsFirst ? staleFixture : retriedFixture;
+        readsFirst = false;
+        return component;
+      },
+    };
+    let resolveModule!: (module: MockModule) => void;
+    const pendingModule = new Promise<MockModule>((resolve) => {
+      resolveModule = resolve;
+    });
+    const moduleFactory = vi.fn(() => pendingModule);
+    vi.doMock("./WorkspaceExportDialog.js", moduleFactory);
+
+    const { loadWorkspaceArchiveDialog } = await loadLoader();
+    const firstLoad = loadWorkspaceArchiveDialog("export");
+    const firstAssertion = expect(firstLoad).rejects.toMatchObject({
+      reason: "timeout",
+    });
+    await vi.advanceTimersByTimeAsync(WORKSPACE_ARCHIVE_DIALOG_LOAD_TIMEOUT_MS + 1);
+    await firstAssertion;
+
+    const retriedLoad = loadWorkspaceArchiveDialog("export");
+    expect(moduleFactory).toHaveBeenCalledTimes(1);
+
+    resolveModule(exportModule);
+    await expect(retriedLoad).resolves.toBe(retriedFixture);
+    await expect(loadWorkspaceArchiveDialog("export")).resolves.toBe(retriedFixture);
+    expect(moduleFactory).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces a late module rejection to the superseding retry and keeps the registry fresh", async () => {
+    vi.useFakeTimers();
+    let rejectModule!: (error: unknown) => void;
+    const pendingModule = new Promise<MockModule>((_resolve, reject) => {
+      rejectModule = reject;
+    });
+    const moduleFactory = vi.fn(() => pendingModule);
+    vi.doMock("./WorkspaceExportDialog.js", moduleFactory);
+
+    const { loadWorkspaceArchiveDialog } = await loadLoader();
+    const firstLoad = loadWorkspaceArchiveDialog("export");
+    const firstAssertion = expect(firstLoad).rejects.toMatchObject({
+      reason: "timeout",
+    });
+    await vi.advanceTimersByTimeAsync(WORKSPACE_ARCHIVE_DIALOG_LOAD_TIMEOUT_MS + 1);
+    await firstAssertion;
+
+    const retriedLoad = loadWorkspaceArchiveDialog("export");
+    expect(moduleFactory).toHaveBeenCalledTimes(1);
+
+    rejectModule(new Error("late module failure"));
+    await expect(retriedLoad).rejects.toMatchObject({ reason: "load" });
+
+    const nextModule = deferredModule();
+    moduleFactory.mockReturnValue(nextModule.modulePromise);
+    const nextLoad = loadWorkspaceArchiveDialog("export");
+    expect(moduleFactory).toHaveBeenCalledTimes(2);
+    nextModule.resolveModule({ WorkspaceExportDialog: retriedFixture });
+    await expect(nextLoad).resolves.toBe(retriedFixture);
   });
 
   it("maps unknown load errors to a safe bounded reason", async () => {

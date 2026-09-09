@@ -25,13 +25,16 @@ let focusEpoch = 0;
  * requested module is ready. The wrapper owns pre-open focus restoration after
  * the loading-to-ready handoff and after the real dialog's own focus cleanup;
  * a module-level epoch prevents a late restore timer from a strict-mode
- * remount or an immediately replaced dialog from stealing focus.
+ * remount or an immediately replaced dialog from stealing focus, and the
+ * restore itself yields to any connected control that was focused while the
+ * dialog was open.
  */
 export function WorkspaceArchiveDialog({ kind, workspace, onClose }: WorkspaceArchiveDialogProps) {
   const [attempt, setAttempt] = useState(0);
   const [failure, setFailure] = useState<DialogFailure>(null);
   const [loaded, setLoaded] = useState<LoadedDialog | null>(null);
   const originalFocusRef = useRef<HTMLElement | null>(null);
+  const attemptRef = useRef(0);
 
   if (originalFocusRef.current === null && typeof document !== "undefined") {
     const active = document.activeElement;
@@ -44,22 +47,31 @@ export function WorkspaceArchiveDialog({ kind, workspace, onClose }: WorkspaceAr
     return () => {
       const original = originalFocusRef.current;
       setTimeout(() => {
-        if (focusEpoch === epoch) {
-          original?.focus();
+        if (focusEpoch !== epoch) {
+          return;
         }
+        const active = typeof document === "undefined" ? null : document.activeElement;
+        if (
+          active instanceof HTMLElement &&
+          active.isConnected &&
+          active !== document.body &&
+          active !== original
+        ) {
+          return;
+        }
+        original?.focus();
       }, 0);
     };
   }, []);
 
   useEffect(() => {
-    const attemptKey = attempt;
     let cancelled = false;
     setLoaded(null);
     setFailure(null);
 
     loadWorkspaceArchiveDialog(kind).then(
       (component) => {
-        if (cancelled || attempt !== attemptKey) {
+        if (cancelled || attemptRef.current !== attempt) {
           return;
         }
         setLoaded({
@@ -69,7 +81,7 @@ export function WorkspaceArchiveDialog({ kind, workspace, onClose }: WorkspaceAr
         });
       },
       (error: unknown) => {
-        if (cancelled || attempt !== attemptKey) {
+        if (cancelled || attemptRef.current !== attempt) {
           return;
         }
         setFailure(error instanceof WorkspaceArchiveDialogLoadError ? error.reason : "load");
@@ -84,7 +96,8 @@ export function WorkspaceArchiveDialog({ kind, workspace, onClose }: WorkspaceAr
   const handleRetry = (): void => {
     setFailure(null);
     setLoaded(null);
-    setAttempt((current) => current + 1);
+    attemptRef.current += 1;
+    setAttempt(attemptRef.current);
   };
 
   const isReady =
