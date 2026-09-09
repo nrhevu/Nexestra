@@ -351,3 +351,54 @@ describe("Next unread command", () => {
     expect(input).toHaveValue("");
   });
 });
+
+describe("Current conversation read commands", () => {
+  it("runs the /first unread command from the palette with its full slash phrase", async () => {
+    const user = userEvent.setup();
+    const onFirstUnread = vi.fn();
+    const onMarkRead = vi.fn();
+    const props = makeProps({ onFirstUnread, onMarkRead });
+    render(<TopBar {...props} />);
+    const input = screen.getByRole("combobox");
+    await user.type(input, "/first unread");
+    const option = screen.getByRole("option", { name: /First unread message/ });
+    expect(option).toHaveAttribute("aria-selected", "true");
+    await user.keyboard("{Enter}");
+    expect(option).not.toBeInTheDocument();
+    expect(onFirstUnread).toHaveBeenCalledTimes(1);
+    expect(props.onMarkAllRead).not.toHaveBeenCalled();
+    expect(input).toHaveValue("");
+  });
+
+  it("runs the /mark read command without triggering mark-all", async () => {
+    const user = userEvent.setup();
+    const onFirstUnread = vi.fn();
+    const onMarkRead = vi.fn();
+    const props = makeProps({ onFirstUnread, onMarkRead });
+    render(<TopBar {...props} />);
+    const input = screen.getByRole("combobox");
+    await user.type(input, "/mark read");
+    const option = screen.getByRole("option", { name: /Mark conversation read/ });
+    expect(option).toHaveAttribute("aria-selected", "true");
+    await user.keyboard("{Enter}");
+    expect(option).not.toBeInTheDocument();
+    expect(onMarkRead).toHaveBeenCalledTimes(1);
+    expect(onFirstUnread).not.toHaveBeenCalled();
+    expect(props.onMarkAllRead).not.toHaveBeenCalled();
+    expect(input).toHaveValue("");
+  });
+
+  it("keeps /mark all read bound to mark-all only", async () => {
+    const user = userEvent.setup();
+    const onMarkRead = vi.fn();
+    const props = makeProps({ onMarkRead });
+    render(<TopBar {...props} />);
+    const input = screen.getByRole("combobox");
+    await user.type(input, "/mark all read");
+    const option = screen.getByRole("option", { name: /Mark all conversations read/ });
+    await user.keyboard("{Enter}");
+    expect(option).not.toBeInTheDocument();
+    expect(props.onMarkAllRead).toHaveBeenCalledTimes(1);
+    expect(onMarkRead).not.toHaveBeenCalled();
+  });
+});

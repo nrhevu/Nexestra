@@ -1,0 +1,51 @@
+.conversation-read-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.conversation-read-count {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.conversation-read-controls button {
+  flex: 0 0 auto;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--input-bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.conversation-read-controls button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.conversation-read-controls button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.conversation-read-controls button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+@media (max-width: 420px) {
+  .conversation-read-count {
+    flex: 1 1 100%;
+  }
+}
