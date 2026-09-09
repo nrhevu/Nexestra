@@ -510,6 +510,36 @@ export const RunSchema = z.object({
 });
 export type AgentRun = z.infer<typeof RunSchema>;
 
+export const RunHistoryRequestSchema = z.object({
+  workspaceId: z.string().trim().min(1).max(200),
+  agentId: z.string().trim().min(1).max(200).optional(),
+  threadId: z.string().trim().min(1).max(200).optional(),
+  status: RunSchema.shape.status.optional(),
+  cursor: z.string().min(1).max(2_048).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+export type RunHistoryRequest = z.infer<typeof RunHistoryRequestSchema>;
+
+export const RunHistoryItemSchema = z.object({
+  run: RunSchema.omit({ error: true }),
+  agentName: z.string(),
+  agentHandle: z.string().optional(),
+  threadName: z.string(),
+  threadArchived: z.boolean(),
+});
+export type RunHistoryItem = z.infer<typeof RunHistoryItemSchema>;
+
+export const RunHistoryPageSchema = z.object({
+  workspaceId: z.string(),
+  items: z.array(RunHistoryItemSchema).max(100),
+  page: z.object({ nextCursor: z.string().nullable() }),
+  coverage: z.object({
+    complete: z.boolean(),
+    unavailableThreads: z.number().int().nonnegative(),
+  }),
+});
+export type RunHistoryPage = z.infer<typeof RunHistoryPageSchema>;
+
 export const RunActivitySchema = z.object({
   runId: z.string(),
   threadId: z.string(),
