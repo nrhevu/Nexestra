@@ -5015,6 +5015,22 @@ describe("Unread conversation UI", () => {
     return parsed.counts?.[threadId];
   }
 
+  function atHistoryUrl(thread: Thread, index: number): string {
+    return `${historyUrl(thread)}&at=${index}`;
+  }
+
+  function withUnreadTarget(page: ThreadHistoryPage, index: number): ThreadHistoryPage {
+    return {
+      ...page,
+      page: {
+        ...page.page,
+        targetFound: true,
+        targetMessageId: `message-unread-${index}`,
+        targetMessageIndex: index,
+      },
+    };
+  }
+
   function latestMessagePage(
     thread: Thread,
     content = "Hello",
@@ -5081,6 +5097,8 @@ describe("Unread conversation UI", () => {
       }
       const thread = [first, second].find((entry) => path === historyUrl(entry));
       if (thread) return jsonResponse(latestMessagePage(thread));
+      const unread = [first, second].find((entry) => path === atHistoryUrl(entry, 1));
+      if (unread) return jsonResponse(withUnreadTarget(latestMessagePage(unread), 1));
       return jsonResponse({ error: { message: "Not found" } }, 404);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -5224,6 +5242,11 @@ describe("Unread conversation UI", () => {
         return jsonResponse({ ...bootstrapData, threads });
       const thread = threads.find((entry) => String(input) === historyUrl(entry));
       if (thread) return jsonResponse(latestMessagePage(thread, `Message in ${thread.name}`));
+      const unread = threads.find((entry) => String(input) === atHistoryUrl(entry, 1));
+      if (unread)
+        return jsonResponse(
+          withUnreadTarget(latestMessagePage(unread, `Message in ${unread.name}`), 1),
+        );
       return jsonResponse({ error: { message: "Not found" } }, 404);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -5260,14 +5283,19 @@ describe("Unread conversation UI", () => {
       fetchMock.mock.calls
         .map(([input]) => String(input))
         .filter((url) => url.includes("/history")),
-    ).toEqual([historyUrl(first), historyUrl(second), historyUrl(archived), historyUrl(first)]);
+    ).toEqual([
+      historyUrl(first),
+      atHistoryUrl(second, 1),
+      atHistoryUrl(archived, 1),
+      atHistoryUrl(first, 1),
+    ]);
   });
 
-  it("opens the only unread conversation's latest Messages from a linked Files view", async () => {
+  it("opens the only unread conversation at its first unread message from Files and coalesces pending requests", async () => {
     const thread = { ...activityThread("next-current", "Alpha"), messageCount: 2 };
     const oldPage = latestMessagePage(thread, "Linked message", 2);
     const latestPage = latestMessagePage(thread, "Latest reply", 2, 2);
-    let resolveLatest!: (value: Response) => void;
+    let resolveUnread!: (value: Response) => void;
     window.localStorage.setItem(
       unreadKey(workspace.id),
       JSON.stringify({ version: 1, workspaceId: workspace.id, counts: { [thread.id]: 0 } }),
@@ -5278,9 +5306,10 @@ describe("Unread conversation UI", () => {
         return jsonResponse({ ...bootstrapData, threads: [thread] });
       if (path === historyUrl(thread, "message-unread-1")) return jsonResponse(oldPage);
       if (path === `/api/threads/${thread.id}`) return jsonResponse(oldPage);
-      if (path === historyUrl(thread))
+      if (path === historyUrl(thread)) return jsonResponse(latestPage);
+      if (path === atHistoryUrl(thread, 1))
         return new Promise<Response>((resolve) => {
-          resolveLatest = resolve;
+          resolveUnread = resolve;
         });
       return jsonResponse({ error: { message: "Not found" } }, 404);
     });
@@ -5302,18 +5331,25 @@ describe("Unread conversation UI", () => {
       "/next unread",
     );
     await user.keyboard("{Enter}");
-    await waitFor(() => expect(window.location.search).toBe(""));
+    expect(window.location.search).toBe("?message=message-unread-1");
     expect(screen.queryByText("No files or links yet")).not.toBeInTheDocument();
     expect(storedReadCount(thread.id)).toBe(0);
     const historyLength = window.history.length;
     await user.click(screen.getByRole("button", { name: "Next unread conversation" }));
     expect(window.history.length).toBe(historyLength);
     expect(
-      fetchMock.mock.calls.filter(([input]) => String(input) === historyUrl(thread)),
+      fetchMock.mock.calls.filter(([input]) => String(input) === atHistoryUrl(thread, 1)),
     ).toHaveLength(1);
     await act(async () => {
-      resolveLatest(jsonResponse(latestPage));
+      resolveUnread(jsonResponse(withUnreadTarget(oldPage, 1)));
     });
+    await screen.findByText("Opened at the first unread message.");
+    await waitFor(() =>
+      expect(screen.getByRole("region", { name: "Selected message" })).toHaveFocus(),
+    );
+    expect(storedReadCount(thread.id)).toBe(0);
+    expect(window.history.length).toBe(historyLength);
+    await user.click(screen.getByRole("button", { name: "Show latest" }));
     await screen.findByText("Latest reply");
     await waitFor(() => expect(storedReadCount(thread.id)).toBe(2));
     expect(screen.getByRole("combobox", { name: "Message" })).toHaveValue("Keep current draft");
@@ -5321,6 +5357,434 @@ describe("Unread conversation UI", () => {
     expect(
       fetchMock.mock.calls.filter(([input]) => String(input) === historyUrl(thread)),
     ).toHaveLength(1);
+  });
+
+  it("resolves a long unread backlog once, refreshes by stable message ID, and marks only the current conversation read", async () => {
+    const thread = { ...activityThread("first-unread-backlog", "Alpha"), messageCount: 140 };
+    const other = { ...activityThread("first-unread-other", "Beta"), messageCount: 4 };
+    window.localStorage.setItem(
+      unreadKey(workspace.id),
+      JSON.stringify({
+        version: 1,
+        workspaceId: workspace.id,
+        counts: { [thread.id]: 20, [other.id]: 0 },
+      }),
+    );
+    const latest = latestMessagePage(thread, "Recent", 140, 91, 50);
+    const firstUnread = withUnreadTarget(latestMessagePage(thread, "Catch up", 140, 1, 50), 21);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap"))
+        return jsonResponse({ ...bootstrapData, threads: [thread, other] });
+      if (path === historyUrl(thread)) return jsonResponse(latest);
+      if (path === atHistoryUrl(thread, 21) || path === historyUrl(thread, "message-unread-21"))
+        return jsonResponse(firstUnread);
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(await screen.findByRole("combobox", { name: "Message" }), "Backlog draft");
+    await user.upload(
+      screen.getByLabelText("Choose files or images"),
+      new File(["keep"], "backlog.txt"),
+    );
+    sentinelTop = 50;
+    await user.click(screen.getByRole("button", { name: "First unread message" }));
+    const selected = await screen.findByRole("region", { name: "Selected message" });
+    expect(within(selected).getByText("Catch up 21")).toBeInTheDocument();
+    await waitFor(() => expect(selected).toHaveFocus());
+    expect(window.location.search).toBe("?message=message-unread-21");
+    expect(storedReadCount(thread.id)).toBe(20);
+    expect(
+      fetchMock.mock.calls
+        .map(([input]) => String(input))
+        .filter((path) => path.includes("/history")),
+    ).toEqual([historyUrl(thread), atHistoryUrl(thread, 21)]);
+
+    await user.click(screen.getByRole("button", { name: "Refresh workspace" }));
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter(
+          ([input]) => String(input) === historyUrl(thread, "message-unread-21"),
+        ),
+      ).toHaveLength(1),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Refresh workspace" })).toBeEnabled(),
+    );
+    expect(storedReadCount(thread.id)).toBe(20);
+    const requests = fetchMock.mock.calls.length;
+    const historyLength = window.history.length;
+    await user.click(screen.getByRole("button", { name: "Mark conversation read" }));
+    expect(storedReadCount(thread.id)).toBe(140);
+    expect(storedReadCount(other.id)).toBe(0);
+    expect(window.location.search).toBe("?message=message-unread-21");
+    expect(window.history.length).toBe(historyLength);
+    expect(screen.getByRole("region", { name: "Selected message" })).toHaveTextContent(
+      "Catch up 21",
+    );
+    expect(screen.getByRole("combobox", { name: "Message" })).toHaveValue("Backlog draft");
+    expect(screen.getByText("backlog.txt")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "First unread message" })).toBeDisabled();
+    expect(fetchMock).toHaveBeenCalledTimes(requests);
+  });
+
+  it.each([false, true])(
+    "marks the current Files view's known total read despite lagging metadata (archived: %s)",
+    async (archived) => {
+      const thread = {
+        ...activityThread("mark-current-files", "Alpha"),
+        messageCount: 3,
+        archived,
+      };
+      const other = activityThread("mark-current-other", "Beta");
+      window.localStorage.setItem(
+        unreadKey(workspace.id),
+        JSON.stringify({
+          version: 1,
+          workspaceId: workspace.id,
+          counts: { [thread.id]: 0, [other.id]: 0 },
+        }),
+      );
+      const page = latestMessagePage(thread, "Old selected message", 4);
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path.startsWith("/api/bootstrap"))
+          return jsonResponse({ ...bootstrapData, threads: [thread, other] });
+        if (path === historyUrl(thread, "message-unread-1") || path === `/api/threads/${thread.id}`)
+          return jsonResponse(page);
+        return jsonResponse({ error: { message: "Not found" } }, 404);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      window.history.replaceState({}, "", `/threads/${thread.id}?message=message-unread-1`);
+      const user = userEvent.setup();
+      render(<App />);
+      await user.click(await screen.findByRole("button", { name: /Files & links/ }));
+      await screen.findByText("No files or links yet");
+      await user.click(screen.getByRole("button", { name: "Unread conversations" }));
+      const requests = fetchMock.mock.calls.length;
+      await user.type(
+        screen.getByRole("combobox", { name: "Search threads, tasks, agents, or knowledge" }),
+        "/mark read",
+      );
+      await user.keyboard("{Enter}");
+      expect(storedReadCount(thread.id)).toBe(4);
+      expect(storedReadCount(other.id)).toBe(0);
+      expect(screen.getByText("No files or links yet")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /#Alpha/ })).toHaveClass("selected");
+      expect(screen.getByRole("button", { name: "Mark conversation read" })).toBeDisabled();
+      expect(window.location.search).toBe("?message=message-unread-1");
+      expect(fetchMock).toHaveBeenCalledTimes(requests);
+    },
+  );
+
+  it.each([
+    ["/first unread", "Open a conversation to find its first unread message."],
+    ["/mark read", "Open a conversation to mark it read."],
+  ])("handles %s without a current conversation locally", async (command, notice) => {
+    const thread = activityThread("no-current-unread", "Alpha");
+    const fetchMock = vi.fn(async () => jsonResponse({ ...bootstrapData, threads: [thread] }));
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", "/surfaces/taskboard");
+    const user = userEvent.setup();
+    render(<App />);
+    const search = await screen.findByRole("combobox", {
+      name: "Search threads, tasks, agents, or knowledge",
+    });
+    const requests = fetchMock.mock.calls.length;
+    await user.type(search, command);
+    await user.keyboard("{Enter}");
+    expect(screen.getByText(notice)).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/surfaces/taskboard");
+    expect(fetchMock).toHaveBeenCalledTimes(requests);
+  });
+
+  it("retries a failed first-unread lookup without losing the existing anchor or draft", async () => {
+    const thread = { ...activityThread("first-unread-retry", "Alpha"), messageCount: 5 };
+    window.localStorage.setItem(
+      unreadKey(workspace.id),
+      JSON.stringify({
+        version: 1,
+        workspaceId: workspace.id,
+        counts: { [thread.id]: 2 },
+      }),
+    );
+    let attempts = 0;
+    const page = latestMessagePage(thread, "Catch up", 5, 1, 5);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap"))
+        return jsonResponse({ ...bootstrapData, threads: [thread] });
+      if (path === historyUrl(thread, "message-unread-1")) return jsonResponse(page);
+      if (path === atHistoryUrl(thread, 3)) {
+        attempts += 1;
+        return attempts === 1
+          ? jsonResponse({ error: { message: "Unread history unavailable" } }, 503)
+          : jsonResponse(withUnreadTarget(page, 3));
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${thread.id}?message=message-unread-1`);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(await screen.findByRole("combobox", { name: "Message" }), "Keep retry draft");
+    await user.click(screen.getByRole("button", { name: "First unread message" }));
+    await screen.findByText("Unread history unavailable");
+    expect(window.location.search).toBe("?message=message-unread-1");
+    expect(storedReadCount(thread.id)).toBe(2);
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await screen.findByText("Opened at the first unread message.");
+    expect(window.location.search).toBe("?message=message-unread-3");
+    expect(storedReadCount(thread.id)).toBe(2);
+    expect(screen.getByRole("combobox", { name: "Message" })).toHaveValue("Keep retry draft");
+    expect(attempts).toBe(2);
+  });
+
+  it("reports an unavailable unread ordinal without treating the fallback page as read", async () => {
+    const thread = { ...activityThread("first-unread-missing", "Alpha"), messageCount: 140 };
+    window.localStorage.setItem(
+      unreadKey(workspace.id),
+      JSON.stringify({
+        version: 1,
+        workspaceId: workspace.id,
+        counts: { [thread.id]: 120 },
+      }),
+    );
+    const oldPage = latestMessagePage(thread, "Original selection", 140);
+    const fallback = latestMessagePage(thread, "Recent fallback", 140, 91, 50);
+    fallback.page.targetFound = false;
+    fallback.page.targetMessageIndex = 121;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap"))
+        return jsonResponse({ ...bootstrapData, threads: [thread] });
+      if (path === historyUrl(thread, "message-unread-1")) return jsonResponse(oldPage);
+      if (path === atHistoryUrl(thread, 121)) return jsonResponse(fallback);
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${thread.id}?message=message-unread-1`);
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText("Original selection");
+    sentinelTop = 50;
+    await user.click(screen.getByRole("button", { name: "First unread message" }));
+    await screen.findByText(
+      "The first unread message is no longer available. Showing recent messages.",
+    );
+    expect(screen.getByText("Recent fallback")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Selected message" })).not.toBeInTheDocument();
+    expect(window.location.search).toBe("");
+    expect(storedReadCount(thread.id)).toBe(120);
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input).includes("/history")),
+    ).toHaveLength(2);
+  });
+
+  it("ignores a delayed unread lookup after Show latest supersedes it", async () => {
+    const thread = { ...activityThread("first-unread-stale", "Alpha"), messageCount: 140 };
+    window.localStorage.setItem(
+      unreadKey(workspace.id),
+      JSON.stringify({
+        version: 1,
+        workspaceId: workspace.id,
+        counts: { [thread.id]: 20 },
+      }),
+    );
+    let resolveUnread!: (response: Response) => void;
+    let unreadSignal: AbortSignal | null | undefined;
+    const latest = latestMessagePage(thread, "Recent conversation", 140, 91, 50);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap"))
+        return jsonResponse({ ...bootstrapData, threads: [thread] });
+      if (path === historyUrl(thread)) return jsonResponse(latest);
+      if (path === atHistoryUrl(thread, 21)) {
+        unreadSignal = init?.signal;
+        return new Promise<Response>((resolve) => {
+          resolveUnread = resolve;
+        });
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "First unread message" }));
+    await user.click(screen.getByRole("button", { name: "Show latest" }));
+    expect(unreadSignal?.aborted).toBe(true);
+    await act(async () => {
+      resolveUnread(
+        jsonResponse(withUnreadTarget(latestMessagePage(thread, "Stale unread", 140, 1, 50), 21)),
+      );
+    });
+    expect(screen.getByText("Recent conversation")).toBeInTheDocument();
+    expect(screen.queryByText("Stale unread")).not.toBeInTheDocument();
+    expect(window.location.search).toBe("");
+    expect(storedReadCount(thread.id)).toBe(20);
+  });
+
+  it("uses the current cross-tab marker for a queued first-unread command", async () => {
+    const thread = { ...activityThread("first-unread-fresh", "Alpha"), messageCount: 10 };
+    window.localStorage.setItem(
+      unreadKey(workspace.id),
+      JSON.stringify({
+        version: 1,
+        workspaceId: workspace.id,
+        counts: { [thread.id]: 2 },
+      }),
+    );
+    const page = latestMessagePage(thread, "Current unread", 10, 1, 10);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap"))
+        return jsonResponse({ ...bootstrapData, threads: [thread] });
+      if (path === historyUrl(thread)) return jsonResponse(page);
+      if (path === atHistoryUrl(thread, 7)) return jsonResponse(withUnreadTarget(page, 7));
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(
+      await screen.findByRole("combobox", { name: "Search threads, tasks, agents, or knowledge" }),
+      "/first unread",
+    );
+    await act(async () => {
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: unreadKey(workspace.id),
+          newValue: JSON.stringify({
+            version: 1,
+            workspaceId: workspace.id,
+            counts: { [thread.id]: 6 },
+          }),
+        }),
+      );
+    });
+    await user.keyboard("{Enter}");
+    await screen.findByText("Opened at the first unread message.");
+    expect(window.location.search).toBe("?message=message-unread-7");
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input) === atHistoryUrl(thread, 3)),
+    ).toHaveLength(0);
+  });
+
+  it("does not replace Back to an identical URL with a delayed unread link", async () => {
+    const thread = { ...activityThread("first-unread-back", "Alpha"), messageCount: 4 };
+    window.localStorage.setItem(
+      unreadKey(workspace.id),
+      JSON.stringify({
+        version: 1,
+        workspaceId: workspace.id,
+        counts: { [thread.id]: 1 },
+      }),
+    );
+    let resolveUnread!: (response: Response) => void;
+    let unreadSignal: AbortSignal | null | undefined;
+    const page = latestMessagePage(thread, "Back destination", 4, 1, 4);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap"))
+        return jsonResponse({ ...bootstrapData, threads: [thread] });
+      if (path === historyUrl(thread)) return jsonResponse(page);
+      if (path === atHistoryUrl(thread, 2)) {
+        unreadSignal = init?.signal;
+        return new Promise<Response>((resolve) => {
+          resolveUnread = resolve;
+        });
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: /#Alpha/ }));
+    await user.click(await screen.findByRole("button", { name: "First unread message" }));
+    await act(async () => {
+      window.history.back();
+    });
+    await waitFor(() => expect(unreadSignal?.aborted).toBe(true));
+    await act(async () => {
+      resolveUnread(jsonResponse(withUnreadTarget(page, 2)));
+    });
+    expect(window.location.pathname).toBe(`/threads/${thread.id}`);
+    expect(window.location.search).toBe("");
+    expect(screen.queryByText("Opened at the first unread message.")).not.toBeInTheDocument();
+    expect(screen.getByText("Back destination")).toBeInTheDocument();
+    expect(storedReadCount(thread.id)).toBe(1);
+  });
+
+  it("ignores an unread response after switching workspaces and keeps the original draft", async () => {
+    const thread = { ...activityThread("first-unread-workspace", "Alpha"), messageCount: 4 };
+    const otherWorkspace = { ...workspace, id: "first-unread-foreign", name: "Second" };
+    const other = {
+      ...activityThread("first-unread-foreign-thread", "Beta"),
+      workspaceId: otherWorkspace.id,
+    };
+    window.localStorage.setItem(
+      unreadKey(workspace.id),
+      JSON.stringify({
+        version: 1,
+        workspaceId: workspace.id,
+        counts: { [thread.id]: 1 },
+      }),
+    );
+    let resolveUnread!: (response: Response) => void;
+    let unreadSignal: AbortSignal | null | undefined;
+    const page = latestMessagePage(thread, "Original workspace", 4, 1, 4);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        const foreign = path.includes(otherWorkspace.id);
+        return jsonResponse({
+          ...bootstrapData,
+          workspaces: [workspace, otherWorkspace],
+          workspace: foreign ? otherWorkspace : workspace,
+          threads: [foreign ? other : thread],
+        });
+      }
+      if (path === historyUrl(thread)) return jsonResponse(page);
+      if (path === historyUrl(other))
+        return jsonResponse(latestMessagePage(other, "Other workspace"));
+      if (path === atHistoryUrl(thread, 2)) {
+        unreadSignal = init?.signal;
+        return new Promise<Response>((resolve) => {
+          resolveUnread = resolve;
+        });
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(await screen.findByRole("combobox", { name: "Message" }), "Workspace draft");
+    await user.upload(
+      screen.getByLabelText("Choose files or images"),
+      new File(["workspace"], "workspace.txt"),
+    );
+    await user.click(screen.getByRole("button", { name: "First unread message" }));
+    await user.click(screen.getByRole("button", { name: "Switch to Second" }));
+    await screen.findByText("Other workspace");
+    expect(unreadSignal?.aborted).toBe(true);
+    await act(async () => {
+      resolveUnread(jsonResponse(withUnreadTarget(page, 2)));
+    });
+    expect(window.location.pathname).toBe(`/threads/${other.id}`);
+    expect(window.location.search).toBe("");
+    expect(screen.getByText("Other workspace")).toBeInTheDocument();
+    expect(screen.queryByText("workspace.txt")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Switch to Nexestra" }));
+    expect(await screen.findByRole("combobox", { name: "Message" })).toHaveValue("Workspace draft");
+    expect(screen.getByText("workspace.txt")).toBeInTheDocument();
+    expect(storedReadCount(thread.id)).toBe(1);
   });
 
   it("uses current cross-tab read markers when a queued next-unread command is selected", async () => {

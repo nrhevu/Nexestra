@@ -11,7 +11,7 @@ export interface LatestReadEligibility {
   bottomVisible: boolean;
   history?: {
     threadId: string;
-    windowKind: "latest" | "around" | "before" | "after";
+    windowKind: "latest" | "around" | "before" | "after" | "at";
     lastMessageIndex: number;
   };
 }

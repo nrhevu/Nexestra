@@ -123,12 +123,23 @@ failed storage leaves the current session's markers in memory. See
 
 `unreadNavigation` projects workspace-scoped All/Unread lists in active-then-archived order,
 retaining the selected read row in Unread. App owns a temporary filter per workspace; reload
-starts with All. Next unread resolves from current metadata/read markers and opens latest Messages,
+starts with All. Next unread resolves from current metadata/read markers and opens the first unread message,
 including explicit archived targets. Empty results do not request history. App also owns selected
 File arrays per workspace/thread, preserving object identity across view unmounts and retiring only
 submitted objects when their request is still current. Older responses retain files reused by newer
 pending submissions. Explicit opening of Messages has its own signal so asynchronous send scrolling
 cannot override a Files view. See [ADR 0042](adr/0042-unread-conversation-navigation.md).
+
+First unread uses a 1-based `at` history anchor computed from the current read-through marker. The
+server resolves that ordinal directly from its canonical message offset index and returns one bounded
+page plus the actual message ID. App then replaces the transient lookup with an ordinary `around`
+intent and canonical `?message=` URL, reusing existing focus and scroll behavior without a second
+request. Missing ordinals return a bounded recent page with an explicit notice and no invented ID.
+Pending lookups coalesce; request/workspace guards and browser Back prevent stale responses from
+overriding navigation. Explicit Mark read writes only the selected conversation's maximum known
+metadata/page count to browser storage, without moving the viewport or calling the server. Neither
+ordinal nor linked history automatically acknowledges messages. See
+[ADR 0044](adr/0044-first-unread-message-navigation.md).
 
 `SubmissionState` owns pending message request IDs independently of a mounted conversation. Its
 workspace/thread-scoped entry records a UUID, payload fingerprint, timestamp and bounded file
@@ -478,8 +489,9 @@ credentials.
   history is baselined on first use; browser storage loss can reset those markers. Cross-tab merges
   are best effort because localStorage read/write is not an atomic transaction. Markers do not
   synchronize between devices or recover a data directory replaced with shorter history.
-  Unread filters reset on reload. Next uses known metadata in the selected workspace and opens the
-  latest page without a first-unread-message anchor. Selected files survive navigation in memory
+  Unread filters reset on reload. First/Next unread uses known metadata in the selected workspace;
+  the ordinal resolves once to a stable message ID. Refresh or workspace revalidation discovers
+  additional idle activity; navigation itself does not poll other conversations. Selected files survive navigation in memory
   only, so reload requires selecting them again. Several drafts can keep several composer-sized
   file buckets until removed, sent, or the tab closes.
 

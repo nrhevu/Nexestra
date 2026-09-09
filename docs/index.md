@@ -34,3 +34,5 @@
     next-unread commands, current-row retention and selected files across workspace navigation.
 19. [Conversation reflow research](research/2026-09-09-conversation-reflow.md): narrow and short
     viewports, keyboard scrolling for rich content, and complete long-URL persistence.
+20. [First unread research](research/2026-09-09-first-unread-navigation.md): bounded ordinal lookup,
+    stable message links, explicit current-conversation acknowledgement and navigation races.

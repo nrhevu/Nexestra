@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted.
+Accepted; first-unread destination behavior amended by
+[ADR 0044](0044-first-unread-message-navigation.md). The original verification below records the
+latest-page behavior before that amendment.
 
 ## Context
 
@@ -52,6 +54,7 @@ reload behavior and pointer/keyboard access at narrow widths.
 
 - Next uses known metadata and current sidebar order. It does not poll, locate the first unread
   message within a transcript, or monitor other workspaces.
+  First-unread location is now implemented by ADR 0044; the metadata and workspace limits remain.
 - Filters reset on reload. Read markers and latest-bottom acknowledgement retain ADR 0041's policy.
 - File bytes survive in-app navigation only. Reload/closing discards them; selection is required
   again. Existing per-composer limits remain. Many drafts can keep multiple file buckets in memory

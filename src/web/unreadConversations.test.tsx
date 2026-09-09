@@ -97,6 +97,9 @@ describe("latestReadThrough", () => {
       latestReadThrough({ ...base, history: { ...base.history, windowKind: "before" } }),
     ).toBeUndefined();
     expect(
+      latestReadThrough({ ...base, history: { ...base.history, windowKind: "at" } }),
+    ).toBeUndefined();
+    expect(
       latestReadThrough({ ...base, history: { ...base.history, threadId: "thread-other" } }),
     ).toBeUndefined();
     expect(

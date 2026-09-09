@@ -30,8 +30,13 @@ origin. Existing history starts read on first use; the feature does not reconstr
 
 Use **All / Unread** above the list to find conversations with new messages. The filter counts
 conversations and keeps the current row visible after reading. **Next unread conversation** or
-`/next unread` cycles through active and archived conversations in sidebar order, opening latest
-Messages. If only the current conversation is unread, it returns there from Files or older history.
+`/next unread` cycles through active and archived conversations in sidebar order, opening the first
+unread message. **First unread** or `/first unread` opens that point in the current conversation,
+including from Files & links. The resulting message link remains stable through Refresh and reload;
+opening it keeps the unread count until you explicitly **Mark read** (`/mark read`) or read the bottom
+after choosing **Show latest**. Mark read acknowledges only this conversation, using its latest known
+count, and leaves the current page in place. If the saved point is unavailable, recent messages appear
+with a notice and keep their read state.
 The filter stays per workspace in this tab and resets to All after reload.
 
 Returning to the workspace refreshes its metadata and the conversation page you were reading.

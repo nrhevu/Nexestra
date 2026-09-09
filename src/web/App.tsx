@@ -98,6 +98,7 @@ import {
 import { AttentionView } from "./AttentionView.js";
 import { ApiError, api } from "./api.js";
 import { ConversationFilterControls } from "./ConversationFilterControls.js";
+import { ConversationReadControls } from "./ConversationReadControls.js";
 import { ConversationState, readBrowserValue, writeBrowserValue } from "./conversationState.js";
 import {
   KnowledgeDocumentPreview,
@@ -137,15 +138,17 @@ interface RouteState {
   view: PrimaryView;
   surface: Surface;
   threadId?: string;
-  messageTarget?: { id: string };
+  messageTarget?: { id: string; source?: "unread" };
 }
 
-type HistoryWindowKind = "latest" | "around" | "before" | "after";
+type HistoryWindowKind = "latest" | "around" | "before" | "after" | "at";
 
 interface HistoryIntent {
   threadId: string;
   kind: HistoryWindowKind;
   messageId?: string;
+  messageIndex?: number;
+  replaceTarget?: boolean;
 }
 
 interface HistoryFocusTarget {
@@ -167,6 +170,7 @@ interface SubmissionOptions {
 
 export function App() {
   const [route, setRoute] = useState<RouteState>(() => routeFromLocation());
+  const [historyNavigationRevision, setHistoryNavigationRevision] = useState(0);
   const [conversations] = useState(() => new ConversationState());
   const [submissions] = useState(() => new SubmissionState());
   const [, setDraftRevision] = useState(0);
@@ -532,6 +536,8 @@ export function App() {
       if (intent.kind === "around" && intent.messageId) params.set("around", intent.messageId);
       else if (intent.kind === "before" && intent.messageId) params.set("before", intent.messageId);
       else if (intent.kind === "after" && intent.messageId) params.set("after", intent.messageId);
+      else if (intent.kind === "at" && intent.messageIndex !== undefined)
+        params.set("at", String(intent.messageIndex));
       try {
         const next = await api<ThreadHistoryPage>(
           `/api/threads/${encodeURIComponent(threadId)}/history?${params.toString()}`,
@@ -545,10 +551,46 @@ export function App() {
           next.thread.workspaceId !== workspaceId
         )
           return undefined;
+        let appliedIntent = intent;
+        if (intent.kind === "at") {
+          const targetId = next.page.targetMessageId;
+          if (next.page.targetFound === true && targetId) {
+            const targetOffset = next.messages.findIndex((message) => message.id === targetId);
+            if (
+              targetOffset < 0 ||
+              next.page.firstMessageIndex + targetOffset !== intent.messageIndex
+            ) {
+              throw new Error("History did not contain the requested unread message.");
+            }
+            appliedIntent = { threadId, kind: "around", messageId: targetId };
+            routeLoadSuppressedRef.current = true;
+            navigate(
+              `/threads/${encodeURIComponent(threadId)}?message=${encodeURIComponent(targetId)}`,
+              {
+                view: "threads",
+                surface: routeRef.current.surface,
+                threadId,
+                messageTarget: { id: targetId, source: "unread" },
+              },
+              intent.replaceTarget || routeRef.current.messageTarget?.id === targetId,
+            );
+          } else if (next.page.targetFound === false) {
+            if (routeRef.current.messageTarget) {
+              routeLoadSuppressedRef.current = true;
+              navigate(
+                `/threads/${encodeURIComponent(threadId)}`,
+                { view: "threads", surface: routeRef.current.surface, threadId },
+                true,
+              );
+            }
+          } else {
+            throw new Error("History did not resolve the requested unread message.");
+          }
+        }
         historyPageRef.current = next;
         historyPageRequestIdRef.current = requestId;
-        historyIntentRef.current = intent;
-        setHistoryWindow(intent);
+        historyIntentRef.current = appliedIntent;
+        setHistoryWindow(appliedIntent);
         setHistoryPage(next);
         if (!quiet && intent.kind === "before") {
           const message = next.messages.at(-1);
@@ -600,7 +642,7 @@ export function App() {
         if (requestId === historyRequestRef.current) setHistoryLoading(false);
       }
     },
-    [refresh, updateData],
+    [navigate, refresh, updateData],
   );
 
   const currentHistoryIntent = useCallback((): HistoryIntent | undefined => {
@@ -797,11 +839,20 @@ export function App() {
   useEffect(() => {
     const onPopState = () => {
       const nextRoute = routeFromLocation();
+      const intent = historyIntentRef.current;
+      const intentMatchesRoute = nextRoute.messageTarget
+        ? intent?.kind === "around" && intent.messageId === nextRoute.messageTarget.id
+        : intent?.kind === "latest";
       if (
         nextRoute.view !== routeRef.current.view ||
-        nextRoute.threadId !== routeRef.current.threadId
+        nextRoute.threadId !== routeRef.current.threadId ||
+        !intentMatchesRoute
       ) {
+        // Back to an identical bare URL still supersedes an ordinal lookup. Retain an
+        // existing latest request when it already matches that destination.
         historyRequestRef.current += 1;
+        routeLoadSuppressedRef.current = false;
+        setHistoryNavigationRevision((revision) => revision + 1);
       }
       routeRef.current = nextRoute;
       setRoute(nextRoute);
@@ -954,6 +1005,7 @@ export function App() {
     route.view,
     routeThreadExists,
   ]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Back to the same URL can change the requested history window without changing route fields.
   useEffect(() => {
     if (route.view !== "threads" || !route.threadId || !routeThreadExists) return;
     if (routeLoadSuppressedRef.current) {
@@ -969,7 +1021,14 @@ export function App() {
       ? { threadId: route.threadId, kind: "around", messageId: route.messageTarget.id }
       : { threadId: route.threadId, kind: "latest" };
     void loadHistoryPage(route.threadId, intent);
-  }, [loadHistoryPage, route.messageTarget, route.threadId, route.view, routeThreadExists]);
+  }, [
+    historyNavigationRevision,
+    loadHistoryPage,
+    route.messageTarget,
+    route.threadId,
+    route.view,
+    routeThreadExists,
+  ]);
 
   const hasActiveThreadRuns = historyPage?.activeRuns.some(isActiveRun);
   const isWatchingActiveThread = Boolean(
@@ -1112,6 +1171,92 @@ export function App() {
 
   const openThread = (threadId: string) =>
     navigate(`/threads/${threadId}`, { view: "threads", surface: route.surface, threadId });
+
+  const currentConversation = (): Thread | undefined => {
+    const current = dataRef.current;
+    const routeNow = routeRef.current;
+    if (!current || current.workspace.id !== workspaceIdRef.current || routeNow.view !== "threads")
+      return undefined;
+    return current.threads.find(
+      (thread) => thread.id === routeNow.threadId && thread.workspaceId === current.workspace.id,
+    );
+  };
+
+  const openUnreadThread = (thread: Thread) => {
+    const current = dataRef.current;
+    if (
+      !current ||
+      current.workspace.id !== workspaceIdRef.current ||
+      thread.workspaceId !== current.workspace.id
+    )
+      return;
+    const count = unreadFor(thread);
+    if (count <= 0) {
+      flash("No unread messages in this conversation.");
+      return;
+    }
+    const messageIndex = thread.messageCount - count + 1;
+    const routeNow = routeRef.current;
+    const sameThread = routeNow.view === "threads" && routeNow.threadId === thread.id;
+    setOpenMessagesRequest((revision) => revision + 1);
+    if (
+      sameThread &&
+      historyIntentRef.current?.kind === "at" &&
+      historyIntentRef.current.threadId === thread.id &&
+      historyIntentRef.current.messageIndex === messageIndex &&
+      historyAbortRef.current &&
+      !historyAbortRef.current.signal.aborted
+    )
+      return;
+    if (!sameThread) {
+      routeLoadSuppressedRef.current = true;
+      navigate(`/threads/${encodeURIComponent(thread.id)}`, {
+        view: "threads",
+        surface: routeNow.surface,
+        threadId: thread.id,
+      });
+      setRunActivities([]);
+      setFullThreadData(undefined);
+    }
+    setHistoryFocusTarget(undefined);
+    void loadHistoryPage(thread.id, {
+      threadId: thread.id,
+      kind: "at",
+      messageIndex,
+      replaceTarget: !sameThread,
+    });
+  };
+
+  const openFirstUnread = () => {
+    const thread = currentConversation();
+    if (!thread) {
+      flash("Open a conversation to find its first unread message.");
+      return;
+    }
+    openUnreadThread(thread);
+  };
+
+  const markCurrentConversationRead = () => {
+    const thread = currentConversation();
+    if (!thread) {
+      flash("Open a conversation to mark it read.");
+      return;
+    }
+    const page = historyPageRef.current;
+    const knownCount =
+      page?.thread.id === thread.id && page.thread.workspaceId === thread.workspaceId
+        ? Math.max(thread.messageCount, page.page.totalMessages)
+        : thread.messageCount;
+    const changed = readState.markRead(thread.workspaceId, thread.id, knownCount);
+    const key = `${thread.workspaceId}:${thread.id}`;
+    readThroughReportedRef.current.set(
+      key,
+      Math.max(readThroughReportedRef.current.get(key) ?? 0, knownCount),
+    );
+    if (changed) refreshReadState();
+    flash(changed ? "Marked this conversation read." : "This conversation is already read.");
+  };
+
   const openNextUnread = () => {
     const current = dataRef.current;
     if (!current || current.workspace.id !== workspaceIdRef.current) return;
@@ -1126,15 +1271,7 @@ export function App() {
       flash("No unread conversations in this workspace.");
       return;
     }
-    if (routeNow.view === "threads" && routeNow.threadId === next.id) {
-      showLatest();
-      return;
-    }
-    navigate(`/threads/${encodeURIComponent(next.id)}`, {
-      view: "threads",
-      surface: routeNow.surface,
-      threadId: next.id,
-    });
+    openUnreadThread(next);
   };
   const openMessage = (threadId: string, messageId: string) => {
     setMessageSearch(undefined);
@@ -1515,6 +1652,8 @@ export function App() {
         onThemeToggle={toggleTheme}
         onMarkAllRead={markAllConversationsRead}
         onNextUnread={openNextUnread}
+        onFirstUnread={openFirstUnread}
+        onMarkRead={markCurrentConversationRead}
         onThread={openThread}
         onSurface={openSurface}
         onSettings={() => setModal("settings")}
@@ -1586,6 +1725,13 @@ export function App() {
               key={route.threadId}
               data={data}
               threadData={visibleThreadData}
+              unreadCount={threadUnread(
+                readState,
+                data.workspace.id,
+                data.threads.find((thread) => thread.id === route.threadId),
+              )}
+              onFirstUnread={openFirstUnread}
+              onMarkRead={markCurrentConversationRead}
               history={{
                 intent: historyWindow,
                 totalMessages: historyPage?.page.totalMessages ?? 0,
@@ -1594,6 +1740,10 @@ export function App() {
                 lastMessageIndex: historyPage?.page.lastMessageIndex ?? 0,
                 beforeCursor: historyPage?.page.beforeCursor ?? null,
                 afterCursor: historyPage?.page.afterCursor ?? null,
+                canShowLatest:
+                  historyIntentRef.current !== undefined &&
+                  historyIntentRef.current.threadId === route.threadId &&
+                  historyIntentRef.current.kind !== "latest",
                 loading: historyLoading,
                 error: historyError,
                 onOlder: goOlder,
@@ -2466,6 +2616,9 @@ function ComposerFormatButton(props: { label: string; onClick: () => void; child
 function ThreadView(props: {
   data: BootstrapData;
   threadData?: ThreadHistoryPage;
+  unreadCount: number;
+  onFirstUnread: () => void;
+  onMarkRead: () => void;
   history: {
     intent?: HistoryIntent;
     totalMessages: number;
@@ -2474,6 +2627,7 @@ function ThreadView(props: {
     lastMessageIndex: number;
     beforeCursor: string | null;
     afterCursor: string | null;
+    canShowLatest: boolean;
     loading: boolean;
     error?: string;
     onOlder: () => void;
@@ -2490,7 +2644,7 @@ function ThreadView(props: {
   fullThreadError?: string;
   onOpenArtifacts: () => void;
   runActivities: RunActivity[];
-  messageTarget?: { id: string };
+  messageTarget?: RouteState["messageTarget"];
   onClearMessageTarget: () => void;
   onLatestBottomVisible: (threadId: string, visible: boolean, loadedCount?: number) => void;
   readRecheckRequest: number;
@@ -2849,6 +3003,11 @@ function ThreadView(props: {
             </div>
           </div>
         </header>
+        <ConversationReadControls
+          unreadCount={props.unreadCount}
+          onFirstUnread={props.onFirstUnread}
+          onMarkRead={props.onMarkRead}
+        />
         <div className="thread-tabs">
           <button
             type="button"
@@ -2894,7 +3053,7 @@ function ThreadView(props: {
             </button>
             <button
               type="button"
-              disabled={props.history.intent?.kind === "latest"}
+              disabled={!props.history.canShowLatest}
               onClick={props.history.onShowLatest}
             >
               Show latest
@@ -2913,11 +3072,22 @@ function ThreadView(props: {
           <div className="message-target-notice">
             <span role="status">
               {props.threadData.page.targetFound === true
-                ? "Viewing a linked message."
+                ? props.messageTarget.source === "unread"
+                  ? "Opened at the first unread message."
+                  : "Viewing a linked message."
                 : "The linked message is not available in this thread."}
             </span>
           </div>
         )}
+        {activeTab === "messages" &&
+          props.history.intent?.kind === "at" &&
+          props.threadData.page.targetFound === false && (
+            <div className="message-target-notice">
+              <span role="status">
+                The first unread message is no longer available. Showing recent messages.
+              </span>
+            </div>
+          )}
       </div>
       {activeTab === "messages" ? (
         <ThreadTranscript
