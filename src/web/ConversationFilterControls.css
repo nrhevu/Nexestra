@@ -1,0 +1,77 @@
+.conversation-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 10px 9px 8px;
+  border: 0;
+  min-width: 0;
+  border-bottom: 1px solid var(--sidebar-border);
+  white-space: nowrap;
+}
+
+.conversation-filter-option,
+.conversation-filter-next {
+  min-width: 24px;
+  min-height: 24px;
+  border: 1px solid var(--sidebar-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--sidebar-text);
+  font: inherit;
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+
+.conversation-filter-option {
+  padding: 3px 9px;
+}
+
+.conversation-filter-next {
+  width: 26px;
+  height: 26px;
+  margin-left: auto;
+}
+
+.conversation-filter-option:hover:not(:disabled),
+.conversation-filter-option-active,
+.conversation-filter-next:hover:not(:disabled) {
+  background: var(--theme-toggle-bg);
+  color: var(--text);
+}
+
+.conversation-filter-option-active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.conversation-filter-option:focus-visible,
+.conversation-filter-next:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.conversation-filter-next:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.conversation-filter-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--canvas);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}

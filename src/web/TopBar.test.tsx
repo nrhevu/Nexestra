@@ -334,3 +334,20 @@ describe("Workspace refresh action", () => {
     expect(props.onMarkAllRead).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("Next unread command", () => {
+  it("runs the next-unread command from the palette with its full slash phrase", async () => {
+    const user = userEvent.setup();
+    const onNextUnread = vi.fn();
+    const props = makeProps({ onNextUnread });
+    render(<TopBar {...props} />);
+    const input = screen.getByRole("combobox");
+    await user.type(input, "/next unread");
+    const option = screen.getByRole("option", { name: /Next unread conversation/ });
+    expect(option).toHaveAttribute("aria-selected", "true");
+    await user.keyboard("{Enter}");
+    expect(option).not.toBeInTheDocument();
+    expect(onNextUnread).toHaveBeenCalledTimes(1);
+    expect(input).toHaveValue("");
+  });
+});

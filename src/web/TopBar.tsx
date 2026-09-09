@@ -13,6 +13,7 @@ export interface TopBarProps {
   refreshError?: string;
   onRefresh: () => void;
   onMarkAllRead: () => void;
+  onNextUnread?: () => void;
   onThemeToggle: () => void;
   onThread: (id: string) => void;
   onSurface: (surface: TopBarSurface) => void;
@@ -107,6 +108,12 @@ export function TopBar(props: TopBarProps) {
           label: "Mark all conversations read",
           description: "Clear unread counts for every known conversation",
           action: props.onMarkAllRead,
+        },
+        {
+          id: "command:next-unread",
+          label: "Next unread conversation",
+          description: "Go to the next conversation with unread messages",
+          action: () => props.onNextUnread?.(),
         },
         {
           id: "command:settings",
