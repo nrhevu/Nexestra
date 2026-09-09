@@ -48,12 +48,14 @@ import {
   X,
 } from "lucide-react";
 import {
+  type Dispatch,
   type FormEvent,
   Fragment,
   type KeyboardEvent,
   lazy,
   memo,
   type ReactNode,
+  type SetStateAction,
   Suspense,
   useCallback,
   useDeferredValue,
@@ -95,6 +97,7 @@ import {
 } from "../shared/contracts.js";
 import { AttentionView } from "./AttentionView.js";
 import { ApiError, api } from "./api.js";
+import { ConversationFilterControls } from "./ConversationFilterControls.js";
 import { ConversationState, readBrowserValue, writeBrowserValue } from "./conversationState.js";
 import {
   KnowledgeDocumentPreview,
@@ -117,6 +120,11 @@ import {
   totalUnread,
   useLatestBottomVisibility,
 } from "./unreadConversations.js";
+import {
+  type ConversationFilter,
+  nextUnreadConversation,
+  selectConversationList,
+} from "./unreadNavigation.js";
 import { type RefreshOutcome, useWorkspaceRefresh } from "./workspaceRefresh.js";
 
 const RichMessage = lazy(() => import("./RichMessage.js"));
@@ -171,6 +179,7 @@ export function App() {
   const [historyError, setHistoryError] = useState<string>();
   const [historyFocusTarget, setHistoryFocusTarget] = useState<HistoryFocusTarget>();
   const [latestScrollRequest, setLatestScrollRequest] = useState(0);
+  const [openMessagesRequest, setOpenMessagesRequest] = useState(0);
   const [fullThreadData, setFullThreadData] = useState<ThreadData>();
   const [fullThreadLoading, setFullThreadLoading] = useState(false);
   const [fullThreadError, setFullThreadError] = useState<string>();
@@ -200,6 +209,13 @@ export function App() {
   });
   const deferredRunActivities = useDeferredValue(runActivities);
   const [readState] = useState(() => new ReadState());
+  const [conversationFilters, setConversationFilters] = useState(
+    () => new Map<string, ConversationFilter>(),
+  );
+  // File objects survive conversation/surface navigation in this App, never browser storage.
+  const [conversationAttachments, setConversationAttachments] = useState(
+    () => new Map<string, File[]>(),
+  );
   const [, setReadStateRevision] = useState(0);
   const [readPersistenceNote, setReadPersistenceNote] = useState(false);
   const readThroughReportedRef = useRef(new Map<string, number>());
@@ -684,14 +700,24 @@ export function App() {
   const showLatest = useCallback(() => {
     const threadId = routeRef.current.threadId;
     if (!threadId) return;
-    if (routeRef.current.messageTarget) routeLoadSuppressedRef.current = true;
-    navigate(`/threads/${encodeURIComponent(threadId)}`, {
-      view: "threads",
-      surface: routeRef.current.surface,
-      threadId,
-    });
+    if (routeRef.current.messageTarget) {
+      routeLoadSuppressedRef.current = true;
+      navigate(`/threads/${encodeURIComponent(threadId)}`, {
+        view: "threads",
+        surface: routeRef.current.surface,
+        threadId,
+      });
+    }
     setHistoryFocusTarget(undefined);
+    setOpenMessagesRequest((revision) => revision + 1);
     setLatestScrollRequest((revision) => revision + 1);
+    if (
+      historyIntentRef.current?.threadId === threadId &&
+      historyIntentRef.current.kind === "latest" &&
+      historyAbortRef.current &&
+      !historyAbortRef.current.signal.aborted
+    )
+      return;
     void loadHistoryPage(threadId, { threadId, kind: "latest" });
   }, [loadHistoryPage, navigate]);
 
@@ -1086,6 +1112,30 @@ export function App() {
 
   const openThread = (threadId: string) =>
     navigate(`/threads/${threadId}`, { view: "threads", surface: route.surface, threadId });
+  const openNextUnread = () => {
+    const current = dataRef.current;
+    if (!current || current.workspace.id !== workspaceIdRef.current) return;
+    const routeNow = routeRef.current;
+    const next = nextUnreadConversation({
+      workspaceId: current.workspace.id,
+      threads: current.threads,
+      currentThreadId: routeNow.view === "threads" ? routeNow.threadId : undefined,
+      unreadFor,
+    });
+    if (!next) {
+      flash("No unread conversations in this workspace.");
+      return;
+    }
+    if (routeNow.view === "threads" && routeNow.threadId === next.id) {
+      showLatest();
+      return;
+    }
+    navigate(`/threads/${encodeURIComponent(next.id)}`, {
+      view: "threads",
+      surface: routeNow.surface,
+      threadId: next.id,
+    });
+  };
   const openMessage = (threadId: string, messageId: string) => {
     setMessageSearch(undefined);
     navigate(`/threads/${encodeURIComponent(threadId)}?message=${encodeURIComponent(messageId)}`, {
@@ -1403,7 +1453,17 @@ export function App() {
       setDraftRevision((revision) => revision + 1);
     }
     const retired = submissions.retire(workspaceId, threadId, requestId);
-    if (retired.matched) setDraftRevision((revision) => revision + 1);
+    if (retired.matched) {
+      setDraftRevision((revision) => revision + 1);
+      const sentFiles = new Set(files);
+      setConversationAttachments((current) => {
+        const remaining = (current.get(scope) ?? []).filter((file) => !sentFiles.has(file));
+        const next = new Map(current);
+        if (remaining.length > 0) next.set(scope, remaining);
+        else next.delete(scope);
+        return next;
+      });
+    }
     if (!retired.persisted) {
       setSubmissionNotice(
         workspaceId,
@@ -1454,6 +1514,7 @@ export function App() {
         onRefresh={workspaceRefresh.requestRefresh}
         onThemeToggle={toggleTheme}
         onMarkAllRead={markAllConversationsRead}
+        onNextUnread={openNextUnread}
         onThread={openThread}
         onSurface={openSurface}
         onSettings={() => setModal("settings")}
@@ -1485,6 +1546,11 @@ export function App() {
         }
         unreadFor={unreadFor}
         totalUnread={unreadTotal}
+        conversationFilter={conversationFilters.get(data.workspace.id) ?? "all"}
+        onConversationFilter={(filter) => {
+          setConversationFilters((current) => new Map(current).set(data.workspace.id, filter));
+        }}
+        onNextUnread={openNextUnread}
         onMarkAllRead={markAllConversationsRead}
         showReadStorageNote={readPersistenceNote}
         onThread={openThread}
@@ -1538,6 +1604,7 @@ export function App() {
               historyFocusTarget={historyFocusTarget}
               onHistoryFocusHandled={handleHistoryFocusHandled}
               scrollToLatestRequest={latestScrollRequest}
+              openMessagesRequest={openMessagesRequest}
               fullThreadData={fullThreadData}
               fullThreadLoading={fullThreadLoading}
               fullThreadError={fullThreadError}
@@ -1555,6 +1622,21 @@ export function App() {
               draftSaved={
                 route.threadId ? conversations.draft(data.workspace.id, route.threadId).saved : true
               }
+              attachments={
+                conversationAttachments.get(`${data.workspace.id}:${route.threadId}`) ?? []
+              }
+              onAttachmentsChange={(update) => {
+                if (!route.threadId) return;
+                const key = `${data.workspace.id}:${route.threadId}`;
+                setConversationAttachments((current) => {
+                  const files =
+                    typeof update === "function" ? update(current.get(key) ?? []) : update;
+                  const next = new Map(current);
+                  if (files.length > 0) next.set(key, files);
+                  else next.delete(key);
+                  return next;
+                });
+              }}
               onDraftChange={(value) => {
                 if (!route.threadId) return;
                 conversations.updateDraft(data.workspace.id, route.threadId, value);
@@ -2075,6 +2157,9 @@ function Sidebar(props: {
   hasDraft: (threadId: string) => boolean;
   unreadFor: (thread: Thread) => number;
   totalUnread: number;
+  conversationFilter: ConversationFilter;
+  onConversationFilter: (filter: ConversationFilter) => void;
+  onNextUnread: () => void;
   onMarkAllRead: () => void;
   showReadStorageNote: boolean;
   onThread: (id: string) => void;
@@ -2084,8 +2169,18 @@ function Sidebar(props: {
   onCreate: () => void;
 }) {
   const visibleAgents = props.data.agents.filter((agent) => !agent.archived);
-  const visibleThreads = props.data.threads.filter((thread) => !thread.archived);
-  const archivedThreads = props.data.threads.filter((thread) => thread.archived);
+  const {
+    active: visibleThreads,
+    archived: archivedThreads,
+    unreadConversationCount,
+    retainedCurrent,
+  } = selectConversationList({
+    workspaceId: props.data.workspace.id,
+    threads: props.data.threads,
+    filter: props.conversationFilter,
+    currentThreadId: props.route.view === "threads" ? props.route.threadId : undefined,
+    unreadFor: props.unreadFor,
+  });
   return (
     <aside className="sidebar">
       <div className="workspace-title">
@@ -2176,6 +2271,18 @@ function Sidebar(props: {
                 <Plus size={15} />
               </button>
             </div>
+            <ConversationFilterControls
+              filter={props.conversationFilter}
+              onFilterChange={props.onConversationFilter}
+              unreadConversationCount={unreadConversationCount}
+              onNextUnread={props.onNextUnread}
+            />
+            {props.conversationFilter === "unread" && unreadConversationCount === 0 && (
+              <p className="conversation-filter-empty" role="status">
+                No unread conversations.
+                {retainedCurrent ? " Current conversation stays visible." : ""}
+              </p>
+            )}
             <div className="sidebar-list">
               {visibleThreads.map((thread) => (
                 <button
@@ -2210,7 +2317,7 @@ function Sidebar(props: {
                 </button>
               ))}
             </div>
-            {visibleThreads.length === 0 && (
+            {props.conversationFilter === "all" && visibleThreads.length === 0 && (
               <button className="sidebar-empty" type="button" onClick={props.onCreate}>
                 No active threads. Create one →
               </button>
@@ -2377,6 +2484,7 @@ function ThreadView(props: {
   historyFocusTarget?: HistoryFocusTarget;
   onHistoryFocusHandled: () => void;
   scrollToLatestRequest: number;
+  openMessagesRequest: number;
   fullThreadData?: ThreadData;
   fullThreadLoading: boolean;
   fullThreadError?: string;
@@ -2393,6 +2501,8 @@ function ThreadView(props: {
   onDraftChange: (value: string) => void;
   onSend: (content: string, files: File[], options?: SubmissionOptions) => Promise<void>;
   pendingSubmission: PendingSubmission | null;
+  attachments: File[];
+  onAttachmentsChange: Dispatch<SetStateAction<File[]>>;
   onRetry: (runId: string) => Promise<unknown>;
   onToolDecision: (toolCallId: string, approved: boolean) => Promise<void>;
   onToolResponse: (toolCallId: string, answers: string[][]) => Promise<void>;
@@ -2404,13 +2514,15 @@ function ThreadView(props: {
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
   const [recoveringAttachments, setRecoveringAttachments] = useState(
-    () => (props.pendingSubmission?.files.length ?? 0) > 0,
+    // Kept File objects are an in-session payload: deliberate edits can start a new send.
+    // After reload, missing bytes require explicit recovery with fingerprint validation.
+    () => (props.pendingSubmission?.files.length ?? 0) > 0 && props.attachments.length === 0,
   );
   const [localError, setLocalError] = useState<string>();
   const [mentionMenuOpen, setMentionMenuOpen] = useState(true);
   const [activeSuggestion, setActiveSuggestion] = useState(0);
   const [activeTab, setActiveTab] = useState<"messages" | "artifacts">("messages");
-  const [attachments, setAttachments] = useState<File[]>([]);
+  const { attachments, onAttachmentsChange: setAttachments } = props;
   const [draggingFiles, setDraggingFiles] = useState(false);
   const [formattingOpen, setFormattingOpen] = useState(false);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
@@ -2424,6 +2536,13 @@ function ThreadView(props: {
   useEffect(() => {
     if (props.messageTarget) setActiveTab("messages");
   }, [props.messageTarget]);
+
+  const previousMessagesRequest = useRef(props.openMessagesRequest);
+  useEffect(() => {
+    if (previousMessagesRequest.current === props.openMessagesRequest) return;
+    previousMessagesRequest.current = props.openMessagesRequest;
+    setActiveTab("messages");
+  }, [props.openMessagesRequest]);
 
   useEffect(() => {
     const selection = pendingSelectionRef.current;
@@ -2560,8 +2679,6 @@ function ThreadView(props: {
         requireOriginalAttachments: recoveringAttachments,
       });
       setRecoveringAttachments(false);
-      const sentIdentity = new Set(sentFiles);
-      setAttachments((current) => current.filter((file) => !sentIdentity.has(file)));
       setMentionMenuOpen(true);
       setAddMenuOpen(false);
     } catch (caught) {

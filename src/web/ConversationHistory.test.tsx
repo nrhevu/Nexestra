@@ -219,9 +219,12 @@ function mockServer(
   const runs = options.runs ?? [];
   const activeRuns = options.activeRuns ?? runs;
   const attention = options.attention ?? [];
+  const secondThread = options.includeSecondThread
+    ? { ...otherThread, workspaceId: workspace.id }
+    : otherThread;
   const threadById = new Map([
     [thread.id, thread],
-    [otherThread.id, otherThread],
+    [secondThread.id, secondThread],
   ]);
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
@@ -231,10 +234,10 @@ function mockServer(
       return jsonResponse({
         ...bootstrap,
         workspace: foreign ? otherWorkspace : workspace,
-        threads: options.includeSecondThread
-          ? [thread, otherThread]
-          : foreign
-            ? [otherThread]
+        threads: foreign
+          ? [otherThread]
+          : options.includeSecondThread
+            ? [thread, secondThread]
             : [thread],
         activeRuns,
         attention,

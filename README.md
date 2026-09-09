@@ -28,6 +28,12 @@ Threads list or use `/mark all read` to acknowledge the currently known counts, 
 threads. These markers are saved in this browser and shared with its other tabs on the same local
 origin. Existing history starts read on first use; the feature does not reconstruct earlier reading.
 
+Use **All / Unread** above the list to find conversations with new messages. The filter counts
+conversations and keeps the current row visible after reading. **Next unread conversation** or
+`/next unread` cycles through active and archived conversations in sidebar order, opening latest
+Messages. If only the current conversation is unread, it returns there from Files or older history.
+The filter stays per workspace in this tab and resets to All after reload.
+
 Returning to the workspace refreshes its metadata and the conversation page you were reading.
 You can also choose **Refresh** beside search or the `/refresh workspace` command. Drafts and
 selected files stay in place, including an unconfirmed send. A failed refresh offers **Retry**;
@@ -57,6 +63,8 @@ Composer drafts are stored per workspace and thread, so switching threads or rel
 restores what you were typing. Thread rows show a **Draft** badge while a draft exists, and the
 Threads entry returns to the last thread you had open in that workspace. Drafts stay browser-only;
 if browser storage is unavailable they remain in the tab with a short note.
+Selected files also stay per conversation while switching threads, surfaces or workspaces in the
+same tab. Their bytes remain in memory; after reloading or closing the tab, select the files again.
 
 If a send fails before its result is confirmed, sending the unchanged draft again confirms the
 original message. It preserves the original attachments and agent runs, including runs that have

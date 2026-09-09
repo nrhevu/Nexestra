@@ -496,6 +496,13 @@ kbd {
   flex: 1;
   overflow-y: auto;
 }
+
+.conversation-filter-empty {
+  margin: 6px 16px 10px;
+  color: var(--sidebar-text);
+  font-size: 12px;
+  line-height: 1.5;
+}
 .sidebar-settings {
   flex: 0 0 auto;
   width: calc(100% - 18px);
@@ -3914,11 +3921,12 @@ kbd {
     grid-column: 2;
     grid-row: 2;
     display: flex;
+    flex-direction: row;
     align-items: center;
     overflow-x: auto;
     border-right: 0;
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-    background: #35113a;
+    background: var(--sidebar-bg);
   }
   .primary-navigation {
     flex: 0 0 auto;
@@ -3936,6 +3944,11 @@ kbd {
     flex: 0 0 auto;
     display: flex;
     overflow: visible;
+  }
+  .conversation-filter-empty {
+    align-self: center;
+    flex: 0 0 200px;
+    margin: 0 8px;
   }
   .sidebar-settings {
     display: none;

@@ -121,6 +121,15 @@ Tabs merge markers monotonically and repair stale snapshots through same-origin 
 failed storage leaves the current session's markers in memory. See
 [ADR 0041](adr/0041-browser-local-conversation-read-state.md).
 
+`unreadNavigation` projects workspace-scoped All/Unread lists in active-then-archived order,
+retaining the selected read row in Unread. App owns a temporary filter per workspace; reload
+starts with All. Next unread resolves from current metadata/read markers and opens latest Messages,
+including explicit archived targets. Empty results do not request history. App also owns selected
+File arrays per workspace/thread, preserving object identity across view unmounts and retiring only
+submitted objects when their request is still current. Older responses retain files reused by newer
+pending submissions. Explicit opening of Messages has its own signal so asynchronous send scrolling
+cannot override a Files view. See [ADR 0042](adr/0042-unread-conversation-navigation.md).
+
 `SubmissionState` owns pending message request IDs independently of a mounted conversation. Its
 workspace/thread-scoped entry records a UUID, payload fingerprint, timestamp and bounded file
 descriptors. WebCrypto hashes file bytes before a send; the bytes themselves stay in browser `File`
@@ -454,6 +463,10 @@ credentials.
   history is baselined on first use; browser storage loss can reset those markers. Cross-tab merges
   are best effort because localStorage read/write is not an atomic transaction. Markers do not
   synchronize between devices or recover a data directory replaced with shorter history.
+  Unread filters reset on reload. Next uses known metadata in the selected workspace and opens the
+  latest page without a first-unread-message anchor. Selected files survive navigation in memory
+  only, so reload requires selecting them again. Several drafts can keep several composer-sized
+  file buckets until removed, sent, or the tab closes.
 
 - App-native `plan` and `delegate` are currently available to custom OpenAI-compatible Masters.
   ChatGPT OAuth Masters run through Codex CLI and do not yet receive this bridge.

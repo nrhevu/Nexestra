@@ -1,7 +1,7 @@
 import { ChevronDown } from "lucide-react";
+import { useId } from "react";
+import type { ConversationFilter } from "./unreadNavigation.js";
 import "./ConversationFilterControls.css";
-
-export type ConversationFilter = "all" | "unread";
 
 export interface ConversationFilterControlsProps {
   filter: ConversationFilter;
@@ -16,6 +16,7 @@ export function ConversationFilterControls({
   unreadConversationCount,
   onNextUnread,
 }: ConversationFilterControlsProps) {
+  const countId = useId();
   return (
     <fieldset className="conversation-filter" aria-label="Conversation filter">
       <button
@@ -40,10 +41,13 @@ export function ConversationFilterControls({
         }
         aria-pressed={filter === "unread"}
         aria-label="Unread conversations"
+        aria-describedby={countId}
         onClick={() => onFilterChange("unread")}
       >
         <span>Unread</span>
-        <span className="conversation-filter-count">{unreadConversationCount}</span>
+        <span id={countId} className="conversation-filter-count">
+          {unreadConversationCount}
+        </span>
       </button>
       <button
         type="button"

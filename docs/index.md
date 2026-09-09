@@ -30,3 +30,5 @@
     return, bounded read cycles, retained drafts and pending sends, and archived-notice contrast.
 17. [Conversation unread research](research/2026-09-09-conversation-unread-state.md): browser-local
     read markers, visible latest-page acknowledgement, archived totals and cross-tab merging.
+18. [Unread navigation research](research/2026-09-09-unread-conversation-navigation.md): All/Unread,
+    next-unread commands, current-row retention and selected files across workspace navigation.

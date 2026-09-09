@@ -156,7 +156,7 @@ describe("Recoverable message submission", () => {
     vi.unstubAllGlobals();
   });
 
-  it("reuses one request identity while the failing payload keeps its files and content", async () => {
+  it("reuses one request identity with retained files after navigating away and back", async () => {
     const user = userEvent.setup();
     const thread = threadRow("thread-retry-files", "general");
     const posts: (FormData | Record<string, unknown>)[] = [];
@@ -184,9 +184,13 @@ describe("Recoverable message submission", () => {
     await user.click(screen.getByRole("button", { name: "Send" }));
     await screen.findByText("Unavailable");
 
+    await user.click(screen.getByRole("button", { name: "Surfaces" }));
+    await user.click(screen.getByRole("button", { name: "Threads" }));
+    const restoredComposer = await screen.findByRole("combobox", { name: "Message" });
+    expect(screen.queryByText(/Reattach the original files/)).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(posts.length).toBe(2));
-    expect(composer).toHaveValue("Retry me");
+    expect(restoredComposer).toHaveValue("Retry me");
     expect(screen.getByText("diagram.png")).toBeInTheDocument();
     const bodies = posts.map((body) => ({
       requestId: body instanceof FormData ? String(body.get("requestId")) : String(body.requestId),
@@ -195,6 +199,12 @@ describe("Recoverable message submission", () => {
     expect(bodies[0]?.requestId).toBe(bodies[1]?.requestId);
     expect(bodies[0]?.content).toBe("Retry me");
     expect(bodies[0]?.requestId).toMatch(/^[0-9a-f-]{36}$/);
+    await screen.findByText("Unavailable");
+    await user.click(screen.getByRole("button", { name: "Remove diagram.png" }));
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(posts.length).toBe(3));
+    // Removing the retained file is a deliberate in-session edit, so this is a new payload.
+    expect((posts[2] as Record<string, unknown>).requestId).not.toBe(bodies[0]?.requestId);
   });
 
   it("gives edited content a new request identity because it is a new intent", async () => {

@@ -5055,6 +5055,314 @@ describe("Unread conversation UI", () => {
     };
   }
 
+  it("keeps filter and selected files per workspace during navigation and resets the filter on remount", async () => {
+    const first = activityThread("workspace-filter-first", "Alpha");
+    const secondWorkspace = { ...workspace, id: "second-filter-workspace", name: "Second" };
+    const second = {
+      ...activityThread("workspace-filter-second", "Beta"),
+      workspaceId: secondWorkspace.id,
+    };
+    for (const thread of [first, second]) {
+      window.localStorage.setItem(
+        unreadKey(thread.workspaceId),
+        JSON.stringify({ version: 1, workspaceId: thread.workspaceId, counts: { [thread.id]: 0 } }),
+      );
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        const other = path.includes(secondWorkspace.id);
+        return jsonResponse({
+          ...bootstrapData,
+          workspaces: [workspace, secondWorkspace],
+          workspace: other ? secondWorkspace : workspace,
+          threads: [other ? second : first],
+        });
+      }
+      const thread = [first, second].find((entry) => path === historyUrl(entry));
+      if (thread) return jsonResponse(latestMessagePage(thread));
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${first.id}`);
+    const user = userEvent.setup();
+    const view = render(<App />);
+    await user.type(
+      await screen.findByRole("combobox", { name: "Message" }),
+      "First workspace draft",
+    );
+    await user.upload(
+      screen.getByLabelText("Choose files or images"),
+      new File(["first"], "first-workspace.txt"),
+    );
+    await user.click(screen.getByRole("button", { name: "Unread conversations" }));
+    await user.click(screen.getByRole("button", { name: "Switch to Second" }));
+    await screen.findByRole("heading", { name: "# Beta" });
+    expect(screen.getByRole("button", { name: "All conversations" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.queryByText("first-workspace.txt")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Surfaces" }));
+    await user.type(
+      screen.getByRole("combobox", { name: "Search threads, tasks, agents, or knowledge" }),
+      "/next unread",
+    );
+    await user.keyboard("{Enter}");
+    await screen.findByRole("heading", { name: "# Beta" });
+    expect(window.location.pathname).toBe(`/threads/${second.id}`);
+    await user.click(screen.getByRole("button", { name: "Switch to Nexestra" }));
+    await screen.findByRole("heading", { name: "# Alpha" });
+    expect(screen.getByRole("button", { name: "Unread conversations" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("combobox", { name: "Message" })).toHaveValue("First workspace draft");
+    expect(screen.getByText("first-workspace.txt")).toBeInTheDocument();
+    view.unmount();
+    render(<App />);
+    await screen.findByRole("heading", { name: "# Alpha" });
+    expect(screen.getByRole("button", { name: "All conversations" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("combobox", { name: "Message" })).toHaveValue("First workspace draft");
+    expect(screen.queryByText("first-workspace.txt")).not.toBeInTheDocument();
+  });
+
+  it("filters locally, retains the current read conversation, and keeps composer files", async () => {
+    const first = activityThread("filter-current", "Alpha");
+    const read = activityThread("filter-read", "Already read");
+    const archived = { ...activityThread("filter-archive", "Archived unread"), archived: true };
+    window.localStorage.setItem(
+      unreadKey(workspace.id),
+      JSON.stringify({
+        version: 1,
+        workspaceId: workspace.id,
+        counts: {
+          [first.id]: 0,
+          [read.id]: 1,
+          [archived.id]: 0,
+        },
+      }),
+    );
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).startsWith("/api/bootstrap")) {
+        return jsonResponse({ ...bootstrapData, threads: [first, read, archived] });
+      }
+      if (String(input) === historyUrl(first)) return jsonResponse(latestMessagePage(first));
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${first.id}`);
+    const user = userEvent.setup();
+    render(<App />);
+    const composer = await screen.findByRole("combobox", { name: "Message" });
+    await user.type(composer, "Keep this draft");
+    const file = new File(["File stays in this tab"], "filter.txt", { type: "text/plain" });
+    await user.upload(screen.getByLabelText("Choose files or images"), file);
+    const requests = fetchMock.mock.calls.length;
+    const unread = screen.getByRole("button", { name: "Unread conversations" });
+    await user.click(unread);
+    expect(unread).toHaveAttribute("aria-pressed", "true");
+    expect(unread).toHaveFocus();
+    expect(screen.queryByRole("button", { name: /#Already read/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /#Archived unread/ })).toBeInTheDocument();
+    expect(storedReadCount(first.id)).toBe(0);
+    expect(fetchMock).toHaveBeenCalledTimes(requests);
+
+    sentinelTop = 50;
+    await act(async () => {
+      observerCallbacks.at(-1)?.([{ isIntersecting: true }]);
+    });
+    await waitFor(() => expect(storedReadCount(first.id)).toBe(1));
+    expect(screen.getByRole("button", { name: /#Alpha/ })).toHaveClass("selected");
+    expect(unread).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "Mark all conversations read" }));
+    expect(
+      screen.getByText("No unread conversations. Current conversation stays visible."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /#Archived unread/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("No active threads. Create one →")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Next unread conversation" })).toBeDisabled();
+    expect(composer).toHaveValue("Keep this draft");
+    expect(screen.getByText("filter.txt")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(requests);
+    await user.click(screen.getByRole("button", { name: "All conversations" }));
+    expect(screen.getByRole("button", { name: /#Already read/ })).toBeInTheDocument();
+  });
+
+  it("cycles unread in sidebar order including archived and preserves files across navigation", async () => {
+    const first = activityThread("next-first", "Alpha");
+    const second = activityThread("next-second", "Beta");
+    const archived = { ...activityThread("next-archived", "Gamma"), archived: true };
+    // Metadata order deliberately differs from the active-then-archived sidebar order.
+    const threads = [archived, first, second];
+    window.localStorage.setItem(
+      unreadKey(workspace.id),
+      JSON.stringify({
+        version: 1,
+        workspaceId: workspace.id,
+        counts: {
+          [first.id]: 0,
+          [second.id]: 0,
+          [archived.id]: 0,
+        },
+      }),
+    );
+    const pendingKey = `nexestra.pendingSubmission.1.${workspace.id}:${first.id}`;
+    const pending = JSON.stringify({
+      version: 1,
+      requestId: "12345678-1234-4123-8123-123456789012",
+      key: `v1:${"a".repeat(64)}`,
+      files: [],
+      createdAt: now,
+    });
+    window.localStorage.setItem(pendingKey, pending);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).startsWith("/api/bootstrap"))
+        return jsonResponse({ ...bootstrapData, threads });
+      const thread = threads.find((entry) => String(input) === historyUrl(entry));
+      if (thread) return jsonResponse(latestMessagePage(thread, `Message in ${thread.name}`));
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${first.id}`);
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(
+      await screen.findByRole("combobox", { name: "Message" }),
+      "Return to this draft",
+    );
+    await user.upload(
+      screen.getByLabelText("Choose files or images"),
+      new File(["Payload"], "navigation.txt", { type: "text/plain" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Unread conversations" }));
+    await user.click(screen.getByRole("button", { name: "Next unread conversation" }));
+    await screen.findByRole("heading", { name: "# Beta" });
+    expect(screen.queryByText("navigation.txt")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Next unread conversation" }));
+    await screen.findByRole("heading", { name: "# Gamma" });
+    expect(screen.getByRole("button", { name: "Restore" })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Message" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Next unread conversation" }));
+    expect(await screen.findByRole("combobox", { name: "Message" })).toHaveValue(
+      "Return to this draft",
+    );
+    expect(screen.getByText("navigation.txt")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Unread conversations" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(window.localStorage.getItem(pendingKey)).toBe(pending);
+    expect(
+      fetchMock.mock.calls
+        .map(([input]) => String(input))
+        .filter((url) => url.includes("/history")),
+    ).toEqual([historyUrl(first), historyUrl(second), historyUrl(archived), historyUrl(first)]);
+  });
+
+  it("opens the only unread conversation's latest Messages from a linked Files view", async () => {
+    const thread = { ...activityThread("next-current", "Alpha"), messageCount: 2 };
+    const oldPage = latestMessagePage(thread, "Linked message", 2);
+    const latestPage = latestMessagePage(thread, "Latest reply", 2, 2);
+    let resolveLatest!: (value: Response) => void;
+    window.localStorage.setItem(
+      unreadKey(workspace.id),
+      JSON.stringify({ version: 1, workspaceId: workspace.id, counts: { [thread.id]: 0 } }),
+    );
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap"))
+        return jsonResponse({ ...bootstrapData, threads: [thread] });
+      if (path === historyUrl(thread, "message-unread-1")) return jsonResponse(oldPage);
+      if (path === `/api/threads/${thread.id}`) return jsonResponse(oldPage);
+      if (path === historyUrl(thread))
+        return new Promise<Response>((resolve) => {
+          resolveLatest = resolve;
+        });
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${thread.id}?message=message-unread-1`);
+    const user = userEvent.setup();
+    render(<App />);
+    const composer = await screen.findByRole("combobox", { name: "Message" });
+    await user.type(composer, "Keep current draft");
+    await user.upload(
+      screen.getByLabelText("Choose files or images"),
+      new File(["keep"], "current.txt"),
+    );
+    await user.click(screen.getByRole("button", { name: /Files & links/ }));
+    await screen.findByText("No files or links yet");
+    sentinelTop = 50;
+    await user.type(
+      screen.getByRole("combobox", { name: "Search threads, tasks, agents, or knowledge" }),
+      "/next unread",
+    );
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(window.location.search).toBe(""));
+    expect(screen.queryByText("No files or links yet")).not.toBeInTheDocument();
+    expect(storedReadCount(thread.id)).toBe(0);
+    const historyLength = window.history.length;
+    await user.click(screen.getByRole("button", { name: "Next unread conversation" }));
+    expect(window.history.length).toBe(historyLength);
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input) === historyUrl(thread)),
+    ).toHaveLength(1);
+    await act(async () => {
+      resolveLatest(jsonResponse(latestPage));
+    });
+    await screen.findByText("Latest reply");
+    await waitFor(() => expect(storedReadCount(thread.id)).toBe(2));
+    expect(screen.getByRole("combobox", { name: "Message" })).toHaveValue("Keep current draft");
+    expect(screen.getByText("current.txt")).toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input) === historyUrl(thread)),
+    ).toHaveLength(1);
+  });
+
+  it("uses current cross-tab read markers when a queued next-unread command is selected", async () => {
+    const thread = activityThread("next-fresh", "Alpha");
+    window.localStorage.setItem(
+      unreadKey(workspace.id),
+      JSON.stringify({ version: 1, workspaceId: workspace.id, counts: { [thread.id]: 0 } }),
+    );
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).startsWith("/api/bootstrap"))
+        return jsonResponse({ ...bootstrapData, threads: [thread] });
+      if (String(input) === historyUrl(thread)) return jsonResponse(latestMessagePage(thread));
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("combobox", { name: "Message" });
+    await user.type(
+      screen.getByRole("combobox", { name: "Search threads, tasks, agents, or knowledge" }),
+      "/next unread",
+    );
+    const requests = fetchMock.mock.calls.length;
+    await act(async () => {
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: unreadKey(workspace.id),
+          newValue: JSON.stringify({
+            version: 1,
+            workspaceId: workspace.id,
+            counts: { [thread.id]: 1 },
+          }),
+        }),
+      );
+    });
+    await user.keyboard("{Enter}");
+    expect(screen.getByText("No unread conversations in this workspace.")).toBeInTheDocument();
+    expect(window.location.pathname).toBe(`/threads/${thread.id}`);
+    expect(fetchMock).toHaveBeenCalledTimes(requests);
+  });
+
   it("shows per-thread and aggregate unread counts and marks all conversations read", async () => {
     const first = { ...activityThread("thread-unread-first", "Alpha"), messageCount: 5 };
     const second = { ...activityThread("thread-unread-second", "Beta"), messageCount: 3 };
