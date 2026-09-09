@@ -6,13 +6,13 @@ import {
   WORKSPACE_EXPORT_MAX_SOURCE_BYTES,
   WORKSPACE_EXPORT_TIMEOUT_MS,
 } from "../shared/contracts.js";
+import type { TranscriptFileIdentity } from "./conversation-history.js";
 import {
   type FileStore,
   type PreparedWorkspaceExport,
   type PreparedWorkspaceExportFile,
   readWorkspaceExportLines,
   StoreError,
-  type TranscriptFileIdentity,
   type WorkspaceExportLine,
   workspaceExportFileIdentityMatches,
 } from "./store.js";

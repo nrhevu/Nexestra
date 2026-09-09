@@ -1,11 +1,11 @@
-import { appendFile, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HISTORY_MAX_EVENT_BYTES } from "./conversation-history.js";
 import type { WorkspaceExportPrepareOptions } from "./store.js";
 import { FileStore } from "./store.js";
-import { createWorkspaceExport } from "./workspace-export.js";
+import { createWorkspaceExport, workspaceExportEntries } from "./workspace-export.js";
 
 async function openStore(): Promise<{ store: FileStore; root: string }> {
   const root = await mkdtemp(join(tmpdir(), "nexestra-export-boundaries-"));
@@ -149,6 +149,7 @@ describe("workspace export boundaries", () => {
     const originalPrepare = store.prepareWorkspaceExport.bind(store);
     let replacedPath: string | undefined;
     let originalSourceBytes: Uint8Array | undefined;
+    let firstSourceValidations = 0;
     vi.spyOn(store, "prepareWorkspaceExport").mockImplementationOnce(
       async (workspaceId: string, options?: WorkspaceExportPrepareOptions) => {
         const prepared = await originalPrepare(workspaceId, options);
@@ -161,7 +162,11 @@ describe("workspace export boundaries", () => {
           ...prepared,
           validateFile: async (file) => {
             if (file.archivePath === first.archivePath) {
-              await writeFile(file.sourcePath, new TextEncoder().encode("replacement"));
+              firstSourceValidations += 1;
+              // The first check precedes streaming; the second is the final sweep.
+              if (firstSourceValidations === 2) {
+                await writeFile(file.sourcePath, new TextEncoder().encode("replacement"));
+              }
             }
             await originalValidate(file);
           },
@@ -181,6 +186,7 @@ describe("workspace export boundaries", () => {
       }
       const next = await store.prepareWorkspaceExport(workspace.id);
       await next.release();
+      expect(firstSourceValidations).toBe(2);
       expect(failure).toMatchObject({ code: "conflict" });
     } finally {
       if (replacedPath && originalSourceBytes) {
@@ -188,6 +194,53 @@ describe("workspace export boundaries", () => {
       }
     }
   });
+
+  it.each(["before opening", "after streaming"] as const)(
+    "rejects a changed binary descriptor %s before yielding more bytes",
+    async (when) => {
+      const { store } = await openStore();
+      const [workspace] = store.listWorkspaces();
+      if (!workspace) throw new Error("expected seeded workspace");
+      const [thread] = store.listThreads(workspace.id);
+      if (!thread) throw new Error("expected seeded thread");
+      const originalBytes = new TextEncoder().encode("original");
+      await store.createUserMessage(
+        thread.id,
+        "upload",
+        [],
+        [{ name: "fixture.bin", mediaType: "application/octet-stream", bytes: originalBytes }],
+      );
+      const prepared = await store.prepareWorkspaceExport(workspace.id);
+      const upload = prepared.files.find((file) => file.kind === "upload");
+      if (!upload) throw new Error("expected captured upload");
+      const entries = workspaceExportEntries(prepared, store, () => {});
+      try {
+        for await (const entry of entries) {
+          if (entry.kind !== "upload") {
+            for await (const _chunk of entry.chunks) {
+              // Consume earlier entries so the upload passes its preflight check.
+            }
+            continue;
+          }
+          const chunks = entry.chunks[Symbol.asyncIterator]();
+          if (when === "before opening") {
+            // Replace the inode after the path check but before the descriptor opens.
+            await rename(upload.sourcePath, `${upload.sourcePath}.original`);
+          } else {
+            const first = await chunks.next();
+            expect(first.done).toBe(false);
+            expect(first.value).toEqual(originalBytes);
+          }
+          await writeFile(upload.sourcePath, new TextEncoder().encode("replaced"));
+          await expect(chunks.next()).rejects.toMatchObject({ code: "conflict" });
+          break;
+        }
+      } finally {
+        await entries.return(undefined);
+        await prepared.release();
+      }
+    },
+  );
 
   it("rejects invalid UTF-8, torn trailing, and oversized transcript lines", async () => {
     await expectInvalidAfterAppend(async (store, threadId) => {

@@ -14,6 +14,13 @@ import {
   WorkspaceExportArchiveError,
 } from "./workspace-export-archive.js";
 
+const testPaths = vi.hoisted(() => ({ root: "" }));
+
+vi.mock("node:os", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:os")>();
+  return { ...actual, tmpdir: () => testPaths.root };
+});
+
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {
@@ -80,12 +87,17 @@ async function tempExportDirs(): Promise<string[]> {
   return (await readdir(tmpdir())).filter((name) => name.startsWith("nexestra-workspace-export-"));
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.resetAllMocks();
+  const fs = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+  const os = await vi.importActual<typeof import("node:os")>("node:os");
+  testPaths.root = await fs.mkdtemp(join(os.tmpdir(), "nexestra-export-archive-test-"));
 });
 
-afterEach(() => {
+afterEach(async () => {
   vi.restoreAllMocks();
+  const fs = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+  await fs.rm(testPaths.root, { recursive: true, force: true });
 });
 
 describe("buildWorkspaceExportArchive", () => {
