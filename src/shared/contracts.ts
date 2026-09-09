@@ -540,6 +540,40 @@ export const RunHistoryPageSchema = z.object({
 });
 export type RunHistoryPage = z.infer<typeof RunHistoryPageSchema>;
 
+export const WORKSPACE_EXPORT_MAX_SOURCE_BYTES = 128 * 1024 * 1024;
+export const WORKSPACE_EXPORT_MAX_ARCHIVE_BYTES = 136 * 1024 * 1024;
+export const WORKSPACE_EXPORT_MAX_ENTRIES = 5_000;
+export const WORKSPACE_EXPORT_TIMEOUT_MS = 30_000;
+
+export const WorkspaceExportEntrySchema = z.object({
+  path: z.string().min(1).max(1_024),
+  kind: z.enum(["metadata", "transcript", "upload", "document", "notice"]),
+  bytes: z.number().int().nonnegative().max(WORKSPACE_EXPORT_MAX_SOURCE_BYTES),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+});
+export type WorkspaceExportEntry = z.infer<typeof WorkspaceExportEntrySchema>;
+
+export const WorkspaceExportManifestSchema = z.object({
+  format: z.literal("nexestra.workspace-export"),
+  version: z.literal(1),
+  createdAt: z.string().datetime(),
+  workspace: WorkspaceSchema.pick({ id: true, name: true }),
+  stateVersion: z.literal(7),
+  redaction: z.literal("known-credentials"),
+  importSupported: z.literal(false),
+  excluded: z.array(
+    z.enum([
+      "credentials",
+      "harness-auth",
+      "repository-files",
+      "browser-state",
+      "unreferenced-files",
+    ]),
+  ),
+  entries: z.array(WorkspaceExportEntrySchema).min(1).max(WORKSPACE_EXPORT_MAX_ENTRIES),
+});
+export type WorkspaceExportManifest = z.infer<typeof WorkspaceExportManifestSchema>;
+
 export const RunActivitySchema = z.object({
   runId: z.string(),
   threadId: z.string(),
