@@ -180,16 +180,21 @@ describe("inspectArchiveInWorker lifecycle", () => {
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 
-  it("rejects a stale request id and lets a fresh call succeed", async () => {
+  it("ignores stale request ids and lets a fresh call succeed", async () => {
     const first = inspectArchiveInWorker(zipFile());
     const firstWorker = workerAt(0);
     const firstRequest = requestFrom(firstWorker);
     firstWorker.emit("message", resultReply(firstRequest.requestId + 10));
-
-    await expect(first).rejects.toMatchObject({
-      code: "invalid",
-      message: "Workspace inspector returned a stale response.",
+    firstWorker.emit("message", {
+      type: "unknown",
+      requestId: firstRequest.requestId + 11,
+      progress: { phase: "broken", verifiedEntries: -1 },
     });
+
+    await Promise.resolve();
+    expect(firstWorker.terminations).toBe(0);
+    firstWorker.emit("message", resultReply(firstRequest.requestId));
+    await expect(first).resolves.toEqual(inspectionReport());
     expect(firstWorker.terminations).toBe(1);
 
     const second = inspectArchiveInWorker(zipFile());
@@ -199,6 +204,26 @@ describe("inspectArchiveInWorker lifecycle", () => {
     secondWorker.emit("message", resultReply(secondRequest.requestId));
     await expect(second).resolves.toEqual(inspectionReport());
     expect(secondWorker.terminations).toBe(1);
+  });
+
+  it("terminates a worker that aborts reentrantly during construction", async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    class ReentrantAbortWorker extends FakeWorker {
+      constructor(url: string | URL, options?: unknown) {
+        super(url, options);
+        controller.abort();
+      }
+    }
+    vi.stubGlobal("Worker", ReentrantAbortWorker as unknown as typeof Worker);
+
+    const promise = inspectArchiveInWorker(zipFile(), { signal: controller.signal });
+    const worker = workerAt(0);
+    await expect(promise).rejects.toMatchObject({ code: "cancelled" });
+    expect(worker.posts).toHaveLength(0);
+    expect(worker.terminations).toBe(1);
+    expect(worker.listenerCount("message")).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("cancels and terminates even when the worker never replies", async () => {

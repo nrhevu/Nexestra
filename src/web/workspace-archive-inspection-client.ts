@@ -46,6 +46,17 @@ function nextInspectionRequestId(): number {
   return requestId;
 }
 
+function readReplyRequestId(value: unknown): number | undefined {
+  if (typeof value !== "object" || value === null) {
+    return undefined;
+  }
+  const requestId = (value as { requestId?: unknown }).requestId;
+  if (typeof requestId !== "number" || !Number.isSafeInteger(requestId) || requestId <= 0) {
+    return undefined;
+  }
+  return requestId;
+}
+
 function progressIsSane(
   progress: WorkspaceArchiveInspectionProgress,
   lastVerifiedByPhase: Map<
@@ -152,6 +163,10 @@ export async function inspectArchiveInWorker(
       if (settled) {
         return;
       }
+      const rawRequestId = readReplyRequestId(event.data);
+      if (rawRequestId !== undefined && rawRequestId !== requestId) {
+        return;
+      }
       const parsed = WorkspaceArchiveInspectionReplySchema.safeParse(event.data);
       if (!parsed.success) {
         rejectWith("invalid", "Workspace inspector returned an invalid response.");
@@ -159,7 +174,6 @@ export async function inspectArchiveInWorker(
       }
       const reply = parsed.data;
       if (reply.requestId !== requestId) {
-        rejectWith("invalid", "Workspace inspector returned a stale response.");
         return;
       }
       if (reply.type === "progress") {
@@ -207,6 +221,11 @@ export async function inspectArchiveInWorker(
       });
     } catch {
       rejectWith("unsupported", "Workspace archive inspection is not supported in this browser.");
+      return;
+    }
+    if (settled) {
+      worker.terminate();
+      worker = undefined;
       return;
     }
 

@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WORKSPACE_EXPORT_MAX_ARCHIVE_BYTES } from "../shared/contracts.js";
-import {
-  WORKSPACE_ARCHIVE_INSPECTION_CORE_TIMEOUT_MS,
-  type WorkspaceArchiveInspectionProgress,
-  type WorkspaceArchiveInspectionReport,
+import type {
+  WorkspaceArchiveInspectionProgress,
+  WorkspaceArchiveInspectionReport,
 } from "../shared/workspace-archive-inspection-contracts.js";
 
 const engine = vi.hoisted(() => {
@@ -107,12 +106,11 @@ describe("workspace archive inspection worker handler", () => {
     });
 
     const options = engine.inspectWorkspaceArchive.mock.calls[0]?.[1] as {
-      signal: AbortSignal;
       onProgress: (value: WorkspaceArchiveInspectionProgress) => void;
     };
     expect(engine.inspectWorkspaceArchive.mock.calls[0]?.[0]).toBe(file);
     expect(options).toBeDefined();
-    expect(options.signal).toBeInstanceOf(AbortSignal);
+    expect((options as { signal?: unknown }).signal).toBeUndefined();
     options.onProgress(progress());
 
     await vi.waitFor(() => {
@@ -234,23 +232,28 @@ describe("workspace archive inspection worker handler", () => {
     });
   });
 
-  it("arms the engine signal with the core timeout", async () => {
-    vi.useFakeTimers();
-    engine.inspectWorkspaceArchive.mockReturnValue(new Promise(() => undefined));
+  it("forwards an engine limit timeout unchanged", async () => {
+    const requestId = 5;
+    engine.inspectWorkspaceArchive.mockRejectedValue(
+      new engine.WorkspaceArchiveInspectionError(
+        "limit",
+        "Workspace archive inspection timed out.",
+      ),
+    );
     receive({
       type: "inspect",
-      requestId: 5,
+      requestId,
       file: new File([new Uint8Array(1)], "workspace.zip"),
     });
     await vi.waitFor(() => {
-      expect(engine.inspectWorkspaceArchive).toHaveBeenCalledTimes(1);
+      expect(posted).toContainEqual({
+        type: "error",
+        requestId,
+        error: {
+          code: "limit",
+          message: "Workspace archive inspection timed out.",
+        },
+      });
     });
-    const options = engine.inspectWorkspaceArchive.mock.calls[0]?.[1] as {
-      signal: AbortSignal;
-    };
-    expect(options.signal.aborted).toBe(false);
-    await vi.advanceTimersByTimeAsync(WORKSPACE_ARCHIVE_INSPECTION_CORE_TIMEOUT_MS + 1);
-    expect(options.signal.aborted).toBe(true);
-    expect(vi.getTimerCount()).toBe(0);
   });
 });

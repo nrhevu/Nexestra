@@ -3,11 +3,10 @@ import {
   inspectWorkspaceArchive,
   WorkspaceArchiveInspectionError,
 } from "../shared/workspace-archive-inspection.js";
-import {
-  WORKSPACE_ARCHIVE_INSPECTION_CORE_TIMEOUT_MS,
-  type WorkspaceArchiveInspectionFailure,
-  type WorkspaceArchiveInspectionProgress,
-  type WorkspaceArchiveInspectionReport,
+import type {
+  WorkspaceArchiveInspectionFailure,
+  WorkspaceArchiveInspectionProgress,
+  WorkspaceArchiveInspectionReport,
 } from "../shared/workspace-archive-inspection-contracts.js";
 
 // The project intentionally compiles with DOM (not WebWorker) libs, so this
@@ -144,11 +143,6 @@ workerScope.onmessage = (event): void => {
     return;
   }
 
-  const controller = new AbortController();
-  const coreTimer = setTimeout(
-    () => controller.abort(),
-    WORKSPACE_ARCHIVE_INSPECTION_CORE_TIMEOUT_MS,
-  );
   const file = request.file as unknown as Blob;
   const reportProgress = (progress: WorkspaceArchiveInspectionProgress): void => {
     workerScope.postMessage({ type: "progress", requestId: request.requestId, progress });
@@ -157,13 +151,10 @@ workerScope.onmessage = (event): void => {
   void (async (): Promise<void> => {
     try {
       const report: WorkspaceArchiveInspectionReport = await inspectWorkspaceArchive(file, {
-        signal: controller.signal,
         onProgress: reportProgress,
       });
-      clearTimeout(coreTimer);
       workerScope.postMessage({ type: "result", requestId: request.requestId, report });
     } catch (error) {
-      clearTimeout(coreTimer);
       const failure = failureFromEngine(error);
       postError(request.requestId, failure.code, failure.message, failure.path);
     }
