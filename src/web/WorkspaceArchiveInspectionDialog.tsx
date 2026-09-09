@@ -213,13 +213,14 @@ export function WorkspaceArchiveInspectionDialog({
       setPhase("success");
     } catch (caught) {
       if (requestId !== requestIdRef.current) return;
-      const failure = caught as InspectionFailureLike;
+      const failure =
+        caught !== null && typeof caught === "object" ? (caught as InspectionFailureLike) : null;
       const message =
-        typeof failure.message === "string" && failure.message.trim() !== ""
+        failure !== null && typeof failure.message === "string" && failure.message.trim() !== ""
           ? failure.message
           : FALLBACK_ERROR_MESSAGE;
-      const path = typeof failure.path === "string" ? failure.path : undefined;
-      if (failure.code === "cancelled") {
+      const path = failure !== null && typeof failure.path === "string" ? failure.path : undefined;
+      if (failure?.code === "cancelled") {
         setError({ message: CANCELLED_ERROR_MESSAGE, path });
       } else {
         setError({ message, path });

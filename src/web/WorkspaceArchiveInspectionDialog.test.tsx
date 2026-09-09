@@ -282,6 +282,25 @@ describe("WorkspaceArchiveInspectionDialog", () => {
     expect(await screen.findByText("Integrity verified")).toBeInTheDocument();
   });
 
+  it("shows a fallback message for an unknown rejection and still allows retry", async () => {
+    inspectMock.mockImplementationOnce(() => Promise.reject(undefined));
+    const user = userEvent.setup();
+    renderDialog();
+    await chooseAndCheck(user);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("The ZIP could not be inspected.");
+    expect(inspectMock).toHaveBeenCalledTimes(1);
+
+    const retry = deferred<WorkspaceArchiveInspectionReport>();
+    inspectMock.mockImplementationOnce(() => retry.promise);
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(inspectMock).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      retry.resolve(report([entry("retried.txt")]));
+    });
+    expect(await screen.findByText("Integrity verified")).toBeInTheDocument();
+  });
+
   it("aborts on unmount and ignores the late rejection", async () => {
     const pending = deferred<WorkspaceArchiveInspectionReport>();
     inspectMock.mockImplementationOnce(() => pending.promise);
