@@ -692,8 +692,11 @@ describe("Workspace attention supervision", () => {
       window.history.replaceState({}, "", "/surfaces/attention");
       render(<App />);
       await screen.findByRole("heading", { name: "Needs attention" });
+      await waitFor(() => expect(timers.callbacks.size).toBe(1));
       await timers.tick();
-      await userEvent.click(screen.getByRole("button", { name: "Inspect task: New worker task" }));
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Inspect task: New worker task" }),
+      );
       expect(fetchMock).toHaveBeenCalledWith(`/api/tasks/${task.id}`, { headers: {} });
       if (switchWorkspace) {
         await userEvent.click(screen.getByRole("button", { name: "Switch to Product" }));
