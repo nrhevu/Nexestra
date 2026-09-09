@@ -2404,7 +2404,7 @@ export class FileStore {
         messageId: message.id,
         kind: "link",
         source: "reference",
-        name: url,
+        name: artifactReferenceName(url),
         url,
         createdAt: message.createdAt,
       });
@@ -3262,6 +3262,15 @@ function normaliseArtifactName(value: string): string {
     .trim();
   if (!name) throw new StoreError("invalid", "Every attachment needs a file name.");
   return name.slice(0, 255);
+}
+
+// Reference artifacts keep the exact URL as identity; only the derived display label may
+// exceed the 255-character ArtifactSchema bound, so truncate deterministically with an
+// ellipsis. Short URLs keep their original label unchanged.
+function artifactReferenceName(value: string, maxLength = 255): string {
+  const characters = Array.from(value);
+  if (characters.length <= maxLength) return value;
+  return `${characters.slice(0, maxLength - 1).join("")}…`;
 }
 
 function normaliseMediaType(value?: string): string {

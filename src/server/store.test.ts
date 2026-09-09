@@ -405,6 +405,79 @@ describe("FileStore", () => {
     });
   });
 
+  it("bounds the display label of a reference URL longer than the artifact name limit", async () => {
+    const store = await openStore();
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const longUrl = `https://example.com/${"long-path-".repeat(24)}`;
+    expect(longUrl.length).toBeGreaterThan(255);
+    const content = `A long link ${longUrl} and a short one https://example.com/spec.`;
+    const message = await store.createUserMessage(thread.id, content, []);
+    const data = await store.threadData(thread.id);
+
+    expect(message.content).toBe(content);
+    expect(message.artifactIds).toHaveLength(2);
+    const longArtifact = data.artifacts.find((artifact) => artifact.url === longUrl);
+    const shortArtifact = data.artifacts.find(
+      (artifact) => artifact.url === "https://example.com/spec",
+    );
+    if (!longArtifact || !shortArtifact) throw new Error("expected link artifacts");
+    expect(longArtifact.kind).toBe("link");
+    expect(longArtifact.url).toBe(longUrl);
+    expect(longArtifact.name.length).toBeLessThanOrEqual(255);
+    expect(longArtifact.name.endsWith("…")).toBe(true);
+    expect(longArtifact.name).not.toBe(longUrl);
+    expect(shortArtifact.name).toBe("https://example.com/spec");
+
+    const reopened = await FileStore.open({ root: store.root, workspacePath: store.workspacePath });
+    await expect(reopened.threadData(thread.id)).resolves.toMatchObject({
+      artifacts: expect.arrayContaining([
+        expect.objectContaining({ url: longUrl, name: longArtifact.name }),
+      ]),
+    });
+  });
+
+  it("deduplicates repeated long reference URLs and indexes each distinct URL once", async () => {
+    const store = await openStore();
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const longUrl = `https://example.com/${"long-path-".repeat(24)}`;
+    const otherUrl = `https://example.com/${"other-path-".repeat(24)}`;
+    const message = await store.createUserMessage(
+      thread.id,
+      `Link ${longUrl} again ${longUrl} and ${otherUrl}`,
+      [],
+    );
+    const data = await store.threadData(thread.id);
+    const links = data.artifacts.filter((artifact) => artifact.kind === "link");
+
+    expect(message.artifactIds).toHaveLength(2);
+    expect(links).toHaveLength(2);
+    for (const artifact of links) {
+      expect(artifact.name.length).toBeLessThanOrEqual(255);
+      expect(artifact.url).toBeTruthy();
+    }
+    expect(new Set(links.map((artifact) => artifact.url))).toEqual(new Set([longUrl, otherUrl]));
+  });
+
+  it("replays a long-URL user message idempotently after reopen without duplicating artifacts", async () => {
+    const store = await openStore();
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const longUrl = `https://example.com/${"long-path-".repeat(24)}`;
+    const content = `Retry ${longUrl}`;
+    const requestId = crypto.randomUUID();
+    const first = await store.createUserMessage(thread.id, content, [], [], [], requestId);
+    const reopened = await FileStore.open({ root: store.root, workspacePath: store.workspacePath });
+    const replay = await reopened.createUserMessage(thread.id, content, [], [], [], requestId);
+    const data = await reopened.threadData(thread.id);
+
+    expect(replay).toMatchObject({ id: first.id, content });
+    expect(data.messages).toHaveLength(1);
+    expect(data.artifacts).toHaveLength(1);
+    expect(data.artifacts[0]).toMatchObject({ kind: "link", url: longUrl });
+  });
+
   it("indexes links and safe workspace files referenced by an agent reply", async () => {
     const store = await openStore();
     const [thread] = store.listThreads();
