@@ -1,0 +1,181 @@
+/* Conversation content at the mobile shell breakpoint. */
+
+@media (max-width: 720px) {
+  .thread-view .message {
+    grid-template-columns: 38px minmax(0, 1fr);
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+  .thread-view .message > div {
+    min-width: 0;
+  }
+  .thread-view .thread-intro {
+    margin-right: 16px;
+    margin-left: 16px;
+    min-width: 0;
+  }
+  .thread-view .thread-intro h2 {
+    overflow-wrap: anywhere;
+  }
+  .thread-view .message-meta {
+    min-width: 0;
+  }
+  .thread-view .message-meta > strong {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .thread-view .message-meta .agent-badge,
+  .thread-view .message-meta time {
+    flex: none;
+  }
+
+  .thread-view .message-markdown,
+  .thread-view .message-markdown-fallback {
+    min-width: 0;
+  }
+  .thread-view .message-markdown pre {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+  .thread-view .message-markdown pre code {
+    white-space: pre;
+  }
+  .thread-view .message-markdown th,
+  .thread-view .message-markdown td {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .thread-view .message-markdown .katex-display {
+    max-width: 100%;
+  }
+  .thread-view .message-markdown .code-copy-button {
+    min-width: 34px;
+    min-height: 26px;
+    opacity: 1;
+  }
+
+  .thread-view .composer-wrap {
+    min-width: 0;
+  }
+  .thread-view .composer {
+    min-width: 0;
+  }
+  .thread-view .composer textarea {
+    min-width: 0;
+    width: 100%;
+  }
+  .thread-view .composer-formatbar {
+    min-width: 0;
+  }
+  .thread-view .pending-attachments {
+    min-width: 0;
+  }
+  .thread-view .pending-attachments > li {
+    max-width: 100%;
+  }
+  .thread-view .pending-attachments b {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+  .thread-view .pending-attachments button {
+    width: 24px;
+    height: 24px;
+    min-width: 24px;
+    flex-basis: 24px;
+  }
+  .thread-view .composer-toolbar {
+    gap: 6px;
+  }
+  .thread-view .mention-menu {
+    left: 8px;
+    width: min(360px, calc(100% - 16px));
+  }
+  .thread-view .mention-menu button {
+    min-height: 44px;
+  }
+  .thread-view .mention-menu button > span:nth-child(2) {
+    min-width: 0;
+  }
+  .thread-view .mention-menu strong,
+  .thread-view .mention-menu small {
+    overflow-wrap: anywhere;
+  }
+  .thread-view .mention-menu em {
+    flex: none;
+    margin-left: auto;
+  }
+  .thread-view .composer-add-menu {
+    left: 8px;
+    width: min(216px, calc(100% - 16px));
+  }
+  .thread-view .composer-add-menu button {
+    min-height: 44px;
+  }
+  .thread-view .composer-add-menu span {
+    min-width: 0;
+  }
+  .thread-view .draft-storage-note,
+  .thread-view .pending-submission-note {
+    overflow-wrap: anywhere;
+  }
+  .thread-view .pending-submission-actions {
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  .thread-view .artifacts-view {
+    min-width: 0;
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+  .thread-view .artifact-search {
+    min-width: 0;
+  }
+  .thread-view .artifact-search input {
+    min-width: 0;
+  }
+  .thread-view .artifact-filters {
+    min-width: 0;
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  .thread-view .artifact-filters span {
+    flex: 0 0 100%;
+    margin-left: 0;
+  }
+  .thread-view .artifact-list {
+    min-width: 0;
+  }
+  .thread-view .artifact-list article {
+    min-width: 0;
+  }
+  .thread-view .artifact-empty {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .thread-view .live-run,
+  .thread-view .thinking-activity,
+  .thread-view .tool-activity {
+    margin-right: 16px;
+    margin-left: 65px;
+    min-width: 0;
+  }
+  .thread-view .live-run-status {
+    min-width: 0;
+  }
+  .thread-view .live-run-status > span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .thread-view .live-run-response {
+    margin-left: 32px;
+    min-width: 0;
+  }
+  .thread-view .thinking-content {
+    padding-left: 20px;
+  }
+  .thread-view .tool-actions {
+    flex-wrap: wrap;
+  }
+}

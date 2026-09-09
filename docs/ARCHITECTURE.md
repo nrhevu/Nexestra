@@ -155,6 +155,12 @@ enabled, the Markdown renderer removes unsafe URL schemes, and HTTP(S) links use
 Agent and knowledge-reference highlighting is applied to rendered text nodes while links and code
 remain untouched.
 
+Conversation chrome and content use scoped mobile layout rules after the base stylesheet. Short
+mobile viewports scroll the header group while preserving the transcript's existing scroll root
+and bounding the composer. Prose wraps; code, tables and display math use named keyboard scroll
+regions. Refresh errors use a second mobile topbar row, with search results anchored beneath it.
+See [ADR 0043](adr/0043-responsive-conversation-containment.md).
+
 ## Persistence
 
 `state.json` stores workspaces, agent profiles, thread metadata, tasks, knowledge metadata, and
@@ -246,6 +252,10 @@ Images are classified from a small MIME allowlist; SVG and every other file type
 paths are indexed only when they resolve through a real path to a regular file inside the workspace;
 app data and Git internals are excluded. The content endpoint repeats that containment check so a
 changed symlink cannot escape the workspace.
+
+Link reference display names are bounded to 255 characters with an ellipsis; the normalized full
+URL remains the identity, up to the existing 4096-character URL limit. This does not rewrite the
+message or alter canonical append/replay behavior.
 
 ## Mention and dispatch
 
@@ -439,6 +449,11 @@ access may use the current OS user's existing SSH and Git configuration; Nexestr
 credentials.
 
 ## Known gaps
+
+- Conversation reflow is verified with Chromium CSS viewport overrides down to 320×480; physical
+  software keyboards, other browser engines and full surface/modal reflow need separate checks.
+  Short screens use scrollable header and composer areas. The existing 4096-character artifact
+  URL bound still applies to automatic reference indexing.
 
 - Recoverable submissions require a client request ID; legacy unkeyed calls remain independent.
   Receipt metadata grows with retained user messages and is rebuilt from JSONL at startup. Replay

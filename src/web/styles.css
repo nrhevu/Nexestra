@@ -225,6 +225,7 @@ kbd {
   height: 100vh;
 }
 .topbar {
+  position: relative;
   grid-column: 1 / -1;
   display: flex;
   align-items: center;
@@ -236,16 +237,26 @@ kbd {
 }
 .topbar > * {
   flex: 1;
+  min-width: 0;
   max-width: 720px;
-}
-.topbar > *:last-child {
-  flex: 0 0 auto;
-  max-width: none;
 }
 .topbar-actions {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.topbar > .topbar-actions {
+  flex: 0 0 auto;
+  max-width: none;
+}
+.topbar > .refresh-workspace-error {
+  flex: 0 1 140px;
+  max-width: 140px;
+  overflow-wrap: anywhere;
+}
+.thread-chrome {
+  flex: none;
+  min-width: 0;
 }
 .theme-toggle {
   width: 30px;
@@ -1019,6 +1030,7 @@ kbd {
   font-size: 14px;
   line-height: 1.55;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .message-markdown > :first-child {
   margin-top: 1px;
@@ -1036,7 +1048,7 @@ kbd {
 .message-markdown h5,
 .message-markdown h6 {
   margin: 17px 0 7px;
-  color: #f1eef3;
+  color: var(--text);
   line-height: 1.3;
   letter-spacing: -0.015em;
 }
@@ -1055,7 +1067,7 @@ kbd {
   font-size: 15px;
 }
 .message-markdown strong {
-  color: #f0edf2;
+  color: var(--text);
   font-weight: 750;
 }
 .message-markdown a {
@@ -1083,7 +1095,7 @@ kbd {
   margin: 9px 0;
   padding: 2px 0 2px 12px;
   border-left: 3px solid #765384;
-  color: #bcb7c1;
+  color: var(--muted);
 }
 .message-markdown blockquote > :first-child {
   margin-top: 0;
@@ -1146,8 +1158,22 @@ kbd {
   border-color: var(--green);
 }
 
-.message-markdown pre.code-block:hover .code-copy-button {
+.message-markdown pre.code-block:hover .code-copy-button,
+.message-markdown pre.code-block:focus-within .code-copy-button {
   opacity: 1;
+}
+
+.message-markdown [role="region"]:focus-visible,
+.message-table-scroll:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.message-table-scroll {
+  max-width: 100%;
+  margin: 10px 0;
+  overflow-x: auto;
+  border-radius: 7px;
 }
 
 /* Code syntax highlighting */
@@ -1156,29 +1182,25 @@ kbd {
   color: var(--text);
 }
 .message-markdown table {
-  display: block;
   width: max-content;
-  max-width: 100%;
   min-width: min(100%, 420px);
-  margin: 10px 0;
-  overflow-x: auto;
   border-spacing: 0;
   border-collapse: separate;
-  border: 1px solid #3f4249;
+  border: 1px solid var(--code-border);
   border-radius: 7px;
 }
 .message-markdown th,
 .message-markdown td {
   max-width: 420px;
   padding: 7px 10px;
-  border-right: 1px solid #3f4249;
-  border-bottom: 1px solid #3f4249;
+  border-right: 1px solid var(--code-border);
+  border-bottom: 1px solid var(--code-border);
   text-align: left;
   vertical-align: top;
 }
 .message-markdown th {
-  background: #272a30;
-  color: #f0edf2;
+  background: var(--panel-raised);
+  color: var(--text);
   font-size: 12px;
 }
 .message-markdown tr:last-child td {
@@ -1892,7 +1914,7 @@ kbd {
   gap: 10px;
   padding: 0 13px;
   color: var(--quiet);
-  background: #1c1f24;
+  background: var(--artifact-search-bg);
 }
 .artifact-search:focus-within {
   border-color: #737780;
@@ -1921,7 +1943,7 @@ kbd {
   border: 1px solid #50545c;
   border-radius: 6px;
   background: transparent;
-  color: #c2bec6;
+  color: var(--muted);
   font: inherit;
   font-size: 12px;
 }
@@ -1988,13 +2010,13 @@ kbd {
   grid-template-columns: 38px minmax(0, 1fr) 30px;
   align-items: center;
   gap: 10px;
-  background: #1b1e23;
+  background: var(--panel);
 }
 .artifact-list article + article {
   border-top: 1px solid var(--border-soft);
 }
 .artifact-list article:hover {
-  background: #202329;
+  background: var(--panel-raised);
 }
 .artifact-kind {
   width: 38px;
@@ -3911,11 +3933,17 @@ kbd {
 @media (max-width: 720px) {
   .app-shell {
     grid-template-columns: 58px minmax(0, 1fr);
-    grid-template-rows: 44px 50px minmax(0, 1fr);
+    grid-template-rows: minmax(44px, auto) 50px minmax(0, 1fr);
   }
   .topbar {
-    grid-template-columns: 1fr 30px;
-    gap: 8px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px 8px;
+    padding: 6px 14px;
+  }
+  .topbar > .refresh-workspace-error {
+    grid-column: 1 / -1;
+    max-width: none;
   }
   .sidebar {
     grid-column: 2;
@@ -3991,6 +4019,27 @@ kbd {
   }
   .global-search kbd {
     display: none;
+  }
+  .global-search {
+    position: static;
+  }
+  .search-results {
+    top: calc(100% + 2px);
+    right: 10px;
+    left: 10px;
+    max-height: min(420px, 50dvh);
+    overflow-y: auto;
+  }
+  .search-results button {
+    gap: 8px;
+    text-align: left;
+  }
+  .search-results button > span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .search-results small {
+    flex: none;
   }
   .message {
     padding-left: 16px;

@@ -59,6 +59,11 @@ An old page keeps its position while run and tool state updates. Needs attention
 message for a pending decision, including one outside the newest page. **Files & links** loads the
 complete inventory when opened, so files shared earlier remain available with their attribution.
 
+Conversation controls wrap on narrow screens. On short screens, the header can scroll so the
+transcript and composer remain usable. Focus a code block, table or display formula to scroll it
+with the arrow keys; long prose and URLs wrap. Long link labels may end in an ellipsis, while the
+complete URL and original message remain saved (within the existing 4096-character URL limit).
+
 Composer drafts are stored per workspace and thread, so switching threads or reloading the tab
 restores what you were typing. Thread rows show a **Draft** badge while a draft exists, and the
 Threads entry returns to the last thread you had open in that workspace. Drafts stay browser-only;

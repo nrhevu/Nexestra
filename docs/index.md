@@ -32,3 +32,5 @@
     read markers, visible latest-page acknowledgement, archived totals and cross-tab merging.
 18. [Unread navigation research](research/2026-09-09-unread-conversation-navigation.md): All/Unread,
     next-unread commands, current-row retention and selected files across workspace navigation.
+19. [Conversation reflow research](research/2026-09-09-conversation-reflow.md): narrow and short
+    viewports, keyboard scrolling for rich content, and complete long-URL persistence.

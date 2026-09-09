@@ -60,3 +60,4 @@ reload behavior and pointer/keyboard access at narrow widths.
   the command palette provides another route without a new global shortcut.
 - At 390 CSS pixels the existing conversation content can still overflow horizontally. The new
   filter and command are usable at that width; this change does not complete the phone layout.
+  This recorded gap is addressed by [ADR 0043](0043-responsive-conversation-containment.md).

@@ -292,11 +292,6 @@ export function TopBar(props: TopBarProps) {
             )}
             <span>{props.refreshStatus === "error" ? "Retry" : "Refresh"}</span>
           </button>
-          {props.refreshStatus === "error" && (
-            <span className="refresh-workspace-error" id={refreshErrorId} role="status">
-              {props.refreshError ?? "Refresh failed"}
-            </span>
-          )}
         </div>
         <button
           className="message-search-launch"
@@ -329,6 +324,11 @@ export function TopBar(props: TopBarProps) {
           <span />
         </button>
       </div>
+      {props.refreshStatus === "error" && (
+        <span className="refresh-workspace-error" id={refreshErrorId} role="status">
+          {props.refreshError ?? "Refresh failed"}
+        </span>
+      )}
     </header>
   );
 }

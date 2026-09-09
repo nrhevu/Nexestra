@@ -44,3 +44,4 @@
 | [0040](0040-workspace-resume-revalidation.md) | Accepted | Revalidate the selected workspace on return without losing drafts or history position |
 | [0041](0041-browser-local-conversation-read-state.md) | Accepted | Track unread conversations through browser-local counts and visible latest-page acknowledgement |
 | [0042](0042-unread-conversation-navigation.md) | Accepted | Filter and cycle through unread conversations while preserving current context and selected files |
+| [0043](0043-responsive-conversation-containment.md) | Accepted | Reflow conversation controls and provide keyboard scrolling for rich content |

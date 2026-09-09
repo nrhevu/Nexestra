@@ -2797,118 +2797,128 @@ function ThreadView(props: {
     !sending && recoveringAttachments && (props.pendingSubmission?.files.length ?? 0) > 0;
   return (
     <div className="thread-view">
-      <header className="workspace-header">
-        <div>
-          <p className="eyebrow">{archived ? "ARCHIVED THREAD" : "THREAD"}</p>
-          <h1># {thread.name}</h1>
-        </div>
-        <div className="header-actions">
-          <button type="button" onClick={() => props.onRequestRename(thread)} title="Rename thread">
-            <Pencil size={14} />
-            <span>Rename</span>
-          </button>
-          {archived ? (
-            <button type="button" onClick={() => props.onRestore(thread.id)} title="Restore thread">
-              <ArchiveRestore size={14} />
-              <span>Restore</span>
-            </button>
-          ) : (
+      <div className="thread-chrome">
+        <header className="workspace-header">
+          <div>
+            <p className="eyebrow">{archived ? "ARCHIVED THREAD" : "THREAD"}</p>
+            <h1># {thread.name}</h1>
+          </div>
+          <div className="header-actions">
             <button
               type="button"
-              disabled={hasActiveRuns}
-              onClick={() => props.onArchive(thread.id)}
-              title={hasActiveRuns ? "Wait for agents and Workers to finish" : "Archive thread"}
+              onClick={() => props.onRequestRename(thread)}
+              title="Rename thread"
             >
-              <Archive size={14} />
-              <span>Archive</span>
+              <Pencil size={14} />
+              <span>Rename</span>
             </button>
-          )}
-          <a
-            href={`/api/threads/${encodeURIComponent(thread.id)}/export`}
-            download={`${thread.slug}.md`}
-            className="export-button"
-            title="Export thread as Markdown"
-          >
-            <Download size={15} />
-            <span>Export</span>
-          </a>
-          <div className="thread-summary">
-            <UsersRound size={16} />
-            <span>{props.data.agents.filter((agent) => !agent.archived).length} agents</span>
-            <i />
-            Shared transcript
+            {archived ? (
+              <button
+                type="button"
+                onClick={() => props.onRestore(thread.id)}
+                title="Restore thread"
+              >
+                <ArchiveRestore size={14} />
+                <span>Restore</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={hasActiveRuns}
+                onClick={() => props.onArchive(thread.id)}
+                title={hasActiveRuns ? "Wait for agents and Workers to finish" : "Archive thread"}
+              >
+                <Archive size={14} />
+                <span>Archive</span>
+              </button>
+            )}
+            <a
+              href={`/api/threads/${encodeURIComponent(thread.id)}/export`}
+              download={`${thread.slug}.md`}
+              className="export-button"
+              title="Export thread as Markdown"
+            >
+              <Download size={15} />
+              <span>Export</span>
+            </a>
+            <div className="thread-summary">
+              <UsersRound size={16} />
+              <span>{props.data.agents.filter((agent) => !agent.archived).length} agents</span>
+              <i />
+              Shared transcript
+            </div>
           </div>
+        </header>
+        <div className="thread-tabs">
+          <button
+            type="button"
+            className={activeTab === "messages" ? "active" : ""}
+            onClick={() => setActiveTab("messages")}
+          >
+            <MessageSquareMore size={15} /> Messages
+          </button>
+          <button
+            type="button"
+            className={activeTab === "artifacts" ? "active" : ""}
+            onClick={() => setActiveTab("artifacts")}
+          >
+            <Paperclip size={15} /> Files &amp; links
+            {props.history.totalArtifacts > 0 && (
+              <em className="thread-tab-count">{props.history.totalArtifacts}</em>
+            )}
+          </button>
         </div>
-      </header>
-      <div className="thread-tabs">
-        <button
-          type="button"
-          className={activeTab === "messages" ? "active" : ""}
-          onClick={() => setActiveTab("messages")}
-        >
-          <MessageSquareMore size={15} /> Messages
-        </button>
-        <button
-          type="button"
-          className={activeTab === "artifacts" ? "active" : ""}
-          onClick={() => setActiveTab("artifacts")}
-        >
-          <Paperclip size={15} /> Files &amp; links
-          {props.history.totalArtifacts > 0 && (
-            <em className="thread-tab-count">{props.history.totalArtifacts}</em>
-          )}
-        </button>
+        {activeTab === "messages" && (
+          <div className="thread-history-bar">
+            <button
+              type="button"
+              disabled={!props.history.beforeCursor}
+              onClick={props.history.onOlder}
+            >
+              <ArrowUp size={14} />
+              Older messages
+            </button>
+            <span className="thread-history-range" aria-live="polite">
+              {props.history.totalMessages === 0
+                ? "No messages yet"
+                : `Messages ${props.history.firstMessageIndex}–${props.history.lastMessageIndex} of ${props.history.totalMessages}`}
+            </span>
+            {props.history.loading && <LoaderCircle className="spin" size={14} />}
+            <button
+              type="button"
+              disabled={!props.history.afterCursor}
+              onClick={props.history.onNewer}
+            >
+              Newer messages
+              <ArrowDown size={14} />
+            </button>
+            <button
+              type="button"
+              disabled={props.history.intent?.kind === "latest"}
+              onClick={props.history.onShowLatest}
+            >
+              Show latest
+            </button>
+          </div>
+        )}
+        {activeTab === "messages" && props.history.error && (
+          <div className="thread-history-error" role="alert">
+            <span>{props.history.error}</span>
+            <button type="button" onClick={props.history.onRetryHistory}>
+              Try again
+            </button>
+          </div>
+        )}
+        {activeTab === "messages" && props.messageTarget && (
+          <div className="message-target-notice">
+            <span role="status">
+              {props.threadData.page.targetFound === true
+                ? "Viewing a linked message."
+                : "The linked message is not available in this thread."}
+            </span>
+          </div>
+        )}
       </div>
-      {activeTab === "messages" && (
-        <div className="thread-history-bar">
-          <button
-            type="button"
-            disabled={!props.history.beforeCursor}
-            onClick={props.history.onOlder}
-          >
-            <ArrowUp size={14} />
-            Older messages
-          </button>
-          <span className="thread-history-range" aria-live="polite">
-            {props.history.totalMessages === 0
-              ? "No messages yet"
-              : `Messages ${props.history.firstMessageIndex}–${props.history.lastMessageIndex} of ${props.history.totalMessages}`}
-          </span>
-          {props.history.loading && <LoaderCircle className="spin" size={14} />}
-          <button
-            type="button"
-            disabled={!props.history.afterCursor}
-            onClick={props.history.onNewer}
-          >
-            Newer messages
-            <ArrowDown size={14} />
-          </button>
-          <button
-            type="button"
-            disabled={props.history.intent?.kind === "latest"}
-            onClick={props.history.onShowLatest}
-          >
-            Show latest
-          </button>
-        </div>
-      )}
-      {activeTab === "messages" && props.history.error && (
-        <div className="thread-history-error" role="alert">
-          <span>{props.history.error}</span>
-          <button type="button" onClick={props.history.onRetryHistory}>
-            Try again
-          </button>
-        </div>
-      )}
-      {activeTab === "messages" && props.messageTarget && (
-        <div className="message-target-notice">
-          <span role="status">
-            {props.threadData.page.targetFound === true
-              ? "Viewing a linked message."
-              : "The linked message is not available in this thread."}
-          </span>
-        </div>
-      )}
       {activeTab === "messages" ? (
         <ThreadTranscript
           thread={thread}
@@ -3040,269 +3050,271 @@ function ThreadView(props: {
                     ))}
               </div>
             )}
-          <fieldset
-            className={`composer${draggingFiles ? " dragging" : ""}`}
-            aria-label="Message composer"
-            onDragEnter={(event) => {
-              event.preventDefault();
-              setDraggingFiles(true);
-            }}
-            onDragOver={(event) => event.preventDefault()}
-            onDragLeave={(event) => {
-              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          <div className="composer-scroll">
+            <fieldset
+              className={`composer${draggingFiles ? " dragging" : ""}`}
+              aria-label="Message composer"
+              onDragEnter={(event) => {
+                event.preventDefault();
+                setDraggingFiles(true);
+              }}
+              onDragOver={(event) => event.preventDefault()}
+              onDragLeave={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                  setDraggingFiles(false);
+                }
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
                 setDraggingFiles(false);
-              }
-            }}
-            onDrop={(event) => {
-              event.preventDefault();
-              setDraggingFiles(false);
-              setAddMenuOpen(false);
-              addAttachments([...event.dataTransfer.files]);
-            }}
-          >
-            <input
-              ref={fileInputRef}
-              className="file-input"
-              type="file"
-              multiple
-              aria-label="Choose files or images"
-              onChange={(event) => {
-                addAttachments([...(event.target.files ?? [])]);
-                event.target.value = "";
-              }}
-            />
-            {formattingOpen && (
-              <div
-                className="composer-formatbar"
-                id="message-formatting-toolbar"
-                role="toolbar"
-                aria-label="Message formatting"
-              >
-                <div className="composer-format-group">
-                  <ComposerFormatButton
-                    label="Bold"
-                    onClick={() => applyInlineFormatting("**", "**", "bold text")}
-                  >
-                    <Bold size={17} />
-                  </ComposerFormatButton>
-                  <ComposerFormatButton
-                    label="Italic"
-                    onClick={() => applyInlineFormatting("_", "_", "italic text")}
-                  >
-                    <Italic size={17} />
-                  </ComposerFormatButton>
-                  <ComposerFormatButton
-                    label="Strikethrough"
-                    onClick={() => applyInlineFormatting("~~", "~~", "struck text")}
-                  >
-                    <Strikethrough size={17} />
-                  </ComposerFormatButton>
-                  <ComposerFormatButton
-                    label="Link"
-                    onClick={() => applyInlineFormatting("[", "](https://)", "link text")}
-                  >
-                    <LinkIcon size={17} />
-                  </ComposerFormatButton>
-                </div>
-                <div className="composer-format-group">
-                  <ComposerFormatButton
-                    label="Numbered list"
-                    onClick={() => applyLineFormatting((index) => `${index + 1}. `, /^\d+\.\s/)}
-                  >
-                    <ListOrdered size={17} />
-                  </ComposerFormatButton>
-                  <ComposerFormatButton
-                    label="Bulleted list"
-                    onClick={() => applyLineFormatting(() => "- ", /^-\s/)}
-                  >
-                    <List size={17} />
-                  </ComposerFormatButton>
-                  <ComposerFormatButton
-                    label="Quote"
-                    onClick={() => applyLineFormatting(() => "> ", /^>\s/)}
-                  >
-                    <Quote size={17} />
-                  </ComposerFormatButton>
-                </div>
-                <div className="composer-format-group">
-                  <ComposerFormatButton
-                    label="Inline code"
-                    onClick={() => applyInlineFormatting("`", "`", "code")}
-                  >
-                    <CodeXml size={17} />
-                  </ComposerFormatButton>
-                  <ComposerFormatButton
-                    label="Code block"
-                    onClick={() => applyInlineFormatting("```\n", "\n```", "code")}
-                  >
-                    <SquareCode size={17} />
-                  </ComposerFormatButton>
-                </div>
-              </div>
-            )}
-            {attachments.length > 0 && (
-              <ul className="pending-attachments" aria-label="Attachments ready to send">
-                {attachments.map((file, index) => (
-                  <li key={`${file.name}:${file.size}:${file.lastModified}:${file.type}`}>
-                    {file.type.startsWith("image/") ? (
-                      <ImageIcon size={14} />
-                    ) : (
-                      <FileText size={14} />
-                    )}
-                    <b>{file.name}</b>
-                    <small>{formatBytes(file.size)}</small>
-                    <button
-                      type="button"
-                      aria-label={`Remove ${file.name}`}
-                      onClick={() =>
-                        setAttachments((current) => current.filter((_, item) => item !== index))
-                      }
-                    >
-                      <X size={13} />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <textarea
-              ref={textareaRef}
-              aria-label="Message"
-              role="combobox"
-              aria-autocomplete="list"
-              aria-expanded={
-                mentionMenuOpen &&
-                (suggestionMode === "knowledge"
-                  ? knowledgeSuggestions.length > 0
-                  : suggestions.length > 0)
-              }
-              aria-controls="mention-suggestions"
-              aria-activedescendant={
-                mentionMenuOpen &&
-                (suggestionMode === "knowledge"
-                  ? knowledgeSuggestions[selectedSuggestionIndex]
-                  : suggestions[selectedSuggestionIndex])
-                  ? `mention-option-${
-                      suggestionMode === "knowledge"
-                        ? knowledgeSuggestions[selectedSuggestionIndex]?.id
-                        : suggestions[selectedSuggestionIndex]?.id
-                    }`
-                  : undefined
-              }
-              value={draft}
-              onChange={(event) => {
-                setDraft(event.target.value);
-                setMentionMenuOpen(true);
                 setAddMenuOpen(false);
-                setActiveSuggestion(0);
-                setLocalError(undefined);
+                addAttachments([...event.dataTransfer.files]);
               }}
-              onFocus={() => setAddMenuOpen(false)}
-              onKeyDown={onKeyDown}
-              placeholder={`Message #${thread.slug}`}
-              rows={2}
-            />
-            <div className="composer-toolbar">
-              <div className="composer-actions">
-                <button
-                  ref={addButtonRef}
-                  className={`attachment-button${addMenuOpen ? " active" : ""}`}
-                  type="button"
-                  onClick={() => {
-                    setMentionMenuOpen(false);
-                    setAddMenuOpen((open) => !open);
-                  }}
-                  aria-label="Add to message"
-                  aria-controls="composer-add-menu"
-                  aria-expanded={addMenuOpen}
-                  aria-haspopup="menu"
-                  title={addMenuOpen ? "Close add menu" : "Add to message"}
+            >
+              <input
+                ref={fileInputRef}
+                className="file-input"
+                type="file"
+                multiple
+                aria-label="Choose files or images"
+                onChange={(event) => {
+                  addAttachments([...(event.target.files ?? [])]);
+                  event.target.value = "";
+                }}
+              />
+              {formattingOpen && (
+                <div
+                  className="composer-formatbar"
+                  id="message-formatting-toolbar"
+                  role="toolbar"
+                  aria-label="Message formatting"
                 >
-                  {addMenuOpen ? <X size={18} /> : <Plus size={19} />}
-                </button>
+                  <div className="composer-format-group">
+                    <ComposerFormatButton
+                      label="Bold"
+                      onClick={() => applyInlineFormatting("**", "**", "bold text")}
+                    >
+                      <Bold size={17} />
+                    </ComposerFormatButton>
+                    <ComposerFormatButton
+                      label="Italic"
+                      onClick={() => applyInlineFormatting("_", "_", "italic text")}
+                    >
+                      <Italic size={17} />
+                    </ComposerFormatButton>
+                    <ComposerFormatButton
+                      label="Strikethrough"
+                      onClick={() => applyInlineFormatting("~~", "~~", "struck text")}
+                    >
+                      <Strikethrough size={17} />
+                    </ComposerFormatButton>
+                    <ComposerFormatButton
+                      label="Link"
+                      onClick={() => applyInlineFormatting("[", "](https://)", "link text")}
+                    >
+                      <LinkIcon size={17} />
+                    </ComposerFormatButton>
+                  </div>
+                  <div className="composer-format-group">
+                    <ComposerFormatButton
+                      label="Numbered list"
+                      onClick={() => applyLineFormatting((index) => `${index + 1}. `, /^\d+\.\s/)}
+                    >
+                      <ListOrdered size={17} />
+                    </ComposerFormatButton>
+                    <ComposerFormatButton
+                      label="Bulleted list"
+                      onClick={() => applyLineFormatting(() => "- ", /^-\s/)}
+                    >
+                      <List size={17} />
+                    </ComposerFormatButton>
+                    <ComposerFormatButton
+                      label="Quote"
+                      onClick={() => applyLineFormatting(() => "> ", /^>\s/)}
+                    >
+                      <Quote size={17} />
+                    </ComposerFormatButton>
+                  </div>
+                  <div className="composer-format-group">
+                    <ComposerFormatButton
+                      label="Inline code"
+                      onClick={() => applyInlineFormatting("`", "`", "code")}
+                    >
+                      <CodeXml size={17} />
+                    </ComposerFormatButton>
+                    <ComposerFormatButton
+                      label="Code block"
+                      onClick={() => applyInlineFormatting("```\n", "\n```", "code")}
+                    >
+                      <SquareCode size={17} />
+                    </ComposerFormatButton>
+                  </div>
+                </div>
+              )}
+              {attachments.length > 0 && (
+                <ul className="pending-attachments" aria-label="Attachments ready to send">
+                  {attachments.map((file, index) => (
+                    <li key={`${file.name}:${file.size}:${file.lastModified}:${file.type}`}>
+                      {file.type.startsWith("image/") ? (
+                        <ImageIcon size={14} />
+                      ) : (
+                        <FileText size={14} />
+                      )}
+                      <b>{file.name}</b>
+                      <small>{formatBytes(file.size)}</small>
+                      <button
+                        type="button"
+                        aria-label={`Remove ${file.name}`}
+                        onClick={() =>
+                          setAttachments((current) => current.filter((_, item) => item !== index))
+                        }
+                      >
+                        <X size={13} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <textarea
+                ref={textareaRef}
+                aria-label="Message"
+                role="combobox"
+                aria-autocomplete="list"
+                aria-expanded={
+                  mentionMenuOpen &&
+                  (suggestionMode === "knowledge"
+                    ? knowledgeSuggestions.length > 0
+                    : suggestions.length > 0)
+                }
+                aria-controls="mention-suggestions"
+                aria-activedescendant={
+                  mentionMenuOpen &&
+                  (suggestionMode === "knowledge"
+                    ? knowledgeSuggestions[selectedSuggestionIndex]
+                    : suggestions[selectedSuggestionIndex])
+                    ? `mention-option-${
+                        suggestionMode === "knowledge"
+                          ? knowledgeSuggestions[selectedSuggestionIndex]?.id
+                          : suggestions[selectedSuggestionIndex]?.id
+                      }`
+                    : undefined
+                }
+                value={draft}
+                onChange={(event) => {
+                  setDraft(event.target.value);
+                  setMentionMenuOpen(true);
+                  setAddMenuOpen(false);
+                  setActiveSuggestion(0);
+                  setLocalError(undefined);
+                }}
+                onFocus={() => setAddMenuOpen(false)}
+                onKeyDown={onKeyDown}
+                placeholder={`Message #${thread.slug}`}
+                rows={2}
+              />
+              <div className="composer-toolbar">
+                <div className="composer-actions">
+                  <button
+                    ref={addButtonRef}
+                    className={`attachment-button${addMenuOpen ? " active" : ""}`}
+                    type="button"
+                    onClick={() => {
+                      setMentionMenuOpen(false);
+                      setAddMenuOpen((open) => !open);
+                    }}
+                    aria-label="Add to message"
+                    aria-controls="composer-add-menu"
+                    aria-expanded={addMenuOpen}
+                    aria-haspopup="menu"
+                    title={addMenuOpen ? "Close add menu" : "Add to message"}
+                  >
+                    {addMenuOpen ? <X size={18} /> : <Plus size={19} />}
+                  </button>
+                  <button
+                    className={`format-toggle${formattingOpen ? " active" : ""}`}
+                    type="button"
+                    onClick={() => {
+                      setAddMenuOpen(false);
+                      setFormattingOpen((open) => !open);
+                    }}
+                    aria-label="Toggle formatting"
+                    aria-controls="message-formatting-toolbar"
+                    aria-pressed={formattingOpen}
+                    title="Formatting"
+                  >
+                    <span aria-hidden="true">Aa</span>
+                  </button>
+                  <button
+                    className="mention-button"
+                    type="button"
+                    onClick={insertMentionTrigger}
+                    aria-label="Mention an agent"
+                    title="Mention an agent"
+                  >
+                    @
+                  </button>
+                </div>
                 <button
-                  className={`format-toggle${formattingOpen ? " active" : ""}`}
+                  className="send-button"
                   type="button"
-                  onClick={() => {
-                    setAddMenuOpen(false);
-                    setFormattingOpen((open) => !open);
-                  }}
-                  aria-label="Toggle formatting"
-                  aria-controls="message-formatting-toolbar"
-                  aria-pressed={formattingOpen}
-                  title="Formatting"
+                  onClick={() => void send()}
+                  disabled={(!draft.trim() && attachments.length === 0) || sending}
+                  aria-label="Send"
                 >
-                  <span aria-hidden="true">Aa</span>
-                </button>
-                <button
-                  className="mention-button"
-                  type="button"
-                  onClick={insertMentionTrigger}
-                  aria-label="Mention an agent"
-                  title="Mention an agent"
-                >
-                  @
+                  {sending ? (
+                    <LoaderCircle className="spin" size={17} />
+                  ) : (
+                    <SendHorizontal size={17} />
+                  )}
                 </button>
               </div>
-              <button
-                className="send-button"
-                type="button"
-                onClick={() => void send()}
-                disabled={(!draft.trim() && attachments.length === 0) || sending}
-                aria-label="Send"
-              >
-                {sending ? (
-                  <LoaderCircle className="spin" size={17} />
-                ) : (
-                  <SendHorizontal size={17} />
-                )}
-              </button>
-            </div>
-          </fieldset>
-          {!props.draftSaved && (
-            <p className="draft-storage-note" role="status">
-              Browser storage is unavailable. Draft changes stay in this tab until you close it.
-            </p>
-          )}
-          {props.pendingNotice && (
-            <p className="pending-submission-note" role="status">
-              {props.pendingNotice}{" "}
-              <button
-                type="button"
-                className="pending-notice-close"
-                aria-label="Dismiss pending identity notice"
-                onClick={props.onCloseSubmitNotice}
-              >
-                Dismiss
-              </button>
-            </p>
-          )}
-          {pendingRewarning && (
-            <div className="pending-submission-note" role="status">
-              <p>
-                The previous send was not confirmed. Reattach the original files in the same order
-                to retry that message, or send the current draft as a new message.
+            </fieldset>
+            {!props.draftSaved && (
+              <p className="draft-storage-note" role="status">
+                Browser storage is unavailable. Draft changes stay in this tab until you close it.
               </p>
-              <p>{props.pendingSubmission?.files.map((file) => file.name).join(", ")}</p>
-              <div className="pending-submission-actions">
-                <button type="button" onClick={() => fileInputRef.current?.click()}>
-                  Reattach original files
-                </button>
+            )}
+            {props.pendingNotice && (
+              <p className="pending-submission-note" role="status">
+                {props.pendingNotice}{" "}
                 <button
                   type="button"
-                  onClick={() => void send(true)}
-                  disabled={!draft.trim() && attachments.length === 0}
+                  className="pending-notice-close"
+                  aria-label="Dismiss pending identity notice"
+                  onClick={props.onCloseSubmitNotice}
                 >
-                  Send as new message
+                  Dismiss
                 </button>
+              </p>
+            )}
+            {pendingRewarning && (
+              <div className="pending-submission-note" role="status">
+                <p>
+                  The previous send was not confirmed. Reattach the original files in the same order
+                  to retry that message, or send the current draft as a new message.
+                </p>
+                <p>{props.pendingSubmission?.files.map((file) => file.name).join(", ")}</p>
+                <div className="pending-submission-actions">
+                  <button type="button" onClick={() => fileInputRef.current?.click()}>
+                    Reattach original files
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void send(true)}
+                    disabled={!draft.trim() && attachments.length === 0}
+                  >
+                    Send as new message
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
-          {localError && (
-            <p className="inline-error">
-              <CircleAlert size={13} />
-              {localError}
-            </p>
-          )}
+            )}
+            {localError && (
+              <p className="inline-error">
+                <CircleAlert size={13} />
+                {localError}
+              </p>
+            )}
+          </div>
         </div>
       )}
       {archived && (

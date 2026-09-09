@@ -312,7 +312,7 @@ describe("Message navigation", () => {
     followLocation(`/threads/${thread.id}?message=message-0`);
     const selected = await screen.findByRole("region", { name: "Selected message" });
     expect(within(selected).getByText("Opening note")).toBeVisible();
-    expect(selected).toHaveFocus();
+    await waitFor(() => expect(selected).toHaveFocus());
     expect(screen.getByRole("button", { name: "Messages" })).toHaveClass("active");
   });
 

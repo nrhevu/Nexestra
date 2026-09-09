@@ -58,4 +58,39 @@ describe("RichMessage", () => {
     expect(screen.getByText("@unknown")).toHaveClass("unresolved");
     expect(screen.getByText("unsafe").tagName).toBe("SPAN");
   });
+
+  it("makes code, tables, and display math named keyboard scroll regions", () => {
+    render(
+      <RichMessage
+        content={[
+          "```text\n  spacing stays intact\n```",
+          "| First | Second |\n| --- | --- |\n| One | Two |",
+          "$$\na_1 + b_2 = c_3\n$$",
+          "Inline $x$ stays inline.",
+        ].join("\n\n")}
+        knownHandles={new Set()}
+      />,
+    );
+
+    for (const name of ["Code block", "Table", "Math expression"]) {
+      const region = screen.getByRole("region", { name });
+      expect(region).toHaveAttribute("tabindex", "0");
+      region.focus();
+      expect(region).toHaveFocus();
+    }
+    expect(screen.getAllByRole("region")).toHaveLength(3);
+    expect(
+      screen.getByRole("region", { name: "Code block" }).querySelector("code")?.textContent,
+    ).toBe("  spacing stays intact\n");
+    expect(
+      within(screen.getByRole("region", { name: "Table" })).getByRole("table"),
+    ).toBeInTheDocument();
+    expect(
+      screen
+        .getByRole("region", { name: "Math expression" })
+        .querySelector("math")
+        ?.getAttribute("display"),
+    ).toBe("block");
+    expect(screen.getByRole("button", { name: "Copy code" })).toBeInTheDocument();
+  });
 });
