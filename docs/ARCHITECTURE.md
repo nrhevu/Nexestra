@@ -201,6 +201,19 @@ assignment collections. Version 6 migrates to version 7 by adding the task verif
 State writes use a temporary file followed by an atomic rename. The
 separate `credentials.json` file has mode `0600` and stores only custom API keys by agent ID.
 
+Workspace export captures a selected state projection and owned source file identities under the
+store write barrier, then streams redacted canonical JSONL and exact uploads/document revisions
+into a private temporary ZIP. It checks identities again before handoff and fails on changed,
+missing, unsafe or corrupt sources. `GET /api/workspaces/:id/export` sends the completed archive
+with no-store download headers and disposes it after delivery or cancellation. One export per store
+remains reserved through the download. Source data, output, entry count and preparation time are
+bounded; browser download also has a deadline and ignores stale workspace results.
+The versioned manifest records the SHA-256 and size of each delivered payload. Known credentials
+are redacted from structured text; a literal known credential in original upload/document bytes
+blocks export. Credential/auth files, repository/worktree contents, browser state and unreferenced
+files are excluded. Settings and `/export workspace` open an inert dialog before explicit download.
+See [ADR 0046](adr/0046-portable-workspace-export.md) for ownership, snapshot and format details.
+
 Permanent agent deletion removes the profile and its custom credential, clears matching task
 assignments, and releases the handle for reuse. Credential removal is persisted before public state
 so an interrupted multi-file write favors removing the secret. Thread JSONL files are never rewritten
@@ -500,6 +513,12 @@ credentials.
   a restart. Filtered pages are live and can change as statuses update. Filters/page position reset
   after leaving the surface, and deleted agents are labeled Unknown. It has no background polling,
   run error/output search, cross-workspace aggregation or new run action controls.
+
+- Workspace export has no import/restore workflow and is not a complete backup. Snapshot inventory
+  scans transcripts under the write barrier before a second read for ZIP generation. Stored ZIP
+  entries avoid compression work; the browser holds a bounded ZIP Blob. Known-credential redaction
+  cannot discover other secrets or decode arbitrary binary encodings. Hashes are integrity checks,
+  not signatures. A process crash can leave a private archive in operating-system temporary storage.
 
 - Conversation unread state belongs to one browser profile and origin. It counts all canonical
   messages and uses a read-through count, not a per-message receipt or proof of attention. Existing

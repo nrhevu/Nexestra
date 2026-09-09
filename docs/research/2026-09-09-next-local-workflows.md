@@ -5,7 +5,9 @@ transcript-search and document-preview wave. Branch selection is now implemented
 its status and verification are recorded in the [branch selection report](2026-09-09-repository-branch-selection.md).
 Recoverable message submission is also implemented and verified in its
 [submission recovery report](2026-09-09-recoverable-message-submission.md).
-Portable workspace export remains research only.
+Portable workspace export was subsequently implemented with explicit snapshot and exclusion
+boundaries in [ADR 0046](../adr/0046-portable-workspace-export.md). Its combined research and
+verification are recorded in [the export report](2026-09-09-workspace-export.md).
 
 ## Explicit repository branch selection
 
@@ -29,7 +31,7 @@ branch switch or a merge/push workflow.
 
 ## Portable workspace export
 
-Nexestra currently exports individual threads as Markdown. It does not export a workspace's
+At the start of this research, Nexestra exported individual threads as Markdown, without a workspace's
 structured metadata, canonical transcripts, document history and attachments as one artifact.
 A portable export could include a manifest of relative paths, byte counts and SHA-256 hashes while
 excluding the credential store and external harness state.
@@ -81,7 +83,8 @@ replay reconciliation. Its actual guarantees and verification are recorded in
 ## Priority
 
 Branch selection was prioritized because source refresh already defines how future assignments
-obtain a commit without altering existing work. Keep workspace export in research until its
-snapshot and restoration boundaries are concrete. Recoverable submission followed because the
+obtain a commit without altering existing work. Workspace export remained in research until its
+snapshot and restoration boundaries were concrete; ADR 0046 now defines a bounded data export with
+no restore claim. Recoverable submission followed because the
 history tests demonstrated the durable-append/failed-metadata boundary. Branch selection and
 recoverable submission each have their own implementation and verification reports linked above.

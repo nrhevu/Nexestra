@@ -16,6 +16,17 @@ workspace also creates its initial `general` thread.
 Settings can rename any workspace and reorder the rail. The order is saved in `state.json` and
 restored after a restart.
 
+Choose **Export selected workspace** in Settings or use `/export workspace`, then **Download ZIP**,
+to export workspace metadata, active and archived conversations, uploaded files and retained
+document versions. The ZIP includes a manifest with file sizes and SHA-256 hashes. Credentials,
+harness login files, repository/worktree files, browser drafts and unreferenced files are excluded.
+Known credentials are redacted from structured text; an original upload or document containing a
+literal known credential blocks the export. This does not detect every possible secret.
+Exports are limited to 128 MiB of source data and fail visibly if included files are missing or
+change during preparation. **Cancel export** stops a pending request; changing workspace also
+cancels it. Import and restore are not supported. See
+[the export design and limits](docs/adr/0046-portable-workspace-export.md).
+
 **Needs attention** gathers agents waiting for your answer or approval and tasks that are blocked,
 failed, or interrupted. Open an item to return to its thread or task process controls. Thread rows
 show current agent activity, including work in other threads while your current conversation runs.
