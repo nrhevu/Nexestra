@@ -449,6 +449,28 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
     ).toBeVisible();
   });
 
+  it("keeps duplicate run ids across different threads as separate rows", async () => {
+    const first = makeItem(makeRun("run-shared"), {
+      threadName: "Planning",
+      threadArchived: false,
+    });
+    const second = makeItem(
+      makeRun("run-shared", { threadId: "thread-archived", agentId: "agent-a" }),
+      { threadName: "Archive", threadArchived: true },
+    );
+    const fetchMock = vi.fn(async () => jsonResponse(makePage([first, second])));
+    vi.stubGlobal("fetch", fetchMock);
+    renderView();
+
+    expect(
+      await screen.findByRole("button", { name: "Open run: Planner in #Planning" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Open run: Planner in #Archive" }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("Attempt 1")).toHaveLength(2);
+  });
+
   it("opens the returned run item on click and on keyboard activation", async () => {
     const user = userEvent.setup();
     const onOpenRun = vi.fn();

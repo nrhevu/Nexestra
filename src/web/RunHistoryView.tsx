@@ -456,7 +456,7 @@ export function RunHistoryView({
           ) : (
             <ul className="run-history-list">
               {rows.map((item) => (
-                <li key={item.run.id} className="run-history-row">
+                <li key={`${item.run.threadId}:${item.run.id}`} className="run-history-row">
                   <article className="run-history-item" aria-label={`Run ${item.run.id}`}>
                     <div className="run-history-main">
                       <div className="run-history-identity">
