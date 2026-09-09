@@ -35,6 +35,13 @@ recompressed or encrypted archives are unsupported. A matching manifest does not
 completeness or the ability to restore the data. See
 [the inspection design](docs/adr/0047-local-workspace-archive-inspection.md).
 
+Both archive dialogs load when opened. Close or press Escape while loading; if loading fails or
+takes more than 15 seconds, **Retry loading** tries again. Opening the dialog starts no export or
+ZIP check. Closing keeps your current draft and selected message attachments. Persistent loading
+errors may require reopening the page and reselecting attachments; the app does not reload
+automatically. See
+[the loading design](docs/adr/0048-deferred-workspace-archive-dialogs.md).
+
 **Needs attention** gathers agents waiting for your answer or approval and tasks that are blocked,
 failed, or interrupted. Open an item to return to its thread or task process controls. Thread rows
 show current agent activity, including work in other threads while your current conversation runs.

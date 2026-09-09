@@ -105,15 +105,22 @@ export function WorkspaceArchiveDialogLoading({
             <div className="workspace-archive-dialog-loading-error" role="alert">
               <p className="workspace-archive-dialog-loading-error-text">{FAILURE_COPY[failure]}</p>
               <p className="workspace-archive-dialog-loading-hint">
-                No export or inspection was started. Close the dialog and try again, or retry
-                loading.
+                No export or inspection was started. If retry keeps failing, reopen this page;
+                selected message attachments will need to be added again.
               </p>
             </div>
           )}
         </div>
         {failure !== null && (
           <div className="modal-actions workspace-archive-dialog-loading-actions">
-            <button type="button" className="secondary-button" onClick={() => onRetryRef.current()}>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => {
+                closeButtonRef.current?.focus();
+                onRetryRef.current();
+              }}
+            >
               <RefreshCw size={15} />
               Retry loading
             </button>

@@ -69,14 +69,21 @@ describe("WorkspaceArchiveDialogLoading", () => {
   it("shows load failure copy and retries", async () => {
     const user = userEvent.setup();
     const onRetry = vi.fn();
-    render(<WorkspaceArchiveDialogLoading {...props({ failure: "load", onRetry })} />);
+    const view = render(<WorkspaceArchiveDialogLoading {...props({ failure: "load", onRetry })} />);
+    onRetry.mockImplementation(() => {
+      view.rerender(<WorkspaceArchiveDialogLoading {...props({ failure: null, onRetry })} />);
+    });
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent("The dialog could not be loaded.");
     expect(alert).toHaveTextContent("No export or inspection was started.");
+    expect(alert).toHaveTextContent("If retry keeps failing, reopen this page");
+    expect(alert).toHaveTextContent("selected message attachments will need to be added again");
     const retry = screen.getByRole("button", { name: /Retry loading/ });
     await user.click(retry);
     expect(onRetry).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("button", { name: "Close" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
+    expect(screen.getByRole("status")).toHaveTextContent("Loading export dialog…");
   });
 
   it("shows timeout failure copy and can retry again", async () => {

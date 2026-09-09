@@ -36,3 +36,11 @@
     viewports, keyboard scrolling for rich content, and complete long-URL persistence.
 20. [First unread research](research/2026-09-09-first-unread-navigation.md): bounded ordinal lookup,
     stable message links, explicit current-conversation acknowledgement and navigation races.
+21. [Workspace run history research](research/2026-09-09-workspace-run-history.md): paged run
+    discovery, filters, trigger links and explicit incomplete coverage.
+22. [Workspace export research](research/2026-09-09-workspace-export.md): portable ZIP contents,
+    credential boundaries, source consistency and cancellation.
+23. [Local archive inspection research](research/2026-09-09-local-workspace-archive-inspection.md):
+    Worker-based CRC/SHA verification, supported ZIP profile and integrity limits.
+24. [Deferred archive dialog research](research/2026-09-09-deferred-workspace-archive-dialogs.md):
+    measured initial bundle reduction, bounded loading, native failures and focus preservation.

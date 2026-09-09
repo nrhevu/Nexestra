@@ -46,3 +46,7 @@
 | [0042](0042-unread-conversation-navigation.md) | Amended by 0044 | Filter and cycle through unread conversations while preserving current context and selected files |
 | [0043](0043-responsive-conversation-containment.md) | Accepted | Reflow conversation controls and provide keyboard scrolling for rich content |
 | [0044](0044-first-unread-message-navigation.md) | Accepted | Resolve the first unread ordinal to a stable message link and explicitly acknowledge the current conversation |
+| [0045](0045-workspace-run-history.md) | Accepted | Browse paged workspace run history with filters and stable links to triggering messages |
+| [0046](0046-portable-workspace-export.md) | Accepted | Export bounded workspace archives with credential exclusions and delivered-byte hashes |
+| [0047](0047-local-workspace-archive-inspection.md) | Accepted | Inspect stored workspace ZIP integrity locally in a cancellable browser Worker |
+| [0048](0048-deferred-workspace-archive-dialogs.md) | Accepted | Load archive dialogs on demand with bounded retry, focus restoration and navigation guards |

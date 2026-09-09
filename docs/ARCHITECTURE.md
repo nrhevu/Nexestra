@@ -223,6 +223,15 @@ WebCrypto requires one complete capped entry per digest. Matching hashes do not 
 state/transcript semantics or establish authenticity, completeness or the ability to restore the data. See
 [ADR 0047](adr/0047-local-workspace-archive-inspection.md) for the supported profile and limitations.
 
+The export and inspection dialogs load through separate dynamic imports on explicit opening.
+`WorkspaceArchiveDialog` shows an immediately usable loading/error shell and restores focus across
+the content handoff. A per-kind registry caches component functions, coalesces pending imports and
+removes failed/timed-out attempts after a 15-second deadline. UI generations reject late results
+after close, retry or workspace changes. Native imports cannot be aborted; code may finish loading
+after the UI detaches, without starting archive work. Retry is subject to the browser's module
+cache. The standard Vite manifest records initial and dynamic dependency graphs for build checks.
+See [ADR 0048](adr/0048-deferred-workspace-archive-dialogs.md).
+
 Permanent agent deletion removes the profile and its custom credential, clears matching task
 assignments, and releases the handle for reuse. Credential removal is persisted before public state
 so an interrupted multi-file write favors removing the secret. Thread JSONL files are never rewritten
