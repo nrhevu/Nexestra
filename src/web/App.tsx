@@ -236,6 +236,7 @@ export function App() {
   const [readPersistenceNote, setReadPersistenceNote] = useState(false);
   const readThroughReportedRef = useRef(new Map<string, number>());
   const modalRef = useRef<ModalName>(null);
+  const settingsOpenerRef = useRef<HTMLElement | null>(null);
   const [readRecheckRequest, setReadRecheckRequest] = useState(0);
   const workspaceIdRef = useRef<string | undefined>(
     readBrowserValue("nexestra.workspaceId") ?? undefined,
@@ -1194,13 +1195,35 @@ export function App() {
   const openThread = (threadId: string) =>
     navigate(`/threads/${threadId}`, { view: "threads", surface: route.surface, threadId });
 
+  const openSettings = () => {
+    settingsOpenerRef.current =
+      document.activeElement instanceof HTMLElement && document.activeElement.isConnected
+        ? document.activeElement
+        : null;
+    setModal("settings");
+  };
+
+  const closeSettings = () => {
+    settingsOpenerRef.current = null;
+    setModal(null);
+  };
+
+  const ensureStableSettingsOpener = () => {
+    if (modalRef.current !== "settings") return;
+    const opener = settingsOpenerRef.current;
+    settingsOpenerRef.current = null;
+    if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+  };
+
   const openWorkspaceExport = () => {
     if (dataRef.current?.workspace.id !== workspaceIdRef.current) return;
+    ensureStableSettingsOpener();
     setModal("export");
   };
 
   const openWorkspaceArchiveInspection = () => {
     if (dataRef.current?.workspace.id !== workspaceIdRef.current) return;
+    ensureStableSettingsOpener();
     setModal("archive-inspection");
   };
 
@@ -1705,7 +1728,7 @@ export function App() {
         onMarkRead={markCurrentConversationRead}
         onThread={openThread}
         onSurface={openSurface}
-        onSettings={() => setModal("settings")}
+        onSettings={openSettings}
         onExportWorkspace={openWorkspaceExport}
         onInspectWorkspaceArchive={openWorkspaceArchiveInspection}
         onTask={(id) => void inspectTask(id)}
@@ -1759,7 +1782,7 @@ export function App() {
             });
           }
         }}
-        onSettings={() => setModal("settings")}
+        onSettings={openSettings}
         onCreate={() => {
           if (route.view === "threads") setModal("thread");
           else if (route.surface === "agents") setModal("agent");
@@ -2221,7 +2244,7 @@ export function App() {
       {modal === "settings" && (
         <SettingsDialog
           data={data}
-          onClose={() => setModal(null)}
+          onClose={closeSettings}
           onExport={openWorkspaceExport}
           onInspectArchive={openWorkspaceArchiveInspection}
           onRename={async (workspaceId, name) => {

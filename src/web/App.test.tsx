@@ -1410,6 +1410,29 @@ describe("Workspace archive inspection navigation", () => {
 });
 
 describe("Deferred archive dialog navigation", () => {
+  async function openArchiveFromSettings(kind: "export" | "inspection") {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) return jsonResponse(bootstrapData);
+      return jsonResponse({ error: { message: "Unexpected request" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", "/surfaces/agents");
+    const user = userEvent.setup();
+    render(<App />);
+    const settingsOpener = await screen.findByRole("button", { name: "Open settings" });
+    await user.click(settingsOpener);
+    await user.click(
+      screen.getByRole("button", {
+        name: kind === "export" ? "Export selected workspace" : "Inspect workspace ZIP",
+      }),
+    );
+    await screen.findByRole("dialog", {
+      name: kind === "export" ? "Export workspace" : "Inspect workspace ZIP",
+    });
+    return { user, settingsOpener };
+  }
+
   it("does not call the dialog loader during bootstrap or ordinary browser navigation", async () => {
     const thread = activityThread("plain-dialog-nav-thread", "Plain dialog nav");
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -1639,6 +1662,74 @@ describe("Deferred archive dialog navigation", () => {
     await user.keyboard("{Enter}");
     expect(await screen.findByRole("button", { name: "Download ZIP" })).toBeVisible();
     expect(archiveDialogLoaderMock.loadWorkspaceArchiveDialog).toHaveBeenCalledTimes(2);
+  });
+
+  it("restores focus to the Settings opener when the pending export dialog is closed", async () => {
+    const delayed = deferredDialogModule();
+    archiveDialogLoaderMock.loadWorkspaceArchiveDialog.mockImplementationOnce(
+      () => delayed.promise,
+    );
+    const { user, settingsOpener } = await openArchiveFromSettings("export");
+    expect(screen.getByText("Loading export dialog…")).toBeVisible();
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Export workspace" })).not.toBeInTheDocument(),
+    );
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    });
+    expect(settingsOpener).toHaveFocus();
+    expect(inspectArchiveInWorker).not.toHaveBeenCalled();
+  });
+
+  it("restores focus to the Settings opener when the ready export dialog is closed", async () => {
+    const { user, settingsOpener } = await openArchiveFromSettings("export");
+    expect(await screen.findByRole("button", { name: "Download ZIP" })).toBeVisible();
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Export workspace" })).not.toBeInTheDocument(),
+    );
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    });
+    expect(settingsOpener).toHaveFocus();
+    expect(inspectArchiveInWorker).not.toHaveBeenCalled();
+  });
+
+  it("restores focus to the Settings opener when the pending inspection dialog is closed", async () => {
+    const delayed = deferredDialogModule();
+    archiveDialogLoaderMock.loadWorkspaceArchiveDialog.mockImplementationOnce(
+      () => delayed.promise,
+    );
+    const { user, settingsOpener } = await openArchiveFromSettings("inspection");
+    expect(screen.getByText("Loading ZIP inspector…")).toBeVisible();
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Inspect workspace ZIP" }),
+      ).not.toBeInTheDocument(),
+    );
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    });
+    expect(settingsOpener).toHaveFocus();
+    expect(inspectArchiveInWorker).not.toHaveBeenCalled();
+  });
+
+  it("restores focus to the Settings opener when the ready inspection dialog is closed", async () => {
+    const { user, settingsOpener } = await openArchiveFromSettings("inspection");
+    expect(await screen.findByRole("button", { name: "Check ZIP" })).toBeVisible();
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Inspect workspace ZIP" }),
+      ).not.toBeInTheDocument(),
+    );
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    });
+    expect(settingsOpener).toHaveFocus();
+    expect(inspectArchiveInWorker).not.toHaveBeenCalled();
   });
 
   it("retries a failed load without starting export or the archive worker", async () => {
