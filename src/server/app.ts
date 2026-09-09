@@ -28,6 +28,7 @@ import {
   StoreError,
   type UploadArtifactInput,
 } from "./store.js";
+import { createWorkspaceExportResponse } from "./workspace-export.js";
 
 interface CreateAppOptions {
   store: FileStore;
@@ -124,6 +125,17 @@ export function createApp(options: CreateAppOptions) {
 
   app.put("/api/workspaces/order", async (context) => {
     return context.json(await options.store.reorderWorkspaces(await context.req.json()));
+  });
+
+  app.get("/api/workspaces/:id/export", async (context) => {
+    if (Object.keys(context.req.query()).length > 0) {
+      throw new StoreError("invalid", "Workspace export does not accept query options.");
+    }
+    return createWorkspaceExportResponse({
+      store: options.store,
+      workspaceId: context.req.param("id"),
+      signal: context.req.raw.signal,
+    });
   });
 
   app.post("/api/agents", async (context) => {

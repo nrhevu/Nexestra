@@ -15,7 +15,7 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
-import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import {
   type Agent,
@@ -77,6 +77,9 @@ import {
   UpdateKnowledgeSchema,
   UpdateTaskSchema,
   UpdateWorkspaceSchema,
+  WORKSPACE_EXPORT_MAX_ENTRIES,
+  WORKSPACE_EXPORT_MAX_SOURCE_BYTES,
+  WORKSPACE_EXPORT_TIMEOUT_MS,
   type WorkAssignment,
   WorkAssignmentSchema,
   type Workspace,
@@ -96,6 +99,7 @@ import {
   readTranscriptPageLines,
   scanTranscriptHistoryFile,
   setRunHistorySummary,
+  type TranscriptFileIdentity,
   type TranscriptHistoryIndex,
   transcriptFileIdentityOf,
   transcriptHistoryEntry,
@@ -215,6 +219,41 @@ export interface UploadArtifactInput {
   bytes: Uint8Array;
 }
 
+export interface WorkspaceExportState {
+  version: 7;
+  workspaces: Workspace[];
+  agents: Agent[];
+  threads: Thread[];
+  tasks: Task[];
+  knowledge: KnowledgeItem[];
+  assignments: WorkAssignment[];
+}
+
+export interface PreparedWorkspaceExportFile {
+  archivePath: string;
+  kind: "transcript" | "upload" | "document";
+  sourcePath: string;
+  size: number;
+  sha256?: string;
+  identity: TranscriptFileIdentity | null;
+}
+
+export interface PreparedWorkspaceExport {
+  workspace: Pick<Workspace, "id" | "name">;
+  createdAt: string;
+  state: WorkspaceExportState;
+  files: PreparedWorkspaceExportFile[];
+  redactText(value: string): string;
+  createCredentialScanner(): (chunk: Uint8Array) => boolean;
+  validateFile(file: PreparedWorkspaceExportFile): Promise<void>;
+  release(): Promise<void>;
+}
+
+export interface WorkspaceExportPrepareOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
 export interface AgentArtifact {
   artifact: Artifact;
   localPath?: string;
@@ -288,6 +327,7 @@ export class FileStore {
   private readonly submissionReceipts = new Map<string, UserSubmissionReceipt>();
   private readonly dirtyMetadataThreads = new Set<string>();
   private readonly uncertainDurabilityThreads = new Set<string>();
+  private activeWorkspaceExport: { released: boolean } | undefined;
 
   private constructor(
     paths: {
@@ -3231,6 +3271,543 @@ export class FileStore {
     return target;
   }
 
+  async prepareWorkspaceExport(
+    workspaceId: string,
+    options: WorkspaceExportPrepareOptions = {},
+  ): Promise<PreparedWorkspaceExport> {
+    if (this.activeWorkspaceExport && !this.activeWorkspaceExport.released) {
+      throw new StoreError("conflict", "Another workspace export is already running.");
+    }
+    const timeoutMs = options.timeoutMs ?? WORKSPACE_EXPORT_TIMEOUT_MS;
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0) {
+      throw new StoreError("invalid", "Workspace export timeout is invalid.");
+    }
+    const reservation = { released: false };
+    this.activeWorkspaceExport = reservation;
+    const startedAt = performance.now();
+
+    let rejectFailure!: (error: StoreError) => void;
+    const failurePromise = new Promise<never>((_, reject) => {
+      rejectFailure = reject;
+    });
+    let failureSettled = false;
+    const failWith = (error: StoreError) => {
+      if (failureSettled) return;
+      failureSettled = true;
+      rejectFailure(error);
+    };
+    const deadlineTimer = setTimeout(
+      () => failWith(new StoreError("conflict", "Workspace export timed out.")),
+      timeoutMs,
+    );
+    deadlineTimer.unref?.();
+    const onAbort = () => failWith(new StoreError("conflict", "Workspace export was cancelled."));
+    if (options.signal?.aborted) onAbort();
+    else options.signal?.addEventListener("abort", onAbort, { once: true });
+
+    const guard = {
+      assertActive: () => {
+        if (options.signal?.aborted) {
+          throw new StoreError("conflict", "Workspace export was cancelled.");
+        }
+        if (performance.now() - startedAt >= timeoutMs) {
+          throw new StoreError("conflict", "Workspace export timed out.");
+        }
+      },
+    };
+    const createdAt = new Date().toISOString();
+    const capture = this.withWrite(async () => {
+      guard.assertActive();
+      const captured = await this.captureWorkspaceExport(workspaceId, guard);
+      guard.assertActive();
+      return captured;
+    });
+
+    const releaseReservation = () => {
+      if (reservation.released) return;
+      reservation.released = true;
+      if (this.activeWorkspaceExport === reservation) {
+        this.activeWorkspaceExport = undefined;
+      }
+    };
+    let requestFailed = false;
+    const settled = capture.then(
+      () => {
+        clearTimeout(deadlineTimer);
+        options.signal?.removeEventListener("abort", onAbort);
+        if (requestFailed) releaseReservation();
+      },
+      () => {
+        clearTimeout(deadlineTimer);
+        options.signal?.removeEventListener("abort", onAbort);
+        releaseReservation();
+      },
+    );
+    void settled;
+
+    try {
+      const captured = await Promise.race([capture, failurePromise]);
+      return {
+        workspace: captured.workspace,
+        createdAt,
+        state: captured.state,
+        files: captured.files,
+        redactText: captured.redactText,
+        createCredentialScanner: captured.createCredentialScanner,
+        validateFile: captured.validateFile,
+        release: async () => {
+          releaseReservation();
+        },
+      };
+    } catch (error) {
+      requestFailed = true;
+      clearTimeout(deadlineTimer);
+      options.signal?.removeEventListener("abort", onAbort);
+      releaseReservation();
+      if (error instanceof StoreError) throw error;
+      throw new StoreError("invalid", "Workspace export preparation failed.");
+    }
+  }
+
+  private async captureWorkspaceExport(
+    workspaceId: string,
+    guard: { assertActive(): void },
+  ): Promise<Omit<PreparedWorkspaceExport, "createdAt" | "release">> {
+    const workspace = this.state.workspaces.find((entry) => entry.id === workspaceId);
+    if (!workspace) throw new StoreError("not_found", "Workspace not found.");
+    if (!isStorageId(workspace.id)) {
+      throw new StoreError("invalid", "Workspace identifier is invalid for export.");
+    }
+    const agents = this.state.agents.filter((entry) => entry.workspaceId === workspaceId);
+    const threads = this.state.threads.filter((entry) => entry.workspaceId === workspaceId);
+    const tasks = this.state.tasks.filter((entry) => entry.workspaceId === workspaceId);
+    const knowledge = this.state.knowledge.filter((entry) => entry.workspaceId === workspaceId);
+    const assignments = this.state.assignments.filter((entry) => entry.workspaceId === workspaceId);
+    this.validateWorkspaceExportJoins(workspaceId);
+    const canonicalRoot = await realpath(this.root);
+    const security = workspaceExportSecurity(Object.values(this.credentials));
+    const ownership = this.workspaceExportOwnership();
+
+    const state: WorkspaceExportState = {
+      version: 7,
+      workspaces: [structuredClone(workspace)],
+      agents: structuredClone(agents),
+      threads: structuredClone(threads),
+      tasks: structuredClone(tasks),
+      knowledge: structuredClone(knowledge),
+      assignments: structuredClone(assignments),
+    };
+    const files: PreparedWorkspaceExportFile[] = [];
+    let sourceBytesTotal = 0;
+    const accountSourceBytes = (size: number) => {
+      if (
+        !Number.isSafeInteger(size) ||
+        size < 0 ||
+        size > WORKSPACE_EXPORT_MAX_SOURCE_BYTES - sourceBytesTotal
+      ) {
+        throw new StoreError("invalid", "Workspace export source exceeds the size limit.");
+      }
+      sourceBytesTotal += size;
+    };
+    // Reserve state.json, NOTICE.txt, and manifest.json before scanning files.
+    let entryCount = 3;
+    const reserveFile = () => {
+      if (++entryCount > WORKSPACE_EXPORT_MAX_ENTRIES) {
+        throw new StoreError("invalid", "Workspace export entry limit exceeded.");
+      }
+    };
+    accountSourceBytes(Buffer.byteLength(JSON.stringify(state), "utf8"));
+    for (const thread of threads) {
+      guard.assertActive();
+      const captured = await this.captureWorkspaceTranscript(
+        thread,
+        canonicalRoot,
+        guard,
+        accountSourceBytes,
+        reserveFile,
+        ownership,
+      );
+      files.push(captured.transcript, ...captured.uploads);
+    }
+    for (const item of knowledge) {
+      guard.assertActive();
+      if (item.kind !== "document") continue;
+      const captured = await this.captureWorkspaceDocument(
+        workspaceId,
+        item,
+        canonicalRoot,
+        guard,
+        accountSourceBytes,
+        reserveFile,
+      );
+      files.push(...captured);
+    }
+    guard.assertActive();
+    return {
+      workspace: {
+        id: security.redactText(workspace.id),
+        name: security.redactText(workspace.name),
+      },
+      state,
+      files,
+      ...security,
+      validateFile: async (file) => {
+        try {
+          if ((await realpath(this.root)) !== canonicalRoot) throw new Error("changed root");
+          await assertWorkspaceExportSafePath(
+            canonicalRoot,
+            this.root,
+            file.sourcePath,
+            file.identity === null,
+          );
+          const current = await lstat(file.sourcePath, { bigint: true }).catch((error: unknown) => {
+            if (isNodeError(error, "ENOENT")) return undefined;
+            throw error;
+          });
+          if (
+            file.identity === null
+              ? current !== undefined
+              : !current?.isFile() || !workspaceExportFileIdentityMatches(current, file.identity)
+          ) {
+            throw new Error("changed source");
+          }
+        } catch {
+          throw new StoreError("conflict", "Workspace export source changed during preparation.");
+        }
+      },
+    };
+  }
+
+  private async captureWorkspaceTranscript(
+    thread: Thread,
+    canonicalRoot: string,
+    guard: { assertActive(): void },
+    accountSourceBytes: (size: number) => void,
+    reserveFile: () => void,
+    ownership: WorkspaceExportOwnership,
+  ): Promise<{ transcript: PreparedWorkspaceExportFile; uploads: PreparedWorkspaceExportFile[] }> {
+    reserveFile();
+    if (!isStorageId(thread.id)) {
+      throw new StoreError("invalid", "Thread identifier is invalid for export.");
+    }
+    const sourcePath = this.transcriptPath(thread.id);
+    const archivePath = `threads/${thread.id}.jsonl`;
+    await assertWorkspaceExportSafePath(canonicalRoot, this.root, sourcePath, true);
+    const details = await lstat(sourcePath, { bigint: true }).catch((error: unknown) => {
+      if (isNodeError(error, "ENOENT")) return undefined;
+      throw error;
+    });
+    const emptyKnown = thread.messageCount === 0 && thread.lastMessageAt === null;
+    if (!details) {
+      if (!emptyKnown) {
+        throw new StoreError(
+          "invalid",
+          "Workspace export cannot include a nonempty thread with a missing transcript.",
+        );
+      }
+      return {
+        transcript: {
+          archivePath,
+          kind: "transcript",
+          sourcePath,
+          size: 0,
+          identity: null,
+        },
+        uploads: [],
+      };
+    }
+    if (!details.isFile()) {
+      throw new StoreError("invalid", "Workspace export transcript is not a regular file.");
+    }
+    const identity = transcriptFileIdentityOf(details);
+    accountSourceBytes(identity.size);
+    await assertWorkspaceExportSafePath(canonicalRoot, this.root, sourcePath);
+    let messageEvents = 0;
+    let lastSequence = 0;
+    const messageRecords = new Set<string>();
+    const artifactRecords = new Set<string>();
+    const messageArtifactReferences = new Set<string>();
+    const uploads: PreparedWorkspaceExportFile[] = [];
+    for await (const { text, blank } of readWorkspaceExportLines(sourcePath, identity, guard)) {
+      guard.assertActive();
+      let event: TranscriptEvent | undefined;
+      try {
+        if (blank) throw new Error("blank event");
+        event = parseTranscriptEvent(text);
+      } catch {
+        throw new StoreError("invalid", "Workspace export transcript contains an invalid event.");
+      }
+      if (!event || event.sequence <= lastSequence) {
+        throw new StoreError(
+          "invalid",
+          "Workspace export transcript event type or sequence is invalid.",
+        );
+      }
+      lastSequence = event.sequence;
+      validateWorkspaceExportEvent(event, thread, ownership);
+      if (event.type === "message.created") {
+        const message = event.message;
+        if (messageRecords.has(message.id) || message.sequence !== event.sequence) {
+          throw new StoreError(
+            "invalid",
+            "Workspace export transcript message identity is invalid.",
+          );
+        }
+        messageRecords.add(message.id);
+        messageEvents += 1;
+        for (const artifactId of message.artifactIds) messageArtifactReferences.add(artifactId);
+        continue;
+      }
+      if (event.type !== "artifact.created") continue;
+      const artifactRecord = event.artifact;
+      if (artifactRecord.sequence !== event.sequence || artifactRecords.has(artifactRecord.id)) {
+        throw new StoreError(
+          "invalid",
+          "Workspace export transcript artifact identity is invalid.",
+        );
+      }
+      artifactRecords.add(artifactRecord.id);
+      if (artifactRecord.source !== "upload") continue;
+      if (
+        artifactRecord.kind === "link" ||
+        artifactRecord.path !== undefined ||
+        artifactRecord.url !== undefined ||
+        artifactRecord.size === undefined
+      ) {
+        throw new StoreError("invalid", "Workspace export upload artifact is invalid.");
+      }
+      reserveFile();
+      const uploadPath = this.uploadArtifactPath(thread.id, artifactRecord.id);
+      const upload = await this.captureWorkspaceExportFile(
+        uploadPath,
+        `artifacts/${thread.id}/${artifactRecord.id}`,
+        "upload",
+        canonicalRoot,
+        guard,
+      );
+      if (typeof artifactRecord.size === "number" && upload.size !== artifactRecord.size) {
+        throw new StoreError(
+          "invalid",
+          "Workspace export upload size does not match its artifact.",
+        );
+      }
+      accountSourceBytes(upload.size);
+      uploads.push(upload);
+    }
+    if (messageEvents !== thread.messageCount) {
+      throw new StoreError(
+        "invalid",
+        "Workspace export transcript metadata does not match its content.",
+      );
+    }
+    for (const artifactId of messageArtifactReferences) {
+      if (!artifactRecords.has(artifactId)) {
+        throw new StoreError(
+          "invalid",
+          "Workspace export transcript references a missing artifact.",
+        );
+      }
+    }
+    return {
+      transcript: {
+        archivePath,
+        kind: "transcript",
+        sourcePath,
+        size: identity.size,
+        identity,
+      },
+      uploads,
+    };
+  }
+
+  private async captureWorkspaceDocument(
+    workspaceId: string,
+    item: KnowledgeItem,
+    canonicalRoot: string,
+    guard: { assertActive(): void },
+    accountSourceBytes: (size: number) => void,
+    reserveFile: () => void,
+  ): Promise<PreparedWorkspaceExportFile[]> {
+    if (item.kind !== "document") return [];
+    if (!isStorageId(item.id)) {
+      throw new StoreError("invalid", "Knowledge document identifier is invalid for export.");
+    }
+    const files: PreparedWorkspaceExportFile[] = [];
+    if (item.revisions.length > 0) {
+      if (item.currentRevisionId === undefined) {
+        throw new StoreError(
+          "invalid",
+          "Knowledge document revisions are missing their current identity.",
+        );
+      }
+      const currentRevision = item.revisions.find(
+        (revision) => revision.id === item.currentRevisionId,
+      );
+      if (!currentRevision) {
+        throw new StoreError(
+          "invalid",
+          "Knowledge document current revision is missing from its history.",
+        );
+      }
+      if (
+        item.storagePath !== currentRevision.storagePath ||
+        item.size !== currentRevision.size ||
+        item.fileName !== currentRevision.fileName ||
+        item.mediaType !== currentRevision.mediaType
+      ) {
+        throw new StoreError(
+          "invalid",
+          "Knowledge document current metadata does not match its revision.",
+        );
+      }
+      const seenRevisions = new Set<string>();
+      for (const revision of item.revisions) {
+        guard.assertActive();
+        reserveFile();
+        if (seenRevisions.has(revision.id) || !/^[a-f0-9]{64}$/.test(revision.sha256)) {
+          throw new StoreError("invalid", "Knowledge document revision metadata is invalid.");
+        }
+        seenRevisions.add(revision.id);
+        if (!isStorageId(revision.id)) {
+          throw new StoreError("invalid", "Knowledge document revision identifier is invalid.");
+        }
+        const expectedPath = join(
+          "workspaces",
+          workspaceId,
+          "knowledge",
+          item.id,
+          "revisions",
+          revision.id,
+        );
+        if (revision.storagePath !== expectedPath) {
+          throw new StoreError(
+            "invalid",
+            "Knowledge document revision is stored outside its owned location.",
+          );
+        }
+        const file = await this.captureWorkspaceExportFile(
+          this.managedPath(revision.storagePath),
+          expectedPath,
+          "document",
+          canonicalRoot,
+          guard,
+        );
+        if (file.size !== revision.size) {
+          throw new StoreError(
+            "invalid",
+            "Knowledge document revision size does not match its metadata.",
+          );
+        }
+        file.sha256 = revision.sha256;
+        accountSourceBytes(file.size);
+        files.push(file);
+      }
+    } else {
+      reserveFile();
+      const expectedPath = join("workspaces", workspaceId, "knowledge", item.id, "document");
+      if (item.storagePath !== expectedPath) {
+        throw new StoreError("invalid", "Knowledge document is stored outside its owned location.");
+      }
+      const file = await this.captureWorkspaceExportFile(
+        this.managedPath(item.storagePath),
+        expectedPath,
+        "document",
+        canonicalRoot,
+        guard,
+      );
+      if (file.size !== item.size) {
+        throw new StoreError("invalid", "Knowledge document size does not match its metadata.");
+      }
+      accountSourceBytes(file.size);
+      files.push(file);
+    }
+    return files;
+  }
+
+  private async captureWorkspaceExportFile(
+    sourcePath: string,
+    archivePath: string,
+    kind: PreparedWorkspaceExportFile["kind"],
+    canonicalRoot: string,
+    guard: { assertActive(): void },
+  ): Promise<PreparedWorkspaceExportFile> {
+    guard.assertActive();
+    await assertWorkspaceExportSafePath(canonicalRoot, this.root, sourcePath);
+    const details = await lstat(sourcePath, { bigint: true }).catch((error: unknown) => {
+      if (isNodeError(error, "ENOENT")) return undefined;
+      throw error;
+    });
+    if (!details) {
+      throw new StoreError("invalid", "Workspace export source file is missing.");
+    }
+    if (!details.isFile()) {
+      throw new StoreError("invalid", "Workspace export source is not a regular file.");
+    }
+    guard.assertActive();
+    return {
+      archivePath,
+      kind,
+      sourcePath,
+      size: Number(details.size),
+      identity: transcriptFileIdentityOf(details),
+    };
+  }
+
+  private workspaceExportOwnership(): WorkspaceExportOwnership {
+    const owners: WorkspaceExportOwnership = {
+      agents: new Map(this.state.agents.map((item) => [item.id, item.workspaceId])),
+      knowledge: new Map(this.state.knowledge.map((item) => [item.id, item.workspaceId])),
+      messages: new Map(),
+      artifacts: new Map(),
+      runs: new Map(),
+      tools: new Map(),
+    };
+    const remember = (map: Map<string, Set<string>>, id: string, threadId: string) => {
+      const threads = map.get(id) ?? new Set<string>();
+      threads.add(threadId);
+      map.set(id, threads);
+    };
+    for (const [threadId, index] of this.historyIndexes) {
+      for (const id of index.messageById.keys()) remember(owners.messages, id, threadId);
+      for (const artifact of index.artifacts) remember(owners.artifacts, artifact.id, threadId);
+      for (const id of index.runLatestByRunId.keys()) remember(owners.runs, id, threadId);
+      for (const id of index.toolById.keys()) remember(owners.tools, id, threadId);
+    }
+    return owners;
+  }
+
+  private validateWorkspaceExportJoins(workspaceId: string): void {
+    const agentWorkspaces = new Map(
+      this.state.agents.map((agent) => [agent.id, agent.workspaceId]),
+    );
+    const threadWorkspaces = new Map(
+      this.state.threads.map((thread) => [thread.id, thread.workspaceId]),
+    );
+    const taskWorkspaces = new Map(this.state.tasks.map((task) => [task.id, task.workspaceId]));
+    const knowledgeWorkspaces = new Map(
+      this.state.knowledge.map((item) => [item.id, item.workspaceId]),
+    );
+    const rejectForeign = (kind: string, id: string | null, owner: Map<string, string>) => {
+      if (id !== null && owner.has(id) && owner.get(id) !== workspaceId) {
+        throw new StoreError(
+          "invalid",
+          `Workspace export ${kind} references an identity from another workspace.`,
+        );
+      }
+    };
+    for (const task of this.state.tasks) {
+      if (task.workspaceId !== workspaceId) continue;
+      rejectForeign("task assignment", task.assigneeId, agentWorkspaces);
+      rejectForeign("task thread", task.threadId, threadWorkspaces);
+    }
+    for (const assignment of this.state.assignments) {
+      if (assignment.workspaceId !== workspaceId) continue;
+      rejectForeign("assignment task", assignment.taskId, taskWorkspaces);
+      rejectForeign("assignment thread", assignment.threadId, threadWorkspaces);
+      rejectForeign("assignment worker", assignment.workerAgentId, agentWorkspaces);
+      rejectForeign("assignment repository", assignment.repositoryId, knowledgeWorkspaces);
+    }
+  }
   private requireThread(id: string): Thread {
     const thread = this.state.threads.find((entry) => entry.id === id);
     if (!thread) throw new StoreError("not_found", "Thread not found.");
@@ -3264,6 +3841,241 @@ export class FileStore {
   }
 }
 
+interface WorkspaceExportOwnership {
+  agents: Map<string, string>;
+  knowledge: Map<string, string>;
+  messages: Map<string, Set<string>>;
+  artifacts: Map<string, Set<string>>;
+  runs: Map<string, Set<string>>;
+  tools: Map<string, Set<string>>;
+}
+
+function validateWorkspaceExportEvent(
+  event: TranscriptEvent,
+  thread: Thread,
+  owners: WorkspaceExportOwnership,
+): void {
+  const invalid = () =>
+    new StoreError(
+      "invalid",
+      "Workspace export transcript contains a foreign or invalid structured identity.",
+    );
+  const id = (value: string) => {
+    if (!isStorageId(value)) throw invalid();
+  };
+  const workspaceReference = (value: string, map: Map<string, string>) => {
+    id(value);
+    if (map.has(value) && map.get(value) !== thread.workspaceId) throw invalid();
+  };
+  const threadReference = (value: string, map: Map<string, Set<string>>) => {
+    id(value);
+    const threads = map.get(value);
+    if (threads && [...threads].some((owner) => owner !== thread.id)) throw invalid();
+  };
+  const remember = (value: string, map: Map<string, Set<string>>) => {
+    threadReference(value, map);
+    map.set(value, new Set([thread.id]));
+  };
+  if (event.type === "message.created") {
+    const message = event.message;
+    if (message.threadId !== thread.id) throw invalid();
+    remember(message.id, owners.messages);
+    if (message.author.kind === "agent") workspaceReference(message.author.id, owners.agents);
+    for (const mention of message.mentions) workspaceReference(mention.agentId, owners.agents);
+    for (const reference of message.knowledgeReferences)
+      workspaceReference(reference.knowledgeId, owners.knowledge);
+    if (message.triggerMessageId) threadReference(message.triggerMessageId, owners.messages);
+    for (const artifactId of message.artifactIds) threadReference(artifactId, owners.artifacts);
+  } else if (event.type === "artifact.created") {
+    const artifact = event.artifact;
+    if (artifact.threadId !== thread.id) throw invalid();
+    remember(artifact.id, owners.artifacts);
+    threadReference(artifact.messageId, owners.messages);
+  } else if (event.type === "run.updated") {
+    const run = event.run;
+    if (run.threadId !== thread.id) throw invalid();
+    remember(run.id, owners.runs);
+    threadReference(run.triggerMessageId, owners.messages);
+    workspaceReference(run.agentId, owners.agents);
+  } else {
+    const tool = event.toolCall;
+    if (tool.threadId !== thread.id) throw invalid();
+    remember(tool.id, owners.tools);
+    threadReference(tool.runId, owners.runs);
+    workspaceReference(tool.agentId, owners.agents);
+  }
+}
+
+function workspaceExportSecurity(
+  values: string[],
+): Pick<PreparedWorkspaceExport, "redactText" | "createCredentialScanner"> {
+  const credentials = [...new Set(values.filter((value) => value.length > 0))].sort(
+    (left, right) => right.length - left.length,
+  );
+  const needles = credentials.map((value) => Buffer.from(value, "utf8"));
+  const keepBytes = Math.max(0, ...needles.map((value) => value.byteLength - 1));
+  return {
+    redactText: (value) => {
+      let redacted = value;
+      for (const credential of credentials)
+        redacted = redacted.replaceAll(credential, "[REDACTED]");
+      return redacted;
+    },
+    createCredentialScanner: () => {
+      let tail = Buffer.alloc(0);
+      return (chunk) => {
+        if (needles.length === 0) return false;
+        const combined = Buffer.concat([tail, chunk]);
+        if (needles.some((needle) => combined.includes(needle))) return true;
+        tail = Buffer.from(combined.subarray(Math.max(0, combined.byteLength - keepBytes)));
+        return false;
+      };
+    },
+  };
+}
+
+const EXPORT_READ_CHUNK_BYTES = 64 * 1024;
+
+export interface WorkspaceExportLine {
+  text: string;
+  blank: boolean;
+}
+
+export function workspaceExportFileIdentityMatches(
+  stats: {
+    dev?: bigint;
+    ino?: bigint;
+    size?: bigint | number;
+    mtimeNs?: bigint;
+    ctimeNs?: bigint;
+  },
+  expected: TranscriptFileIdentity,
+): boolean {
+  return (
+    stats.dev === expected.device &&
+    stats.ino === expected.ino &&
+    Number(stats.size) === expected.size &&
+    stats.mtimeNs === expected.mtimeNs &&
+    stats.ctimeNs === expected.ctimeNs
+  );
+}
+
+export async function* readWorkspaceExportLines(
+  sourcePath: string,
+  expected: TranscriptFileIdentity,
+  guard: { assertActive(): void },
+): AsyncGenerator<WorkspaceExportLine, void> {
+  const handle = await open(sourcePath, "r");
+  try {
+    const initial = await handle.stat({ bigint: true });
+    if (!workspaceExportFileIdentityMatches(initial, expected)) {
+      throw new StoreError("conflict", "Workspace export source changed during preparation.");
+    }
+    const chunkBuffer = Buffer.allocUnsafe(EXPORT_READ_CHUNK_BYTES);
+    const lineBuffer = Buffer.allocUnsafe(HISTORY_MAX_EVENT_BYTES);
+    let lineLength = 0;
+    let position = 0;
+    while (position < expected.size) {
+      guard.assertActive();
+      const readLength = Math.min(chunkBuffer.byteLength, expected.size - position);
+      const { bytesRead } = await handle.read(chunkBuffer, 0, readLength, position);
+      if (bytesRead <= 0) {
+        throw new StoreError("conflict", "Workspace export source changed during preparation.");
+      }
+      const chunkEnd = Math.min(bytesRead, readLength);
+      let segmentStart = 0;
+      for (let index = 0; index < chunkEnd; index += 1) {
+        if (chunkBuffer[index] !== 0x0a) continue;
+        const segmentLength = index - segmentStart;
+        if (lineLength + segmentLength + 1 > HISTORY_MAX_EVENT_BYTES) {
+          throw new StoreError(
+            "invalid",
+            "Workspace export transcript line exceeds the event size limit.",
+          );
+        }
+        if (segmentLength > 0) {
+          chunkBuffer.copy(lineBuffer, lineLength, segmentStart, index);
+          lineLength += segmentLength;
+        }
+        yield decodeWorkspaceExportLine(lineBuffer.subarray(0, lineLength));
+        lineLength = 0;
+        segmentStart = index + 1;
+      }
+      const remainingSegmentLength = chunkEnd - segmentStart;
+      if (lineLength + remainingSegmentLength + 1 > HISTORY_MAX_EVENT_BYTES) {
+        throw new StoreError(
+          "invalid",
+          "Workspace export transcript line exceeds the event size limit.",
+        );
+      }
+      if (remainingSegmentLength > 0) {
+        chunkBuffer.copy(lineBuffer, lineLength, segmentStart, chunkEnd);
+        lineLength += remainingSegmentLength;
+      }
+      position += chunkEnd;
+    }
+    if (lineLength > 0) {
+      throw new StoreError("invalid", "Workspace export transcript has a torn trailing line.");
+    }
+    const final = await handle.stat({ bigint: true });
+    if (!workspaceExportFileIdentityMatches(final, expected)) {
+      throw new StoreError("conflict", "Workspace export source changed during preparation.");
+    }
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+}
+
+function decodeWorkspaceExportLine(bytes: Uint8Array): WorkspaceExportLine {
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new StoreError("invalid", "Workspace export transcript contains invalid UTF-8.");
+  }
+  return { text, blank: text.trim().length === 0 };
+}
+
+async function assertWorkspaceExportSafePath(
+  canonicalRoot: string,
+  root: string,
+  sourcePath: string,
+  allowMissingLeaf = false,
+): Promise<void> {
+  const relativePath = relative(root, sourcePath);
+  if (
+    !relativePath ||
+    relativePath === "." ||
+    relativePath.startsWith("..") ||
+    isAbsolute(relativePath)
+  ) {
+    throw new StoreError("invalid", "Workspace export path is outside the data root.");
+  }
+  const segments = relativePath.split(sep);
+  let current = canonicalRoot;
+  let segmentIndex = 0;
+  for (const segment of segments) {
+    current = join(current, segment);
+    const entry = await lstat(current).catch((error: unknown) => {
+      if (isNodeError(error, "ENOENT")) {
+        if (allowMissingLeaf && segmentIndex === segments.length - 1) return undefined;
+        throw new StoreError("invalid", "Workspace export source file is missing.");
+      }
+      throw error;
+    });
+    if (!entry) return;
+    if (entry.isSymbolicLink()) {
+      throw new StoreError("invalid", "Workspace export path contains a symbolic link.");
+    }
+    if (segmentIndex < segments.length - 1 && !entry.isDirectory()) {
+      throw new StoreError("invalid", "Workspace export parent path is not a directory.");
+    }
+    if (segmentIndex === segments.length - 1 && !entry.isFile()) {
+      throw new StoreError("invalid", "Workspace export path is not a regular file.");
+    }
+    segmentIndex += 1;
+  }
+}
 export type RepositoryDestinationState = "missing" | "empty" | "git" | "occupied";
 
 export async function inspectRepositoryDestinationKind(
