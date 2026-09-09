@@ -3069,13 +3069,17 @@ export class FileStore {
   private async repairThreadSummaries(): Promise<void> {
     let changed = false;
     for (const thread of this.state.threads) {
+      const index = this.historyIndexes.get(thread.id);
       const events = await this.readEvents(thread.id);
       const messages = events.filter((event) => event.type === "message.created");
       const last = messages.at(-1)?.message;
       this.sequenceByThread.set(thread.id, events.at(-1)?.sequence ?? 0);
+      const knownNonemptyBefore = thread.messageCount > 0 || thread.lastMessageAt !== null;
+      const missingKnownNonempty = index?.missing === true && knownNonemptyBefore;
       if (
-        thread.messageCount !== messages.length ||
-        thread.lastMessageAt !== (last?.createdAt ?? null)
+        !missingKnownNonempty &&
+        (thread.messageCount !== messages.length ||
+          thread.lastMessageAt !== (last?.createdAt ?? null))
       ) {
         thread.messageCount = messages.length;
         thread.lastMessageAt = last?.createdAt ?? null;

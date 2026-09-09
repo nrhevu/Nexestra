@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -269,6 +269,43 @@ describe("run history server", () => {
     const page = await store.listRunHistory({ workspaceId: workspace.id, limit: 50 });
     expect(page.coverage).toEqual({ complete: false, unavailableThreads: 2 });
     expect(page.items.map((item) => item.run.id)).toEqual(["good-run"]);
+  });
+
+  it("keeps a known nonempty missing transcript unavailable across reopens and filtered reads", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected seeded workspace");
+    const agent = await createWorkerAgent(store);
+    const missing = await createThread(store, "Missing");
+    const empty = await createThread(store, "Empty");
+    await store.createUserMessage(missing.id, "hello", []);
+    await store.updateRun(makeRun("missing-run", missing.id, agent.id, "2026-01-01T00:00:00.000Z"));
+    await unlink(store.transcriptPath(missing.id));
+    const reopened = await FileStore.open({
+      root: store.root,
+      workspacePath: store.workspacePath,
+    });
+    const page = await reopened.listRunHistory({ workspaceId: workspace.id, limit: 50 });
+    expect(page.coverage).toEqual({ complete: false, unavailableThreads: 1 });
+    expect(page.items).toEqual([]);
+    const filtered = await reopened.listRunHistory({
+      workspaceId: workspace.id,
+      threadId: missing.id,
+      limit: 50,
+    });
+    expect(filtered.coverage).toEqual({ complete: false, unavailableThreads: 1 });
+    const emptyFiltered = await reopened.listRunHistory({
+      workspaceId: workspace.id,
+      threadId: empty.id,
+      limit: 50,
+    });
+    expect(emptyFiltered.coverage).toEqual({ complete: true, unavailableThreads: 0 });
+    const reopenedAgain = await FileStore.open({
+      root: store.root,
+      workspacePath: store.workspacePath,
+    });
+    const again = await reopenedAgain.listRunHistory({ workspaceId: workspace.id, limit: 50 });
+    expect(again.coverage).toEqual({ complete: false, unavailableThreads: 1 });
   });
   it("never leaks foreign owning thread or agent identities from crafted summaries", async () => {
     const store = await openStore();
