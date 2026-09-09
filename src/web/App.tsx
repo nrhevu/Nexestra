@@ -127,8 +127,7 @@ import {
   nextUnreadConversation,
   selectConversationList,
 } from "./unreadNavigation.js";
-import { WorkspaceArchiveInspectionDialog } from "./WorkspaceArchiveInspectionDialog.js";
-import { WorkspaceExportDialog } from "./WorkspaceExportDialog.js";
+import { WorkspaceArchiveDialog } from "./WorkspaceArchiveDialog.js";
 import { type RefreshOutcome, useWorkspaceRefresh } from "./workspaceRefresh.js";
 
 const RichMessage = lazy(() => import("./RichMessage.js"));
@@ -428,6 +427,9 @@ export function App() {
   }, []);
 
   const navigate = useCallback((nextPath: string, nextRoute: RouteState, replace = false) => {
+    setModal((current) =>
+      current === "export" || current === "archive-inspection" ? null : current,
+    );
     if (
       nextRoute.view !== routeRef.current.view ||
       nextRoute.threadId !== routeRef.current.threadId
@@ -854,6 +856,9 @@ export function App() {
 
   useEffect(() => {
     const onPopState = () => {
+      setModal((current) =>
+        current === "export" || current === "archive-inspection" ? null : current,
+      );
       const nextRoute = routeFromLocation();
       const intent = historyIntentRef.current;
       const intentMatchesRoute = nextRoute.messageTarget
@@ -2233,16 +2238,15 @@ export function App() {
           }}
         />
       )}
-      {modal === "export" && data.workspace.id === workspaceIdRef.current && (
-        <WorkspaceExportDialog
-          key={data.workspace.id}
-          workspace={data.workspace}
-          onClose={() => setModal(null)}
-        />
-      )}
-      {modal === "archive-inspection" && data.workspace.id === workspaceIdRef.current && (
-        <WorkspaceArchiveInspectionDialog key={data.workspace.id} onClose={() => setModal(null)} />
-      )}
+      {(modal === "export" || modal === "archive-inspection") &&
+        data.workspace.id === workspaceIdRef.current && (
+          <WorkspaceArchiveDialog
+            key={`${data.workspace.id}:${modal}`}
+            kind={modal === "export" ? "export" : "inspection"}
+            workspace={data.workspace}
+            onClose={() => setModal(null)}
+          />
+        )}
       {agentToDelete && (
         <DeleteAgentDialog
           agent={agentToDelete}

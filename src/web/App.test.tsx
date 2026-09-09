@@ -18,11 +18,27 @@ import type {
 import { runAttentionItem } from "../shared/contracts.js";
 import type { WorkspaceArchiveInspectionReport } from "../shared/workspace-archive-inspection-contracts.js";
 import { App } from "./App.js";
+import { WorkspaceArchiveInspectionDialog } from "./WorkspaceArchiveInspectionDialog.js";
+import { WorkspaceExportDialog } from "./WorkspaceExportDialog.js";
+import type { WorkspaceArchiveDialogComponent } from "./workspace-archive-dialog-contracts.js";
+import { WorkspaceArchiveDialogLoadError } from "./workspace-archive-dialog-loader.js";
 import { inspectArchiveInWorker } from "./workspace-archive-inspection-client.js";
 
 vi.mock("./workspace-archive-inspection-client.js", () => ({
   inspectArchiveInWorker: vi.fn(),
 }));
+
+const archiveDialogLoaderMock = vi.hoisted(() => ({
+  loadWorkspaceArchiveDialog: vi.fn(),
+}));
+
+vi.mock("./workspace-archive-dialog-loader.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./workspace-archive-dialog-loader.js")>();
+  return {
+    ...actual,
+    loadWorkspaceArchiveDialog: archiveDialogLoaderMock.loadWorkspaceArchiveDialog,
+  };
+});
 
 const now = "2026-09-02T12:00:00.000Z";
 
@@ -78,6 +94,14 @@ const bootstrapData: BootstrapData = {
   workspacePath: "/workspace",
   dataPath: "/workspace/.nexestra",
 };
+
+beforeEach(() => {
+  archiveDialogLoaderMock.loadWorkspaceArchiveDialog.mockReset();
+  archiveDialogLoaderMock.loadWorkspaceArchiveDialog.mockImplementation((kind) =>
+    Promise.resolve(kind === "export" ? WorkspaceExportDialog : WorkspaceArchiveInspectionDialog),
+  );
+  vi.mocked(inspectArchiveInWorker).mockReset();
+});
 
 afterEach(() => {
   cleanup();
@@ -191,6 +215,14 @@ function installEventSources() {
 function deferredResponse() {
   let resolve: (response: Response) => void = () => {};
   const promise = new Promise<Response>((finish) => {
+    resolve = finish;
+  });
+  return { promise, resolve };
+}
+
+function deferredDialogModule() {
+  let resolve!: (component: WorkspaceArchiveDialogComponent) => void;
+  const promise = new Promise<WorkspaceArchiveDialogComponent>((finish) => {
     resolve = finish;
   });
   return { promise, resolve };
@@ -1131,6 +1163,7 @@ describe("Workspace export navigation", () => {
     );
     await user.click(screen.getByRole("button", { name: "Open settings" }));
     await user.click(screen.getByRole("button", { name: "Export selected workspace" }));
+    expect(await screen.findByRole("button", { name: "Download ZIP" })).toBeVisible();
     expect(screen.getByRole("dialog", { name: "Export workspace" })).toHaveTextContent(
       workspace.name,
     );
@@ -1140,6 +1173,7 @@ describe("Workspace export navigation", () => {
 
     await user.type(screen.getByRole("combobox", { name: /Search/ }), "/export workspace");
     await user.keyboard("{Enter}");
+    expect(await screen.findByRole("button", { name: "Download ZIP" })).toBeVisible();
     expect(screen.getByRole("dialog", { name: "Export workspace" })).toBeVisible();
     await user.keyboard("{Escape}");
     expect(window.location.pathname).toBe(`/threads/${thread.id}`);
@@ -1181,7 +1215,7 @@ describe("Workspace export navigation", () => {
     render(<App />);
     await user.type(await screen.findByRole("combobox", { name: /Search/ }), "/export workspace");
     await user.keyboard("{Enter}");
-    await user.click(screen.getByRole("button", { name: "Download ZIP" }));
+    await user.click(await screen.findByRole("button", { name: "Download ZIP" }));
     await waitFor(() => expect(requests).toHaveLength(1));
     expect(requests[0]?.path).toBe(`/api/workspaces/${workspace.id}/export`);
     await user.click(screen.getByRole("button", { name: "Switch to Second export" }));
@@ -1211,6 +1245,7 @@ describe("Workspace export navigation", () => {
     );
     await user.type(screen.getByRole("combobox", { name: /Search/ }), "/export workspace");
     await user.keyboard("{Enter}");
+    expect(await screen.findByRole("button", { name: "Download ZIP" })).toBeVisible();
     expect(screen.getByRole("dialog", { name: "Export workspace" })).toHaveTextContent(
       secondWorkspace.name,
     );
@@ -1253,11 +1288,13 @@ describe("Workspace archive inspection navigation", () => {
     );
     await user.click(screen.getByRole("button", { name: "Open settings" }));
     await user.click(screen.getByRole("button", { name: "Inspect workspace ZIP" }));
+    expect(await screen.findByRole("button", { name: "Check ZIP" })).toBeVisible();
     expect(screen.getByRole("dialog", { name: "Inspect workspace ZIP" })).toBeVisible();
     expect(screen.queryByRole("dialog", { name: "Local workspace" })).not.toBeInTheDocument();
     await user.keyboard("{Escape}");
     await user.type(screen.getByRole("combobox", { name: /Search/ }), "/inspect workspace zip");
     await user.keyboard("{Enter}");
+    expect(await screen.findByRole("button", { name: "Check ZIP" })).toBeVisible();
     expect(screen.getByRole("dialog", { name: "Inspect workspace ZIP" })).toBeVisible();
     await user.keyboard("{Escape}");
     expect(inspectArchiveInWorker).not.toHaveBeenCalled();
@@ -1301,6 +1338,7 @@ describe("Workspace archive inspection navigation", () => {
       "/inspect workspace zip",
     );
     await user.keyboard("{Enter}");
+    await waitFor(() => expect(screen.getByLabelText("Choose ZIP")).toBeInTheDocument());
     const selected = new File(["PK fixture"], "selected-workspace.zip", {
       type: "application/zip",
     });
@@ -1358,6 +1396,7 @@ describe("Workspace archive inspection navigation", () => {
     );
     await user.type(screen.getByRole("combobox", { name: /Search/ }), "/inspect workspace zip");
     await user.keyboard("{Enter}");
+    expect(await screen.findByRole("button", { name: "Check ZIP" })).toBeVisible();
     expect(screen.getByRole("dialog", { name: "Inspect workspace ZIP" })).toBeVisible();
     expect(screen.queryByText("Stale archive report")).not.toBeInTheDocument();
     expect(inspectArchiveInWorker).toHaveBeenCalledOnce();
@@ -1367,6 +1406,270 @@ describe("Workspace archive inspection navigation", () => {
           String(input).startsWith("/api/bootstrap") && (!init?.method || init.method === "GET"),
       ),
     ).toBe(true);
+  });
+});
+
+describe("Deferred archive dialog navigation", () => {
+  it("does not call the dialog loader during bootstrap or ordinary browser navigation", async () => {
+    const thread = activityThread("plain-dialog-nav-thread", "Plain dialog nav");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap"))
+        return jsonResponse({ ...bootstrapData, threads: [thread] });
+      if (path === historyUrl(thread)) return jsonResponse(threadSnapshot(thread, []));
+      return jsonResponse({ error: { message: "Unexpected request" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    render(<App />);
+    await screen.findByRole("combobox", { name: "Message" });
+    expect(archiveDialogLoaderMock.loadWorkspaceArchiveDialog).not.toHaveBeenCalled();
+    window.history.replaceState({}, "", "/surfaces/agents");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    await screen.findByRole("heading", { name: "Agent management" });
+    expect(archiveDialogLoaderMock.loadWorkspaceArchiveDialog).not.toHaveBeenCalled();
+  });
+
+  it("closes a delayed archive dialog on same-workspace Back without starting work", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) return jsonResponse(bootstrapData);
+      return jsonResponse({ error: { message: "Unexpected request" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", "/surfaces/agents");
+    const delayed = deferredDialogModule();
+    archiveDialogLoaderMock.loadWorkspaceArchiveDialog.mockImplementationOnce(
+      () => delayed.promise,
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(await screen.findByRole("combobox", { name: /Search/ }), "/export workspace");
+    await user.keyboard("{Enter}");
+    expect(await screen.findByRole("dialog", { name: "Export workspace" })).toBeVisible();
+    expect(screen.getByText("Loading export dialog…")).toBeVisible();
+    window.history.replaceState({}, "", "/surfaces/knowledge");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Export workspace" })).not.toBeInTheDocument(),
+    );
+    await act(async () => {
+      delayed.resolve(WorkspaceExportDialog);
+    });
+    expect(screen.queryByRole("dialog", { name: "Export workspace" })).not.toBeInTheDocument();
+    expect(archiveDialogLoaderMock.loadWorkspaceArchiveDialog).toHaveBeenCalledTimes(1);
+    expect(inspectArchiveInWorker).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/export"))).toBe(false);
+  });
+
+  it("closes a delayed archive dialog on same-workspace command navigation without starting work", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) return jsonResponse(bootstrapData);
+      return jsonResponse({ error: { message: "Unexpected request" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", "/surfaces/agents");
+    const delayed = deferredDialogModule();
+    archiveDialogLoaderMock.loadWorkspaceArchiveDialog.mockImplementationOnce(
+      () => delayed.promise,
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(await screen.findByRole("combobox", { name: /Search/ }), "/export workspace");
+    await user.keyboard("{Enter}");
+    expect(await screen.findByRole("dialog", { name: "Export workspace" })).toBeVisible();
+    expect(screen.getByText("Loading export dialog…")).toBeVisible();
+    await user.type(screen.getByRole("combobox", { name: /Search/ }), "/agents");
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Export workspace" })).not.toBeInTheDocument(),
+    );
+    expect(window.location.pathname).toBe("/surfaces/agents");
+    await act(async () => {
+      delayed.resolve(WorkspaceExportDialog);
+    });
+    expect(screen.queryByRole("dialog", { name: "Export workspace" })).not.toBeInTheDocument();
+    expect(archiveDialogLoaderMock.loadWorkspaceArchiveDialog).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/export"))).toBe(false);
+  });
+
+  it("closes a delayed load without losing draft/files and ignores its late resolve", async () => {
+    const thread = activityThread("delayed-close-thread", "Delayed close");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap"))
+        return jsonResponse({ ...bootstrapData, threads: [thread] });
+      if (path === historyUrl(thread)) return jsonResponse(threadSnapshot(thread, []));
+      return jsonResponse({ error: { message: "Unexpected request" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    const delayed = deferredDialogModule();
+    archiveDialogLoaderMock.loadWorkspaceArchiveDialog.mockImplementationOnce(
+      () => delayed.promise,
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(await screen.findByRole("combobox", { name: "Message" }), "Keep draft");
+    await user.upload(
+      screen.getByLabelText("Choose files or images"),
+      new File(["selected bytes"], "context.txt"),
+    );
+    await user.click(screen.getByRole("button", { name: "Open settings" }));
+    await user.click(screen.getByRole("button", { name: "Export selected workspace" }));
+    expect(await screen.findByRole("dialog", { name: "Export workspace" })).toBeVisible();
+    expect(screen.getByText("Loading export dialog…")).toBeVisible();
+    expect(archiveDialogLoaderMock.loadWorkspaceArchiveDialog).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog", { name: "Export workspace" })).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Message" })).toHaveValue("Keep draft");
+    expect(screen.getByText("context.txt")).toBeInTheDocument();
+    await act(async () => {
+      delayed.resolve(WorkspaceExportDialog);
+    });
+    await waitFor(() =>
+      expect(archiveDialogLoaderMock.loadWorkspaceArchiveDialog).toHaveBeenCalledTimes(1),
+    );
+    expect(screen.queryByRole("dialog", { name: "Export workspace" })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/export"))).toBe(false);
+  });
+
+  it("switching workspaces closes a delayed load and the late resolve cannot act for the old workspace", async () => {
+    const secondWorkspace = { ...workspace, id: "workspace-export-second", name: "Second export" };
+    const secondBootstrap = deferredResponse();
+    const delayed = deferredDialogModule();
+    archiveDialogLoaderMock.loadWorkspaceArchiveDialog.mockImplementationOnce(
+      () => delayed.promise,
+    );
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        if (path.includes(secondWorkspace.id)) return secondBootstrap.promise;
+        return jsonResponse({ ...bootstrapData, workspaces: [workspace, secondWorkspace] });
+      }
+      return jsonResponse({ error: { message: "Unexpected request" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", "/surfaces/agents");
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(await screen.findByRole("combobox", { name: /Search/ }), "/export workspace");
+    await user.keyboard("{Enter}");
+    expect(await screen.findByRole("dialog", { name: "Export workspace" })).toBeVisible();
+    expect(screen.getByText("Loading export dialog…")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Switch to Second export" }));
+    expect(screen.queryByRole("dialog", { name: "Export workspace" })).not.toBeInTheDocument();
+    await act(async () => {
+      delayed.resolve(WorkspaceExportDialog);
+      secondBootstrap.resolve(
+        jsonResponse({
+          ...bootstrapData,
+          workspace: secondWorkspace,
+          workspaces: [workspace, secondWorkspace],
+        }),
+      );
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Switch to Second export" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      ),
+    );
+    await user.type(screen.getByRole("combobox", { name: /Search/ }), "/export workspace");
+    await user.keyboard("{Enter}");
+    expect(await screen.findByRole("button", { name: "Download ZIP" })).toBeVisible();
+    expect(screen.getByRole("dialog", { name: "Export workspace" })).toHaveTextContent(
+      secondWorkspace.name,
+    );
+    expect(archiveDialogLoaderMock.loadWorkspaceArchiveDialog).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/export"))).toBe(false);
+  });
+
+  it("keeps a stale delayed dialog closed while the workspace transition is pending", async () => {
+    const secondWorkspace = {
+      ...workspace,
+      id: "workspace-export-pending",
+      name: "Pending export",
+    };
+    const secondBootstrap = deferredResponse();
+    const delayed = deferredDialogModule();
+    archiveDialogLoaderMock.loadWorkspaceArchiveDialog.mockImplementationOnce(
+      () => delayed.promise,
+    );
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        if (path.includes(secondWorkspace.id)) return secondBootstrap.promise;
+        return jsonResponse({ ...bootstrapData, workspaces: [workspace, secondWorkspace] });
+      }
+      return jsonResponse({ error: { message: "Unexpected request" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", "/surfaces/agents");
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(await screen.findByRole("combobox", { name: /Search/ }), "/export workspace");
+    await user.keyboard("{Enter}");
+    expect(await screen.findByRole("dialog", { name: "Export workspace" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Switch to Pending export" }));
+    await act(async () => {
+      delayed.resolve(WorkspaceExportDialog);
+    });
+    await user.type(screen.getByRole("combobox", { name: /Search/ }), "/export workspace");
+    await user.keyboard("{Enter}");
+    expect(archiveDialogLoaderMock.loadWorkspaceArchiveDialog).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog", { name: "Export workspace" })).not.toBeInTheDocument();
+    await act(async () => {
+      secondBootstrap.resolve(
+        jsonResponse({
+          ...bootstrapData,
+          workspace: secondWorkspace,
+          workspaces: [workspace, secondWorkspace],
+        }),
+      );
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Switch to Pending export" })).toHaveAttribute(
+        "aria-current",
+        "page",
+      ),
+    );
+    await user.type(screen.getByRole("combobox", { name: /Search/ }), "/export workspace");
+    await user.keyboard("{Enter}");
+    expect(await screen.findByRole("button", { name: "Download ZIP" })).toBeVisible();
+    expect(archiveDialogLoaderMock.loadWorkspaceArchiveDialog).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries a failed load without starting export or the archive worker", async () => {
+    const thread = activityThread("retry-dialog-thread", "Retry dialog");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap"))
+        return jsonResponse({ ...bootstrapData, threads: [thread] });
+      if (path === historyUrl(thread)) return jsonResponse(threadSnapshot(thread, []));
+      return jsonResponse({ error: { message: "Unexpected request" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    archiveDialogLoaderMock.loadWorkspaceArchiveDialog.mockImplementationOnce(() =>
+      Promise.reject(new WorkspaceArchiveDialogLoadError("load")),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(await screen.findByRole("combobox", { name: "Message" }), "Draft survives");
+    await user.click(screen.getByRole("button", { name: "Open settings" }));
+    await user.click(screen.getByRole("button", { name: "Export selected workspace" }));
+    expect(await screen.findByRole("dialog", { name: "Export workspace" })).toBeVisible();
+    expect(screen.getByText("Retry loading")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Close" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Retry loading" }));
+    expect(await screen.findByRole("button", { name: "Download ZIP" })).toBeVisible();
+    expect(archiveDialogLoaderMock.loadWorkspaceArchiveDialog).toHaveBeenCalledTimes(2);
+    expect(archiveDialogLoaderMock.loadWorkspaceArchiveDialog.mock.calls[0]?.[0]).toBe("export");
+    expect(screen.getByRole("combobox", { name: "Message" })).toHaveValue("Draft survives");
+    expect(inspectArchiveInWorker).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/export"))).toBe(false);
   });
 });
 
