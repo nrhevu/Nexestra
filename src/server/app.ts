@@ -9,6 +9,7 @@ import {
   type BootstrapData,
   DelegateTaskSchema,
   MessageSearchRequestSchema,
+  RunHistoryRequestSchema,
   SelectRepositorySourceBranchSchema,
   ThreadHistoryRequestSchema,
   ToolAnswersSchema,
@@ -332,6 +333,11 @@ export function createApp(options: CreateAppOptions) {
   app.get("/api/search/messages", async (context) => {
     const query = MessageSearchRequestSchema.parse(context.req.query());
     return context.json(await options.store.searchMessages(query));
+  });
+
+  app.get("/api/runs", async (context) => {
+    const input = RunHistoryRequestSchema.parse(context.req.query());
+    return context.json(await options.store.listRunHistory(input));
   });
 
   app.get("/api/threads/:id/history", async (context) => {

@@ -5,6 +5,7 @@ import {
   extractMentionHandles,
   handleFromName,
   ReorderWorkspacesSchema,
+  RunHistoryRequestSchema,
   ThreadHistoryRequestSchema,
   UpdateAgentSchema,
 } from "./contracts.js";
@@ -142,5 +143,40 @@ describe("ThreadHistoryRequestSchema", () => {
       false,
     );
     expect(ThreadHistoryRequestSchema.safeParse({ ...base, at: "7" }).success).toBe(true);
+  });
+});
+
+describe("RunHistoryRequestSchema", () => {
+  const base = { workspaceId: "workspace" };
+  it("defaults to limit 50 and bounds it to 1..100", () => {
+    expect(RunHistoryRequestSchema.parse(base).limit).toBe(50);
+    expect(RunHistoryRequestSchema.safeParse({ ...base, limit: "1" }).success).toBe(true);
+    expect(RunHistoryRequestSchema.safeParse({ ...base, limit: 100 }).success).toBe(true);
+    for (const limit of [0, 101, 1.5, NaN]) {
+      expect(RunHistoryRequestSchema.safeParse({ ...base, limit }).success).toBe(false);
+    }
+  });
+
+  it("requires a nonempty workspace id and bounded filter strings", () => {
+    expect(RunHistoryRequestSchema.safeParse({}).success).toBe(false);
+    expect(RunHistoryRequestSchema.safeParse({ ...base, workspaceId: "  " }).success).toBe(false);
+    expect(
+      RunHistoryRequestSchema.safeParse({ ...base, workspaceId: "w".repeat(201) }).success,
+    ).toBe(false);
+    expect(RunHistoryRequestSchema.safeParse({ ...base, agentId: " " }).success).toBe(false);
+    expect(RunHistoryRequestSchema.safeParse({ ...base, threadId: "t".repeat(201) }).success).toBe(
+      false,
+    );
+  });
+
+  it("rejects unknown statuses and unbounded cursors", () => {
+    expect(RunHistoryRequestSchema.safeParse({ ...base, status: "finished" }).success).toBe(false);
+    expect(RunHistoryRequestSchema.safeParse({ ...base, cursor: "" }).success).toBe(false);
+    expect(RunHistoryRequestSchema.safeParse({ ...base, cursor: "a".repeat(2_049) }).success).toBe(
+      false,
+    );
+    expect(RunHistoryRequestSchema.safeParse({ ...base, cursor: "a".repeat(2_048) }).success).toBe(
+      true,
+    );
   });
 });

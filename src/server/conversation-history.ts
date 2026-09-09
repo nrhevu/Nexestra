@@ -13,6 +13,26 @@ export const HISTORY_MAX_PAGE_BYTES = 8 * 1024 * 1024;
 
 export type HistoryAnchorMode = "latest" | "before" | "after" | "around" | "at";
 
+export type RunHistoryStatus =
+  | "queued"
+  | "running"
+  | "waiting_approval"
+  | "waiting_input"
+  | "completed"
+  | "failed"
+  | "interrupted";
+
+export interface RunHistorySummary {
+  id: string;
+  threadId: string;
+  triggerMessageId: string;
+  agentId: string;
+  attempt: number;
+  status: RunHistoryStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type RawTranscriptEvent = {
   type: string;
   sequence?: number;
@@ -48,6 +68,7 @@ export interface TranscriptHistoryIndex {
   messageById: Map<string, TranscriptHistoryEntry>;
   runLatestByRunId: Map<string, TranscriptHistoryEntry>;
   runByTriggerMessageId: Map<string, TranscriptHistoryEntry[]>;
+  runHistory: Map<string, RunHistorySummary>;
   toolById: Map<string, TranscriptHistoryEntry>;
   toolCallByRunId: Map<string, TranscriptHistoryEntry[]>;
   identity: TranscriptFileIdentity | null;
@@ -69,6 +90,7 @@ export function emptyTranscriptHistoryIndex(threadId: string): TranscriptHistory
     messageById: new Map(),
     runLatestByRunId: new Map(),
     runByTriggerMessageId: new Map(),
+    runHistory: new Map(),
     toolById: new Map(),
     toolCallByRunId: new Map(),
     identity: null,
@@ -189,6 +211,14 @@ export function addTranscriptHistoryEntry(
   const tools = index.toolCallByRunId.get(entry.parentId) ?? [];
   tools.push(entry);
   index.toolCallByRunId.set(entry.parentId, tools);
+}
+
+export function setRunHistorySummary(
+  index: TranscriptHistoryIndex,
+  summary: RunHistorySummary,
+): void {
+  // One bounded summary tuple per run id; the latest durable run.updated event wins.
+  index.runHistory.set(summary.id, summary);
 }
 
 export interface TranscriptHistoryFileScanOutcome {

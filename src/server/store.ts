@@ -57,6 +57,10 @@ import {
   ReorderWorkspacesSchema,
   ReplaceKnowledgeDocumentSchema,
   RestoreKnowledgeDocumentRevisionSchema,
+  type RunHistoryItem,
+  type RunHistoryPage,
+  RunHistoryPageSchema,
+  RunHistoryRequestSchema,
   RunSchema,
   type Task,
   TaskSchema,
@@ -88,12 +92,22 @@ import {
   planHistoryPage,
   planHistoryPageAt,
   type RawTranscriptEvent,
+  type RunHistorySummary,
   readTranscriptPageLines,
   scanTranscriptHistoryFile,
+  setRunHistorySummary,
   type TranscriptHistoryIndex,
   transcriptFileIdentityOf,
   transcriptHistoryEntry,
 } from "./conversation-history.js";
+
+import {
+  compareRunHistorySummaries,
+  decodeRunHistoryCursor,
+  encodeRunHistoryCursor,
+  type RunHistoryCursorPayload,
+  runHistorySummaryAfterCursor,
+} from "./run-history.js";
 
 const StateSchema = z.object({
   version: z.literal(7),
@@ -2715,6 +2729,132 @@ export class FileStore {
     });
   }
 
+  async listRunHistory(rawInput: unknown): Promise<RunHistoryPage> {
+    const input = RunHistoryRequestSchema.parse(rawInput);
+    return this.withWrite(async () => {
+      const workspace = this.requireWorkspace(input.workspaceId);
+      if (input.threadId) {
+        const thread = this.getThread(input.threadId);
+        if (!thread || thread.workspaceId !== workspace.id) {
+          throw new StoreError("not_found", "Thread not found in this workspace.");
+        }
+      }
+      if (input.agentId) {
+        const agent = this.getAgent(input.agentId);
+        if (!agent || agent.workspaceId !== workspace.id) {
+          throw new StoreError("not_found", "Agent not found in this workspace.");
+        }
+      }
+      let cursor: RunHistoryCursorPayload | undefined;
+      if (input.cursor !== undefined) {
+        try {
+          cursor = decodeRunHistoryCursor(input.cursor);
+        } catch {
+          throw new StoreError("invalid", "Run history cursor is invalid.");
+        }
+        if (!cursor) {
+          throw new StoreError("invalid", "Run history cursor is invalid.");
+        }
+        if (
+          cursor.workspaceId !== input.workspaceId ||
+          cursor.agentId !== input.agentId ||
+          cursor.threadId !== input.threadId ||
+          cursor.status !== input.status ||
+          cursor.limit !== input.limit
+        ) {
+          throw new StoreError("invalid", "Run history cursor does not match this request.");
+        }
+      }
+      const scopedThreads = this.state.threads.filter(
+        (thread) => thread.workspaceId === workspace.id,
+      );
+      const coverageThreads =
+        input.threadId === undefined
+          ? scopedThreads
+          : scopedThreads.filter((thread) => thread.id === input.threadId);
+      let unavailableThreads = 0;
+      const summaries: RunHistorySummary[] = [];
+      const foreignAgentIds = new Set(
+        this.state.agents
+          .filter((agent) => agent.workspaceId !== workspace.id)
+          .map((agent) => agent.id),
+      );
+      for (const thread of coverageThreads) {
+        const index =
+          this.historyIndexes.get(thread.id) ?? (await this.primeTranscriptIndex(thread.id));
+        const emptyKnownThread = thread.messageCount === 0 && thread.lastMessageAt === null;
+        if ((index.missing && !emptyKnownThread) || index.unreliable) {
+          unavailableThreads += 1;
+          continue;
+        }
+        let foreignSummary = false;
+        for (const summary of index.runHistory.values()) {
+          if (summary.threadId !== thread.id || foreignAgentIds.has(summary.agentId)) {
+            foreignSummary = true;
+            break;
+          }
+        }
+        if (foreignSummary) {
+          unavailableThreads += 1;
+          continue;
+        }
+        for (const summary of index.runHistory.values()) {
+          if (input.agentId !== undefined && summary.agentId !== input.agentId) continue;
+          if (input.threadId !== undefined && summary.threadId !== input.threadId) continue;
+          if (input.status !== undefined && summary.status !== input.status) continue;
+          summaries.push(summary);
+        }
+      }
+      summaries.sort(compareRunHistorySummaries);
+      const remaining =
+        cursor === undefined
+          ? summaries
+          : summaries.filter((summary) => runHistorySummaryAfterCursor(summary, cursor));
+      const pageSummaries = remaining.slice(0, input.limit);
+      const agents = new Map(
+        this.state.agents
+          .filter((agent) => agent.workspaceId === workspace.id)
+          .map((agent) => [agent.id, agent]),
+      );
+      const threads = new Map(
+        this.state.threads
+          .filter((entry) => entry.workspaceId === workspace.id)
+          .map((entry) => [entry.id, entry]),
+      );
+      const items = pageSummaries.map((summary): RunHistoryItem => {
+        const agent = agents.get(summary.agentId);
+        const thread = threads.get(summary.threadId);
+        return {
+          run: {
+            id: summary.id,
+            threadId: summary.threadId,
+            triggerMessageId: summary.triggerMessageId,
+            agentId: summary.agentId,
+            attempt: summary.attempt,
+            status: summary.status,
+            createdAt: summary.createdAt,
+            updatedAt: summary.updatedAt,
+          },
+          agentName: agent ? this.redactSecrets(agent.name) : "Unknown",
+          agentHandle: agent ? this.redactHandleValue(agent.handle) : undefined,
+          threadName: thread ? this.redactSecrets(thread.name) : "Unknown",
+          threadArchived: thread?.archived ?? false,
+        };
+      });
+      const lastSummary = pageSummaries[pageSummaries.length - 1];
+      const nextCursor =
+        lastSummary && remaining.length > input.limit
+          ? encodeRunHistoryCursor(input, lastSummary)
+          : null;
+      return RunHistoryPageSchema.parse({
+        workspaceId: workspace.id,
+        items,
+        page: { nextCursor },
+        coverage: { complete: unavailableThreads === 0, unavailableThreads },
+      });
+    });
+  }
+
   private async primeTranscriptIndexes(): Promise<void> {
     for (const thread of this.state.threads) {
       await this.primeTranscriptIndex(thread.id);
@@ -2759,6 +2899,9 @@ export class FileStore {
         const entry = transcriptHistoryEntry(event.sequence, raw, lineStart, lineEnd);
         if (!entry) return { status: "unknown" };
         addTranscriptHistoryEntry(index, entry);
+        if (event.type === "run.updated") {
+          setRunHistorySummary(index, this.runHistorySummaryOf(event.run));
+        }
         return { status: "event", raw };
       },
     });
@@ -2819,6 +2962,9 @@ export class FileStore {
       }
       const entry = transcriptHistoryEntry(event.sequence, raw, offset, offset + lineBytes);
       if (entry) addTranscriptHistoryEntry(index, entry);
+      if (event.type === "run.updated") {
+        setRunHistorySummary(index, this.runHistorySummaryOf(event.run));
+      }
       offset += lineBytes;
     }
     try {
@@ -2835,6 +2981,19 @@ export class FileStore {
       ...thread,
       name: this.redactSecrets(thread.name),
       slug: this.redactSecrets(thread.slug),
+    };
+  }
+
+  private runHistorySummaryOf(run: AgentRun): RunHistorySummary {
+    return {
+      id: run.id,
+      threadId: run.threadId,
+      triggerMessageId: run.triggerMessageId,
+      agentId: run.agentId,
+      attempt: run.attempt,
+      status: run.status,
+      createdAt: run.createdAt,
+      updatedAt: run.updatedAt,
     };
   }
 
