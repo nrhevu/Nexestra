@@ -12,6 +12,9 @@ import {
   type PreparedWorkspaceExportFile,
   readWorkspaceExportLines,
   StoreError,
+  type TranscriptFileIdentity,
+  type WorkspaceExportLine,
+  workspaceExportFileIdentityMatches,
 } from "./store.js";
 import {
   type BuiltWorkspaceExportArchive,
@@ -115,7 +118,6 @@ export async function* workspaceExportEntries(
   assertActive: () => void,
 ): AsyncGenerator<WorkspaceExportSourceEntry, void> {
   const redact = prepared.redactText;
-  const scanCredential = prepared.createCredentialScanner();
   yield {
     path: "state.json",
     kind: "metadata",
@@ -126,17 +128,26 @@ export async function* workspaceExportEntries(
     if (redact(file.archivePath) !== file.archivePath) {
       throw exportInvalid("Workspace export entry path contains a credential.");
     }
+    try {
+      await prepared.validateFile(file);
+    } catch (error) {
+      throw fromStoreError(error);
+    }
     const chunks =
       file.kind === "transcript" && file.identity === null
         ? emptyEntryChunks()
         : file.kind === "transcript"
           ? transcriptEntryChunks(file, redact, assertActive)
-          : binaryEntryChunks(file, scanCredential, assertActive);
+          : binaryEntryChunks(file, prepared.createCredentialScanner, assertActive);
     yield { path: file.archivePath, kind: file.kind, chunks };
   }
   for (const file of prepared.files) {
     assertActive();
-    await prepared.validateFile(file);
+    try {
+      await prepared.validateFile(file);
+    } catch (error) {
+      throw fromStoreError(error);
+    }
   }
 }
 
@@ -163,7 +174,7 @@ async function* transcriptEntryChunks(
   const identity = file.identity;
   if (!identity) return;
   const encoder = new TextEncoder();
-  for await (const { text, blank } of readWorkspaceExportLines(file.sourcePath, identity, {
+  for await (const { text, blank } of readWorkspaceExportLinesMapped(file.sourcePath, identity, {
     assertActive,
   })) {
     if (blank) {
@@ -184,15 +195,36 @@ async function* transcriptEntryChunks(
   }
 }
 
+async function* readWorkspaceExportLinesMapped(
+  sourcePath: string,
+  expected: TranscriptFileIdentity,
+  guard: { assertActive(): void },
+): AsyncGenerator<WorkspaceExportLine, void> {
+  try {
+    for await (const line of readWorkspaceExportLines(sourcePath, expected, guard)) yield line;
+  } catch (error) {
+    throw fromStoreError(error);
+  }
+}
 async function* binaryEntryChunks(
   file: PreparedWorkspaceExportFile,
-  scanCredential: (chunk: Uint8Array) => boolean,
+  createScanner: () => (chunk: Uint8Array) => boolean,
   assertActive: () => void,
 ): AsyncGenerator<Uint8Array, void> {
   const identity = file.identity;
   if (!identity) return;
-  const handle = await open(file.sourcePath, "r");
+  let handle: Awaited<ReturnType<typeof open>>;
   try {
+    handle = await open(file.sourcePath, "r");
+  } catch (error) {
+    throw fromStoreError(error);
+  }
+  try {
+    const initial = await handle.stat({ bigint: true });
+    if (!workspaceExportFileIdentityMatches(initial, identity)) {
+      throw exportConflict("Workspace export source changed during preparation.");
+    }
+    const scanCredential = createScanner();
     const buffer = Buffer.allocUnsafe(EXPORT_READ_CHUNK_BYTES);
     const hash = createHash("sha256");
     let totalBytes = 0;
@@ -218,9 +250,15 @@ async function* binaryEntryChunks(
     if (totalBytes !== identity.size) {
       throw exportConflict("Workspace export source changed during preparation.");
     }
+    const final = await handle.stat({ bigint: true });
+    if (!workspaceExportFileIdentityMatches(final, identity)) {
+      throw exportConflict("Workspace export source changed during preparation.");
+    }
     if (file.sha256 !== undefined && hash.digest("hex") !== file.sha256) {
       throw exportInvalid("Workspace export document content is corrupted.");
     }
+  } catch (error) {
+    throw fromStoreError(error);
   } finally {
     await handle.close().catch(() => undefined);
   }
@@ -325,6 +363,20 @@ function exportInvalid(message: string): WorkspaceExportArchiveError {
 
 function exportConflict(message: string): WorkspaceExportArchiveError {
   return new WorkspaceExportArchiveError("conflict", message);
+}
+
+function fromStoreError(
+  error: unknown,
+  conflictMessage = "Workspace export source changed during preparation.",
+): WorkspaceExportArchiveError {
+  if (error instanceof WorkspaceExportArchiveError) return error;
+  if (error instanceof StoreError) {
+    return new WorkspaceExportArchiveError(
+      error.code === "invalid" ? "invalid" : "conflict",
+      error.message,
+    );
+  }
+  return exportConflict(conflictMessage);
 }
 
 function toStoreError(error: unknown): StoreError {

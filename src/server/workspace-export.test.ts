@@ -12,6 +12,10 @@ import {
   createWorkspaceExportResponse,
   workspaceExportEntries,
 } from "./workspace-export.js";
+import {
+  buildWorkspaceExportArchive,
+  WorkspaceExportArchiveError,
+} from "./workspace-export-archive.js";
 
 const runtime: RuntimeStatus = {
   chatgpt: { installed: true, connected: true, message: "Logged in using ChatGPT" },
@@ -816,6 +820,72 @@ describe("workspace export", () => {
     await prepared.release();
     expect(failure).toMatchObject({ code: "conflict" });
     await expect(store.prepareWorkspaceExport(workspace.id)).resolves.toBeTruthy();
+  });
+
+  it("keeps conflict code through the real archive builder when a captured source changes", async () => {
+    const { store } = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected seeded workspace");
+    const [thread] = store.listThreads(workspace.id);
+    if (!thread) throw new Error("expected seeded thread");
+    const message = await store.createUserMessage(
+      thread.id,
+      "upload",
+      [],
+      [
+        {
+          name: "a.bin",
+          mediaType: "application/octet-stream",
+          bytes: new TextEncoder().encode("aaa"),
+        },
+      ],
+    );
+    const artifactId = requireId(message.artifactIds, "artifact id");
+    const prepared = await store.prepareWorkspaceExport(workspace.id);
+    await writeFile(
+      join(store.root, "artifacts", thread.id, artifactId),
+      new TextEncoder().encode("abc"),
+    );
+    let failure: unknown;
+    try {
+      await buildWorkspaceExportArchive({
+        workspace: prepared.workspace,
+        createdAt: prepared.createdAt,
+        entries: workspaceExportEntries(prepared, store, noopAssert),
+      });
+    } catch (error) {
+      failure = error;
+    }
+    await prepared.release();
+    expect(failure).toBeInstanceOf(WorkspaceExportArchiveError);
+    expect((failure as WorkspaceExportArchiveError).code).toBe("conflict");
+  });
+
+  it("does not stitch credential fragments across separate binary files", async () => {
+    const phrase = "fixture-cross-file-phrase-123456";
+    const { store } = await openStore({ demo: phrase });
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected seeded workspace");
+    const [thread] = store.listThreads(workspace.id);
+    if (!thread) throw new Error("expected seeded thread");
+    const bytes = Buffer.from(phrase, "utf8");
+    const split = Math.floor(bytes.byteLength / 2);
+    const firstBytes = new Uint8Array([0x61, 0x62, ...bytes.subarray(0, split)]);
+    const secondBytes = new Uint8Array([...bytes.subarray(split), 0x63]);
+    await store.createUserMessage(
+      thread.id,
+      "first",
+      [],
+      [{ name: "a.bin", mediaType: "application/octet-stream", bytes: firstBytes }],
+    );
+    await store.createUserMessage(
+      thread.id,
+      "second",
+      [],
+      [{ name: "b.bin", mediaType: "application/octet-stream", bytes: secondBytes }],
+    );
+    const archive = await createWorkspaceExport({ store, workspaceId: workspace.id });
+    await archive.dispose();
   });
 
   it("revalidates a missing empty transcript path after preparation", async () => {
