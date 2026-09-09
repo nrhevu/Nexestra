@@ -322,6 +322,9 @@ export function WorkspaceExportDialog({ workspace, onClose }: WorkspaceExportDia
       }
       setPhase("error");
     } finally {
+      // Release unread response bodies even when header validation fails or this
+      // attempt became stale. Abort only this attempt, never a newer Retry.
+      controller.abort();
       if (requestId === requestIdRef.current) {
         busyRef.current = false;
         if (controllerRef.current === controller) controllerRef.current = null;

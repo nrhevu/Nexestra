@@ -448,6 +448,51 @@ describe("WorkspaceExportDialog", () => {
     expect(urls.createObjectURL).not.toHaveBeenCalled();
   });
 
+  it.each<{ headers: Record<string, string>; message: string }>([
+    {
+      headers: { "content-type": "text/html" },
+      message: "The export response was not a ZIP archive.",
+    },
+    {
+      headers: { "content-length": String(WORKSPACE_EXPORT_MAX_ARCHIVE_BYTES + 1) },
+      message: "The export is larger than 136 MiB",
+    },
+  ])(
+    "aborts rejected headers and gives Retry a fresh request: $message",
+    async ({ headers, message }) => {
+      const urls = stubObjectUrl();
+      stubAnchorClick();
+      const retryResponse = deferred<Response>();
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(zipResponse(headers))
+        .mockReturnValueOnce(retryResponse.promise);
+      vi.stubGlobal("fetch", fetchMock);
+      renderDialog();
+
+      click(screen.getByRole("button", { name: "Download ZIP" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(message);
+      const firstSignal = requestInit(fetchMock, 0)?.signal;
+      expect(firstSignal).toBeInstanceOf(AbortSignal);
+      expect(firstSignal?.aborted).toBe(true);
+      expect(urls.createObjectURL).not.toHaveBeenCalled();
+
+      click(screen.getByRole("button", { name: "Retry" }));
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const retrySignal = requestInit(fetchMock, 1)?.signal;
+      expect(retrySignal).toBeInstanceOf(AbortSignal);
+      expect(retrySignal).not.toBe(firstSignal);
+      expect(retrySignal?.aborted).toBe(false);
+
+      await act(async () => {
+        retryResponse.resolve(zipResponse());
+      });
+      expect(await screen.findByText("Download started.")).toBeInTheDocument();
+      expect(urls.createObjectURL).toHaveBeenCalledTimes(1);
+      expect(retrySignal?.aborted).toBe(true);
+    },
+  );
+
   it("rejects an actual blob over the archive cap when headers understate it", async () => {
     const urls = stubObjectUrl();
     const fetchMock = vi.fn(
