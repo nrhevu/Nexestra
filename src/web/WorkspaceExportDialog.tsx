@@ -201,10 +201,20 @@ export function WorkspaceExportDialog({ workspace, onClose }: WorkspaceExportDia
       const first = items[0];
       const last = items.at(-1);
       if (!first || !last) return;
-      if (event.shiftKey && document.activeElement === first) {
+      const active = document.activeElement;
+      if (!(active instanceof Node) || !items.some((item) => item === active)) {
+        // The focused action can become disabled mid-interaction (busy or
+        // success), and some browsers or jsdom keep focus on that now-non-focusable
+        // element. Pull the next Tab back into the dialog instead of escaping.
+        event.preventDefault();
+        if (event.shiftKey) last.focus();
+        else first.focus();
+        return;
+      }
+      if (event.shiftKey && active === first) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
+      } else if (!event.shiftKey && active === last) {
         event.preventDefault();
         first.focus();
       }

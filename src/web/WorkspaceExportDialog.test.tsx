@@ -583,6 +583,41 @@ describe("WorkspaceExportDialog", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps Tab inside while the primary action is disabled in busy and success", async () => {
+    stubObjectUrl();
+    stubAnchorClick();
+    const pending = deferred<Response>();
+    const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) => pending.promise);
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    const outside = document.createElement("button");
+    outside.type = "button";
+    outside.textContent = "outside trigger";
+    document.body.append(outside);
+    renderDialog();
+    const dialog = screen.getByRole("dialog", { name: "Export workspace" });
+
+    await user.click(screen.getByRole("button", { name: "Download ZIP" }));
+    expect(await screen.findByRole("button", { name: "Cancel export" })).toBeInTheDocument();
+    // jsdom keeps focus on the now-disabled primary action; Tab must not escape.
+    expect(screen.getByRole("button", { name: "Preparing export…" })).toBeDisabled();
+    await user.tab();
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+    expect(screen.getByRole("button", { name: "Close" })).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+    expect(screen.getByRole("button", { name: "Cancel export" })).toHaveFocus();
+
+    await act(async () => {
+      pending.resolve(zipResponse());
+    });
+    expect(await screen.findByText("Download started.")).toBeInTheDocument();
+    await user.tab();
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+    await user.tab({ shift: true });
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+  });
+
   it("never autostarts and starts exactly one request under StrictMode", async () => {
     const urls = stubObjectUrl();
     const fetchMock = vi.fn(async () => zipResponse());
