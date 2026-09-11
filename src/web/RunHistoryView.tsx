@@ -1,0 +1,546 @@
+import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { AgentView, RunHistoryItem, RunHistoryPage, Thread } from "../shared/contracts.js";
+import { RunHistoryPageSchema, RunSchema } from "../shared/contracts.js";
+import { api } from "./api.js";
+import "./RunHistoryView.css";
+
+export interface RunHistoryViewProps {
+  workspaceId: string;
+  agents: AgentView[];
+  threads: Thread[];
+  refreshRevision?: number;
+  onOpenRun: (item: RunHistoryItem) => void;
+}
+
+const PAGE_LIMIT = 50;
+const FETCH_TIMEOUT_MS = 30_000;
+const RUN_STATUSES = RunSchema.shape.status.options;
+type RunStatus = (typeof RUN_STATUSES)[number];
+
+const RUN_STATUS_LABELS: Record<RunStatus, string> = {
+  queued: "Queued",
+  running: "Running",
+  waiting_approval: "Waiting for approval",
+  waiting_input: "Waiting for input",
+  completed: "Completed",
+  failed: "Failed",
+  interrupted: "Interrupted",
+};
+
+type LoadPhase = "loading" | "ready" | "error";
+
+interface RunPage {
+  items: RunHistoryItem[];
+  nextCursor: string | null;
+  cursor: string | null;
+}
+
+interface RunHistoryViewState {
+  workspaceId: string;
+  page: RunPage | null;
+  previousCursors: Array<string | null>;
+  coverage: RunHistoryPage["coverage"] | null;
+  phase: LoadPhase;
+  errorMessage: string;
+  moreError: string;
+  loadingMore: boolean;
+  failedAction: "older" | "newer" | null;
+}
+
+interface RunHistoryFilters {
+  workspaceId: string;
+  agentId: string;
+  threadId: string;
+  status: RunStatus | "";
+}
+
+function initialViewState(workspaceId: string): RunHistoryViewState {
+  return {
+    workspaceId,
+    page: null,
+    previousCursors: [],
+    coverage: null,
+    phase: "loading",
+    errorMessage: "",
+    moreError: "",
+    loadingMore: false,
+    failedAction: null,
+  };
+}
+
+function statusLabel(status: RunStatus): string {
+  return RUN_STATUS_LABELS[status];
+}
+
+function formatDate(value: string): string {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+}
+
+function errorText(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message !== "" ? error.message : fallback;
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+export function RunHistoryView({
+  workspaceId,
+  agents,
+  threads,
+  refreshRevision,
+  onOpenRun,
+}: RunHistoryViewProps) {
+  const [filters, setFilters] = useState<RunHistoryFilters>({
+    workspaceId,
+    agentId: "",
+    threadId: "",
+    status: "",
+  });
+  const [view, setView] = useState(() => initialViewState(workspaceId));
+
+  const requestRef = useRef(0);
+  const controllerRef = useRef<AbortController | null>(null);
+  const inFlightRef = useRef(false);
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const filtersKeyRef = useRef<string | null>(null);
+  const revisionRef = useRef<number | undefined>(undefined);
+
+  const updateView = useCallback(
+    (updater: (current: RunHistoryViewState) => RunHistoryViewState) => {
+      setView((current) => (current.workspaceId === workspaceId ? updater(current) : current));
+    },
+    [workspaceId],
+  );
+
+  const requestPage = useCallback(
+    async (params: URLSearchParams, controller: AbortController): Promise<RunHistoryPage> => {
+      const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+      try {
+        const raw = await withTimeout(
+          api<unknown>(`/api/runs?${params.toString()}`, { signal: controller.signal }),
+          FETCH_TIMEOUT_MS,
+          "Run history request timed out.",
+        );
+        const parsed = RunHistoryPageSchema.safeParse(raw);
+        if (!parsed.success) {
+          throw new Error("Run history response was invalid.");
+        }
+        if (parsed.data.workspaceId !== workspaceId) {
+          throw new Error("Run history response was for another workspace.");
+        }
+        return parsed.data;
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    [workspaceId],
+  );
+
+  const buildParams = useCallback(
+    (cursor?: string) => {
+      const params = new URLSearchParams({
+        workspaceId: filters.workspaceId,
+        limit: String(PAGE_LIMIT),
+      });
+      if (filters.agentId !== "") params.set("agentId", filters.agentId);
+      if (filters.threadId !== "") params.set("threadId", filters.threadId);
+      if (filters.status !== "") params.set("status", filters.status);
+      if (cursor !== undefined && cursor !== null) params.set("cursor", cursor);
+      return params;
+    },
+    [filters],
+  );
+
+  const loadFirstPage = useCallback(async () => {
+    const requestId = ++requestRef.current;
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    inFlightRef.current = true;
+    // Let StrictMode effect replay (setup -> cleanup -> setup) settle before
+    // dispatching a network request; the first setup is cancelled by teardown.
+    await Promise.resolve();
+    if (requestId !== requestRef.current || controller.signal.aborted) return;
+    updateView((current) => ({
+      ...current,
+      page: null,
+      previousCursors: [],
+      coverage: null,
+      phase: "loading",
+      errorMessage: "",
+      moreError: "",
+      loadingMore: false,
+      failedAction: null,
+    }));
+    try {
+      const response = await requestPage(buildParams(), controller);
+      if (requestId !== requestRef.current) return;
+      updateView((current) => ({
+        ...current,
+        page: { items: response.items, nextCursor: response.page.nextCursor, cursor: null },
+        previousCursors: [],
+        coverage: response.coverage,
+        phase: "ready",
+      }));
+    } catch (error) {
+      if (requestId !== requestRef.current) return;
+      updateView((current) => ({
+        ...current,
+        page: null,
+        previousCursors: [],
+        coverage: null,
+        phase: "error",
+        errorMessage: errorText(error, "Loading run history failed."),
+        failedAction: null,
+      }));
+    } finally {
+      if (controllerRef.current === controller) controllerRef.current = null;
+      if (requestId === requestRef.current) inFlightRef.current = false;
+    }
+  }, [buildParams, requestPage, updateView]);
+
+  const loadOlder = useCallback(async () => {
+    if (inFlightRef.current) return;
+    const currentPage = viewRef.current.page;
+    if (!currentPage?.nextCursor) return;
+    const requestId = ++requestRef.current;
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    inFlightRef.current = true;
+    updateView((current) => ({ ...current, moreError: "", loadingMore: true, failedAction: null }));
+    try {
+      const response = await requestPage(buildParams(currentPage.nextCursor), controller);
+      if (requestId !== requestRef.current) return;
+      updateView((current) => {
+        if (!current.page || current.page.nextCursor !== currentPage.nextCursor) return current;
+        return {
+          ...current,
+          page: {
+            items: response.items,
+            nextCursor: response.page.nextCursor,
+            cursor: currentPage.nextCursor,
+          },
+          previousCursors: [...current.previousCursors, current.page.cursor],
+          coverage: response.coverage,
+          loadingMore: false,
+        };
+      });
+    } catch (error) {
+      if (requestId !== requestRef.current) return;
+      updateView((current) => ({
+        ...current,
+        loadingMore: false,
+        moreError: errorText(error, "Loading older runs failed."),
+        failedAction: "older",
+      }));
+    } finally {
+      if (controllerRef.current === controller) controllerRef.current = null;
+      if (requestId === requestRef.current) inFlightRef.current = false;
+    }
+  }, [buildParams, requestPage, updateView]);
+
+  const loadNewer = useCallback(async () => {
+    if (inFlightRef.current) return;
+    const previousCursors = viewRef.current.previousCursors;
+    if (previousCursors.length === 0) return;
+    const cursor = previousCursors.at(-1) ?? null;
+    const requestId = ++requestRef.current;
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    inFlightRef.current = true;
+    updateView((current) => ({ ...current, moreError: "", loadingMore: true, failedAction: null }));
+    try {
+      const response = await requestPage(
+        buildParams(cursor === null ? undefined : cursor),
+        controller,
+      );
+      if (requestId !== requestRef.current) return;
+      updateView((current) => {
+        if (current.previousCursors.at(-1) !== cursor) return current;
+        return {
+          ...current,
+          page: { items: response.items, nextCursor: response.page.nextCursor, cursor },
+          previousCursors: current.previousCursors.slice(0, -1),
+          coverage: response.coverage,
+          loadingMore: false,
+        };
+      });
+    } catch (error) {
+      if (requestId !== requestRef.current) return;
+      updateView((current) => ({
+        ...current,
+        loadingMore: false,
+        moreError: errorText(error, "Loading newer runs failed."),
+        failedAction: "newer",
+      }));
+    } finally {
+      if (controllerRef.current === controller) controllerRef.current = null;
+      if (requestId === requestRef.current) inFlightRef.current = false;
+    }
+  }, [buildParams, requestPage, updateView]);
+
+  useEffect(() => {
+    if (filters.workspaceId === workspaceId) return;
+    requestRef.current += 1;
+    controllerRef.current?.abort();
+    controllerRef.current = null;
+    inFlightRef.current = false;
+    filtersKeyRef.current = null;
+    revisionRef.current = undefined;
+    setFilters({ workspaceId, agentId: "", threadId: "", status: "" });
+    setView(initialViewState(workspaceId));
+  }, [filters.workspaceId, workspaceId]);
+
+  useEffect(() => {
+    if (filters.workspaceId !== workspaceId) return;
+    const filtersKey = JSON.stringify(filters);
+    const revisionChanged = refreshRevision !== revisionRef.current;
+    const filtersChanged = filtersKeyRef.current !== filtersKey;
+    if (!revisionChanged && !filtersChanged) return;
+    revisionRef.current = refreshRevision;
+    filtersKeyRef.current = filtersKey;
+    void loadFirstPage();
+  }, [filters, refreshRevision, loadFirstPage, workspaceId]);
+
+  useEffect(
+    () => () => {
+      requestRef.current += 1;
+      controllerRef.current?.abort();
+      controllerRef.current = null;
+      inFlightRef.current = false;
+      // Reset dedupe state so a StrictMode remount replay starts a fresh request.
+      filtersKeyRef.current = null;
+      revisionRef.current = undefined;
+    },
+    [],
+  );
+
+  const agentOptions = useMemo(
+    () =>
+      agents
+        .filter((agent) => agent.workspaceId === workspaceId)
+        .slice()
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    [agents, workspaceId],
+  );
+
+  const threadOptions = useMemo(
+    () =>
+      threads
+        .filter((thread) => thread.workspaceId === workspaceId)
+        .slice()
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    [threads, workspaceId],
+  );
+
+  const currentWorkspace = view.workspaceId === workspaceId;
+  const rows = currentWorkspace ? (view.page?.items ?? []) : [];
+  const nextCursor = currentWorkspace ? (view.page?.nextCursor ?? null) : null;
+  const hasNewer = currentWorkspace ? view.previousCursors.length > 0 : false;
+  const pageNumber = currentWorkspace ? view.previousCursors.length + 1 : 1;
+  const loading = currentWorkspace && view.phase === "loading";
+  const busy = loading || view.loadingMore;
+
+  const handleAgentChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    setFilters((current) => ({ ...current, agentId: event.target.value }));
+  };
+
+  const handleThreadChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    setFilters((current) => ({ ...current, threadId: event.target.value }));
+  };
+
+  return (
+    <section className="run-history-view" aria-label="Run history">
+      <header className="run-history-header">
+        <h1 className="run-history-heading">Run history</h1>
+        <button
+          type="button"
+          className="run-history-refresh"
+          aria-label="Refresh run history"
+          disabled={busy}
+          onClick={() => void loadFirstPage()}
+        >
+          Refresh run history
+        </button>
+      </header>
+
+      <fieldset className="run-history-filters">
+        <legend className="run-history-legend">Run history filters</legend>
+        <label className="run-history-filter">
+          <span>Run status</span>
+          <select
+            value={filters.status}
+            onChange={(event) =>
+              setFilters((current) => ({
+                ...current,
+                status: event.target.value as RunStatus | "",
+              }))
+            }
+            disabled={!currentWorkspace}
+          >
+            <option value="">All statuses</option>
+            {RUN_STATUSES.map((value) => (
+              <option key={value} value={value}>
+                {RUN_STATUS_LABELS[value]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="run-history-filter">
+          <span>Run agent</span>
+          <select value={filters.agentId} onChange={handleAgentChange} disabled={!currentWorkspace}>
+            <option value="">All agents</option>
+            {agentOptions.map((agent) => (
+              <option key={agent.id} value={agent.id}>
+                {agent.archived ? `${agent.name} (archived)` : agent.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="run-history-filter">
+          <span>Run conversation</span>
+          <select
+            value={filters.threadId}
+            onChange={handleThreadChange}
+            disabled={!currentWorkspace}
+          >
+            <option value="">All conversations</option>
+            {threadOptions.map((thread) => (
+              <option key={thread.id} value={thread.id}>
+                {thread.archived ? `${thread.name} (archived)` : thread.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </fieldset>
+
+      {currentWorkspace && view.phase === "loading" ? (
+        <p className="run-history-status-text" role="status">
+          Loading run history…
+        </p>
+      ) : null}
+
+      {currentWorkspace && view.phase === "error" ? (
+        <div className="run-history-error" role="alert">
+          <p>{view.errorMessage}</p>
+          <button type="button" onClick={() => void loadFirstPage()}>
+            Retry
+          </button>
+        </div>
+      ) : null}
+
+      {currentWorkspace && view.phase === "ready" ? (
+        <>
+          {view.coverage !== null && !view.coverage.complete ? (
+            <p className="run-history-warning" role="status">
+              Run history is incomplete: {view.coverage.unavailableThreads} conversation
+              {view.coverage.unavailableThreads === 1 ? "" : "s"} could not be scanned.
+            </p>
+          ) : null}
+          {rows.length === 0 ? (
+            <p className="run-history-empty">
+              {view.coverage !== null && !view.coverage.complete
+                ? "No run history available. Some conversations could not be scanned."
+                : "No runs found."}
+            </p>
+          ) : (
+            <ul className="run-history-list">
+              {rows.map((item) => (
+                <li key={`${item.run.threadId}:${item.run.id}`} className="run-history-row">
+                  <article className="run-history-item" aria-label={`Run ${item.run.id}`}>
+                    <div className="run-history-main">
+                      <div className="run-history-identity">
+                        <span className="run-history-agent">
+                          {item.agentName}
+                          {item.agentHandle !== undefined ? ` (${item.agentHandle})` : ""}
+                        </span>
+                        <span className="run-history-thread">
+                          {item.threadName}
+                          {item.threadArchived ? " (archived)" : ""}
+                        </span>
+                      </div>
+                      <div className="run-history-meta">
+                        <span
+                          className={`run-history-status run-history-status--${item.run.status}`}
+                        >
+                          {statusLabel(item.run.status)}
+                        </span>
+                        <span className="run-history-attempt">Attempt {item.run.attempt}</span>
+                        <time className="run-history-date" dateTime={item.run.createdAt}>
+                          Created {formatDate(item.run.createdAt)}
+                        </time>
+                        <time className="run-history-date" dateTime={item.run.updatedAt}>
+                          Updated {formatDate(item.run.updatedAt)}
+                        </time>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="run-history-open"
+                      aria-label={`Open run: ${item.agentName} in #${item.threadName}`}
+                      onClick={() => onOpenRun(item)}
+                    >
+                      Open run
+                    </button>
+                  </article>
+                </li>
+              ))}
+            </ul>
+          )}
+          <fieldset className="run-history-pagination">
+            <legend className="run-history-legend">Run history pages</legend>
+            <button
+              type="button"
+              className="run-history-newer"
+              aria-label="Newer runs"
+              disabled={!hasNewer || busy}
+              onClick={() => void loadNewer()}
+            >
+              Newer runs
+            </button>
+            <span className="run-history-page-indicator" aria-live="polite">
+              Page {pageNumber}
+            </span>
+            <button
+              type="button"
+              className="run-history-older"
+              aria-label="Older runs"
+              disabled={!nextCursor || busy}
+              onClick={() => void loadOlder()}
+            >
+              Older runs
+            </button>
+          </fieldset>
+          {view.moreError !== "" ? (
+            <p className="run-history-more-error" role="alert">
+              {view.moreError}
+              <button
+                type="button"
+                onClick={() => void (view.failedAction === "newer" ? loadNewer() : loadOlder())}
+              >
+                Retry
+              </button>
+            </p>
+          ) : null}
+        </>
+      ) : null}
+    </section>
+  );
+}

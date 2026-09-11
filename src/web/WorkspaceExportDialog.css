@@ -1,0 +1,60 @@
+.workspace-export-dialog {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.workspace-export-dialog > header {
+  flex: none;
+}
+
+.workspace-export-dialog .modal-body {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+
+.workspace-export-description {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.workspace-export-scope {
+  margin: 0;
+  color: var(--quiet);
+  font-size: 11px;
+}
+
+.workspace-export-scope strong {
+  font-weight: 700;
+}
+
+.workspace-export-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.workspace-export-success {
+  color: var(--green);
+}
+
+.workspace-export-error {
+  align-items: center;
+  gap: 8px;
+}
+
+.workspace-export-actions {
+  flex: none;
+  flex-wrap: wrap;
+  margin-top: 0;
+  padding: 14px 18px 18px;
+}

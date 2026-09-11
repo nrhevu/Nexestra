@@ -1,0 +1,63 @@
+.workspace-archive-dialog-loading {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.workspace-archive-dialog-loading > header {
+  flex: none;
+}
+
+.workspace-archive-dialog-loading-body {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  overflow-wrap: anywhere;
+}
+
+.workspace-archive-dialog-loading-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.workspace-archive-dialog-loading-error {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.workspace-archive-dialog-loading-error-text {
+  margin: 0;
+  font-weight: 600;
+}
+
+.workspace-archive-dialog-loading-hint {
+  margin: 0;
+  color: var(--quiet);
+  font-size: 11px;
+}
+
+.workspace-archive-dialog-loading-actions {
+  flex: none;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 0;
+  padding: 14px 18px 18px;
+  justify-content: flex-end;
+}
+
+.workspace-archive-dialog-loading-actions .secondary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-color: var(--border);
+  color: var(--text);
+}

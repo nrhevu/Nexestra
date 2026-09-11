@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import { delimiter, join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 
 export interface CommandResult {
   stdout: string;
@@ -34,6 +35,8 @@ export async function runCommand(
       stdio: ["ignore", "pipe", "pipe"],
     });
     const maxBytes = options.maxOutputBytes ?? 10 * 1024 * 1024;
+    const stdoutDecoder = new StringDecoder("utf8");
+    const stderrDecoder = new StringDecoder("utf8");
     let stdout = "";
     let stderr = "";
     let totalBytes = 0;
@@ -46,35 +49,34 @@ export async function runCommand(
     const onAbort = () => terminate(abortReason(options.signal));
     options.signal?.addEventListener("abort", onAbort, { once: true });
 
-    child.stdout.on("data", (chunk: Buffer) => {
-      totalBytes += chunk.byteLength;
-      if (totalBytes <= maxBytes) {
-        const text = chunk.toString("utf8");
-        stdout += text;
-        try {
-          options.onStdout?.(text);
-        } catch (error) {
-          terminate(error instanceof Error ? error : new Error("Could not process agent output."));
-        }
-      } else terminate(new Error("Agent returned too much data."));
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-      totalBytes += chunk.byteLength;
-      if (totalBytes <= maxBytes) {
-        const text = chunk.toString("utf8");
-        stderr += text;
-        try {
-          options.onStderr?.(text);
-        } catch (error) {
-          terminate(error instanceof Error ? error : new Error("Could not process agent output."));
-        }
-      } else terminate(new Error("Agent returned too much data."));
-    });
+    child.stdout.on("data", (chunk: Buffer) => collectOutput("stdout", chunk, stdoutDecoder));
+    child.stderr.on("data", (chunk: Buffer) => collectOutput("stderr", chunk, stderrDecoder));
+    child.stdout.on("end", () => appendOutput("stdout", stdoutDecoder.end()));
+    child.stderr.on("end", () => appendOutput("stderr", stderrDecoder.end()));
     child.on("error", (error) => finish(error));
     child.on("close", (exitCode) => {
       if (terminalError) finish(terminalError);
       else finish(undefined, { stdout, stderr, exitCode: exitCode ?? 1 });
     });
+
+    function collectOutput(stream: "stdout" | "stderr", chunk: Buffer, decoder: StringDecoder) {
+      if (settled || terminalError) return;
+      totalBytes += chunk.byteLength;
+      if (totalBytes > maxBytes) terminate(new Error("Agent returned too much data."));
+      else appendOutput(stream, decoder.write(chunk));
+    }
+
+    function appendOutput(stream: "stdout" | "stderr", text: string) {
+      if (settled || terminalError || !text) return;
+      if (stream === "stdout") stdout += text;
+      else stderr += text;
+      try {
+        if (stream === "stdout") options.onStdout?.(text);
+        else options.onStderr?.(text);
+      } catch (error) {
+        terminate(error instanceof Error ? error : new Error("Could not process agent output."));
+      }
+    }
 
     function terminate(error: Error) {
       if (terminalError || settled) return;

@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { Agent, RuntimeStatus, ThreadStreamEvent, ToolCall } from "../shared/contracts.js";
 import { AgentDispatcher, ChatService } from "./dispatcher.js";
-import type { AssignmentLocation, AssignmentRepositoryManager } from "./repository-manager.js";
+import type {
+  AssignmentLocation,
+  AssignmentPreparation,
+  AssignmentRepositoryManager,
+} from "./repository-manager.js";
 import type { AgentInvocation, AgentRunner } from "./runtime.js";
 import { FileStore, StoreError } from "./store.js";
 
@@ -25,6 +29,34 @@ class FakeRunner implements AgentRunner {
 
   async invoke(agent: Agent, invocation: AgentInvocation) {
     this.invocations.push({ agent, invocation });
+    return `reply from @${agent.handle}`;
+  }
+}
+
+class GatedRunner implements AgentRunner {
+  readonly invocations: { agent: Agent; invocation: AgentInvocation }[] = [];
+  private started = false;
+  private readonly startedWaiters: (() => void)[] = [];
+  private readonly releaseWaiters: (() => void)[] = [];
+
+  async runtimeStatus() {
+    return readyRuntime;
+  }
+
+  nextInvocationStarted(): Promise<void> {
+    if (this.started) return Promise.resolve();
+    return new Promise((resolve) => this.startedWaiters.push(resolve));
+  }
+
+  release(): void {
+    for (const resolve of this.releaseWaiters.splice(0)) resolve();
+  }
+
+  async invoke(agent: Agent, invocation: AgentInvocation) {
+    this.invocations.push({ agent, invocation });
+    this.started = true;
+    for (const resolve of this.startedWaiters.splice(0)) resolve();
+    await new Promise<void>((resolve) => this.releaseWaiters.push(resolve));
     return `reply from @${agent.handle}`;
   }
 }
@@ -211,9 +243,14 @@ class FakeAssignmentRepositories implements AssignmentRepositoryManager {
   async prepareAssignment(
     _repository: Parameters<AssignmentRepositoryManager["prepareAssignment"]>[0],
     location: AssignmentLocation,
-  ) {
+  ): Promise<AssignmentPreparation | undefined> {
     await mkdir(location.absolutePath, { recursive: true });
+    return undefined;
   }
+
+  async cleanupAssignment() {}
+
+  async deleteAssignmentBranch() {}
 }
 
 async function setup() {
@@ -415,6 +452,106 @@ describe("mention dispatch", () => {
       first.message.id,
       second.message.id,
     ]);
+  });
+
+  it("pins a queued invocation to the document revision at message persistence", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-dispatch-gated-pin-"));
+    const store = await FileStore.open({ root, workspacePath: root });
+    const runner = new GatedRunner();
+    const dispatcher = new AgentDispatcher(store, runner);
+    const chat = new ChatService(store, dispatcher);
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    await store.createAgent({
+      kind: "worker",
+      name: "Codex",
+      handle: "codex",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    const item = await store.createKnowledgeDocument(
+      { name: "Document", handle: "doc", description: "" },
+      {
+        name: "doc.md",
+        mediaType: "text/markdown",
+        bytes: new TextEncoder().encode("# v1"),
+      },
+    );
+    const sent = chat.send(thread.id, { content: "@codex read #doc" });
+    await runner.nextInvocationStarted();
+    await store.replaceKnowledgeDocument(
+      item.id,
+      { expectedRevisionId: item.currentRevisionId },
+      {
+        name: "doc-v2.md",
+        mediaType: "text/markdown",
+        bytes: new TextEncoder().encode("# v2"),
+      },
+    );
+    runner.release();
+    await Promise.all([sent, dispatcher.waitForIdle()]);
+    const invocation = runner.invocations[0]?.invocation;
+    expect(invocation?.knowledge).toEqual([expect.objectContaining({ content: "# v1" })]);
+  });
+
+  it("keeps the pinned revision when a failed run is retried after replacement", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-dispatch-gated-pin-"));
+    const store = await FileStore.open({ root, workspacePath: root });
+    const runner = new GatedRunner();
+    const dispatcher = new AgentDispatcher(store, runner);
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const agent = await store.createAgent({
+      kind: "worker",
+      name: "Codex",
+      handle: "codex",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    const item = await store.createKnowledgeDocument(
+      { name: "Document", handle: "doc", description: "" },
+      {
+        name: "doc.md",
+        mediaType: "text/markdown",
+        bytes: new TextEncoder().encode("# v1"),
+      },
+    );
+    const trigger = await store.createUserMessage(
+      thread.id,
+      "@codex retry #doc",
+      [{ agentId: agent.id, handle: agent.handle }],
+      [],
+      [{ knowledgeId: item.id, handle: item.handle }],
+    );
+    const now = new Date().toISOString();
+    const failed = await store.updateRun({
+      id: crypto.randomUUID(),
+      threadId: thread.id,
+      triggerMessageId: trigger.id,
+      agentId: agent.id,
+      attempt: 1,
+      status: "failed",
+      error: "test failure",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await store.replaceKnowledgeDocument(
+      item.id,
+      { expectedRevisionId: item.currentRevisionId },
+      {
+        name: "doc-v2.md",
+        mediaType: "text/markdown",
+        bytes: new TextEncoder().encode("# v2"),
+      },
+    );
+    const retried = dispatcher.retry(failed.id);
+    await runner.nextInvocationStarted();
+    const invocation = runner.invocations[0]?.invocation;
+    expect(invocation?.knowledge).toEqual([expect.objectContaining({ content: "# v1" })]);
+    runner.release();
+    await Promise.all([retried, dispatcher.waitForIdle()]);
   });
 
   it("records a clear failure for a disabled mentioned agent", async () => {
@@ -705,6 +842,118 @@ describe("mention dispatch", () => {
     );
   });
 
+  it("runs a task verification command in the manual Worker worktree", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-dispatch-verify-"));
+    const store = await FileStore.open({ root, workspacePath: root });
+    const runner = new FakeRunner();
+    const dispatcher = new AgentDispatcher(
+      store,
+      runner,
+      new FakeAssignmentRepositories(store.root),
+    );
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const worker = await store.createAgent({
+      kind: "worker",
+      name: "Builder",
+      handle: "builder",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    const repository = await store.createKnowledgeRepository({
+      name: "Product repository",
+      handle: "product-repo",
+      source: "https://github.com/example/product.git",
+    });
+    await store.updateKnowledgeRepository(repository.id, {
+      status: "ready",
+      defaultBranch: "main",
+    });
+    const task = await store.createTask({
+      title: "Implement feature",
+      description: "Build it.",
+      assigneeId: worker.id,
+      threadId: thread.id,
+      verificationCommand: "printf verification-passed",
+    });
+
+    const queued = await dispatcher.delegateFromTask(task.id, worker.handle, repository.handle);
+    expect(queued.status).toBe("queued");
+    await dispatcher.waitForIdle();
+    const assignment = (await dispatcher.taskProcess(task.id)).assignment;
+
+    expect(assignment).toMatchObject({
+      status: "completed",
+      verificationExitCode: 0,
+      verificationOutput: "verification-passed",
+    });
+    expect(store.getTask(task.id)).toMatchObject({ status: "done" });
+  });
+
+  it("blocks a task when its verification command fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-dispatch-verify-fail-"));
+    const store = await FileStore.open({ root, workspacePath: root });
+    const runner = new FakeRunner();
+    const dispatcher = new AgentDispatcher(
+      store,
+      runner,
+      new FakeAssignmentRepositories(store.root),
+    );
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const worker = await store.createAgent({
+      kind: "worker",
+      name: "Builder",
+      handle: "builder",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    const repository = await store.createKnowledgeRepository({
+      name: "Product repository",
+      handle: "product-repo",
+      source: "https://github.com/example/product.git",
+    });
+    await store.updateKnowledgeRepository(repository.id, {
+      status: "ready",
+      defaultBranch: "main",
+    });
+    const task = await store.createTask({
+      title: "Implement feature",
+      description: "Build it.",
+      assigneeId: worker.id,
+      threadId: thread.id,
+      verificationCommand: "printf verification-failed >&2; exit 42",
+    });
+
+    const queued = await dispatcher.delegateFromTask(task.id, worker.handle, repository.handle);
+    expect(queued.status).toBe("queued");
+    await dispatcher.waitForIdle();
+    const assignment = (await dispatcher.taskProcess(task.id)).assignment;
+
+    expect(assignment).toMatchObject({
+      status: "completed",
+      verificationExitCode: 42,
+      verificationOutput: "verification-failed",
+    });
+    expect(store.getTask(task.id)).toMatchObject({ status: "blocked" });
+
+    await dispatcher.delegateFromTask(task.id, worker.handle, repository.handle);
+    await dispatcher.waitForIdle();
+    const retried = (await dispatcher.taskProcess(task.id)).assignment;
+    expect(retried?.id).not.toBe(assignment?.id);
+    expect(retried).toMatchObject({
+      status: "completed",
+      verificationExitCode: 42,
+      workerAgentId: worker.id,
+      repositoryId: repository.id,
+    });
+    const process = await dispatcher.taskProcess(task.id);
+    expect(process.assignment?.id).toBe(retried?.id);
+    expect(process.assignments.map((entry) => entry.id)).toEqual([assignment?.id, retried?.id]);
+  });
+
   it("stops an active Worker process and preserves interrupted run and tool history", async () => {
     const root = await mkdtemp(join(tmpdir(), "nexestra-dispatch-stop-"));
     const store = await FileStore.open({ root, workspacePath: root });
@@ -775,6 +1024,105 @@ describe("mention dispatch", () => {
     expect(threadData.toolCalls).toEqual([
       expect.objectContaining({ name: "write", status: "interrupted" }),
     ]);
+  });
+
+  it("lets an archive win over a retry whose thread lookup is still pending", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-retry-archive-"));
+    const store = await FileStore.open({ root, workspacePath: root });
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const agent = await store.createAgent({
+      kind: "worker",
+      name: "Archiver",
+      handle: "archiver",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    const trigger = await store.createUserMessage(thread.id, "retry me", [
+      { agentId: agent.id, handle: agent.handle },
+    ]);
+    const run = {
+      id: "run-to-retry",
+      threadId: thread.id,
+      triggerMessageId: trigger.id,
+      agentId: agent.id,
+      attempt: 1,
+      status: "failed" as const,
+      error: "Network unavailable.",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    await store.updateRun(run);
+    const dispatcher = new AgentDispatcher(store, new FakeRunner());
+
+    const originalThreadData = store.threadData.bind(store);
+    let gateOpened = false;
+    let releaseGate: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    let dataCalls = 0;
+    vi.spyOn(store, "threadData").mockImplementation(async (threadId) => {
+      dataCalls += 1;
+      const result = await originalThreadData(threadId);
+      if (dataCalls === 1) {
+        gateOpened = true;
+        await gate;
+      }
+      return result;
+    });
+
+    const retryPromise = dispatcher.retry(run.id);
+    await waitUntil(() => gateOpened);
+    await expect(dispatcher.archiveThread(thread.id)).resolves.toMatchObject({ archived: true });
+    releaseGate();
+    await expect(retryPromise).rejects.toMatchObject({ code: "conflict" });
+
+    const after = await store.threadData(thread.id);
+    expect(after.runs).toHaveLength(1);
+    expect(after.messages).toHaveLength(1);
+    expect(store.getThread(thread.id)).toMatchObject({ archived: true });
+  });
+
+  it("releases a rejected send reservation so archiving can proceed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-send-archive-"));
+    const store = await FileStore.open({ root, workspacePath: root });
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const agent = await store.createAgent({
+      kind: "worker",
+      name: "Busy Agent",
+      handle: "busy",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    const dispatcher = new AgentDispatcher(store, new FakeRunner());
+    const chat = new ChatService(store, dispatcher);
+
+    const originalUpdateAgent = store.updateAgent.bind(store);
+    let mutationEntered = false;
+    let releaseMutation: () => void = () => undefined;
+    const mutationGate = new Promise<void>((resolve) => {
+      releaseMutation = resolve;
+    });
+    vi.spyOn(store, "updateAgent").mockImplementation(async (id, input) => {
+      const result = await originalUpdateAgent(id, input);
+      mutationEntered = true;
+      await mutationGate;
+      return result;
+    });
+    const updatePromise = dispatcher.updateAgent(agent.id, { name: "Being Changed" });
+    await waitUntil(() => mutationEntered);
+
+    await expect(chat.send(thread.id, { content: "@busy hello" })).rejects.toMatchObject({
+      code: "conflict",
+    });
+    await expect(dispatcher.archiveThread(thread.id)).resolves.toMatchObject({ archived: true });
+
+    releaseMutation();
+    await updatePromise;
   });
 });
 

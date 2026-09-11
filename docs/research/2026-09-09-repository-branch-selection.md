@@ -1,0 +1,121 @@
+# Research: choosing the source branch for future Workers
+
+Research date: 9 September 2026 (Asia/Ho_Chi_Minh).
+
+## Observed gap and selected direction
+
+Source refresh records a new commit from the repository's original default branch. A repository
+with work on another branch cannot currently select that branch for future Worker assignments.
+The selected change is an explicit source-branch picker that publishes a fetched commit only after
+success. Existing Worker worktrees keep their original commits, index and working files.
+
+## Primary-source evidence
+
+[Git's ls-remote documentation](https://git-scm.com/docs/git-ls-remote) describes listing remote
+refs and their object IDs without fetching objects into the local repository. `--refs` suppresses
+pseudorefs and peeled tag entries; `--exit-code` uses status 2 when no matching refs exist. This
+supports a read-only branch list with an ordinary empty state. The docs now call the filter
+`--branches`; `--heads` remains an alias and is supported by the installed Git 2.50.1.
+
+[Git's ref-validation documentation](https://git-scm.com/docs/git-check-ref-format) defines the
+restrictions on reference names. Its `--branch` option also expands previous-checkout syntax.
+Nexestra should validate the literal full `refs/heads/<name>` ref, reject names starting with a
+dash, and pass arguments directly to Git without a shell.
+
+[Git's fetch documentation](https://git-scm.com/docs/git-fetch) describes atomic ref updates,
+empty `--refmap=` ignoring configured mappings, and `--no-write-fetch-head` avoiding a write to
+`FETCH_HEAD`. Reusing source refresh's private destination ref and these flags lets branch
+selection obtain a commit without checking out the source clone or moving its existing refs.
+
+[Node 24's StringDecoder documentation](https://nodejs.org/docs/latest-v24.x/api/string_decoder.html)
+explains that incomplete multibyte characters are buffered between writes and that an incomplete
+final character is replaced when the decoder ends. A real subprocess fixture exposed a related
+bug in the existing command transport: independently decoding each chunk corrupted a Vietnamese
+branch name and emoji split between chunks. Separate streaming decoders for stdout and stderr
+preserve those names while keeping the combined raw-byte output budget.
+
+The web search tool returned HTTP 404. These official pages were fetched directly over HTTPS and
+their relevant text was read locally. The design choices and limits below are Nexestra decisions,
+not features promised by the cited tools.
+
+## Acceptance criteria
+
+- List existing source branches only after an explicit action. Listing must not change state,
+  source-clone refs, checkout, index, or Worker worktrees. Bound rows, name length, bytes and time;
+  malformed or omitted rows must make incompleteness visible.
+- Preserve the original `defaultBranch`; record a separate `selectedBranch` and source version.
+  Legacy records without a source version act as version zero.
+- Validate and fetch an explicitly chosen existing branch into a fresh private ref under the
+  repository operation lock. Publish the branch, commit and next version together after success.
+- Use an expected source version so a stale picker cannot replace a newer selection. A conflict
+  requires reloading and an explicit user retry. A fetch failure keeps the previous usable source.
+- Future refreshes follow the selected branch. Future Worker assignments use the selected commit;
+  existing assignments, including staged, unstaged and untracked files, remain unchanged.
+- Keep credentials out of branch-list results, saved metadata and error messages. Use the existing
+  process environment allowlist, closed stdin, noninteractive Git and bounded output/time.
+  The shared HTTP error boundary also redacts stored credentials from validation, store and
+  unexpected error messages; unexpected errors are logged as redacted text instead of raw Error
+  objects with potentially sensitive stack or cause fields.
+- Cover loading, empty, partial, manual-entry, failure and stale states in the UI. Cancel or ignore
+  old requests when the repository or workspace changes. Verify keyboard and light/dark themes.
+
+## Implementation and verification
+
+The subprocess regression fixture reproduced corrupted UTF-8 before the change. All seven focused
+process tests pass after the fix, including separate stdout/stderr decoding, incomplete final
+characters, callback failure and the combined raw-byte limit. Three HTTP error-boundary cases
+also verify redaction of stored credentials from validation, store and unexpected errors and logs.
+The branch backend, picker and shared contracts are integrated on
+`codex/workspace-attention-navigation`; [ADR 0037](../adr/0037-explicit-repository-source-branch.md)
+records the state and Git boundaries.
+
+Native-browser verification used one isolated local Git source and a runner that throws if invoked:
+
+- Opening details and explicitly listing `main`, `feature/release` and `nhánh/🚀` left all 39
+  original data files byte-identical, including state and the managed clone's Git metadata.
+- Applying `feature/release` published its commit at source version 1 while retaining the original
+  default `main`. Preparing a new Worker worktree through `RepositoryManager` used that feature
+  commit; the existing Worker's staged, unstaged and untracked edits and both clone/Worker index
+  files retained their hashes. Preparation itself did not modify state metadata.
+- Two browser pickers started from version 0. After the first applied the feature branch, the
+  second could not apply its stale choice. Reloading and explicitly applying `nhánh/🚀` succeeded
+  at version 2. The picker now shows the loaded response's current source branch after a reload.
+- Selecting a missing branch displayed the Git failure while preserving the selected Unicode
+  branch, commit and version. Advancing that source branch and using **Refresh source** selected
+  its new commit at version 3; source and clone HEAD still pointed to `main`.
+- With 509 source branches, the list displayed 500 rows in a 240px scroll region and showed its
+  partial-list note. PageDown moved the list by 220px. Typing the omitted `release/outside-list`
+  branch and pressing Enter successfully applied it at version 4.
+- Browser QA found a successful apply leaving **Change branch** disabled because the guarded
+  finalizer skipped a cleared intent. Success now clears the busy state directly, and focus returns
+  after React enables the button. A regression test and a fresh native apply both verify that the
+  picker can reopen immediately. Closing a pending picker also restores focus after rendering.
+- Escape closes only the inline picker, returning focus to **Change branch**; a second Escape
+  closes details. Light/dark screenshots were inspected. Detail cards now use theme colors, and
+  metadata-label styling no longer leaks into nested branch rows and messages.
+- After all selections, refreshes and worktree preparation, all 38 original data files other than
+  the intentionally changed `state.json` retained their hashes. The old Worker still had its main
+  commit and edits, the first newly prepared Worker retained the feature commit, clone HEAD stayed
+  unchanged, and no `FETCH_HEAD` was created.
+
+The focused UI integration run passed 86 tests. The final combined `pnpm check` ran after the last
+presentation adjustment.
+
+### Combined gate
+
+`PATH=/opt/homebrew/bin:$PATH NODE_OPTIONS=--no-experimental-webstorage pnpm check` passed with
+**406 tests in 32 files**, lint on 76 files, TypeScript and client/server production builds on
+9 September 2026. No live provider or credentialed remote was used.
+
+## Deliberate limits
+
+This workflow selects existing source branches for future work. It does not create remote branches,
+switch existing Worker worktrees, merge, push, or turn the managed clone into an interactive checkout.
+Branch listing is an observation of a changing source, not a guaranteed future fetch result. A
+deleted branch can fail when selected even if it appeared in the list earlier.
+
+Names are limited to 256 characters and results to 500 rows. A list exceeding the 1 MiB transport
+budget fails visibly instead of returning an unverified partial result; branch listing is not a
+paginated remote-ref browser. Private fetched snapshot refs have no automatic pruning. If both
+publication and its recovery write fail, the last commit remains selected but the persisted busy
+flag can require restart recovery, as documented for source refresh.

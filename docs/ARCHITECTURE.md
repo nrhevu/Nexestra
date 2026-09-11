@@ -7,7 +7,9 @@ communicates over HTTP, and the server invokes configured coding harnesses or pr
 primary navigation areas are Threads and Surfaces; the initial surfaces are Taskboard, Knowledge,
 and Agents.
 The far-left rail switches between workspaces, while the adjacent panel owns the Threads, Surfaces,
-and Settings navigation.
+and Settings navigation. **Needs attention** is available directly from workspace navigation and
+collects pending decisions and task failures across the selected workspace. Settings exposes
+workspace rename and rail reordering; the stored order is restored on restart.
 
 ## Components
 
@@ -39,16 +41,134 @@ thread has queued, running, approval-waiting, or input-waiting work, it opens on
 connection. The dispatcher publishes phase changes, runtime-emitted reasoning, and accumulated
 response text directly, and marks events that require the browser to reload durable messages, runs,
 or tools. Browsers without
-EventSource retain the one-second active-thread polling fallback. If work continues after the user
-navigates elsewhere, a lightweight activity endpoint is polled instead; the full workspace
-bootstrap is refreshed once when activity finishes. The dispatcher keeps the live run and response
+EventSource retain the one-second active-thread polling fallback. A lightweight workspace activity
+endpoint is polled for other active runs, including while the selected thread streams. Each snapshot
+updates run status and attention items; when any observed run disappears, the browser refreshes
+durable workspace metadata even if other work remains. Delayed results from a previous workspace
+are discarded. The dispatcher keeps the live run and response
 projection in memory, while JSONL run and tool events remain the durable source used for restart
 recovery.
+
+An idle workspace revalidates on window focus, document visibility and visible network-online
+events, or the explicit **Refresh workspace** action. Related lifecycle events coalesce into one
+read cycle with at most one queued follow-up. Revalidation refreshes bootstrap metadata and the
+current bounded history intent; a newer navigation or request keeps ownership of its view.
+Each cycle times out after 30 seconds, aborts its reads and permits retry; late responses cannot
+apply after cancellation. Hidden tabs discard queued automatic work.
+Drafts, selected files and pending submission identities remain unchanged. Surfaces need only
+bootstrap metadata, and Files & links retains its on-demand inventory path. Failures expose Retry
+while preserving usable data. Browser online status is a hint to attempt a read, never a gate on
+loopback access. See [ADR 0040](adr/0040-workspace-resume-revalidation.md).
 
 Harness installation and ChatGPT login status are cached for 30 seconds and explicitly invalidated
 by the login flow. In React, search input owns its local state and the transcript is a memoized render
 boundary. Runs are grouped by trigger in one pass, so typing does not rebuild message rows and a
 transcript refresh does not perform a messages-by-runs nested scan.
+
+Global search uses an editable combobox with keyboard selection and an `aria-activedescendant`
+listbox. It searches the current bootstrap data. Thread results navigate to the thread, while task
+and knowledge results open their existing detail dialogs directly.
+
+The local search endpoint scans only canonical transcript message events in the selected workspace.
+It bounds bytes, lines, line size and retained result metadata, matches after credential redaction,
+and reports observed counts plus explicit completeness. Invalid UTF-8, damaged/missing history and
+budget limits cannot be presented as an exhaustive no-match result. Complete pages accept offsets
+through 10,000; they are not snapshot-stable cursors. No index, provider call or persistence mutation
+is part of search. See [ADR 0034](adr/0034-transcript-message-search.md).
+
+A separate Messages dialog sends explicit phrase/thread/archive filters to the local transcript
+search endpoint. Editing a filter clears old results and aborts pending requests; workspace changes
+invalidate the dialog. A fresh modal request preserves the current focus across background metadata
+updates. Complete result pages are deduplicated by thread/message identity; partial scans offer no
+continuation. Search results navigate to `/threads/<id>?message=<id>`, which resolves foreign
+workspace links, opens Messages, and focuses the matching group. Automatic bottom scrolling stays
+paused until **Show latest** clears the target. Archived conversations remain read-only. See
+[ADR 0035](adr/0035-message-deep-links.md).
+
+Saved message rows also expose that route through **Copy message link**. The button builds an
+absolute URL for the current origin using stored thread and message IDs, waits for clipboard
+confirmation, and reveals a selectable URL when copying is unavailable or denied. Its feedback
+is component state; it adds no transcript, run or server-side sharing record.
+
+Messages uses `/api/threads/:id/history` with a 50-message window. Stable message-ID anchors select
+older, newer or centered pages; a missing linked target is established across the index rather than
+inferred from absence in the current page. A startup-built in-memory byte-offset index locates
+selected messages, their artifacts and the latest associated run/tool records in canonical JSONL.
+Durable appends extend the index. Whole-thread active runs are returned separately from page runs,
+so reading history does not hide current work or stop its SSE subscription. Historical refreshes
+keep their anchor. Needs attention resolves a live run to its trigger message before navigation.
+Files & links explicitly loads the complete legacy thread response when opened. See
+[ADR 0038](adr/0038-bounded-conversation-history-pagination.md).
+
+Draft text, pending send identities, the theme, and navigation preferences are browser-persisted UI state. An
+App-owned `ConversationState` keeps drafts under `nexestra.draft.<workspaceId>:<threadId>`, reads
+only on first access, and clears only the sent revision after a successful send; the empty value is a tombstone that also retires legacy thread-only keys. The sidebar shows a **Draft**
+badge per thread, and each workspace remembers its last opened thread under
+`nexestra.lastThread.<workspaceId>` so the Threads entry returns to the active conversation. Guarded
+storage calls degrade to in-memory text with a visible note instead of interrupting the composer. Foreign bare deep links are resolved once through `/api/threads/:id/metadata` with workspace and route generation guards, never by polling or loading a transcript.
+See [ADR 0025](adr/0025-app-scoped-conversation-state.md).
+
+An App-owned `ReadState` stores versioned read-through message counts under
+`nexestra.readState.1.<workspaceId>`. A workspace with no valid saved marker baselines existing
+threads to current counts. Restored workspaces retain their markers; newly discovered conversations
+start at zero. Unread badges subtract these counts from current thread metadata, including archived
+threads in the workspace total. Automatic acknowledgement uses the loaded latest page's
+`lastMessageIndex`, gated by current transcript-bottom geometry, document visibility, focus and
+covering dialogs. Reading older or linked pages and Files & links does not advance the marker.
+Explicit mark-all batches the currently known counts into one write without navigation or API calls.
+Storage contains only identities and counts, bounded to 5,000 threads and 256 KiB per workspace.
+Tabs merge markers monotonically and repair stale snapshots through same-origin storage events;
+failed storage leaves the current session's markers in memory. See
+[ADR 0041](adr/0041-browser-local-conversation-read-state.md).
+
+`unreadNavigation` projects workspace-scoped All/Unread lists in active-then-archived order,
+retaining the selected read row in Unread. App owns a temporary filter per workspace; reload
+starts with All. Next unread resolves from current metadata/read markers and opens the first unread message,
+including explicit archived targets. Empty results do not request history. App also owns selected
+File arrays per workspace/thread, preserving object identity across view unmounts and retiring only
+submitted objects when their request is still current. Older responses retain files reused by newer
+pending submissions. Explicit opening of Messages has its own signal so asynchronous send scrolling
+cannot override a Files view. See [ADR 0042](adr/0042-unread-conversation-navigation.md).
+
+First unread uses a 1-based `at` history anchor computed from the current read-through marker. The
+server resolves that ordinal directly from its canonical message offset index and returns one bounded
+page plus the actual message ID. App then replaces the transient lookup with an ordinary `around`
+intent and canonical `?message=` URL, reusing existing focus and scroll behavior without a second
+request. Missing ordinals return a bounded recent page with an explicit notice and no invented ID.
+Pending lookups coalesce; request/workspace guards and browser Back prevent stale responses from
+overriding navigation. Explicit Mark read writes only the selected conversation's maximum known
+metadata/page count to browser storage, without moving the viewport or calling the server. Neither
+ordinal nor linked history automatically acknowledges messages. See
+[ADR 0044](adr/0044-first-unread-message-navigation.md).
+
+`SubmissionState` owns pending message request IDs independently of a mounted conversation. Its
+workspace/thread-scoped entry records a UUID, payload fingerprint, timestamp and bounded file
+descriptors. WebCrypto hashes file bytes before a send; the bytes themselves stay in browser `File`
+objects. A confirmed response retires only its captured request ID and draft revision. Unconfirmed
+attachment submissions require the original files or an explicit new send after reload. Guarded
+storage and memory tombstones prevent a failed storage removal from reviving a retired identity in
+the current App session. See [ADR 0039](adr/0039-recoverable-message-submission.md).
+
+The attention projection uses active dispatcher runs plus current task, assignment, agent, and
+thread metadata. Bootstrap and the activity endpoint return the same shared item shape. Waiting
+approval/input runs are listed first. Tasks contribute at most one item based on their status and
+latest assignment; done tasks and superseded failures are omitted. Building the projection does not
+read transcripts or persist another queue. See [ADR 0024](adr/0024-workspace-attention-projection.md).
+If a new task appears in attention before the cached task list is refreshed, Inspect loads that task
+by ID before opening its process dialog. The result is discarded if the user switches workspaces.
+An invalid saved workspace selection is cleared once during initial startup so a replaced local data
+directory cannot leave the browser stuck at a missing-workspace error; explicit switch failures
+remain visible.
+
+Run history lists the latest durable lifecycle summary per run from the canonical transcript
+indices, including ordinary terminal chat runs and archived conversations. `/api/runs` validates
+workspace-owned filters and uses creation-order keyset cursors bound to those filters and the
+bounded page size. Invalid or unavailable conversations are omitted with explicit coverage. The
+in-memory summary projection is rebuilt at startup and extended after durable appends; warm listing
+sorts cached summaries without reading whole transcripts. The surface retains one page of run
+objects plus previous cursors. Open run uses the canonical trigger message link, with app-owned
+draft/file retention and immediate invalidation on workspace switches. Global Refresh/resume also
+refreshes the mounted listing. See [ADR 0045](adr/0045-workspace-run-history.md).
 
 Message content is stored and transported as unchanged Markdown. The browser renders it with
 GitHub Flavored Markdown and KaTeX inside the memoized transcript boundary. Raw HTML parsing is not
@@ -56,31 +176,110 @@ enabled, the Markdown renderer removes unsafe URL schemes, and HTTP(S) links use
 Agent and knowledge-reference highlighting is applied to rendered text nodes while links and code
 remain untouched.
 
+Conversation chrome and content use scoped mobile layout rules after the base stylesheet. Short
+mobile viewports scroll the header group while preserving the transcript's existing scroll root
+and bounding the composer. Prose wraps; code, tables and display math use named keyboard scroll
+regions. Refresh errors use a second mobile topbar row, with search results anchored beneath it.
+See [ADR 0043](adr/0043-responsive-conversation-containment.md).
+
 ## Persistence
 
 `state.json` stores workspaces, agent profiles, thread metadata, tasks, knowledge metadata, and
 Worker assignments. Every record carries a workspace ID. Handles and thread slugs are unique only
 within their workspace, and task references cannot cross workspace boundaries. Creating a
-workspace seeds a `general` thread.
+workspace seeds a `general` thread. Renaming updates the workspace name and re-derives a unique
+slug within the current list. Reordering stores the exact workspace ID list. The store serializes
+these writes, so a stale reorder from another window is rejected instead of silently dropping a
+concurrent workspace creation. Settings shows the resulting error and can reload the workspace
+list from the server without restarting the app.
 Version 1 state is migrated in place to version 2 by assigning every existing record to a default
 `Nexestra` workspace; record IDs and transcript paths do not change. Version 2 state migrates to
 version 3 by adding the first Master tool permissions; version 3 migrates to version 4 by adding the
 complete tool matrix. Version 4 migrates to version 5 by replacing that matrix with one `ask`,
 `auto`, or `full` access mode. Version 5 migrates to version 6 by adding empty knowledge and
-assignment collections. State writes use a temporary file followed by an atomic rename. The
+assignment collections. Version 6 migrates to version 7 by adding the task verification contract.
+State writes use a temporary file followed by an atomic rename. The
 separate `credentials.json` file has mode `0600` and stores only custom API keys by agent ID.
+
+Workspace export captures a selected state projection and owned source file identities under the
+store write barrier, then streams redacted canonical JSONL and exact uploads/document revisions
+into a private temporary ZIP. It checks identities again before handoff and fails on changed,
+missing, unsafe or corrupt sources. `GET /api/workspaces/:id/export` sends the completed archive
+with no-store download headers and disposes it after delivery or cancellation. One export per store
+remains reserved through the download. Source data, output, entry count and preparation time are
+bounded; browser download also has a deadline and ignores stale workspace results.
+The versioned manifest records the SHA-256 and size of each delivered payload. Known credentials
+are redacted from structured text; a literal known credential in original upload/document bytes
+blocks export. Credential/auth files, repository/worktree contents, browser state and unreferenced
+files are excluded. Settings and `/export workspace` open an inert dialog before explicit download.
+See [ADR 0046](adr/0046-portable-workspace-export.md) for ownership, snapshot and format details.
+
+Workspace archive inspection runs entirely in a browser module Worker. An explicit local File is
+checked against the ZIP records and export manifest; no inspection upload/API or persisted state is
+created. The client owns cancellation, a 45-second deadline and stale-result guards. The shared
+engine supports the stored ZIP v1 profile, validates layout and bounds, and checks CRC/SHA-256 one
+payload at a time. The report identifies the archive's workspace and paginates its verified files.
+WebCrypto requires one complete capped entry per digest. Matching hashes do not validate deep
+state/transcript semantics or establish authenticity, completeness or the ability to restore the data. See
+[ADR 0047](adr/0047-local-workspace-archive-inspection.md) for the supported profile and limitations.
+
+The export and inspection dialogs load through separate dynamic imports on explicit opening.
+`WorkspaceArchiveDialog` shows an immediately usable loading/error shell and restores focus across
+the content handoff. A per-kind registry caches component functions, coalesces pending imports and
+removes failed/timed-out attempts after a 15-second deadline. UI generations reject late results
+after close, retry or workspace changes. Native imports cannot be aborted; code may finish loading
+after the UI detaches, without starting archive work. Retry is subject to the browser's module
+cache. The standard Vite manifest records initial and dynamic dependency graphs for build checks.
+See [ADR 0048](adr/0048-deferred-workspace-archive-dialogs.md).
 
 Permanent agent deletion removes the profile and its custom credential, clears matching task
 assignments, and releases the handle for reuse. Credential removal is persisted before public state
 so an interrupted multi-file write favors removing the secret. Thread JSONL files are never rewritten
 for agent deletion; historical author and mention snapshots remain part of the canonical transcript.
 
+Agent profile updates use the same write order and never touch transcript files. Custom Master
+updates are write-only: an omitted or blank API key keeps the stored key, a new key rotates it, and
+`removeCredential: true` deletes it. The credential file is written first and rolled back if the
+public state write fails, so metadata cannot claim a credential the file lacks.
+
 Task and Knowledge metadata support create, detail, update, and permanent-delete operations.
 Deleting a task is rejected while one of its Worker assignments is queued or running. Historical
 assignment and transcript events are retained after task deletion. Deleting repository knowledge is
-also rejected while cloning or while a related assignment is active. Unused Knowledge storage is
+also rejected while cloning or while a related assignment is active. Repository clones are
+first created in a `source.retrying-*` staging sibling and atomically published only when
+the destination is absent or empty, so a failed clone can be retried from the failed detail card
+without changing the record's id, `#handle`, source, or creation time. An interrupted
+clone is marked failed at startup; an existing matching clone can be adopted after provenance
+checks. Unused Knowledge storage is
 removed; repository storage with assignment history is retained so its worktrees remain inspectable.
 Existing message text and stable historical references are never rewritten.
+
+Thread rename changes only metadata and derives a unique slug across active and archived threads
+in the workspace. Archive keeps the same ID, JSONL file and artifact paths, and Restore reopens the
+conversation. Dispatcher thread reservations span sends, retries and delegations; archival checks
+both those reservations and durable active runs/assignments. Archived threads reject new activity
+before persistence while retaining reads, exports and historical task inspection. The sidebar has
+separate active and archived lists, and ordinary last-thread resolution uses active threads. See
+[ADR 0031](adr/0031-thread-rename-and-archive.md).
+
+Knowledge document versions keep immutable bytes in a per-item revisions directory. The current
+document's storage path points at its selected revision. Replacement writes a new private file
+before publishing cloned state metadata; restoring copies a historical version into a new revision.
+Both mutations require the expected current revision, so stale edits fail explicitly. New user
+messages pin the selected document revision, with legacy bytes captured before their first pinned
+reference. Older transcript references without a revision retain their documented current-content
+fallback; they are never rewritten to invent historical provenance. The version list and version
+download endpoints remain local, with downloads served as attachments and `nosniff`.
+See [ADR 0032](adr/0032-revision-history.md).
+
+An explicit document preview endpoint resolves the current or requested immutable revision and
+returns bounded plain text. It verifies a revision's complete checksum before returning content,
+rejects files beyond the upload cap and invalid UTF-8, and redacts known credentials in text and
+labels. The retained prefix is 128 KiB plus bounded redaction lookahead; redaction can expand the
+returned text. Unsupported content uses a download fallback. Legacy documents without a recorded
+revision remain read-only and acquire no new provenance from a preview. The inline panel discards
+old responses when its version/document/workspace changes and makes the scrollable text accessible
+to keyboard readers. See [ADR 0036](adr/0036-knowledge-preview.md).
 
 Each thread has one canonical JSONL file. The `message.created`, `artifact.created`, `run.updated`,
 and `tool.updated` events use a monotonically increasing sequence. Artifact metadata and message
@@ -91,12 +290,24 @@ is truncated. After a restart, queued, running, approval-waiting, or input-waiti
 if their replies were fsynced; otherwise, they and any unfinished tools are marked interrupted and
 can be retried.
 
+Keyed user messages carry a private `submission` receipt in their canonical `message.created`
+event. It stores hashes of the normalized UUID and the server-verified payload, rather than a
+second transcript or cached HTTP response. Startup reconstructs receipt offsets; the write barrier
+and per-request dispatch lock serialize repeated submissions. Same-key payload changes fail with
+409. Confirmation returns the original message, Knowledge pins and artifact identities with current
+durable run records. Missing initial runs can be reconciled, while existing running or terminal runs
+are never repeated by confirmation. Archived confirmation has no new dispatch side effects.
+
 The upload boundary validates file count and size before converting multipart files to byte buffers.
 Images are classified from a small MIME allowlist; SVG and every other file type are downloaded with
 `nosniff`. HTTP(S) URLs are indexed from both user and agent messages. Markdown links and inline-code
 paths are indexed only when they resolve through a real path to a regular file inside the workspace;
 app data and Git internals are excluded. The content endpoint repeats that containment check so a
 changed symlink cannot escape the workspace.
+
+Link reference display names are bounded to 255 characters with an ellipsis; the normalized full
+URL remains the identity, up to the existing 4096-character URL limit. This does not rewrite the
+message or alter canonical append/replay behavior.
 
 ## Mention and dispatch
 
@@ -121,6 +332,11 @@ tombstone prevents new reservations until the profile update finishes. After an 
 newly typed reference to its old handle is plain text unless that handle has been reused by another
 agent. Historical failed runs for a deleted profile cannot be retried.
 
+Configuration edits reuse that tombstone: a PATCH changing anything other than `enabled` or
+`archived` is rejected while the agent is busy, queued, reserved, or already being changed, and
+falls back to the direct store call for pure toggles. Update validation matches creation, rejects
+unknown and immutable fields (kind, workspace, ID), and re-checks handle uniqueness.
+
 ## Planning and Worker delegation
 
 The provider-neutral Master tool session owns a per-run set of planned task IDs. `plan` creates
@@ -133,11 +349,52 @@ adds a corrective turn and keeps the tool loop active.
 
 Each repository is cloned once under the owning workspace. Every assignment creates a unique
 `nexestra/<assignment-id>` branch and a Git worktree under the same managed workspace tree. The
+ready repository detail view can explicitly select or refresh a source branch into a new private
+Git ref and publish a `sourceCommit` for future worktree preparations. The original `defaultBranch`
+is retained; `selectedBranch` overrides it after an explicit choice. A read-only, bounded branch
+list is loaded on demand. Selection requires the list's `sourceVersion`, with an absent legacy
+version interpreted as zero. Successful selection and refresh advance the version so a stale
+picker cannot overwrite newer source metadata. A preparation selects the latest published commit
+when it starts; before the first selection or refresh it uses clone HEAD. Fetch preserves
+the clone's checkout and index, origin refs, and existing assignments. Refresh failure retains the
+last usable selection and `ready` status. A persisted `refreshing` flag guards edit/delete and is
+recovered at restart; known errors are redacted. See
+[ADR 0033](adr/0033-explicit-repository-source-refresh.md) and
+[ADR 0037](adr/0037-explicit-repository-source-branch.md). The
 dispatcher reuses the normal per-agent queue, so one Worker remains serial while different Workers
 can execute concurrently. A delegated Worker receives task mode, the worktree as its process cwd,
 the shared transcript snapshot, and the selected repository as knowledge. Success marks the
-assignment and task complete; failure records a redacted error and returns the task to To do.
+assignment complete, then the dispatcher runs the task's user-owned verification command in the
+assignment worktree. Exit code zero marks the task done; any other exit code marks it blocked and
+stores the redacted, bounded output and exit code. Worker failure records a redacted error and
+returns the task to To do.
 Branches and worktrees are retained for inspection. Nexestra never merges or pushes.
+A finished assignment can be cleaned up explicitly from its process dialog. Cleanup uses Git's
+non-forced worktree removal, so dirty or untracked work is refused, records `worktreeCleanedAt`,
+and leaves the branch and durable run history intact.
+  After the worktree is removed, the same dialog can delete the assignment branch. Branch cleanup uses
+  Git's non-forced `branch -d`, records `branchDeletedAt`, and refuses unmerged branches.
+
+Worktree preparation captures the starting commit before the Worker runs. The process dialog exposes
+a read-only on-demand Git review that compares that base with the assigned branch and worktree:
+committed, staged, and unstaged summaries, a bounded unified diff, and untracked paths. It verifies
+repository/branch identity and path containment, refuses custom Git filters, and never merges,
+applies, resets, or cleans up. Older assignments without a recorded base are reported as `legacy`.
+See [ADR 0030](adr/0030-read-only-assignment-git-review.md).
+The process dialog can also retry the latest failed, interrupted, or verification-blocked
+assignment with its same Worker and repository. Retry creates a new assignment, branch, and worktree
+while preserving all historical assignment and run records.
+A task with no assignment can be delegated directly from its process dialog by selecting an enabled
+Worker and ready repository; a linked thread remains mandatory.
+
+Master and manual delegation use one assignment lifecycle. A manual request first appends a user
+message with the selected Worker's explicit mention, then persists its assignment and canonical run.
+The HTTP endpoint returns `202` with the queued assignment so the existing process view can observe
+and stop it immediately. An in-memory task reservation rejects duplicate starts while persistence is
+in flight; the per-Worker queue includes worktree preparation, execution, and verification. Run/tool
+failures and interruptions remain durable, and a failed start releases its reservations. Stopping
+selects an active assignment even if an older historical assignment was updated later. See
+[ADR 0028](adr/0028-shared-worker-assignment-lifecycle.md).
 
 Each delegated assignment owns an in-memory abort controller from before it is queued until its
 final cleanup. Stopping a task aborts both Git worktree preparation and the Worker harness process;
@@ -149,7 +406,8 @@ left without an in-memory controller after a restart.
 The assignment ID is also the delegated Worker's durable run ID in the canonical thread JSONL.
 Native Worker tool events are normalized and persisted against that run, while reasoning and
 partial text remain in the dispatcher's bounded live projection. The Taskboard process endpoint
-joins task, assignment, run, tool history, and current live activity. Its dialog subscribes to the
+joins task, every assignment attempt, the latest run, tool history, and current live activity. Its
+dialog subscribes to the
 same thread SSE stream as chat, with an active-only polling fallback when EventSource is unavailable.
 
 ## Agent runtimes
@@ -181,7 +439,9 @@ is written to the thread and pauses its run until the user decides; a question p
 input state until the local user responds. Multiple calls from one model step execute concurrently,
 and a run stays paused until all outstanding approvals or questions are resolved. File tools accept
 relative paths and absolute paths inside the repository, reject traversal and escaping symlinks,
-and protect Nexestra data and credentials. `read` also accepts exact absolute paths allowlisted from
+and protect Nexestra data and credentials. Workspace, data-root, and absolute-path comparisons use
+canonical physical paths so symlink aliases such as macOS `/var` versus `/private/var` cannot bypass
+or break containment checks. `read` also accepts exact absolute paths allowlisted from
 the triggering message, loaded skill, or saved large tool output; that allowlist does not extend to
 search or mutation tools. Tool loops stop after twelve rounds or three consecutive identical calls.
 
@@ -242,18 +502,73 @@ credentials.
 
 ## Known gaps
 
+- Conversation reflow is verified with Chromium CSS viewport overrides down to 320×480; physical
+  software keyboards, other browser engines and full surface/modal reflow need separate checks.
+  Short screens use scrollable header and composer areas. The existing 4096-character artifact
+  URL bound still applies to automatic reference indexing.
+
+- Recoverable submissions require a client request ID; legacy unkeyed calls remain independent.
+  Receipt metadata grows with retained user messages and is rebuilt from JSONL at startup. Replay
+  reconciliation reads durable thread runs; this is separate from bounded history-page reads.
+  Browser storage may be denied or cleared, and file bytes are not persisted by the composer.
+  Explicit run retries and the existing automatic retry policy can invoke a harness again; message
+  confirmation does not provide exactly-once external effects or multi-process coordination.
+
+- Conversation history pages avoid whole-log reads after startup, but startup still scans the
+  logs and the in-memory offset index grows with record counts. Oversized page/event reads fail
+  visibly. Files & links, Markdown export and agent context retain full-history reads. Finite
+  pages replace their predecessor; the app does not virtualize one continuous transcript.
+
+- Needs attention reflects the selected workspace's current conditions. It has no historical
+  notification log, snoozing, dismissal, desktop notifications, or cross-workspace
+  monitoring. Run history separately lists ordinary failed chat turns and links to their thread.
+  Changes from another client are
+  discovered on return, a visible online event or explicit refresh; idle clients do not continuously
+  exchange updates.
+
+- Run history adds O(runs) summary memory and sorts matching runs per request under the store's
+  write serialization. Its coverage describes the cached index; external transcript edits require
+  a restart. Filtered pages are live and can change as statuses update. Filters/page position reset
+  after leaving the surface, and deleted agents are labeled Unknown. It has no background polling,
+  run error/output search, cross-workspace aggregation or new run action controls.
+
+- Workspace export has no import/restore workflow and is not a complete backup. Snapshot inventory
+  scans transcripts under the write barrier before a second read for ZIP generation. Stored ZIP
+  entries avoid compression work; the browser holds a bounded ZIP Blob. Known-credential redaction
+  cannot discover other secrets or decode arbitrary binary encodings. Hashes are integrity checks,
+  not signatures. A process crash can leave a private archive in operating-system temporary storage.
+
+- Conversation unread state belongs to one browser profile and origin. It counts all canonical
+  messages and uses a read-through count, not a per-message receipt or proof of attention. Existing
+  history is baselined on first use; browser storage loss can reset those markers. Cross-tab merges
+  are best effort because localStorage read/write is not an atomic transaction. Markers do not
+  synchronize between devices or recover a data directory replaced with shorter history.
+  Unread filters reset on reload. First/Next unread uses known metadata in the selected workspace;
+  the ordinal resolves once to a stable message ID. Refresh or workspace revalidation discovers
+  additional idle activity; navigation itself does not poll other conversations. Selected files survive navigation in memory
+  only, so reload requires selecting them again. Several drafts can keep several composer-sized
+  file buckets until removed, sent, or the tab closes.
+
 - App-native `plan` and `delegate` are currently available to custom OpenAI-compatible Masters.
   ChatGPT OAuth Masters run through Codex CLI and do not yet receive this bridge.
-- Assignment worktrees and branches are retained and cannot yet be cleaned up, merged, or pushed
-  from the UI. Repository fetch/pull and retry are not yet exposed.
-- Knowledge metadata can be edited, but replacing stored document bytes or a repository source
+- Assignment branches can be deleted only when Git confirms they are merged; merge and push are not
+  yet exposed. Finished worktrees can be removed explicitly, but dirty or untracked work is refused.
+  A ready repository can explicitly select and refresh an existing source branch for future Worker
+  assignments; branch creation, pull and merge are not exposed. Branch listing is bounded and can
+  become stale before selection; a missing source branch is a visible fetch failure. Private refresh
+  refs are retained without automatic pruning. Branch deletion still uses Git's non-forced merged check against its
+  upstream or the clone HEAD, so even an unchanged branch from a refreshed source can require the
+  clone's integration branch to be advanced manually before Git allows deletion.
+- Document versions have no automatic retention limit or pruning. Permanent Knowledge deletion
+  removes its versions, so historical references to a deleted item cannot load those bytes. Old
+  messages without a pinned revision use current contents. Changing a repository source still
   requires deleting and creating the item again.
+- A crash during cloning can leave a `source.retrying-*` staging directory. It is preserved for
+  manual review instead of being auto-removed, because no ownership record exists for it.
 - Tasks created before the delegation-completion guard may remain unassigned; their process dialog
   reports that state, but does not retroactively start a Worker.
 - OpenCode `plan` is an application policy, not an independent OS or container sandbox.
-- Agent profiles cannot yet edit their full configuration after creation; enable, disable, archive,
-  and permanent deletion are available.
-- Workspaces cannot yet be renamed, reordered, or deleted.
+- Workspaces can be renamed and reordered from Settings; deletion is not yet supported.
 - Device OAuth displays raw Codex CLI instructions; it does not yet use `codex app-server` JSON-RPC.
 - Custom providers support only two OpenAI-compatible protocols; Anthropic Messages is not supported.
 - Remote MCP supports Streamable HTTP, environment-backed headers, and separate startup, catalog,

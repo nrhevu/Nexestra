@@ -420,6 +420,8 @@ function builtInTools(
               branch: assignment.branch,
               worktreePath: assignment.worktreePath,
               workerResult: result,
+              verificationExitCode: assignment.verificationExitCode,
+              verificationOutput: assignment.verificationOutput,
             },
             null,
             2,
@@ -769,28 +771,32 @@ async function repositoryFiles(
 ): Promise<string[]> {
   const target = await securePath(context, requestedPath, "read");
   if (!(await stat(target)).isDirectory()) throw new Error(`${requestedPath} is not a directory.`);
+  const workspace = await realpath(context.workspacePath);
   const binary = await findExecutable("rg", context.env);
   if (!binary) throw new Error("File discovery requires ripgrep (rg) in PATH.");
   const args = ["--files", "--hidden", "--no-require-git", "--color", "never"];
   addIgnoreGlobs(args, config.ignore);
-  args.push("--", relative(context.workspacePath, target) || ".");
+  args.push("--", relative(workspace, target) || ".");
   const result = await runCommand(binary, args, {
-    cwd: context.workspacePath,
+    cwd: workspace,
     timeoutMs: 10_000,
     maxOutputBytes: MAX_PROCESS_OUTPUT_BYTES,
     env: safeProcessEnv(context.env),
   });
   if (result.exitCode !== 0) throw new Error(result.stderr.trim() || "ripgrep failed.");
-  const files = result.stdout
+  const discovered = result.stdout
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((line) => relative(context.workspacePath, resolve(context.workspacePath, line)))
-    .filter((file) => !isSensitivePath(context, resolve(context.workspacePath, file)))
-    .sort();
+    .map((line) => relative(workspace, resolve(workspace, line)));
+  const files: string[] = [];
+  for (const file of discovered) {
+    if (!(await isSensitivePath(context, resolve(workspace, file)))) files.push(file);
+  }
+  files.sort();
   if (pattern === "**/*") return files;
   return files.filter((file) => {
-    const fromTarget = relative(target, resolve(context.workspacePath, file));
+    const fromTarget = relative(target, resolve(workspace, file));
     return !fromTarget.startsWith("..") && matchesGlob(fromTarget, pattern);
   });
 }
@@ -801,6 +807,7 @@ async function grepTool(
   config: HarnessConfig,
 ): Promise<string> {
   const target = await securePath(context, input.path as string, "read");
+  const workspace = await realpath(context.workspacePath);
   const binary = await findExecutable("rg", context.env);
   if (!binary) throw new Error("The grep tool requires ripgrep (rg) in PATH.");
   const args = [
@@ -817,9 +824,9 @@ async function grepTool(
   addIgnoreGlobs(args, config.ignore);
   const include = validateGlob(input.pattern as string);
   if (include !== "**/*") args.push("--glob", include);
-  args.push("--", input.query as string, relative(context.workspacePath, target) || ".");
+  args.push("--", input.query as string, relative(workspace, target) || ".");
   const result = await runCommand(binary, args, {
-    cwd: context.workspacePath,
+    cwd: workspace,
     timeoutMs: 10_000,
     maxOutputBytes: MAX_PROCESS_OUTPUT_BYTES,
     env: safeProcessEnv(context.env),
@@ -832,9 +839,7 @@ async function grepTool(
     .flatMap((line) => {
       const match = /^(.*?):(\d+):(.*)$/.exec(line);
       if (!match?.[1] || !match[2]) return [];
-      return [
-        { path: resolve(context.workspacePath, match[1]), line: match[2], text: match[3] ?? "" },
-      ];
+      return [{ path: resolve(workspace, match[1]), line: match[2], text: match[3] ?? "" }];
     });
   const selected = rows.slice(0, MAX_SEARCH_RESULTS);
   if (selected.length === 0) return "No files found";
@@ -1003,10 +1008,15 @@ async function readTextSlice(
 
 async function secureReadPath(context: MasterToolContext, requestedPath: string): Promise<string> {
   if (!isAbsolute(requestedPath)) return securePath(context, requestedPath, "read");
-  const requested = resolve(requestedPath);
-  const allowed = context.readableArtifactPaths?.some(
-    (artifactPath) => isAbsolute(artifactPath) && resolve(artifactPath) === requested,
-  );
+  const requested = await canonicalizeExisting(resolve(requestedPath));
+  let allowed = false;
+  for (const artifactPath of context.readableArtifactPaths ?? []) {
+    if (!isAbsolute(artifactPath)) continue;
+    if ((await canonicalizeExisting(resolve(artifactPath))) === requested) {
+      allowed = true;
+      break;
+    }
+  }
   if (allowed) {
     const directInfo = await lstat(requested);
     if (!directInfo.isFile()) throw new Error("Attached artifact paths must be regular files.");
@@ -1501,16 +1511,16 @@ async function securePath(
 ): Promise<string> {
   const workspace = await realpath(context.workspacePath);
   const target = isAbsolute(requestedPath)
-    ? resolve(requestedPath)
+    ? await canonicalizeExisting(resolve(requestedPath))
     : resolve(workspace, requestedPath);
   if (!isWithin(workspace, target)) throw new Error("Path escapes the repository root.");
-  if (isSensitivePath(context, target))
+  if (await isSensitivePath(context, target))
     throw new Error("Nexestra credentials and auth files are protected.");
   try {
     const resolved = await realpath(target);
     if (!isWithin(workspace, resolved))
       throw new Error("Path resolves outside the repository root.");
-    if (isSensitivePath(context, resolved))
+    if (await isSensitivePath(context, resolved))
       throw new Error("Nexestra credentials and auth files are protected.");
     return resolved;
   } catch (error) {
@@ -1534,9 +1544,25 @@ async function securePath(
   return target;
 }
 
-function isSensitivePath(context: MasterToolContext, target: string): boolean {
-  const dataRoot = resolve(context.dataPath);
-  const workspace = resolve(context.workspacePath);
+async function canonicalizeExisting(path: string): Promise<string> {
+  let current = path;
+  const missing: string[] = [];
+  for (;;) {
+    try {
+      return join(await realpath(current), ...missing.reverse());
+    } catch (error) {
+      if (!isNodeError(error, "ENOENT")) throw error;
+      missing.push(basename(current));
+      const parent = dirname(current);
+      if (parent === current) throw error;
+      current = parent;
+    }
+  }
+}
+
+async function isSensitivePath(context: MasterToolContext, target: string): Promise<boolean> {
+  const dataRoot = await canonicalizeExisting(resolve(context.dataPath));
+  const workspace = await canonicalizeExisting(resolve(context.workspacePath));
   const resolvedTarget = resolve(target);
   if (isCredentialPath(context, resolvedTarget)) return true;
   if (resolve(resolvedTarget) === resolve(dataRoot, "state.json")) return true;

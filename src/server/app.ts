@@ -5,10 +5,20 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { ZodError } from "zod";
-import { type BootstrapData, ToolAnswersSchema } from "../shared/contracts.js";
+import {
+  type BootstrapData,
+  DelegateTaskSchema,
+  MessageSearchRequestSchema,
+  RunHistoryRequestSchema,
+  SelectRepositorySourceBranchSchema,
+  ThreadHistoryRequestSchema,
+  ToolAnswersSchema,
+} from "../shared/contracts.js";
+import { reviewAssignmentGit } from "./assignment-review.js";
+import { workspaceActivity } from "./attention.js";
 import { ChatGptAuthManager } from "./auth.js";
 import { AgentDispatcher, ChatService } from "./dispatcher.js";
-import { RepositoryManager } from "./repository-manager.js";
+import { type AssignmentRepositoryManager, RepositoryManager } from "./repository-manager.js";
 import { type AgentRunner, agentView, LocalAgentRunner } from "./runtime.js";
 import {
   type FileStore,
@@ -18,6 +28,7 @@ import {
   StoreError,
   type UploadArtifactInput,
 } from "./store.js";
+import { createWorkspaceExportResponse } from "./workspace-export.js";
 
 interface CreateAppOptions {
   store: FileStore;
@@ -25,11 +36,13 @@ interface CreateAppOptions {
   auth?: ChatGptAuthManager;
   productionAssets?: boolean;
   launchPath?: (path: string, reveal: boolean) => Promise<void>;
+  repositories?: AssignmentRepositoryManager;
 }
 
 export function createApp(options: CreateAppOptions) {
   const runner = options.runner ?? new LocalAgentRunner({ store: options.store });
-  const repositories = new RepositoryManager(options.store);
+  const defaultRepositories = new RepositoryManager(options.store);
+  const repositories = options.repositories ?? defaultRepositories;
   const dispatcher = new AgentDispatcher(options.store, runner, repositories);
   const chat = new ChatService(options.store, dispatcher);
   const launchPath = options.launchPath ?? launchDesktopPath;
@@ -54,12 +67,19 @@ export function createApp(options: CreateAppOptions) {
   app.get("/api/health", (context) => context.json({ ok: true, version: "0.1.0" }));
 
   app.get("/api/bootstrap", async (context) => {
-    const runtime = await runner.runtimeStatus();
     const workspaces = options.store.listWorkspaces();
     const requestedWorkspaceId = context.req.query("workspaceId");
     const workspace =
-      (requestedWorkspaceId && options.store.getWorkspace(requestedWorkspaceId)) ?? workspaces[0];
+      requestedWorkspaceId === undefined
+        ? workspaces[0]
+        : options.store.getWorkspace(requestedWorkspaceId);
     if (!workspace) throw new StoreError("not_found", "Workspace not found.");
+    const runtime = await runner.runtimeStatus();
+    const activity = workspaceActivity(
+      options.store,
+      workspace.id,
+      dispatcher.activeRuns(workspace.id),
+    );
     const data: BootstrapData = {
       workspaces,
       workspace,
@@ -70,7 +90,8 @@ export function createApp(options: CreateAppOptions) {
       tasks: options.store.listTasks(workspace.id),
       knowledge: options.store.listKnowledge(workspace.id),
       assignments: options.store.listAssignments(workspace.id),
-      activeRuns: dispatcher.activeRuns(workspace.id),
+      activeRuns: activity.activeRuns,
+      attention: activity.attention,
       runtime,
       workspacePath: options.store.workspacePath,
       dataPath: options.store.root,
@@ -81,14 +102,40 @@ export function createApp(options: CreateAppOptions) {
   app.get("/api/activity", (context) => {
     const requestedWorkspaceId = context.req.query("workspaceId");
     const workspace =
-      (requestedWorkspaceId && options.store.getWorkspace(requestedWorkspaceId)) ??
-      options.store.listWorkspaces()[0];
+      requestedWorkspaceId === undefined
+        ? options.store.listWorkspaces()[0]
+        : options.store.getWorkspace(requestedWorkspaceId);
     if (!workspace) throw new StoreError("not_found", "Workspace not found.");
-    return context.json({ activeRuns: dispatcher.activeRuns(workspace.id) });
+    return context.json(
+      workspaceActivity(options.store, workspace.id, dispatcher.activeRuns(workspace.id)),
+    );
   });
+
+  app.get("/api/workspaces", (context) => context.json(options.store.listWorkspaces()));
 
   app.post("/api/workspaces", async (context) => {
     return context.json(await options.store.createWorkspace(await context.req.json()), 201);
+  });
+
+  app.patch("/api/workspaces/:id", async (context) => {
+    return context.json(
+      await options.store.updateWorkspace(context.req.param("id"), await context.req.json()),
+    );
+  });
+
+  app.put("/api/workspaces/order", async (context) => {
+    return context.json(await options.store.reorderWorkspaces(await context.req.json()));
+  });
+
+  app.get("/api/workspaces/:id/export", async (context) => {
+    if (Object.keys(context.req.query()).length > 0) {
+      throw new StoreError("invalid", "Workspace export does not accept query options.");
+    }
+    return createWorkspaceExportResponse({
+      store: options.store,
+      workspaceId: context.req.param("id"),
+      signal: context.req.raw.signal,
+    });
   });
 
   app.post("/api/agents", async (context) => {
@@ -98,7 +145,12 @@ export function createApp(options: CreateAppOptions) {
   });
 
   app.post("/api/knowledge/documents", async (context) => {
-    const body = await context.req.parseBody({ all: true });
+    const body = await context.req.parseBody({
+      all: true,
+      maxFiles: MAX_UPLOAD_FILES,
+      maxFileSize: MAX_UPLOAD_BYTES,
+      maxSize: MAX_UPLOAD_TOTAL_BYTES,
+    });
     const files = toFiles(body.file);
     if (files.length !== 1) {
       throw new StoreError("invalid", "Choose exactly one knowledge document.");
@@ -124,8 +176,54 @@ export function createApp(options: CreateAppOptions) {
     );
   });
 
+  app.put("/api/knowledge/:id/document", async (context) => {
+    const body = await context.req.parseBody({
+      all: true,
+      maxFiles: 1,
+      maxFileSize: MAX_UPLOAD_BYTES,
+      maxSize: MAX_UPLOAD_TOTAL_BYTES,
+    });
+    const files = toFiles(body.file);
+    if (files.length !== 1) {
+      throw new StoreError("invalid", "Choose exactly one replacement document.");
+    }
+    validateFileHeaders(files);
+    const file = files[0];
+    if (!file) throw new StoreError("invalid", "Replacement document is missing.");
+    return context.json(
+      await options.store.replaceKnowledgeDocument(
+        context.req.param("id"),
+        { expectedRevisionId: stringField(body.expectedRevisionId) },
+        {
+          name: file.name,
+          mediaType: file.type,
+          bytes: new Uint8Array(await file.arrayBuffer()),
+        },
+      ),
+    );
+  });
+
   app.post("/api/knowledge/repositories", async (context) => {
-    return context.json(await repositories.addRepository(await context.req.json()), 201);
+    return context.json(await defaultRepositories.addRepository(await context.req.json()), 201);
+  });
+
+  app.post("/api/knowledge/repositories/:id/retry", async (context) => {
+    return context.json(await defaultRepositories.retryRepository(context.req.param("id")));
+  });
+
+  app.post("/api/knowledge/repositories/:id/refresh", async (context) => {
+    return context.json(await defaultRepositories.refreshRepository(context.req.param("id")));
+  });
+
+  app.get("/api/knowledge/:id/branches", async (context) => {
+    return context.json(await defaultRepositories.listBranches(context.req.param("id")));
+  });
+
+  app.post("/api/knowledge/:id/source-branch", async (context) => {
+    const input = SelectRepositorySourceBranchSchema.parse(await context.req.json());
+    return context.json(
+      await defaultRepositories.selectSourceBranch(context.req.param("id"), input),
+    );
   });
 
   app.get("/api/knowledge/:id", (context) => {
@@ -150,7 +248,9 @@ export function createApp(options: CreateAppOptions) {
     if (item?.kind !== "document") {
       throw new StoreError("not_found", "Knowledge document not found.");
     }
-    const bytes = await readFile(options.store.knowledgePath(item));
+    const bytes = item.currentRevisionId
+      ? (await options.store.documentRevisionContent(item.id, item.currentRevisionId)).bytes
+      : await readFile(options.store.knowledgePath(item));
     return new Response(new Uint8Array(bytes), {
       headers: {
         "cache-control": "private, no-store",
@@ -161,33 +261,118 @@ export function createApp(options: CreateAppOptions) {
     });
   });
 
-  app.patch("/api/agents/:id", async (context) => {
-    const agent = await options.store.updateAgent(
-      context.req.param("id"),
-      await context.req.json(),
+  app.get("/api/knowledge/:id/revisions", async (context) => {
+    return context.json(
+      await options.store.listKnowledgeDocumentRevisions(context.req.param("id")),
     );
+  });
+
+  app.get("/api/knowledge/:id/preview", async (context) => {
+    const revisionId = context.req.query("revisionId");
+    return context.json(
+      await options.store.previewKnowledgeDocument(
+        context.req.param("id"),
+        revisionId === undefined || revisionId === "" ? undefined : revisionId,
+      ),
+    );
+  });
+
+  app.get("/api/knowledge/:id/revisions/:revisionId/content", async (context) => {
+    const { revision, bytes } = await options.store.documentRevisionContent(
+      context.req.param("id"),
+      context.req.param("revisionId"),
+    );
+    return new Response(new Blob([bytes]), {
+      headers: {
+        "cache-control": "private, no-store",
+        "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(revision.fileName)}`,
+        "content-type": "application/octet-stream",
+        "x-content-type-options": "nosniff",
+      },
+    });
+  });
+
+  app.post("/api/knowledge/:id/revisions/:revisionId/restore", async (context) => {
+    return context.json(
+      await options.store.restoreKnowledgeDocumentRevision(
+        context.req.param("id"),
+        context.req.param("revisionId"),
+        await context.req.json(),
+      ),
+    );
+  });
+
+  app.patch("/api/agents/:id", async (context) => {
+    const agent = await dispatcher.updateAgent(context.req.param("id"), await context.req.json());
     const runtime = await runner.runtimeStatus();
     return context.json(agentView(agent, runtime, dispatcher.busyAgentIds()));
   });
 
   app.delete("/api/agents/:id", async (context) => {
     const agentId = context.req.param("id");
-    if (!dispatcher.beginAgentDeletion(agentId)) {
+    if (!dispatcher.beginAgentMutation(agentId)) {
       throw new StoreError(
         "conflict",
-        "Wait for the agent's current work to finish before deleting it.",
+        "Wait for the agent's current work or configuration change to finish before deleting it.",
       );
     }
     try {
       await options.store.deleteAgent(agentId);
       return context.body(null, 204);
     } finally {
-      dispatcher.finishAgentDeletion(agentId);
+      dispatcher.finishAgentMutation(agentId);
     }
   });
 
   app.post("/api/threads", async (context) => {
     return context.json(await options.store.createThread(await context.req.json()), 201);
+  });
+
+  app.patch("/api/threads/:id", async (context) => {
+    return context.json(
+      await options.store.renameThread(context.req.param("id"), await context.req.json()),
+    );
+  });
+
+  app.post("/api/threads/:id/archive", async (context) => {
+    return context.json(await dispatcher.archiveThread(context.req.param("id")));
+  });
+
+  app.post("/api/threads/:id/restore", async (context) => {
+    return context.json(await options.store.restoreThread(context.req.param("id")));
+  });
+
+  app.get("/api/search/messages", async (context) => {
+    const query = MessageSearchRequestSchema.parse(context.req.query());
+    return context.json(await options.store.searchMessages(query));
+  });
+
+  app.get("/api/runs", async (context) => {
+    const input = RunHistoryRequestSchema.parse(context.req.query());
+    return context.json(await options.store.listRunHistory(input));
+  });
+
+  app.get("/api/threads/:id/history", async (context) => {
+    const threadId = context.req.param("id");
+    const input = ThreadHistoryRequestSchema.parse(context.req.query());
+    const thread = options.store.getThread(threadId);
+    if (!thread || thread.workspaceId !== input.workspaceId) {
+      throw new StoreError("not_found", "Thread not found in this workspace.");
+    }
+    const activeRuns = dispatcher
+      .activeRuns(thread.workspaceId)
+      .filter((run) => run.threadId === threadId);
+    return context.json(
+      await options.store.historyPage(input.workspaceId, threadId, input, activeRuns),
+    );
+  });
+
+  app.get("/api/threads/:id/metadata", (context) => {
+    const threadId = context.req.param("id");
+    const thread = options.store.getThread(threadId);
+    if (!thread) throw new StoreError("not_found", "Thread not found.");
+    const redact = (value: string) => options.store.redactSecrets(value);
+    return context.json({ ...thread, name: redact(thread.name), slug: redact(thread.slug) });
   });
 
   app.get("/api/threads/:id", async (context) => {
@@ -233,9 +418,15 @@ export function createApp(options: CreateAppOptions) {
   app.post("/api/threads/:id/messages", async (context) => {
     const contentType = context.req.header("content-type") ?? "";
     if (!contentType.toLowerCase().startsWith("multipart/form-data")) {
-      return context.json(await chat.send(context.req.param("id"), await context.req.json()), 201);
+      const result = await chat.send(context.req.param("id"), await context.req.json());
+      return context.json(result, result.replayed ? 200 : 201);
     }
-    const body = await context.req.parseBody({ all: true });
+    const body = await context.req.parseBody({
+      all: true,
+      maxFiles: MAX_UPLOAD_FILES,
+      maxFileSize: MAX_UPLOAD_BYTES,
+      maxSize: MAX_UPLOAD_TOTAL_BYTES,
+    });
     const content = typeof body.content === "string" ? body.content : "";
     const files = toFiles(body.files);
     validateFileHeaders(files);
@@ -246,7 +437,9 @@ export function createApp(options: CreateAppOptions) {
         bytes: new Uint8Array(await file.arrayBuffer()),
       })),
     );
-    return context.json(await chat.send(context.req.param("id"), { content }, uploads), 201);
+    const raw = body.requestId === undefined ? { content } : { content, requestId: body.requestId };
+    const result = await chat.send(context.req.param("id"), raw, uploads);
+    return context.json(result, result.replayed ? 200 : 201);
   });
 
   app.get("/api/threads/:threadId/artifacts/:artifactId/content", async (context) => {
@@ -322,6 +515,67 @@ export function createApp(options: CreateAppOptions) {
     return context.body(null, 204);
   });
 
+  app.get("/api/assignments/:id/review", async (context) => {
+    return context.json(await reviewAssignmentGit(options.store, context.req.param("id")));
+  });
+
+  app.post("/api/assignments/:id/cleanup", async (context) => {
+    const assignmentId = context.req.param("id");
+    const assignment = options.store.listAssignments().find((entry) => entry.id === assignmentId);
+    if (!assignment) throw new StoreError("not_found", "Assignment not found.");
+    if (assignment.status === "queued" || assignment.status === "running") {
+      throw new StoreError("conflict", "Wait for the Worker assignment to finish before cleanup.");
+    }
+    if (assignment.worktreeCleanedAt) {
+      throw new StoreError("conflict", "This Worker worktree has already been cleaned up.");
+    }
+    const knowledge = options.store.getKnowledge(assignment.repositoryId);
+    if (knowledge?.kind !== "repository") {
+      throw new StoreError("invalid", "The assignment repository is unavailable.");
+    }
+    const absolutePath = assignmentWorktreePath(options.store, assignment.id);
+    await repositories.cleanupAssignment(knowledge, {
+      branch: assignment.branch,
+      worktreePath: assignment.worktreePath,
+      absolutePath,
+    });
+    return context.json(
+      await options.store.updateAssignment(assignment.id, {
+        worktreeCleanedAt: new Date().toISOString(),
+      }),
+    );
+  });
+
+  app.post("/api/assignments/:id/branch", async (context) => {
+    const assignmentId = context.req.param("id");
+    const assignment = options.store.listAssignments().find((entry) => entry.id === assignmentId);
+    if (!assignment) throw new StoreError("not_found", "Assignment not found.");
+    if (assignment.status === "queued" || assignment.status === "running") {
+      throw new StoreError("conflict", "Wait for the Worker assignment to finish first.");
+    }
+    if (!assignment.worktreeCleanedAt) {
+      throw new StoreError("conflict", "Remove this Worker worktree before deleting its branch.");
+    }
+    if (assignment.branchDeletedAt) {
+      throw new StoreError("conflict", "This Worker branch has already been deleted.");
+    }
+    const knowledge = options.store.getKnowledge(assignment.repositoryId);
+    if (knowledge?.kind !== "repository") {
+      throw new StoreError("invalid", "The assignment repository is unavailable.");
+    }
+    const absolutePath = assignmentWorktreePath(options.store, assignment.id);
+    await repositories.deleteAssignmentBranch(knowledge, {
+      branch: assignment.branch,
+      worktreePath: assignment.worktreePath,
+      absolutePath,
+    });
+    return context.json(
+      await options.store.updateAssignment(assignment.id, {
+        branchDeletedAt: new Date().toISOString(),
+      }),
+    );
+  });
+
   app.patch("/api/tasks/:id", async (context) => {
     return context.json(
       await options.store.updateTask(context.req.param("id"), await context.req.json()),
@@ -335,9 +589,11 @@ export function createApp(options: CreateAppOptions) {
 
   app.post("/api/tasks/:taskId/delegate", async (context) => {
     const taskId = context.req.param("taskId");
-    const body = await context.req.json();
-    const { workerHandle, repositoryHandle } = body;
-    return context.json(await dispatcher.delegateFromTask(taskId, workerHandle, repositoryHandle));
+    const { workerHandle, repositoryHandle } = DelegateTaskSchema.parse(await context.req.json());
+    return context.json(
+      await dispatcher.delegateFromTask(taskId, workerHandle, repositoryHandle),
+      202,
+    );
   });
 
   app.post("/api/auth/chatgpt/start", async (context) => {
@@ -372,7 +628,7 @@ export function createApp(options: CreateAppOptions) {
         {
           error: {
             code: "invalid_request",
-            message: error.issues[0]?.message ?? "Invalid data.",
+            message: options.store.redactSecrets(error.issues[0]?.message ?? "Invalid data."),
           },
         },
         400,
@@ -380,13 +636,15 @@ export function createApp(options: CreateAppOptions) {
     }
     if (error instanceof StoreError) {
       const status = error.code === "not_found" ? 404 : error.code === "conflict" ? 409 : 400;
-      return context.json({ error: { code: error.code, message: error.message } }, status);
+      return context.json(
+        { error: { code: error.code, message: options.store.redactSecrets(error.message) } },
+        status,
+      );
     }
-    console.error(error);
-    return context.json(
-      { error: { code: "internal_error", message: error.message || "Server error." } },
-      500,
-    );
+    const message = options.store.redactSecrets(error.message || "Server error.");
+    // Log only redacted text: Error objects can expose secrets through stack or cause fields.
+    console.error(options.store.redactSecrets(error.stack ?? message));
+    return context.json({ error: { code: "internal_error", message } }, 500);
   });
 
   if (options.productionAssets) {

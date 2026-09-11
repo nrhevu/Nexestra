@@ -1,11 +1,17 @@
-import { mkdtemp } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Agent, RuntimeStatus } from "../shared/contracts.js";
+import { z } from "zod";
+import type { Agent, AgentRun, RuntimeStatus } from "../shared/contracts.js";
 import { createApp } from "./app.js";
+import type { AssignmentRepositoryManager } from "./repository-manager.js";
 import type { AgentInvocation, AgentRunner } from "./runtime.js";
-import { FileStore } from "./store.js";
+import { FileStore, PREVIEW_BUDGET_BYTES, StoreError } from "./store.js";
+
+const execFileAsync = promisify(execFile);
 
 const runtime: RuntimeStatus = {
   chatgpt: { installed: true, connected: true, message: "Logged in using ChatGPT" },
@@ -143,6 +149,12 @@ describe("HTTP app", () => {
       instructions: "",
       harness: "codex",
     });
+    await store.createTask({ title: "Other workspace blocker", status: "blocked" });
+    const task = await store.createTask({
+      workspaceId: workspace.id,
+      title: "Product decision",
+      status: "blocked",
+    });
     const bootstrap = await app.request(`/api/bootstrap?workspaceId=${workspace.id}`);
 
     await expect(bootstrap.json()).resolves.toMatchObject({
@@ -150,9 +162,81 @@ describe("HTTP app", () => {
       workspaces: [{ name: "Nexestra" }, { id: workspace.id, name: "Product Team" }],
       agents: [{ workspaceId: workspace.id, handle: "planner" }],
       threads: [{ workspaceId: workspace.id, name: "general" }],
-      tasks: [],
+      tasks: [{ id: task.id, workspaceId: workspace.id }],
+      attention: [{ id: `task:${task.id}`, kind: "task_blocked", title: task.title }],
+    });
+    const activity = await app.request(`/api/activity?workspaceId=${workspace.id}`);
+    await expect(activity.json()).resolves.toMatchObject({
+      workspaceId: workspace.id,
+      activeRuns: [],
+      attention: [{ id: `task:${task.id}`, kind: "task_blocked", title: task.title }],
     });
   });
+
+  it("renames and reorders workspaces and rejects stale or duplicate order payloads", async () => {
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected seeded workspace");
+    const created = await app.request("/api/workspaces", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Product Team" }),
+    });
+    expect(created.status).toBe(201);
+    const product = (await created.json()) as { id: string };
+
+    const rename = await app.request(`/api/workspaces/${workspace.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Nexus Studio" }),
+    });
+    expect(rename.status).toBe(200);
+    await expect(rename.json()).resolves.toMatchObject({
+      id: workspace.id,
+      name: "Nexus Studio",
+      slug: "nexus-studio",
+    });
+
+    const order = await app.request("/api/workspaces/order", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspaceIds: [product.id, workspace.id] }),
+    });
+    expect(order.status).toBe(200);
+    await expect(order.json()).resolves.toMatchObject([{ id: product.id }, { id: workspace.id }]);
+
+    const listed = await app.request("/api/workspaces");
+    expect(listed.status).toBe(200);
+    await expect(listed.json()).resolves.toMatchObject([{ id: product.id }, { id: workspace.id }]);
+
+    const stale = await app.request("/api/workspaces/order", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspaceIds: [workspace.id] }),
+    });
+    expect(stale.status).toBe(409);
+    const duplicate = await app.request("/api/workspaces/order", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspaceIds: [workspace.id, workspace.id] }),
+    });
+    expect(duplicate.status).toBe(400);
+
+    const reopened = await FileStore.open({ root: store.root, workspacePath: store.workspacePath });
+    expect(reopened.listWorkspaces().map((entry) => entry.id)).toEqual([product.id, workspace.id]);
+  });
+
+  it.each(["bootstrap", "activity"])(
+    "rejects an explicitly unknown workspace for %s instead of returning another workspace",
+    async (endpoint) => {
+      for (const workspaceId of ["missing-workspace", ""]) {
+        const response = await app.request(`/api/${endpoint}?workspaceId=${workspaceId}`);
+        expect(response.status).toBe(404);
+        await expect(response.json()).resolves.toMatchObject({
+          error: { code: "not_found", message: "Workspace not found." },
+        });
+      }
+    },
+  );
 
   it("creates an agent and dispatches only an explicit mention", async () => {
     const agentResponse = await app.request("/api/agents", {
@@ -288,6 +372,230 @@ describe("HTTP app", () => {
     expect((await app.request(`/api/knowledge/${item.id}`)).status).toBe(404);
   });
 
+  it("replaces and restores knowledge documents while keeping revision history", async () => {
+    const createForm = new FormData();
+    createForm.append("name", "Architecture guide");
+    createForm.append("handle", "architecture");
+    createForm.append("description", "");
+    createForm.append(
+      "file",
+      new File(["# Architecture v1\n"], "architecture.md", { type: "text/markdown" }),
+    );
+    const created = await app.request("/api/knowledge/documents", {
+      method: "POST",
+      body: createForm,
+    });
+    expect(created.status).toBe(201);
+    const item = (await created.json()) as {
+      id: string;
+      currentRevisionId: string;
+      revisions: { id: string }[];
+    };
+    expect(item.revisions).toHaveLength(1);
+    const firstRevisionId = item.currentRevisionId;
+
+    const replaceForm = new FormData();
+    replaceForm.append("expectedRevisionId", firstRevisionId);
+    replaceForm.append(
+      "file",
+      new File(["# Architecture v2\n"], "architecture-v2.md", { type: "text/markdown" }),
+    );
+    const replacedResponse = await app.request(`/api/knowledge/${item.id}/document`, {
+      method: "PUT",
+      body: replaceForm,
+    });
+    expect(replacedResponse.status).toBe(200);
+    const replaced = (await replacedResponse.json()) as {
+      currentRevisionId: string;
+      fileName: string;
+      revisions: { id: string }[];
+    };
+    expect(replaced.fileName).toBe("architecture-v2.md");
+    expect(replaced.currentRevisionId).not.toBe(firstRevisionId);
+    expect(replaced.revisions).toHaveLength(2);
+
+    const revisions = await app.request(`/api/knowledge/${item.id}/revisions`);
+    expect(revisions.status).toBe(200);
+    await expect(revisions.json()).resolves.toMatchObject({
+      currentRevisionId: replaced.currentRevisionId,
+      revisions: [{ id: replaced.currentRevisionId }, { id: firstRevisionId }],
+    });
+    const oldContent = await app.request(
+      `/api/knowledge/${item.id}/revisions/${firstRevisionId}/content`,
+    );
+    expect(oldContent.status).toBe(200);
+    expect(oldContent.headers.get("x-content-type-options")).toBe("nosniff");
+    await expect(oldContent.text()).resolves.toBe("# Architecture v1\n");
+    const currentContent = await app.request(`/api/knowledge/${item.id}/content`);
+    expect(await currentContent.text()).toBe("# Architecture v2\n");
+
+    const restoredResponse = await app.request(
+      `/api/knowledge/${item.id}/revisions/${firstRevisionId}/restore`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ expectedRevisionId: replaced.currentRevisionId }),
+      },
+    );
+    expect(restoredResponse.status).toBe(200);
+    const restored = (await restoredResponse.json()) as {
+      currentRevisionId: string;
+      revisions: { restoredFromId?: string }[];
+    };
+    expect(restored.currentRevisionId).not.toBe(replaced.currentRevisionId);
+    expect(restored.revisions).toHaveLength(3);
+    expect(restored.revisions.at(-1)?.restoredFromId).toBe(firstRevisionId);
+    const restoredContent = await app.request(`/api/knowledge/${item.id}/content`);
+    expect(await restoredContent.text()).toBe("# Architecture v1\n");
+
+    const staleForm = new FormData();
+    staleForm.append("expectedRevisionId", replaced.currentRevisionId);
+    staleForm.append("file", new File(["# Stale\n"], "stale.md", { type: "text/markdown" }));
+    const stale = await app.request(`/api/knowledge/${item.id}/document`, {
+      method: "PUT",
+      body: staleForm,
+    });
+    expect(stale.status).toBe(409);
+    expect((await app.request(`/api/knowledge/${item.id}/revisions/missing/content`)).status).toBe(
+      404,
+    );
+  });
+
+  it("refuses corrupted document bytes through both current and revision downloads", async () => {
+    const item = await store.createKnowledgeDocument(
+      { name: "Release guide", handle: "release-guide", description: "" },
+      {
+        name: "release.md",
+        mediaType: "text/markdown",
+        bytes: new TextEncoder().encode("Release on Friday."),
+      },
+    );
+    await writeFile(store.knowledgePath(item), "Unexpected local changes.");
+
+    for (const path of [
+      `/api/knowledge/${item.id}/content`,
+      `/api/knowledge/${item.id}/revisions/${item.currentRevisionId}/content`,
+    ]) {
+      const response = await app.request(path);
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({
+        error: { code: "invalid", message: "Document revision content is corrupted." },
+      });
+    }
+  });
+
+  it("serves bounded current and historical previews without writes or provider calls", async () => {
+    const created = await store.createKnowledgeDocument(
+      { name: "Preview guide", handle: "preview-guide", description: "" },
+      {
+        name: "preview.md",
+        mediaType: "text/markdown",
+        bytes: new TextEncoder().encode("# Preview v1"),
+      },
+    );
+    const firstRevisionId = created.currentRevisionId;
+    const largeBytes = Buffer.concat([
+      Buffer.alloc(PREVIEW_BUDGET_BYTES, 0x41),
+      Buffer.from("😀"),
+      Buffer.from("tail"),
+    ]);
+    await store.replaceKnowledgeDocument(
+      created.id,
+      { expectedRevisionId: firstRevisionId },
+      { name: "preview-large.md", mediaType: "text/plain", bytes: largeBytes },
+    );
+    const binary = await store.createKnowledgeDocument(
+      { name: "Diagram", handle: "preview-diagram", description: "" },
+      {
+        name: "diagram.png",
+        mediaType: "image/png",
+        bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+      },
+    );
+    const stateBefore = await readFile(store.stateFile, "utf8");
+
+    const currentResponse = await app.request(`/api/knowledge/${created.id}/preview`);
+    expect(currentResponse.status).toBe(200);
+    const current = (await currentResponse.json()) as {
+      fileName: string;
+      supported: boolean;
+      truncated: boolean;
+      text?: string;
+    };
+    expect(current).toMatchObject({
+      fileName: "preview-large.md",
+      supported: true,
+      truncated: true,
+    });
+    expect(current.text).not.toContain("😀");
+    expect(Buffer.byteLength(current.text ?? "", "utf8")).toBe(PREVIEW_BUDGET_BYTES);
+    expect(JSON.stringify(current)).not.toContain("workspaces");
+
+    const oldResponse = await app.request(
+      `/api/knowledge/${created.id}/preview?revisionId=${firstRevisionId}`,
+    );
+    expect(oldResponse.status).toBe(200);
+    await expect(oldResponse.json()).resolves.toMatchObject({
+      fileName: "preview.md",
+      supported: true,
+      truncated: false,
+      text: "# Preview v1",
+      isCurrent: false,
+    });
+
+    const unsupported = await app.request(`/api/knowledge/${binary.id}/preview`);
+    expect(unsupported.status).toBe(200);
+    await expect(unsupported.json()).resolves.toMatchObject({
+      supported: false,
+      fileName: "diagram.png",
+      reason: expect.stringContaining("cannot be previewed"),
+    });
+    const missing = await app.request(`/api/knowledge/${created.id}/preview?revisionId=missing`);
+    expect(missing.status).toBe(404);
+    expect(await readFile(store.stateFile, "utf8")).toBe(stateBefore);
+    expect(runner.invocations).toBe(0);
+  });
+
+  it("reports a corrupted revision before invalid UTF-8 in previews", async () => {
+    const item = await store.createKnowledgeDocument(
+      { name: "Broken preview", handle: "broken-preview", description: "" },
+      {
+        name: "broken.txt",
+        mediaType: "text/plain",
+        bytes: new TextEncoder().encode("ok"),
+      },
+    );
+    await writeFile(store.knowledgePath(item), Buffer.from([0x6f, 0x6b, 0xff]));
+    const response = await app.request(`/api/knowledge/${item.id}/preview`);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "invalid", message: "Document revision content is corrupted." },
+    });
+  });
+
+  it("rejects replacement uploads with too many files before buffering", async () => {
+    const createForm = new FormData();
+    createForm.append("name", "Notes");
+    createForm.append("handle", "notes");
+    createForm.append("description", "");
+    createForm.append("file", new File(["one"], "one.md", { type: "text/markdown" }));
+    const created = await app.request("/api/knowledge/documents", {
+      method: "POST",
+      body: createForm,
+    });
+    expect(created.status).toBe(201);
+    const item = (await created.json()) as { id: string; currentRevisionId: string };
+    const form = new FormData();
+    form.append("expectedRevisionId", item.currentRevisionId);
+    form.append("file", new File(["one"], "one.md", { type: "text/markdown" }));
+    form.append("file", new File(["two"], "two.md", { type: "text/markdown" }));
+    const rejected = await app.request(`/api/knowledge/${item.id}/document`, {
+      method: "PUT",
+      body: form,
+    });
+    expect(rejected.status).toBe(400);
+  });
+
   it("creates, reads, updates, and deletes a Taskboard task", async () => {
     const created = await app.request("/api/tasks", {
       method: "POST",
@@ -298,6 +606,7 @@ describe("HTTP app", () => {
         status: "todo",
         assigneeId: null,
         threadId: null,
+        verificationCommand: "pnpm test",
       }),
     });
     expect(created.status).toBe(201);
@@ -315,14 +624,16 @@ describe("HTTP app", () => {
       body: JSON.stringify({
         title: "Publish documentation",
         description: "Review and publish the draft.",
-        status: "in_progress",
+        status: "blocked",
+        verificationCommand: "pnpm check",
       }),
     });
     expect(updated.status).toBe(200);
     await expect(updated.json()).resolves.toMatchObject({
       title: "Publish documentation",
       description: "Review and publish the draft.",
-      status: "in_progress",
+      status: "blocked",
+      verificationCommand: "pnpm check",
     });
 
     const deleted = await app.request(`/api/tasks/${task.id}`, { method: "DELETE" });
@@ -354,15 +665,31 @@ describe("HTTP app", () => {
     });
     expect(sent.status).toBe(201);
 
+    await vi.waitFor(() => expect(runner.lastInvocation).toBeDefined());
+    const transcript = vi.spyOn(store, "threadData").mockRejectedValue(new Error("No transcript"));
+
     const active = await app.request(`/api/activity?workspaceId=${workspace.id}`);
     await expect(active.json()).resolves.toMatchObject({
+      workspaceId: workspace.id,
       activeRuns: [{ agentId: agent.id, threadId: thread.id }],
+      attention: [],
     });
+    const bootstrap = await app.request(`/api/bootstrap?workspaceId=${workspace.id}`);
+    await expect(bootstrap.json()).resolves.toMatchObject({
+      activeRuns: [{ agentId: agent.id, threadId: thread.id }],
+      attention: [],
+    });
+    expect(transcript).not.toHaveBeenCalled();
+    transcript.mockRestore();
 
     releaseRunner();
     await app.dispatcher.waitForIdle();
     const idle = await app.request(`/api/activity?workspaceId=${workspace.id}`);
-    await expect(idle.json()).resolves.toEqual({ activeRuns: [] });
+    await expect(idle.json()).resolves.toEqual({
+      workspaceId: workspace.id,
+      activeRuns: [],
+      attention: [],
+    });
   });
 
   it("returns the persisted Worker process for a Taskboard task", async () => {
@@ -478,6 +805,48 @@ describe("HTTP app", () => {
     expect(new TextDecoder().decode(chunk.value)).toContain('"activities":[]');
   });
 
+  it("renames, archives, restores, and rejects new messages in archived threads", async () => {
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+
+    const renamed = await app.request(`/api/threads/${thread.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Renamed Thread" }),
+    });
+    expect(renamed.status).toBe(200);
+    await expect(renamed.json()).resolves.toMatchObject({
+      id: thread.id,
+      name: "Renamed Thread",
+      slug: "renamed-thread",
+      archived: false,
+    });
+
+    const archived = await app.request(`/api/threads/${thread.id}/archive`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    await expect(archived.json()).resolves.toMatchObject({ id: thread.id, archived: true });
+
+    const rejected = await app.request(`/api/threads/${thread.id}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "late note" }),
+    });
+    expect(rejected.status).toBe(409);
+    const afterSend = await store.threadData(thread.id);
+    expect(afterSend.messages).toHaveLength(0);
+
+    const restored = await app.request(`/api/threads/${thread.id}/restore`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    await expect(restored.json()).resolves.toMatchObject({ id: thread.id, archived: false });
+    expect(store.transcriptPath(thread.id)).toBe(join(store.threadDirectory, `${thread.id}.jsonl`));
+  });
+
   it("rejects mutating browser requests from a non-loopback origin", async () => {
     const response = await app.request("/api/threads", {
       method: "POST",
@@ -513,6 +882,13 @@ describe("HTTP app", () => {
     });
     await runner.approvalRequested;
 
+    await vi.waitFor(async () => {
+      const pending = await app.request(`/api/activity?workspaceId=${thread.workspaceId}`);
+      expect(await pending.json()).toMatchObject({
+        attention: [{ kind: "approval", threadId: thread.id, title: "Maya in #general" }],
+      });
+    });
+
     const approval = await app.request("/api/tool-calls/tool-approval/approve", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -520,6 +896,9 @@ describe("HTTP app", () => {
     });
     expect(approval.status).toBe(204);
     await app.dispatcher.waitForIdle();
+
+    const cleared = await app.request(`/api/activity?workspaceId=${thread.workspaceId}`);
+    await expect(cleared.json()).resolves.toMatchObject({ attention: [] });
 
     const data = await store.threadData(thread.id);
     expect(data.runs).toMatchObject([{ status: "completed" }]);
@@ -554,6 +933,13 @@ describe("HTTP app", () => {
     });
     await runner.questionRequested;
 
+    await vi.waitFor(async () => {
+      const pending = await app.request(`/api/activity?workspaceId=${thread.workspaceId}`);
+      expect(await pending.json()).toMatchObject({
+        attention: [{ kind: "input", threadId: thread.id, title: "Maya in #general" }],
+      });
+    });
+
     const response = await app.request("/api/tool-calls/tool-question/respond", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -561,6 +947,9 @@ describe("HTTP app", () => {
     });
     expect(response.status).toBe(204);
     await app.dispatcher.waitForIdle();
+
+    const cleared = await app.request(`/api/activity?workspaceId=${thread.workspaceId}`);
+    await expect(cleared.json()).resolves.toMatchObject({ attention: [] });
 
     const data = await store.threadData(thread.id);
     expect(data.runs).toMatchObject([{ status: "completed" }]);
@@ -745,5 +1134,523 @@ describe("HTTP app", () => {
     });
     expect(blocked.status).toBe(400);
     expect(launchPath).toHaveBeenCalledTimes(2);
+  });
+
+  it("cleans up only finished assignment worktrees", async () => {
+    const [workspace] = store.listWorkspaces();
+    const [thread] = store.listThreads();
+    if (!workspace || !thread) throw new Error("expected seeded workspace and thread");
+    const repository = await store.createKnowledgeRepository({
+      workspaceId: workspace.id,
+      name: "Product repository",
+      handle: "product-repo",
+      description: "",
+      source: "/tmp/product-repo",
+    });
+    await store.updateKnowledgeRepository(repository.id, {
+      status: "ready",
+      defaultBranch: "main",
+    });
+    const now = new Date().toISOString();
+    const assignmentId = "assignment-cleanup";
+    const relativeWorktree = `workspaces/${workspace.id}/worktrees/${assignmentId}`;
+    await store.createAssignment({
+      id: assignmentId,
+      workspaceId: workspace.id,
+      taskId: "task-cleanup",
+      threadId: thread.id,
+      masterRunId: "run-master",
+      workerAgentId: "agent-worker",
+      repositoryId: repository.id,
+      status: "completed",
+      branch: `nexestra/${assignmentId}`,
+      worktreePath: relativeWorktree,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const cleanupAssignment = vi.fn(async () => undefined);
+    const deleteAssignmentBranch = vi.fn(async () => undefined);
+    const repositories: AssignmentRepositoryManager = {
+      assignmentLocation: (workspaceId, id) => ({
+        branch: `nexestra/${id}`,
+        worktreePath: `workspaces/${workspaceId}/worktrees/${id}`,
+        absolutePath: join(store.root, "workspaces", workspaceId, "worktrees", id),
+      }),
+      prepareAssignment: async () => undefined,
+      cleanupAssignment,
+      deleteAssignmentBranch,
+    };
+    app = createApp({ store, runner, repositories });
+
+    const cleaned = await app.request(`/api/assignments/${assignmentId}/cleanup`, {
+      method: "POST",
+    });
+    expect(cleaned.status).toBe(200);
+    const updated = (await cleaned.json()) as { worktreeCleanedAt?: string };
+    expect(updated.worktreeCleanedAt).toEqual(expect.any(String));
+    expect(cleanupAssignment).toHaveBeenCalledWith(
+      expect.objectContaining({ id: repository.id }),
+      expect.objectContaining({
+        branch: `nexestra/${assignmentId}`,
+        worktreePath: relativeWorktree,
+        absolutePath: join(store.root, relativeWorktree),
+      }),
+    );
+
+    const repeat = await app.request(`/api/assignments/${assignmentId}/cleanup`, {
+      method: "POST",
+    });
+    expect(repeat.status).toBe(409);
+    const branchDeleted = await app.request(`/api/assignments/${assignmentId}/branch`, {
+      method: "POST",
+    });
+    expect(branchDeleted.status).toBe(200);
+    const deleted = (await branchDeleted.json()) as { branchDeletedAt?: string };
+    expect(deleted.branchDeletedAt).toEqual(expect.any(String));
+    expect(deleteAssignmentBranch).toHaveBeenCalledWith(
+      expect.objectContaining({ id: repository.id }),
+      expect.objectContaining({
+        branch: `nexestra/${assignmentId}`,
+        worktreePath: relativeWorktree,
+        absolutePath: join(store.root, relativeWorktree),
+      }),
+    );
+    const branchRepeat = await app.request(`/api/assignments/${assignmentId}/branch`, {
+      method: "POST",
+    });
+    expect(branchRepeat.status).toBe(409);
+    await store.createAssignment({
+      id: "assignment-cleanup-active",
+      workspaceId: workspace.id,
+      taskId: "task-cleanup-active",
+      threadId: thread.id,
+      masterRunId: "run-master",
+      workerAgentId: "agent-worker",
+      repositoryId: repository.id,
+      status: "running",
+      branch: "nexestra/assignment-cleanup-active",
+      worktreePath: `workspaces/${workspace.id}/worktrees/assignment-cleanup-active`,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const active = await app.request("/api/assignments/assignment-cleanup-active/cleanup", {
+      method: "POST",
+    });
+    expect(active.status).toBe(409);
+    expect(cleanupAssignment).toHaveBeenCalledTimes(1);
+    const activeBranch = await app.request("/api/assignments/assignment-cleanup-active/branch", {
+      method: "POST",
+    });
+    expect(activeBranch.status).toBe(409);
+    expect(deleteAssignmentBranch).toHaveBeenCalledTimes(1);
+  });
+  it("rejects configuration edits while an agent is busy and applies them afterwards", async () => {
+    let releaseRunner: () => void = () => undefined;
+    runner.gate = new Promise<void>((resolve) => {
+      releaseRunner = resolve;
+    });
+    const agent = await store.createAgent({
+      kind: "worker",
+      name: "Codex",
+      handle: "codex",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    await app.request(`/api/threads/${thread.id}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "@codex wait" }),
+    });
+    const blocked = await app.request(`/api/agents/${agent.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Busy Editor" }),
+    });
+    expect(blocked.status).toBe(409);
+    await expect(blocked.json()).resolves.toMatchObject({
+      error: { code: "conflict" },
+    });
+    releaseRunner();
+    await app.dispatcher.waitForIdle();
+    const updated = await app.request(`/api/agents/${agent.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Edited Codex" }),
+    });
+    expect(updated.status).toBe(200);
+    await expect(updated.json()).resolves.toMatchObject({ name: "Edited Codex" });
+  });
+  it("rejects unknown fields and kind changes when updating an agent", async () => {
+    const agent = await store.createAgent({
+      kind: "worker",
+      name: "Codex",
+      handle: "codex",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    for (const payload of [
+      { name: "Changed", kind: "master" },
+      { name: "Changed", workspaceId: "other-workspace" },
+    ]) {
+      const response = await app.request(`/api/agents/${agent.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      expect(response.status).toBe(400);
+    }
+  });
+
+  it("recovers a failed repository clone through the retry endpoint without changing identity", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-app-retry-"));
+    const retryStore = await FileStore.open({ root, workspacePath: root });
+    const [workspace] = retryStore.listWorkspaces();
+    if (!workspace) throw new Error("expected seeded workspace");
+    const source = join(root, "docs-source");
+    const failed = await retryStore.createKnowledgeRepository({
+      name: "Docs repository",
+      handle: "docs",
+      description: "",
+      source,
+    });
+    await retryStore.updateKnowledgeRepository(failed.id, {
+      status: "failed",
+      error: "The source was temporarily unavailable.",
+    });
+    await mkdir(source, { recursive: true });
+    await writeFile(join(source, "README.md"), "# Docs\n");
+    await execFileAsync("git", ["init", "--initial-branch=main", source]);
+    await execFileAsync("git", ["-C", source, "add", "README.md"]);
+    await execFileAsync("git", [
+      "-C",
+      source,
+      "-c",
+      "user.name=Nexestra Test",
+      "-c",
+      "user.email=test@nexestra.local",
+      "commit",
+      "-m",
+      "Initial commit",
+    ]);
+    const retryApp = createApp({ store: retryStore, runner });
+
+    const response = await retryApp.request(`/api/knowledge/repositories/${failed.id}/retry`, {
+      method: "POST",
+    });
+
+    expect(response.status).toBe(200);
+    const recovered = (await response.json()) as {
+      id: string;
+      handle: string;
+      source: string;
+      status: string;
+      createdAt: string;
+      defaultBranch?: string;
+    };
+    expect(recovered).toMatchObject({
+      id: failed.id,
+      handle: "docs",
+      source,
+      status: "ready",
+      defaultBranch: "main",
+    });
+    expect(recovered.createdAt).toBe(failed.createdAt);
+    await expect(
+      readFile(join(retryStore.knowledgePath(failed), "README.md"), "utf8"),
+    ).resolves.toContain("# Docs");
+
+    const repeat = await retryApp.request(`/api/knowledge/repositories/${failed.id}/retry`, {
+      method: "POST",
+    });
+    expect(repeat.status).toBe(409);
+    const missing = await retryApp.request("/api/knowledge/repositories/unknown/retry", {
+      method: "POST",
+    });
+    expect(missing.status).toBe(404);
+  });
+});
+
+describe("HTTP message search", () => {
+  let store: FileStore;
+  let runner: FakeRunner;
+  let app: ReturnType<typeof createApp>;
+
+  beforeEach(async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-search-app-"));
+    store = await FileStore.open({ root, workspacePath: root });
+    runner = new FakeRunner();
+    app = createApp({ store, runner });
+  });
+
+  it("validates search query filters and scopes to the workspace", async () => {
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected workspace");
+    const other = await store.createWorkspace({ name: "Other" });
+    const otherThread = store.listThreads(other.id)[0];
+    if (!otherThread) throw new Error("expected thread");
+
+    const unknownWorkspace = await app.request("/api/search/messages?workspaceId=missing&q=needle");
+    expect(unknownWorkspace.status).toBe(404);
+
+    const foreignThread = await app.request(
+      `/api/search/messages?workspaceId=${workspace.id}&q=needle&threadId=${otherThread.id}`,
+    );
+    expect(foreignThread.status).toBe(404);
+
+    const badFilter = await app.request(
+      `/api/search/messages?workspaceId=${workspace.id}&q=needle&archived=unknown`,
+    );
+    expect(badFilter.status).toBe(400);
+
+    const missingQuery = await app.request(`/api/search/messages?workspaceId=${workspace.id}`);
+    expect(missingQuery.status).toBe(400);
+
+    const longQuery = await app.request(
+      `/api/search/messages?workspaceId=${workspace.id}&q=${"a".repeat(201)}`,
+    );
+    expect(longQuery.status).toBe(400);
+
+    const highOffset = await app.request(
+      `/api/search/messages?workspaceId=${workspace.id}&q=needle&offset=10001`,
+    );
+    expect(highOffset.status).toBe(400);
+  });
+
+  it("returns bounded search hits without invoking providers", async () => {
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected workspace");
+    const thread = store.listThreads(workspace.id)[0];
+    if (!thread) throw new Error("expected thread");
+    const message = await store.createUserMessage(thread.id, "needle phrase", []);
+
+    const response = await app.request(`/api/search/messages?workspaceId=${workspace.id}&q=phrase`);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      query: { term: "phrase", workspaceId: workspace.id, threadId: null, archived: "all" },
+      complete: true,
+      matchesFound: 1,
+      nextOffset: null,
+    });
+    const matches = body.matches as Array<Record<string, unknown>>;
+    expect(matches[0]).toMatchObject({
+      messageId: message.id,
+      thread: { id: thread.id, archived: false },
+    });
+    expect(matches[0]).not.toHaveProperty("content");
+    expect(runner.invocations).toBe(0);
+  });
+
+  it.each([
+    { kind: "internal", status: 500, code: "internal_error" },
+    { kind: "store", status: 409, code: "conflict" },
+    { kind: "validation", status: 400, code: "invalid_request" },
+  ])("redacts stored credentials from $kind HTTP errors and logs", async (scenario) => {
+    const secret = "fixture-http-boundary-secret";
+    await store.createAgent({
+      kind: "master",
+      name: "Error Gateway",
+      handle: "error-gateway",
+      provider: {
+        type: "custom",
+        name: "Error Gateway",
+        baseUrl: "https://gateway.example/v1",
+        model: "model-a",
+        protocol: "openai-chat",
+        apiKey: secret,
+      },
+    });
+    const message = `Could not use source ${secret}.`;
+    const error =
+      scenario.kind === "validation"
+        ? z
+            .string()
+            .refine(() => false, { message })
+            .safeParse("fixture").error
+        : scenario.kind === "store"
+          ? new StoreError("conflict", message)
+          : new Error(message, { cause: { credential: secret } });
+    const getKnowledge = vi.spyOn(store, "getKnowledge").mockImplementation(() => {
+      throw error;
+    });
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const response = await app.request("/api/knowledge/error-fixture");
+      expect(response.status).toBe(scenario.status);
+      expect(await response.json()).toEqual({
+        error: { code: scenario.code, message: "Could not use source [REDACTED]." },
+      });
+      for (const value of log.mock.calls.flat()) {
+        expect(typeof value).toBe("string");
+        expect(value).not.toContain(secret);
+      }
+      if (scenario.kind === "internal") expect(log).toHaveBeenCalled();
+      expect(runner.invocations).toBe(0);
+    } finally {
+      getKnowledge.mockRestore();
+      log.mockRestore();
+    }
+  });
+
+  it("redacts stored credentials from query echo over HTTP", async () => {
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected workspace");
+    const secret = "fixture-http-world";
+    await store.createAgent({
+      kind: "master",
+      name: "Http Gateway",
+      handle: "http-gateway",
+      description: "",
+      instructions: "",
+      provider: {
+        type: "custom",
+        name: "Http Gateway",
+        baseUrl: "https://gateway.example/v1",
+        model: "model-a",
+        protocol: "openai-chat",
+        apiKey: secret,
+      },
+    });
+    const response = await app.request(
+      `/api/search/messages?workspaceId=${workspace.id}&q=${encodeURIComponent(secret)}`,
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Record<string, unknown>;
+    expect((body.query as { term: string }).term).toBe("[REDACTED]");
+    expect(JSON.stringify(body)).not.toContain(secret);
+    expect(runner.invocations).toBe(0);
+  });
+});
+describe("conversation history HTTP routes", () => {
+  let store: FileStore;
+  let runner: FakeRunner;
+  let app: ReturnType<typeof createApp>;
+
+  beforeEach(async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-history-http-"));
+    store = await FileStore.open({ root, workspacePath: root });
+    runner = new FakeRunner();
+    app = createApp({ store, runner });
+  });
+
+  it("returns thread-scoped activeRuns and foreign metadata without reading transcripts", async () => {
+    const [workspace] = store.listWorkspaces();
+    const thread = store.listThreads(workspace?.id ?? "")[0];
+    if (!workspace || !thread) throw new Error("expected seeded workspace");
+    const message = await store.createUserMessage(thread.id, "hello history", []);
+    const otherThread = await store.createThread({ name: "Other" });
+    const otherMessage = await store.createUserMessage(otherThread.id, "other history", []);
+    const now = new Date().toISOString();
+    const runHere = {
+      id: "run-history-here",
+      threadId: thread.id,
+      triggerMessageId: message.id,
+      agentId: "agent-history",
+      attempt: 1,
+      status: "running" as const,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const runElsewhere = {
+      ...runHere,
+      id: "run-history-elsewhere",
+      threadId: otherThread.id,
+      triggerMessageId: otherMessage.id,
+    };
+    const liveRuns = (app.dispatcher as unknown as { liveRuns: Map<string, AgentRun> }).liveRuns;
+    liveRuns.set(runHere.id, runHere);
+    liveRuns.set(runElsewhere.id, runElsewhere);
+    const response = await app.request(
+      `/api/threads/${thread.id}/history?workspaceId=${workspace.id}&limit=10`,
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      messages: { id: string }[];
+      activeRuns: { id: string }[];
+    };
+    expect(body.messages.map((entry) => entry.id)).toEqual([message.id]);
+    expect(body.activeRuns.map((entry) => entry.id)).toEqual([runHere.id]);
+
+    const transcriptPathSpy = vi.spyOn(store, "transcriptPath");
+    const metadata = await app.request(`/api/threads/${otherThread.id}/metadata`);
+    expect(metadata.status).toBe(200);
+    await expect(metadata.json()).resolves.toMatchObject({
+      id: otherThread.id,
+      workspaceId: otherThread.workspaceId,
+    });
+    expect(transcriptPathSpy).not.toHaveBeenCalled();
+  });
+
+  it("validates history and metadata query semantics over HTTP", async () => {
+    const [workspace] = store.listWorkspaces();
+    const thread = store.listThreads(workspace?.id ?? "")[0];
+    if (!workspace || !thread) throw new Error("expected seeded workspace");
+    const message = await store.createUserMessage(thread.id, "anchor me", []);
+    const foreign = await store.createWorkspace({ name: "Foreign" });
+    const multiple = await app.request(
+      `/api/threads/${thread.id}/history?workspaceId=${workspace.id}&before=${message.id}&after=${message.id}`,
+    );
+    expect(multiple.status).toBe(400);
+    const atOk = await app.request(
+      `/api/threads/${thread.id}/history?workspaceId=${workspace.id}&at=1`,
+    );
+    expect(atOk.status).toBe(200);
+    await expect(atOk.json()).resolves.toMatchObject({
+      messages: [{ id: message.id }],
+      page: { targetMessageId: message.id, targetFound: true, targetMessageIndex: 1 },
+    });
+    const mixedAt = await app.request(
+      `/api/threads/${thread.id}/history?workspaceId=${workspace.id}&at=1&before=${message.id}`,
+    );
+    expect(mixedAt.status).toBe(400);
+    const zeroAt = await app.request(
+      `/api/threads/${thread.id}/history?workspaceId=${workspace.id}&at=0`,
+    );
+    expect(zeroAt.status).toBe(400);
+    const pastAt = await app.request(
+      `/api/threads/${thread.id}/history?workspaceId=${workspace.id}&at=999`,
+    );
+    expect(pastAt.status).toBe(200);
+    await expect(pastAt.json()).resolves.toMatchObject({
+      messages: [{ id: message.id }],
+      page: { targetFound: false, targetMessageIndex: 999 },
+    });
+    const unknownBefore = await app.request(
+      `/api/threads/${thread.id}/history?workspaceId=${workspace.id}&before=unknown-anchor`,
+    );
+    expect(unknownBefore.status).toBe(400);
+    const unknownAround = await app.request(
+      `/api/threads/${thread.id}/history?workspaceId=${workspace.id}&around=unknown-anchor`,
+    );
+    expect(unknownAround.status).toBe(200);
+    await expect(unknownAround.json()).resolves.toMatchObject({
+      page: { targetMessageId: "unknown-anchor", targetFound: false },
+    });
+    const foreignHistory = await app.request(
+      `/api/threads/${thread.id}/history?workspaceId=${foreign.id}`,
+    );
+    expect(foreignHistory.status).toBe(404);
+    const fresh = await store.createThread({ name: "Fresh history" });
+    const emptyBefore = await app.request(
+      `/api/threads/${fresh.id}/history?workspaceId=${workspace.id}&before=missing-anchor`,
+    );
+    expect(emptyBefore.status).toBe(400);
+    const emptyAfter = await app.request(
+      `/api/threads/${fresh.id}/history?workspaceId=${workspace.id}&after=missing-anchor`,
+    );
+    expect(emptyAfter.status).toBe(400);
+    const emptyAround = await app.request(
+      `/api/threads/${fresh.id}/history?workspaceId=${workspace.id}&around=missing-anchor`,
+    );
+    expect(emptyAround.status).toBe(200);
+    await expect(emptyAround.json()).resolves.toMatchObject({
+      page: { totalMessages: 0, targetMessageId: "missing-anchor", targetFound: false },
+    });
+    const missingMetadata = await app.request("/api/threads/missing/metadata");
+    expect(missingMetadata.status).toBe(404);
   });
 });

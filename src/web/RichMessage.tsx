@@ -62,6 +62,8 @@ function RichMessageView({
       a: MarkdownLink,
       code: MarkdownCode,
       pre: CodeBlock,
+      table: ScrollableTable,
+      span: MarkdownSpan,
     }),
     [knownHandles, knownKnowledgeHandles],
   );
@@ -147,7 +149,38 @@ function MarkdownCode({
   return <code {...props} />;
 }
 
-function CodeBlock({ children, ...props }: ComponentPropsWithoutRef<"pre"> & { node?: unknown }) {
+function ScrollableTable({
+  node: _node,
+  ...props
+}: ComponentPropsWithoutRef<"table"> & { node?: unknown }) {
+  return (
+    // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll wide tables.
+    <section className="message-table-scroll" aria-label="Table" tabIndex={0}>
+      <table {...props} />
+    </section>
+  );
+}
+
+function MarkdownSpan({
+  node: _node,
+  className,
+  ...props
+}: ComponentPropsWithoutRef<"span"> & { node?: unknown }) {
+  const displayMath = className?.split(/\s+/).includes("katex-display");
+  return (
+    <span
+      {...props}
+      className={className}
+      {...(displayMath ? { role: "region", "aria-label": "Math expression", tabIndex: 0 } : {})}
+    />
+  );
+}
+
+function CodeBlock({
+  node: _node,
+  children,
+  ...props
+}: ComponentPropsWithoutRef<"pre"> & { node?: unknown }) {
   const [copied, setCopied] = useState(false);
 
   // Extract code content from children
@@ -175,7 +208,9 @@ function CodeBlock({ children, ...props }: ComponentPropsWithoutRef<"pre"> & { n
   }, [codeContent]);
 
   return (
-    <pre {...props} className="code-block">
+    // biome-ignore lint/a11y/useSemanticElements: Preserve preformatted code semantics on its named scroll container.
+    // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll long code lines.
+    <pre {...props} className="code-block" role="region" aria-label="Code block" tabIndex={0}>
       <button
         type="button"
         className={`code-copy-button${copied ? " copied" : ""}`}
