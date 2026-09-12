@@ -367,14 +367,24 @@ describe("FileStore", () => {
     const content = await readFile(store.knowledgePath(item), "utf8");
     expect(content).toContain("Decision: use the local-first path.");
     expect(content).not.toContain("super-secret-value");
-    await expect(
+    const duplicates = await Promise.all([
       store.createKnowledgeDocumentFromMessage({
         threadId: thread.id,
         messageId: message.id,
         name: "Renamed duplicate",
         handle: "renamed-duplicate",
       }),
-    ).resolves.toMatchObject({ id: item.id, handle: "decision-record" });
+      store.createKnowledgeDocumentFromMessage({
+        threadId: thread.id,
+        messageId: message.id,
+        name: "Another duplicate",
+        handle: "another-duplicate",
+      }),
+    ]);
+    expect(duplicates).toEqual([
+      expect.objectContaining({ id: item.id, handle: "decision-record" }),
+      expect.objectContaining({ id: item.id, handle: "decision-record" }),
+    ]);
     expect(store.listKnowledge(thread.workspaceId)).toHaveLength(1);
   });
 

@@ -668,6 +668,16 @@ export class FileStore {
     validateUploads([upload]);
     return this.withWrite(async () => {
       const workspaceId = this.requireWorkspace(input.workspaceId).id;
+      if (provenance) {
+        const existing = this.state.knowledge.find(
+          (item): item is KnowledgeDocument =>
+            item.kind === "document" &&
+            item.provenance?.source === "message" &&
+            item.provenance.threadId === provenance.threadId &&
+            item.provenance.messageId === provenance.messageId,
+        );
+        if (existing) return structuredClone(existing);
+      }
       this.requireAvailableKnowledgeHandle(workspaceId, input.handle);
       const id = crypto.randomUUID();
       const now = new Date().toISOString();
@@ -726,14 +736,6 @@ export class FileStore {
         event.type === "message.created" && event.message.id === input.messageId,
     )?.message;
     if (!message) throw new StoreError("not_found", "Message not found in this thread.");
-    const existing = this.listKnowledge(thread.workspaceId).find(
-      (item): item is KnowledgeDocument =>
-        item.kind === "document" &&
-        item.provenance?.source === "message" &&
-        item.provenance.threadId === thread.id &&
-        item.provenance.messageId === message.id,
-    );
-    if (existing) return existing;
     const content = this.redactSecrets(message.content);
     if (!content.trim()) throw new StoreError("invalid", "Cannot capture an empty message.");
     return this.createKnowledgeDocument(
