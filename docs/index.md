@@ -106,3 +106,5 @@
     conditionally poll count-only activity summaries while work is active.
 55. [Custom surface run count research](research/2026-09-12-custom-surface-run-count.md): show
     selected-workspace active-run counts on declarative Run history cards.
+56. [MCP resource reads research](research/2026-09-12-mcp-resource-read.md): expose bounded,
+    catalog-gated resource reads to the harness.

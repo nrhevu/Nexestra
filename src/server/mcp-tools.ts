@@ -86,6 +86,39 @@ export async function loadMcpTools(
           },
         });
       }
+      if (typeof open.client.listResources !== "function") continue;
+      const resources = await open.client.listResources(undefined, { timeout: timeout.catalog });
+      const allowedUris = new Set(
+        resources.resources.slice(0, 500).map((resource) => resource.uri),
+      );
+      if (allowedUris.size > 0) {
+        const name = normalizeToolName(`${serverName}_read_mcp_resource`);
+        tools.push({
+          type: "function",
+          name,
+          description: `Read a cataloged MCP resource from ${serverName}.`,
+          parameters: {
+            type: "object",
+            properties: { uri: { type: "string", maxLength: 2_000 } },
+            required: ["uri"],
+          },
+          permission: "external",
+          parse: async (input) => {
+            if (!isRecord(input) || typeof input.uri !== "string")
+              throw new Error("MCP resource URI is required.");
+            return input;
+          },
+          execute: async (input) => {
+            const uri = input.uri as string;
+            if (!allowedUris.has(uri)) throw new Error("MCP resource URI is not in the catalog.");
+            const result = await open.client.readResource({ uri }, { timeout: timeout.execution });
+            const output = mcpResultText(result);
+            if (Buffer.byteLength(output, "utf8") > MAX_MCP_RESPONSE_BYTES)
+              throw new Error("MCP resource is too large.");
+            return output || "MCP resource is empty.";
+          },
+        });
+      }
     } catch {
       warnings.push(`MCP server ${serverName} is unavailable.`);
     }
