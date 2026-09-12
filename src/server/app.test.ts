@@ -182,24 +182,44 @@ describe("HTTP app", () => {
             id: "inference",
             title: "Inference lab",
             description: "Compare profiles.",
-            cards: [{ id: "runs", title: "Runs", action: "runs" }],
+            cards: [
+              { id: "runs", title: "Runs", action: "runs" },
+              { id: "reviews", title: "Needs work", action: "reviews" },
+            ],
           },
         ],
       }),
     );
     const [workspace] = store.listWorkspaces();
     if (!workspace) throw new Error("expected seeded workspace");
+    const thread = store.listThreads(workspace.id)[0];
+    if (!thread) throw new Error("expected seeded thread");
+    const agent = await store.createAgent({
+      workspaceId: workspace.id,
+      kind: "worker",
+      name: "Reviewer",
+      handle: "reviewer",
+      harness: "codex",
+    });
+    const prompt = await store.createUserMessage(thread.id, "Review this", []);
+    const reply = await store.createAgentMessage(thread.id, agent, "Needs work", prompt.id);
+    await store.setMessageFeedback(thread.id, reply.id, { value: "negative" });
     const response = await app.request(`/api/bootstrap?workspaceId=${workspace.id}`);
     expect(response.status).toBe(200);
     const body = (await response.json()) as {
       customSurfaces: Array<{ title: string; cards: Array<{ action: string }> }>;
+      reviewCount: number;
     };
     expect(body.customSurfaces).toEqual([
       expect.objectContaining({
         title: "Inference lab",
-        cards: [expect.objectContaining({ action: "runs" })],
+        cards: [
+          expect.objectContaining({ action: "runs" }),
+          expect.objectContaining({ action: "reviews" }),
+        ],
       }),
     ]);
+    expect(body.reviewCount).toBe(1);
   });
 
   it("reads and saves a redacted workspace whiteboard within its workspace", async () => {

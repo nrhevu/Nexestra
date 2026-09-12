@@ -21,6 +21,7 @@ const surface: CustomSurface = {
       action: "agents",
     },
     { id: "runs", title: "Active runs", description: "", action: "runs" },
+    { id: "reviews", title: "Needs-work", description: "", action: "reviews" },
   ],
 };
 
@@ -28,12 +29,17 @@ describe("CustomSurfaceView", () => {
   it("renders configured cards and dispatches their safe built-in action", async () => {
     const onAction = vi.fn();
     render(
-      <CustomSurfaceView surface={surface} counts={{ agents: 3, runs: 2 }} onAction={onAction} />,
+      <CustomSurfaceView
+        surface={surface}
+        counts={{ agents: 3, runs: 2, reviews: 4 }}
+        onAction={onAction}
+      />,
     );
     expect(screen.getByRole("heading", { name: "Inference lab" })).toBeVisible();
     expect(screen.getByText("Compare configured agents and costs.")).toBeVisible();
     expect(screen.getByText("3 matching items")).toBeVisible();
     expect(screen.getByText("2 matching items")).toBeVisible();
+    expect(screen.getByText("4 matching items")).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Open Agents" }));
     expect(onAction).toHaveBeenCalledExactlyOnceWith("agents");
   });

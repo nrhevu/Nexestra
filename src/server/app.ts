@@ -93,6 +93,11 @@ export function createApp(options: CreateAppOptions) {
         description: options.store.redactSecrets(card.description),
       })),
     }));
+    const reviewQueue = await options.store.listReviewQueue({
+      workspaceId: workspace.id,
+      status: "open",
+      limit: 1,
+    });
     const activity = workspaceActivity(
       options.store,
       workspace.id,
@@ -111,6 +116,7 @@ export function createApp(options: CreateAppOptions) {
       assignments: options.store.listAssignments(workspace.id),
       activeRuns: activity.activeRuns,
       attention: activity.attention,
+      reviewCount: reviewQueue.total,
       workspaceActivitySummaries: workspaces.map((entry) => {
         const summary = workspaceActivity(options.store, entry.id, dispatcher.activeRuns(entry.id));
         return {

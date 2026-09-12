@@ -92,3 +92,4 @@
 | [0089](0089-mcp-prompt-expansion.md) | Accepted | Expand cataloged MCP prompts with bounded output |
 | [0090](0090-mcp-resource-templates.md) | Accepted | Read cataloged MCP resource templates safely |
 | [0091](0091-run-cost-budget-signal.md) | Accepted | Flag observed run estimates that exceed an agent's configured limit |
+| [0092](0092-custom-surface-review-count.md) | Accepted | Show selected-workspace open review counts on custom surfaces |

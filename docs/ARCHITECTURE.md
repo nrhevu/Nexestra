@@ -607,7 +607,7 @@ credentials.
 
 - Optional `surfaces` entries in `nexestra.config.json` compose domain-specific navigation cards.
   Their actions are an allowlisted set of trusted surfaces and their labels are bounded/redacted
-  before bootstrap. Cards for Taskboard, Knowledge, Attention, and Agents show live counts from
+  before bootstrap. Cards for Taskboard, Knowledge, Attention, Needs-work review, and Agents show live counts from
   the selected workspace; Run history and Needs-work review remain direct links. The browser
   evaluates no configured code, markup, URL, or command. Data-backed widgets and custom forms are
   intentionally future work.
@@ -668,9 +668,8 @@ credentials.
 - Anthropic Messages currently uses the common text/tool-use path; provider-specific server tools,
   prompt-caching controls and extended-thinking options are not exposed.
 - Remote MCP supports Streamable HTTP, environment-backed headers, and separate startup, catalog,
-  and execution timeouts, but not interactive OAuth. MCP resources are exposed only through a
-  catalog-gated, 5 MiB-bounded read tools for resources and prompts; resource templates remain
-  unavailable.
+  and execution timeouts, but not interactive OAuth. MCP resources, prompts, and parameterized
+  resource templates are exposed only through catalog-gated, 5 MiB-bounded read tools.
 - Custom tool modules are trusted local code loaded into the server process; TypeScript modules must
   use syntax supported directly by Node 24.
 - Custom-tool `metadata()` and nested `ask()` calls are compatibility no-ops after the tool-level

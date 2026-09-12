@@ -2096,6 +2096,7 @@ export function App() {
                   attention: data.attention.length,
                   runs: data.activeRuns.length,
                   agents: data.agents.filter((agent) => !agent.archived).length,
+                  reviews: data.reviewCount ?? 0,
                 }}
                 onAction={openCustomSurfaceAction}
               />

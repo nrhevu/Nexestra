@@ -114,3 +114,5 @@
     cataloged parameterized MCP resources with bounded URI expansion.
 59. [Run cost budget signal research](research/2026-09-12-run-cost-budget-signal.md): flag
     observed run estimates that exceed an agent's optional per-run limit.
+60. [Custom surface review count research](research/2026-09-12-custom-surface-review-count.md):
+    show selected-workspace open review counts without exposing queue content.

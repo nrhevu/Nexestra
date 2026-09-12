@@ -138,8 +138,8 @@ Workspaces can add a domain-specific launch surface in `nexestra.config.json`:
 ```
 
 Cards are text-only and can route only to trusted Nexestra surfaces; configuration cannot execute
-browser code or open arbitrary URLs. Taskboard, Knowledge, Attention, and Agents cards show live
-counts; data-backed widgets and custom forms remain future extensions.
+browser code or open arbitrary URLs. Taskboard, Knowledge, Attention, Needs-work review, and Agents
+cards show selected-workspace counts; data-backed widgets and custom forms remain future extensions.
 
 Thread rows also show **unread messages**, with a total on Threads. Reading the bottom of the
 latest Messages page in a focused window marks that loaded page read. Older pages, message links

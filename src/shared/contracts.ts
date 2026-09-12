@@ -1182,6 +1182,7 @@ export interface BootstrapData {
   assignments: WorkAssignment[];
   activeRuns: AgentRun[];
   attention: AttentionItem[];
+  reviewCount?: number;
   workspaceActivitySummaries?: WorkspaceActivitySummary[];
   runtime: RuntimeStatus;
   workspacePath: string;
