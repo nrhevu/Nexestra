@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { RunHistoryItem, RunHistoryMetrics } from "../shared/contracts.js";
-import { runHistoryExportFilename, serializeRunHistoryExport } from "./run-history-export.js";
+import {
+  runHistoryCsvFilename,
+  runHistoryExportFilename,
+  serializeRunHistoryCsv,
+  serializeRunHistoryExport,
+} from "./run-history-export.js";
 
 const summary: RunHistoryMetrics = {
   totalRuns: 1,
@@ -85,6 +90,30 @@ describe("run history export", () => {
     expect(payload.items).toHaveLength(100);
     expect(runHistoryExportFilename("workspace / costs", new Date("2026-09-12T00:00:00Z"))).toBe(
       "nexestra-run-history-workspace-costs-2026-09-12.json",
+    );
+  });
+
+  it("serializes bounded telemetry columns as escaped CSV without message text", () => {
+    const csv = serializeRunHistoryCsv([
+      {
+        ...item,
+        agentName: 'Planner, "primary"',
+        threadName: "Plan\nrelease",
+        agentHarness: "codex",
+        agentModel: "gpt-5.6-terra",
+        estimatedCostUsd: 0.12,
+        costLimitUsd: 0.1,
+        overBudget: true,
+      },
+    ]);
+    expect(csv).toContain("run_id,thread_id,agent_id,agent_name");
+    expect(csv).toContain('"Planner, ""primary"""');
+    expect(csv).toContain('"Plan\nrelease"');
+    expect(csv).toContain("gpt-5.6-terra");
+    expect(csv).toContain("0.12,0.1,true");
+    expect(csv).not.toContain("error");
+    expect(runHistoryCsvFilename("workspace / costs", new Date("2026-09-12T00:00:00Z"))).toBe(
+      "nexestra-run-history-workspace-costs-2026-09-12.csv",
     );
   });
 });

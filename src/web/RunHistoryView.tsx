@@ -14,7 +14,12 @@ import {
   RunSchema,
 } from "../shared/contracts.js";
 import { api } from "./api.js";
-import { runHistoryExportFilename, serializeRunHistoryExport } from "./run-history-export.js";
+import {
+  runHistoryCsvFilename,
+  runHistoryExportFilename,
+  serializeRunHistoryCsv,
+  serializeRunHistoryExport,
+} from "./run-history-export.js";
 import "./RunHistoryView.css";
 
 export interface RunHistoryViewProps {
@@ -546,6 +551,17 @@ export function RunHistoryView({
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
   };
 
+  const exportLoadedRunsCsv = () => {
+    if (rows.length === 0) return;
+    const blob = new Blob([serializeRunHistoryCsv(rows)], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = runHistoryCsvFilename(workspaceId);
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
+
   const handleAgentChange = (event: ChangeEvent<HTMLSelectElement>) => {
     setFilters((current) => ({ ...current, agentId: event.target.value }));
   };
@@ -608,6 +624,14 @@ export function RunHistoryView({
           disabled={busy || rows.length === 0}
         >
           Export loaded runs
+        </button>
+        <button
+          type="button"
+          className="run-history-export"
+          onClick={exportLoadedRunsCsv}
+          disabled={busy || rows.length === 0}
+        >
+          Export CSV
         </button>
         <label className="run-history-auto-refresh">
           <input

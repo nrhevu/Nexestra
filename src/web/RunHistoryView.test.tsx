@@ -722,6 +722,9 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
     expect(createObjectURL).toHaveBeenCalledTimes(1);
     expect(anchorClick).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("button", { name: "Export loaded runs" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Export CSV" }));
+    expect(createObjectURL).toHaveBeenCalledTimes(2);
+    expect(anchorClick).toHaveBeenCalledTimes(2);
   });
 
   it("shows the coverage warning, safe date fallback, status, attempt, and archive label", async () => {
