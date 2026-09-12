@@ -46,3 +46,5 @@
     measured initial bundle reduction, bounded loading, native failures and focus preservation.
 25. [Run quality attribution research](research/2026-09-12-run-quality-attribution.md): exact run
     provenance for retry-safe helpful/needs-work comparisons and a reviewed Knowledge follow-up.
+26. [Reviewed Knowledge capture research](research/2026-09-12-reviewed-knowledge-capture.md): an
+    explicit source preview and naming step before promoting a message to durable Knowledge.

@@ -57,3 +57,4 @@
 | [0053](0053-agent-pricing-profiles.md) | Accepted | Calculate local estimated run cost from user-supplied agent rates |
 | [0054](0054-message-quality-feedback.md) | Accepted | Persist explicit helpful or needs-work ratings for agent messages |
 | [0055](0055-run-quality-attribution.md) | Accepted | Attribute message ratings to exact producing runs for retry-safe comparison |
+| [0056](0056-reviewed-message-knowledge-capture.md) | Accepted | Review and name a message before promoting it to Knowledge |

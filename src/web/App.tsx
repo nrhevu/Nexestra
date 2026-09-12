@@ -215,6 +215,7 @@ export function App() {
   const knowledgeInspectRef = useRef<KnowledgeItem | undefined>(undefined);
   const [knowledgeToEdit, setKnowledgeToEdit] = useState<KnowledgeItem>();
   const [knowledgeToDelete, setKnowledgeToDelete] = useState<KnowledgeItem>();
+  const [messageToCapture, setMessageToCapture] = useState<Message>();
   const [agentToDelete, setAgentToDelete] = useState<AgentView>();
   const [agentToEdit, setAgentToEdit] = useState<AgentView>();
   const [threadToRename, setThreadToRename] = useState<Thread>();
@@ -918,6 +919,7 @@ export function App() {
     knowledgeInspectRef.current = undefined;
     setKnowledgeToEdit(undefined);
     setKnowledgeToDelete(undefined);
+    setMessageToCapture(undefined);
     setAgentToDelete(undefined);
     setThreadToRename(undefined);
     setMessageSearch(undefined);
@@ -1572,26 +1574,6 @@ export function App() {
     }
   };
 
-  const captureMessageAsKnowledge = async (message: Message) => {
-    const name = `Captured note ${message.createdAt.slice(0, 10)}`;
-    const handle = handleFromName(`note-${message.id.slice(0, 8)}`);
-    await mutate(
-      () =>
-        api("/api/knowledge/from-message", {
-          method: "POST",
-          body: JSON.stringify({
-            workspaceId: data?.workspace.id,
-            threadId: message.threadId,
-            messageId: message.id,
-            name,
-            handle,
-            description: `Captured from message ${message.id}.`,
-          }),
-        }),
-      `Saved message as #${handle}.`,
-    );
-  };
-
   const setMessageFeedback = async (
     message: Message,
     value: "positive" | "negative" | null,
@@ -1961,7 +1943,7 @@ export function App() {
                   );
                 }
               }}
-              onCaptureMessage={captureMessageAsKnowledge}
+              onCaptureMessage={setMessageToCapture}
               onMessageFeedback={setMessageFeedback}
             />
           ) : (
@@ -2289,6 +2271,26 @@ export function App() {
             await refresh();
             setKnowledgeToDelete(undefined);
             flash("Knowledge deleted.");
+          }}
+        />
+      )}
+      {messageToCapture && data.workspace.id === workspaceIdRef.current && (
+        <CaptureKnowledgeDialog
+          key={`${messageToCapture.threadId}:${messageToCapture.id}`}
+          data={data}
+          message={messageToCapture}
+          onClose={() => setMessageToCapture(undefined)}
+          onCreated={async () => {
+            await refresh();
+            if (route.threadId) {
+              await loadHistoryPage(
+                route.threadId,
+                currentHistoryIntent() ?? { threadId: route.threadId, kind: "latest" },
+                true,
+              );
+            }
+            setMessageToCapture(undefined);
+            flash("Message saved as reviewed Knowledge.");
           }}
         />
       )}
@@ -2832,7 +2834,7 @@ function ThreadView(props: {
   onRetry: (runId: string) => Promise<unknown>;
   onToolDecision: (toolCallId: string, approved: boolean) => Promise<void>;
   onToolResponse: (toolCallId: string, answers: string[][]) => Promise<void>;
-  onCaptureMessage: (message: Message) => Promise<void>;
+  onCaptureMessage: (message: Message) => void;
   onMessageFeedback: (message: Message, value: "positive" | "negative" | null) => Promise<void>;
   onRequestRename: (thread: Thread) => void;
   onArchive: (threadId: string) => Promise<void>;
@@ -3736,7 +3738,7 @@ const ThreadTranscript = memo(function ThreadTranscript({
   onRetry: (runId: string) => Promise<unknown>;
   onToolDecision: (toolCallId: string, approved: boolean) => Promise<void>;
   onToolResponse: (toolCallId: string, answers: string[][]) => Promise<void>;
-  onCaptureMessage: (message: Message) => Promise<void>;
+  onCaptureMessage: (message: Message) => void;
   onMessageFeedback: (message: Message, value: "positive" | "negative" | null) => Promise<void>;
   readOnly: boolean;
   messageTarget?: { id: string };
@@ -4019,7 +4021,7 @@ function MessageRow({
   feedback?: MessageFeedback;
   knownHandles: ReadonlySet<string>;
   knownKnowledgeHandles: ReadonlySet<string>;
-  onCaptureMessage: (message: Message) => Promise<void>;
+  onCaptureMessage: (message: Message) => void;
   onMessageFeedback: (message: Message, value: "positive" | "negative" | null) => Promise<void>;
 }) {
   const agentAuthor = message.author.kind === "agent" ? message.author : undefined;
@@ -7234,6 +7236,115 @@ function DeleteKnowledgeDialog({
           {deleting ? "Deleting…" : "Delete knowledge"}
         </button>
       </div>
+    </Modal>
+  );
+}
+
+function CaptureKnowledgeDialog({
+  data,
+  message,
+  onClose,
+  onCreated,
+}: {
+  data: BootstrapData;
+  message: Message;
+  onClose: () => void;
+  onCreated: () => Promise<void>;
+}) {
+  const [name, setName] = useState(`Captured note ${message.createdAt.slice(0, 10)}`);
+  const [handle, setHandle] = useState(handleFromName(`note-${message.id.slice(0, 8)}`));
+  const [handleEdited, setHandleEdited] = useState(false);
+  const [description, setDescription] = useState(`Reviewed from message ${message.id}.`);
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string>();
+
+  return (
+    <Modal title="Review message for Knowledge" eyebrow="KNOWLEDGE CAPTURE" onClose={onClose} wide>
+      <div className="capture-knowledge-source">
+        <div className="capture-knowledge-source-header">
+          <div>
+            <strong>{message.author.name}</strong>
+            <small>{new Date(message.createdAt).toLocaleString()}</small>
+          </div>
+          <span>Source message</span>
+        </div>
+        <section className="capture-knowledge-content" aria-label="Message content to capture">
+          <pre>{message.content || "(empty message)"}</pre>
+        </section>
+      </div>
+      <p className="modal-help">
+        Review the source before saving it. The captured document keeps this message unchanged and
+        records its thread and message IDs for later verification.
+      </p>
+      <form
+        onSubmit={async (event) => {
+          event.preventDefault();
+          setSaving(true);
+          setFormError(undefined);
+          try {
+            await api("/api/knowledge/from-message", {
+              method: "POST",
+              body: JSON.stringify({
+                workspaceId: data.workspace.id,
+                threadId: message.threadId,
+                messageId: message.id,
+                name,
+                handle,
+                description,
+              }),
+            });
+            await onCreated();
+          } catch (caught) {
+            setFormError(messageFrom(caught));
+          } finally {
+            setSaving(false);
+          }
+        }}
+      >
+        <Field label="Knowledge name">
+          <input
+            value={name}
+            onChange={(event) => {
+              const value = event.target.value;
+              setName(value);
+              if (!handleEdited) setHandle(handleFromName(value));
+            }}
+            required
+            maxLength={120}
+          />
+        </Field>
+        <Field label="Reference handle" hint="Use this in chat, for example #decision-note">
+          <div className="handle-input">
+            <span>#</span>
+            <input
+              value={handle}
+              onChange={(event) => {
+                setHandleEdited(true);
+                setHandle(event.target.value.toLowerCase());
+              }}
+              pattern="[a-z0-9][a-z0-9_-]{1,47}"
+              required
+              maxLength={48}
+            />
+          </div>
+        </Field>
+        <Field label="Description" optional>
+          <textarea
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            rows={3}
+            maxLength={1_000}
+            placeholder="Why this message is worth keeping…"
+          />
+        </Field>
+        {formError && (
+          <p className="form-error">
+            <CircleAlert size={14} />
+            {formError}
+          </p>
+        )}
+        <ModalActions onClose={onClose} saving={saving} submitLabel="Save reviewed Knowledge" />
+      </form>
     </Modal>
   );
 }

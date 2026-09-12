@@ -1032,6 +1032,59 @@ kbd {
   background: var(--panel);
   color: var(--text);
 }
+.capture-knowledge-source {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 11px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.capture-knowledge-source-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.capture-knowledge-source-header > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.capture-knowledge-source-header strong {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.capture-knowledge-source-header small,
+.capture-knowledge-source-header > span {
+  color: var(--quiet);
+  font-size: 10px;
+}
+.capture-knowledge-content {
+  max-height: 190px;
+  margin: 0;
+  overflow: auto;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--input-bg);
+}
+.capture-knowledge-content > pre {
+  margin: 0;
+  font: 12px / 1.55 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.modal-help {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
 .message-feedback {
   display: inline-flex;
   gap: 2px;

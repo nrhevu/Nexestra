@@ -555,7 +555,9 @@ credentials.
 
 - Quality ratings are explicit single-user observations. They are attributed only when provenance
   resolves to one run, but there is no reviewed correction queue yet for turning a needs-work reply
-  into curated Knowledge or an evaluation case; ratings do not change prompts or routing.
+  into curated Knowledge or an evaluation case; ratings do not change prompts or routing. Message
+  capture now opens a review dialog before promoting the unchanged, provenance-linked source into
+  Knowledge; content correction remains an explicit edit after capture.
 
 - Workspace export has no import/restore workflow and is not a complete backup. Snapshot inventory
   scans transcripts under the write barrier before a second read for ZIP generation. Stored ZIP

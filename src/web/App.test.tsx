@@ -3482,6 +3482,9 @@ describe("Message knowledge capture", () => {
     render(<App />);
     await screen.findByText(message.content);
     await user.click(screen.getByRole("button", { name: "Save message as Knowledge" }));
+    expect(screen.getByRole("dialog", { name: "Review message for Knowledge" })).toBeVisible();
+    expect(screen.getByLabelText("Message content to capture")).toHaveTextContent(message.content);
+    await user.click(screen.getByRole("button", { name: "Save reviewed Knowledge" }));
 
     await waitFor(() => {
       const request = fetchMock.mock.calls.find(
@@ -3497,7 +3500,7 @@ describe("Message knowledge capture", () => {
         handle: "note-message",
       });
     });
-    expect(await screen.findByText("Saved message as #note-message.")).toBeVisible();
+    expect(await screen.findByText("Message saved as reviewed Knowledge.")).toBeVisible();
   });
 
   it("records helpful feedback for an agent response", async () => {
