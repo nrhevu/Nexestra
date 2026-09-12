@@ -88,13 +88,17 @@ import {
   UpdateKnowledgeSchema,
   UpdateTaskSchema,
   UpdateWorkspaceSchema,
+  UpdateWorkspaceWhiteboardSchema,
   WORKSPACE_EXPORT_MAX_ENTRIES,
   WORKSPACE_EXPORT_MAX_SOURCE_BYTES,
   WORKSPACE_EXPORT_TIMEOUT_MS,
+  WORKSPACE_WHITEBOARD_MAX_BYTES,
   type WorkAssignment,
   WorkAssignmentSchema,
   type Workspace,
   WorkspaceSchema,
+  type WorkspaceWhiteboard,
+  WorkspaceWhiteboardSchema,
 } from "../shared/contracts.js";
 
 import {
@@ -574,6 +578,51 @@ export class FileStore {
         .filter((item) => workspaceId === undefined || item.workspaceId === workspaceId)
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
     );
+  }
+
+  async getWorkspaceWhiteboard(workspaceId?: string): Promise<WorkspaceWhiteboard> {
+    const workspace = this.requireWorkspace(workspaceId);
+    const file = this.managedPath(join("workspaces", workspace.id, "whiteboard.md"));
+    let content = "";
+    let updatedAt: string | null = null;
+    try {
+      const details = await lstat(file);
+      if (!details.isFile()) {
+        throw new StoreError("invalid", "Workspace whiteboard is not a regular file.");
+      }
+      if (details.size > WORKSPACE_WHITEBOARD_MAX_BYTES) {
+        throw new StoreError("invalid", "Workspace whiteboard exceeds the 64 KiB limit.");
+      }
+      content = await readFile(file, "utf8");
+      if (Buffer.byteLength(content, "utf8") > WORKSPACE_WHITEBOARD_MAX_BYTES) {
+        throw new StoreError("invalid", "Workspace whiteboard exceeds the 64 KiB limit.");
+      }
+      updatedAt = details.mtime.toISOString();
+    } catch (error) {
+      if (!isNodeError(error, "ENOENT")) throw error;
+    }
+    return WorkspaceWhiteboardSchema.parse({
+      workspaceId: workspace.id,
+      content: this.redactSecrets(content),
+      updatedAt,
+    });
+  }
+
+  async updateWorkspaceWhiteboard(
+    workspaceId: string | undefined,
+    rawInput: unknown,
+  ): Promise<WorkspaceWhiteboard> {
+    const input = UpdateWorkspaceWhiteboardSchema.parse(rawInput);
+    const workspace = this.requireWorkspace(workspaceId);
+    const redacted = this.redactSecrets(input.content);
+    if (Buffer.byteLength(redacted, "utf8") > WORKSPACE_WHITEBOARD_MAX_BYTES) {
+      throw new StoreError("invalid", "Workspace whiteboard exceeds the 64 KiB limit.");
+    }
+    return this.withWrite(async () => {
+      const file = this.managedPath(join("workspaces", workspace.id, "whiteboard.md"));
+      await writeTextAtomic(file, redacted);
+      return this.getWorkspaceWhiteboard(workspace.id);
+    });
   }
 
   getKnowledge(id: string): KnowledgeItem | undefined {
@@ -5616,6 +5665,14 @@ async function writePrivateFile(file: string, bytes: Uint8Array): Promise<void> 
   } finally {
     await handle.close();
   }
+}
+
+async function writeTextAtomic(file: string, content: string): Promise<void> {
+  await mkdir(dirname(file), { recursive: true, mode: 0o700 });
+  const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile(temporary, content, { encoding: "utf8", mode: 0o600, flag: "wx" });
+  await rename(temporary, file);
+  await chmod(file, 0o600);
 }
 
 function hashBytes(bytes: Uint8Array): string {

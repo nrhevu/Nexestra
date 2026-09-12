@@ -22,6 +22,7 @@ export const CustomSurfaceActionSchema = z.enum([
   "runs",
   "reviews",
   "agents",
+  "whiteboard",
 ]);
 export type CustomSurfaceAction = z.infer<typeof CustomSurfaceActionSchema>;
 
@@ -45,6 +46,21 @@ export const CustomSurfaceSchema = z.object({
     }),
 });
 export type CustomSurface = z.infer<typeof CustomSurfaceSchema>;
+
+export const WORKSPACE_WHITEBOARD_MAX_BYTES = 64 * 1024;
+export const WORKSPACE_WHITEBOARD_MAX_CHARS = WORKSPACE_WHITEBOARD_MAX_BYTES;
+
+export const WorkspaceWhiteboardSchema = z.object({
+  workspaceId: z.string(),
+  content: z.string().max(WORKSPACE_WHITEBOARD_MAX_CHARS),
+  updatedAt: z.string().nullable(),
+});
+export type WorkspaceWhiteboard = z.infer<typeof WorkspaceWhiteboardSchema>;
+
+export const UpdateWorkspaceWhiteboardSchema = z.object({
+  content: z.string().max(WORKSPACE_WHITEBOARD_MAX_CHARS),
+});
+export type UpdateWorkspaceWhiteboardInput = z.infer<typeof UpdateWorkspaceWhiteboardSchema>;
 
 export const CreateWorkspaceSchema = z.object({
   name: z.string().trim().min(1).max(60),

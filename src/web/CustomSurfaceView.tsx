@@ -9,6 +9,7 @@ const ACTION_LABELS: Record<CustomSurfaceAction, string> = {
   runs: "Open Run history",
   reviews: "Open Needs-work review",
   agents: "Open Agents",
+  whiteboard: "Open Whiteboard",
 };
 
 export function CustomSurfaceView({

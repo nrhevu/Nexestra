@@ -11,6 +11,7 @@ export type TopBarSurface =
   | "attention"
   | "runs"
   | "reviews"
+  | "whiteboard"
   | "custom";
 
 export interface TopBarProps {
@@ -108,6 +109,12 @@ export function TopBar(props: TopBarProps) {
           label: "Needs-work review",
           description: "Revisit responses marked for correction",
           action: () => props.onSurface("reviews"),
+        },
+        {
+          id: "command:whiteboard",
+          label: "Workspace whiteboard",
+          description: "Capture a bounded Markdown plan for this workspace",
+          action: () => props.onSurface("whiteboard"),
         },
         ...(props.data.customSurfaces ?? []).map((surface) => ({
           id: `command:custom-surface:${surface.id}`,

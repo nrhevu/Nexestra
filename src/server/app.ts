@@ -16,6 +16,7 @@ import {
   SelectRepositorySourceBranchSchema,
   ThreadHistoryRequestSchema,
   ToolAnswersSchema,
+  UpdateWorkspaceWhiteboardSchema,
 } from "../shared/contracts.js";
 import { reviewAssignmentGit } from "./assignment-review.js";
 import { workspaceActivity } from "./attention.js";
@@ -124,6 +125,21 @@ export function createApp(options: CreateAppOptions) {
     if (!workspace) throw new StoreError("not_found", "Workspace not found.");
     return context.json(
       workspaceActivity(options.store, workspace.id, dispatcher.activeRuns(workspace.id)),
+    );
+  });
+
+  app.get("/api/whiteboard", async (context) => {
+    const workspaceId = context.req.query("workspaceId");
+    return context.json(await options.store.getWorkspaceWhiteboard(workspaceId || undefined));
+  });
+
+  app.put("/api/whiteboard", async (context) => {
+    const workspaceId = context.req.query("workspaceId");
+    return context.json(
+      await options.store.updateWorkspaceWhiteboard(
+        workspaceId || undefined,
+        UpdateWorkspaceWhiteboardSchema.parse(await context.req.json()),
+      ),
     );
   });
 

@@ -5,7 +5,7 @@
 M9 is a single-user, local-first control center. The server binds to `127.0.0.1`, the SPA
 communicates over HTTP, and the server invokes configured coding harnesses or providers. The two
 primary navigation areas are Threads and Surfaces; the initial surfaces are Taskboard, Knowledge,
-Agents, Run history, Needs-work review, and optional declarative custom surfaces.
+Whiteboard, Agents, Run history, Needs-work review, and optional declarative custom surfaces.
 The far-left rail switches between workspaces, while the adjacent panel owns the Threads, Surfaces,
 and Settings navigation. **Needs attention** is available directly from workspace navigation and
 collects pending decisions and task failures across the selected workspace. Settings exposes
@@ -20,7 +20,7 @@ React SPA
 Hono API ── FileStore ── state.json / credentials.json
    │                    ├─ threads/<id>.jsonl
    │                    ├─ artifacts/<thread-id>/<artifact-id>
-   │                    └─ workspaces/<id>/{knowledge,repositories,worktrees}
+   │                    └─ workspaces/<id>/{knowledge,repositories,worktrees,whiteboard.md}
    ▼
 ChatService ── AgentDispatcher ── LocalAgentRunner
                                   ├─ codex exec --json (discussion / delegated task / full)
@@ -575,6 +575,11 @@ credentials.
   the selected workspace; Run history and Needs-work review remain direct links. The browser
   evaluates no configured code, markup, URL, or command. Data-backed widgets and custom forms are
   intentionally future work.
+
+- Whiteboard is a built-in workspace surface backed by `workspaces/<workspaceId>/whiteboard.md`.
+  GET and PUT responses are workspace-scoped and redact known credentials. Markdown is bounded to
+  64 KiB of UTF-8, written atomically with mode `0600`, and treated as user notes only; it cannot
+  dispatch agents or execute configured content.
 
 - Workspace export has no import/restore workflow and is not a complete backup. Snapshot inventory
   scans transcripts under the write barrier before a second read for ZIP generation. Stored ZIP

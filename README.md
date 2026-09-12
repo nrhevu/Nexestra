@@ -8,7 +8,8 @@ Milestone M9 is a fresh rebuild focused on two primary workflows:
 - chat in shared threads and invoke agents only with an `@handle`;
 - save shared documents and Git repositories, then reference them with a `#handle`;
 - attach files and images, and browse each thread's indexed files and links;
-- manage planned work, repository knowledge, and agents in Taskboard, Knowledge, and Agents.
+- manage planned work, repository knowledge, and agents in Taskboard, Knowledge, and Agents;
+  keep a bounded Markdown plan in the workspace Whiteboard.
 
 Workspaces are selected from the far-left rail. Each workspace has its own threads, agents, and
 tasks; Threads, Surfaces, and Settings live in the navigation panel beside that rail. Creating a
@@ -261,6 +262,11 @@ Use **Preview current** or a version's **Preview** button to read document text 
 or restoring it. The preview shows up to the first 128 KiB of source text, verifies stored revision
 checksums and provides a download for that version. Text remains plain text, including Markdown
 and HTML; unsupported files have a download fallback. Previewing does not create or change versions.
+
+The **Whiteboard** surface is a small workspace-scoped Markdown scratchpad for plans and decisions.
+It is saved under managed local storage, redacts configured credentials before persistence and
+response, and accepts at most 64 KiB of UTF-8 text. It has no agent execution or arbitrary markup
+hooks.
 
 Use **Save message as Knowledge** beside any message to open a review dialog. Inspect the unchanged
 source, choose a name, `#handle`, and optional description, then confirm the capture. API clients

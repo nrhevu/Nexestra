@@ -2,6 +2,7 @@ import { appendFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "no
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { WORKSPACE_WHITEBOARD_MAX_BYTES } from "../shared/contracts.js";
 import { FileStore, MAX_UPLOAD_BYTES, PREVIEW_BUDGET_BYTES, StoreError } from "./store.js";
 
 async function openStore() {
@@ -10,6 +11,32 @@ async function openStore() {
 }
 
 describe("FileStore", () => {
+  it("persists a bounded workspace whiteboard and rejects unsafe files", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected seeded workspace");
+
+    await expect(store.getWorkspaceWhiteboard(workspace.id)).resolves.toMatchObject({
+      workspaceId: workspace.id,
+      content: "",
+      updatedAt: null,
+    });
+    await expect(
+      store.updateWorkspaceWhiteboard(workspace.id, { content: "# Plan\n\nNext step" }),
+    ).resolves.toMatchObject({ content: "# Plan\n\nNext step" });
+    const whiteboardPath = join(store.root, "workspaces", workspace.id, "whiteboard.md");
+    expect(await readFile(whiteboardPath, "utf8")).toBe("# Plan\n\nNext step");
+
+    await writeFile(whiteboardPath, Buffer.alloc(WORKSPACE_WHITEBOARD_MAX_BYTES + 1, "x"));
+    await expect(store.getWorkspaceWhiteboard(workspace.id)).rejects.toMatchObject({
+      code: "invalid",
+    });
+
+    await rm(whiteboardPath);
+    await mkdir(whiteboardPath);
+    await expect(store.getWorkspaceWhiteboard(workspace.id)).rejects.toThrow("regular file");
+  });
+
   it("migrates version 1 metadata into a default workspace without changing record IDs", async () => {
     const root = await mkdtemp(join(tmpdir(), "nexestra-store-legacy-"));
     const createdAt = "2026-09-01T10:00:00.000Z";

@@ -66,3 +66,4 @@
 | [0062](0062-declarative-custom-surfaces.md) | Accepted | Configure safe domain-specific surfaces from bounded card definitions |
 | [0063](0063-review-queue-total.md) | Accepted | Return filter-scoped review totals alongside paged needs-work results |
 | [0064](0064-review-queue-knowledge-capture.md) | Accepted | Capture reviewed responses directly from the needs-work queue |
+| [0065](0065-workspace-whiteboard.md) | Accepted | Keep a bounded redacted Markdown whiteboard per workspace |

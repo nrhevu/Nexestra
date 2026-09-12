@@ -144,6 +144,17 @@ describe("Global search", () => {
     expect(input).toHaveValue("");
   });
 
+  it("opens the workspace whiteboard from its command", async () => {
+    const user = userEvent.setup();
+    const props = makeProps();
+    render(<TopBar {...props} />);
+    const input = screen.getByRole("combobox");
+    await user.type(input, "/whiteboard");
+    expect(screen.getByRole("option", { name: /Workspace whiteboard/ })).toBeInTheDocument();
+    await user.keyboard("{Enter}");
+    expect(props.onSurface).toHaveBeenCalledExactlyOnceWith("whiteboard");
+  });
+
   it("supports the shortcut and wraps keyboard selection while focus stays in the combobox", async () => {
     const user = userEvent.setup();
     const props = makeProps();

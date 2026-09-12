@@ -202,6 +202,56 @@ describe("HTTP app", () => {
     ]);
   });
 
+  it("reads and saves a redacted workspace whiteboard within its workspace", async () => {
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected seeded workspace");
+    await store.createAgent({
+      workspaceId: workspace.id,
+      kind: "master",
+      name: "Secret provider",
+      handle: "secret",
+      description: "",
+      instructions: "",
+      accessMode: "ask",
+      provider: {
+        type: "custom",
+        name: "Local provider",
+        baseUrl: "https://provider.example/v1",
+        model: "test",
+        protocol: "openai-chat",
+        apiKey: "sk-whiteboard-secret",
+      },
+    });
+    const initial = await app.request(`/api/whiteboard?workspaceId=${workspace.id}`);
+    await expect(initial.json()).resolves.toMatchObject({
+      workspaceId: workspace.id,
+      content: "",
+      updatedAt: null,
+    });
+    const saved = await app.request(`/api/whiteboard?workspaceId=${workspace.id}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "# Plan\n\nToken: sk-whiteboard-secret" }),
+    });
+    expect(saved.status).toBe(200);
+    await expect(saved.json()).resolves.toMatchObject({
+      workspaceId: workspace.id,
+      content: "# Plan\n\nToken: [REDACTED]",
+    });
+    const loaded = await app.request(`/api/whiteboard?workspaceId=${workspace.id}`);
+    await expect(loaded.json()).resolves.toMatchObject({
+      content: "# Plan\n\nToken: [REDACTED]",
+    });
+    const foreign = await app.request("/api/whiteboard?workspaceId=missing");
+    expect(foreign.status).toBe(404);
+    const rejected = await app.request(`/api/whiteboard?workspaceId=${workspace.id}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", origin: "https://evil.example" },
+      body: JSON.stringify({ content: "nope" }),
+    });
+    expect(rejected.status).toBe(403);
+  });
+
   it("renames and reorders workspaces and rejects stale or duplicate order payloads", async () => {
     const [workspace] = store.listWorkspaces();
     if (!workspace) throw new Error("expected seeded workspace");

@@ -135,6 +135,7 @@ import {
   nextUnreadConversation,
   selectConversationList,
 } from "./unreadNavigation.js";
+import { WhiteboardView } from "./WhiteboardView.js";
 import { WorkspaceArchiveDialog } from "./WorkspaceArchiveDialog.js";
 import { type RefreshOutcome, useWorkspaceRefresh } from "./workspaceRefresh.js";
 
@@ -1973,6 +1974,14 @@ export function App() {
           ) : (
             <EmptyThreads onCreate={() => setModal("thread")} />
           )
+        ) : route.surface === "whiteboard" ? (
+          data.workspace.id === workspaceIdRef.current ? (
+            <WhiteboardView key={data.workspace.id} workspaceId={data.workspace.id} />
+          ) : (
+            <div className="surface-view" role="status">
+              Opening workspace…
+            </div>
+          )
         ) : route.surface === "runs" ? (
           data.workspace.id === workspaceIdRef.current ? (
             <RunHistoryView
@@ -2823,6 +2832,16 @@ function Sidebar(props: {
               >
                 <ClipboardCheck size={17} />
                 <span className="row-label">Needs-work review</span>
+              </button>
+              <button
+                className={
+                  props.route.surface === "whiteboard" ? "sidebar-row selected" : "sidebar-row"
+                }
+                type="button"
+                onClick={() => props.onSurface("whiteboard")}
+              >
+                <Pencil size={17} />
+                <span className="row-label">Whiteboard</span>
               </button>
               <button
                 className={
@@ -8341,6 +8360,7 @@ function routeFromLocation(): RouteState {
       parts[1] === "attention" ||
       parts[1] === "runs" ||
       parts[1] === "reviews" ||
+      parts[1] === "whiteboard" ||
       parts[1] === "custom"
         ? parts[1]
         : "agents";
