@@ -13,6 +13,7 @@ const sdk = vi.hoisted(() => ({
   resourceReadOptions: [] as unknown[],
   promptReads: [] as unknown[],
   promptReadOptions: [] as unknown[],
+  templateReads: [] as unknown[],
   closed: 0,
   transports: [] as { kind: string; input: unknown }[],
 }));
@@ -64,6 +65,18 @@ vi.mock("@modelcontextprotocol/client", () => ({
         ],
       };
     }
+    async listResourceTemplates(_input: unknown, options: unknown) {
+      sdk.catalogOptions.push(options);
+      return {
+        resourceTemplates: [
+          {
+            uriTemplate: "docs://guide/{topic}",
+            name: "Guide by topic",
+            description: "A guide for a topic.",
+          },
+        ],
+      };
+    }
     async callTool(input: unknown, options: unknown) {
       sdk.called.push(input);
       sdk.callOptions.push(options);
@@ -71,6 +84,7 @@ vi.mock("@modelcontextprotocol/client", () => ({
     }
     async readResource(input: unknown, options: unknown) {
       sdk.resourceReads.push(input);
+      sdk.templateReads.push(input);
       sdk.resourceReadOptions.push(options);
       return {
         contents: [{ uri: "docs://guide", mimeType: "text/plain", text: "Resource body" }],
@@ -133,9 +147,11 @@ describe("MCP tools", () => {
       "localdocs_lookup",
       "localdocs_read_mcp_resource",
       "localdocs_get_mcp_prompt",
+      "localdocs_read_mcp_resource_template",
       "remotedocs_lookup",
       "remotedocs_read_mcp_resource",
       "remotedocs_get_mcp_prompt",
+      "remotedocs_read_mcp_resource_template",
     ]);
     await expect(loaded.tools[0]?.execute({ value: "guide" }, toolContext())).resolves.toBe(
       "MCP result",
@@ -145,6 +161,8 @@ describe("MCP tools", () => {
     );
     expect(sdk.connectOptions).toEqual([{ timeout: 40_000 }, { timeout: 45_000 }]);
     expect(sdk.catalogOptions).toEqual([
+      { timeout: 41_000 },
+      { timeout: 41_000 },
       { timeout: 41_000 },
       { timeout: 41_000 },
       { timeout: 41_000 },
@@ -179,6 +197,26 @@ describe("MCP tools", () => {
     await expect(promptTool?.execute({ name: "unknown" }, toolContext())).rejects.toThrow(
       "not in the catalog",
     );
+    const templateTool = loaded.tools.find(
+      (tool) => tool.name === "localdocs_read_mcp_resource_template",
+    );
+    expect(templateTool?.description).toContain("docs://guide/{topic}");
+    await expect(
+      templateTool?.execute(
+        { uriTemplate: "docs://guide/{topic}", variables: { topic: "a/b" } },
+        toolContext(),
+      ),
+    ).resolves.toBe("Resource body");
+    expect(sdk.templateReads).toContainEqual({ uri: "docs://guide/a%2Fb" });
+    await expect(
+      templateTool?.execute({ uriTemplate: "docs://guide/{topic}" }, toolContext()),
+    ).rejects.toThrow("required");
+    await expect(
+      templateTool?.execute(
+        { uriTemplate: "docs://unknown/{topic}", variables: { topic: "x" } },
+        toolContext(),
+      ),
+    ).rejects.toThrow("not in the catalog");
     expect(sdk.transports).toContainEqual(
       expect.objectContaining({
         kind: "local",

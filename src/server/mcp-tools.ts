@@ -184,10 +184,15 @@ export async function loadMcpTools(
         );
         if (allowedTemplates.size > 0) {
           const name = normalizeToolName(`${serverName}_read_mcp_resource_template`);
+          const catalog = [...allowedTemplates].slice(0, 50).join("\n- ");
           tools.push({
             type: "function",
             name,
-            description: `Read a cataloged MCP resource template from ${serverName}.`,
+            description:
+              `Read a cataloged MCP resource template from ${serverName}. Available templates:\n- ${catalog}`.slice(
+                0,
+                2_000,
+              ),
             parameters: {
               type: "object",
               properties: {
@@ -207,8 +212,14 @@ export async function loadMcpTools(
               if (!allowedTemplates.has(template))
                 throw new Error("MCP resource template is not in the catalog.");
               const vars = isRecord(input.variables) ? input.variables : {};
+              const variableEntries = Object.entries(vars).slice(0, 50);
               const uri = template.replace(/\{([^}]+)\}/g, (_match, key: string) =>
-                encodeURIComponent(String(vars[key] ?? "")),
+                (() => {
+                  const value = variableEntries.find(([name]) => name === key)?.[1];
+                  if (value === undefined)
+                    throw new Error(`MCP template variable ${key} is required.`);
+                  return encodeURIComponent(String(value).slice(0, 2_000));
+                })(),
               );
               const result = await open.client.readResource(
                 { uri },
