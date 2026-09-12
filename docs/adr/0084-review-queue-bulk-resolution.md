@@ -14,3 +14,4 @@ load changes. No new server bulk endpoint or automatic resolution policy is intr
 
 Reviewers can clear a bounded batch while preserving per-message authorization and error handling.
 Rows on older pages remain untouched until explicitly loaded and selected.
+The page also offers a select-all-visible control; it never selects rows outside the loaded page.

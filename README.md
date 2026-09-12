@@ -97,6 +97,7 @@ The queue can also be narrowed to one workspace agent or thread; changing any fi
 first page, and the active agent/thread selection is recorded in review-case exports.
 Select open rows to mark a bounded visible batch reviewed sequentially; selection is cleared when the
 page or filters change.
+Use **Select all visible** for the loaded page, or clear the selection before choosing another batch.
 
 Open **Needs attention** to review pending approvals, questions, and blocked or failed work. Each
 item can be snoozed for one hour, four hours, or one day, or dismissed; snoozes expire automatically,

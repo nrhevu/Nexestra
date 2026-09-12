@@ -160,6 +160,21 @@ export function ReviewQueueView({
           </p>
         </div>
         <div className="review-queue-header-actions">
+          <button
+            type="button"
+            onClick={() =>
+              setSelectedIds(
+                selectedRows.length === rows.length
+                  ? new Set()
+                  : new Set(rows.map((item) => item.id)),
+              )
+            }
+            disabled={busy || rows.length === 0}
+          >
+            {selectedRows.length === rows.length && rows.length > 0
+              ? "Clear selection"
+              : "Select all visible"}
+          </button>
           <button type="button" onClick={() => void load()} disabled={busy}>
             Refresh
           </button>
