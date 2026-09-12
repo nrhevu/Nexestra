@@ -9,6 +9,7 @@ import type {
   AgentView,
   BootstrapData,
   KnowledgeDocument,
+  Message,
   RunHistoryPage,
   Thread,
   ThreadData,
@@ -3439,6 +3440,64 @@ describe("Master harness", () => {
         body: JSON.stringify({ answers: [["Proceed"]] }),
       });
     });
+  });
+});
+
+describe("Message knowledge capture", () => {
+  it("captures a message with generated metadata and refreshes the workspace", async () => {
+    const thread = activityThread("thread-capture", "Research");
+    const message: Message = {
+      id: "message-capture",
+      threadId: thread.id,
+      sequence: 1,
+      author: { kind: "user", id: "local-user", name: "You" },
+      content: "Decision: keep the local-first design.",
+      mentions: [],
+      knowledgeReferences: [],
+      artifactIds: [],
+      createdAt: now,
+    };
+    const transcript: ThreadData = {
+      thread,
+      messages: [message],
+      artifacts: [],
+      runs: [],
+      toolCalls: [],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        return jsonResponse({ ...bootstrapData, threads: [thread] });
+      }
+      if (path === historyUrl(thread)) return jsonResponse(historySnapshot(transcript));
+      if (path === "/api/knowledge/from-message" && init?.method === "POST") {
+        return jsonResponse({}, 201);
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await screen.findByText(message.content);
+    await user.click(screen.getByRole("button", { name: "Save message as Knowledge" }));
+
+    await waitFor(() => {
+      const request = fetchMock.mock.calls.find(
+        ([input, init]) =>
+          String(input) === "/api/knowledge/from-message" && init?.method === "POST",
+      );
+      expect(request).toBeDefined();
+      expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({
+        workspaceId: workspace.id,
+        threadId: thread.id,
+        messageId: message.id,
+        name: `Captured note ${now.slice(0, 10)}`,
+        handle: "note-message",
+      });
+    });
+    expect(await screen.findByText("Saved message as #note-message.")).toBeVisible();
   });
 });
 
