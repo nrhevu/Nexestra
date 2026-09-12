@@ -649,7 +649,7 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
 
   it("offers retry only for failed or interrupted runs", async () => {
     const user = userEvent.setup();
-    const onRetryRun = vi.fn(async () => undefined);
+    const onRetryRun = vi.fn(async (_runId: string) => undefined);
     const failed = makeItem(makeRun("run-failed", { status: "failed" }));
     const interrupted = makeItem(makeRun("run-interrupted", { status: "interrupted" }));
     const completed = makeItem(makeRun("run-completed", { status: "completed" }));
@@ -670,7 +670,7 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
 
   it("retries multiple selected failed runs in order", async () => {
     const user = userEvent.setup();
-    const onRetryRun = vi.fn(async () => undefined);
+    const onRetryRun = vi.fn(async (_runId: string) => undefined);
     const failed = makeItem(makeRun("run-failed", { status: "failed" }));
     const interrupted = makeItem(makeRun("run-interrupted", { status: "interrupted" }));
     const fetchMock = vi.fn(async () => jsonResponse(makePage([failed, interrupted])));
