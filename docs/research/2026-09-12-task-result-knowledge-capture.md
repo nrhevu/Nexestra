@@ -6,8 +6,8 @@ friction was navigation: a user had to find the generated Worker message in the 
 before starting capture. That extra step makes useful implementation notes less likely to survive as
 shared workspace knowledge.
 
-The bounded change is to return the canonical agent message whose `runId` equals the latest
-assignment ID in `GET /api/tasks/:id/process`. Taskboard renders **Save as Knowledge** only for a
+The bounded change is to return an 8,000-character redacted preview of the canonical agent message
+whose `runId` equals the latest assignment ID in `GET /api/tasks/:id/process`. Taskboard renders **Save as Knowledge** only for a
 completed assignment with that message. The existing capture dialog then submits the thread and
 message IDs to the server, which rereads the transcript and captures redacted canonical content.
 

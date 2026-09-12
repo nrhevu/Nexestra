@@ -6,8 +6,8 @@ Accepted
 
 ## Decision
 
-Expose the canonical Worker reply for the latest Taskboard assignment in the task process
-response. When a Worker has completed and produced a reply, Taskboard offers the existing reviewed
+Expose an 8,000-character redacted preview of the canonical Worker reply for the latest Taskboard
+assignment in the task process response. When a Worker has completed and produced a reply, Taskboard offers the existing reviewed
 Knowledge capture dialog directly from the result. The server still captures by the immutable
 thread and message IDs, redacts known credentials, and records message provenance; the UI does not
 trust the displayed assignment result as a second source of content.

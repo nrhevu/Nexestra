@@ -103,7 +103,7 @@ export class AgentDispatcher {
             sourceMessage: {
               id: sourceMessage.id,
               threadId: sourceMessage.threadId,
-              content: this.store.redactSecrets(sourceMessage.content),
+              content: this.store.redactSecrets(sourceMessage.content).slice(0, 8_000),
               createdAt: sourceMessage.createdAt,
               author: { name: this.store.redactSecrets(sourceMessage.author.name) },
             },
