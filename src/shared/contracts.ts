@@ -495,6 +495,8 @@ export const ReviewQueuePageSchema = z.object({
   workspaceId: z.string(),
   items: z.array(ReviewQueueItemSchema).max(50),
   page: z.object({ nextCursor: z.string().nullable() }),
+  // Optional so older clients can still parse queue responses during upgrades.
+  total: z.number().int().nonnegative().default(0),
   coverage: z.object({
     complete: z.boolean(),
     unavailableThreads: z.number().int().nonnegative(),

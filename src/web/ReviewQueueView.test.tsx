@@ -67,6 +67,7 @@ function page(): ReviewQueuePage {
       },
     ],
     page: { nextCursor: null },
+    total: 1,
     coverage: { complete: true, unavailableThreads: 0 },
   };
 }
@@ -88,6 +89,7 @@ describe("ReviewQueueView", () => {
       />,
     );
     expect(await screen.findByText("A response that needs review.")).toBeVisible();
+    expect(screen.getByText("1 matching review")).toBeVisible();
     expect(screen.getByText("Note: Add evidence")).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Open response" }));
     expect(onOpenMessage).toHaveBeenCalledExactlyOnceWith(thread.id, "message-reply");

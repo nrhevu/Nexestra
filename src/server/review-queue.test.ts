@@ -92,6 +92,7 @@ describe("review queue", () => {
 
     const firstPage = await store.listReviewQueue({ workspaceId: workspace.id, limit: 1 });
     expect(firstPage.items).toHaveLength(1);
+    expect(firstPage.total).toBe(2);
     expect(firstPage.page.nextCursor).toBeTruthy();
     expect(JSON.stringify(firstPage)).not.toContain("sk-review-secret");
     expect(firstPage.items[0]?.feedback.value).toBe("negative");

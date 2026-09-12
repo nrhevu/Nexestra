@@ -73,9 +73,10 @@ run. Ratings are user signals, not an automatic score or billing record.
 Open **Needs-work review** under Surfaces, or use `/needs-work review`, to revisit the latest
 negative rating for each agent reply across the workspace. The queue shows a bounded, redacted
 excerpt and note, reports conversations that could not be scanned, and opens the exact source
-message. Use **Mark reviewed** to close an item without changing its rating or source; the status
-filter can reopen or inspect resolved items. Promotion to Knowledge still requires the existing
-review dialog and explicit capture.
+message. The header also reports the number of matching reviews across the current status filter,
+before pagination. Use **Mark reviewed** to close an item without changing its rating or source;
+the status filter can reopen or inspect resolved items. Promotion to Knowledge still requires the
+existing review dialog and explicit capture.
 
 Workspaces can add a domain-specific launch surface in `nexestra.config.json`:
 

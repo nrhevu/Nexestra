@@ -564,7 +564,9 @@ credentials.
   auto-resolve, rewrite prompts, or silently promote content. Message capture still opens a review
   dialog before promoting the unchanged, provenance-linked source into Knowledge; content correction
   remains an explicit edit after capture. Needs-work ratings can carry an optional bounded note and
-  an explicit open/resolved review status; resolving changes metadata only.
+  an explicit open/resolved review status; resolving changes metadata only. Review queue responses
+  also include a filter-scoped total for the current snapshot, while keyset pagination and coverage
+  warnings remain unchanged.
 
 - Optional `surfaces` entries in `nexestra.config.json` compose domain-specific navigation cards.
   Their actions are an allowlisted set of trusted surfaces and their labels are bounded/redacted

@@ -64,3 +64,4 @@
 | [0060](0060-needs-work-review-queue.md) | Accepted | Provide a bounded workspace review queue for needs-work replies |
 | [0061](0061-explicit-review-resolution.md) | Accepted | Resolve and reopen needs-work reviews without changing source content |
 | [0062](0062-declarative-custom-surfaces.md) | Accepted | Configure safe domain-specific surfaces from bounded card definitions |
+| [0063](0063-review-queue-total.md) | Accepted | Return filter-scoped review totals alongside paged needs-work results |

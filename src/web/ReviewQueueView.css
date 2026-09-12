@@ -61,6 +61,12 @@
   font: inherit;
 }
 
+.review-queue-total {
+  margin: -4px 0 16px;
+  color: var(--text-muted);
+  font-size: 0.86rem;
+}
+
 .review-queue-list {
   display: grid;
   gap: 12px;

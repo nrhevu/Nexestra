@@ -123,6 +123,11 @@ export function ReviewQueueView({
           Some conversations could not be scanned ({page.coverage.unavailableThreads}).
         </p>
       ) : null}
+      {page && !loading && !error ? (
+        <p className="review-queue-total" role="status">
+          {page.total} {page.total === 1 ? "matching review" : "matching reviews"}
+        </p>
+      ) : null}
       {loading ? <p className="review-queue-status">Loading review queue…</p> : null}
       {error ? (
         <div className="review-queue-error" role="alert">

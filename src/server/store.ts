@@ -3570,6 +3570,7 @@ export class FileStore {
         workspaceId: workspace.id,
         items: pageItems,
         page: { nextCursor },
+        total: items.length,
         coverage: {
           complete: unavailableThreadIds.size === 0,
           unavailableThreads: unavailableThreadIds.size,
