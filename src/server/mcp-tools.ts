@@ -224,6 +224,13 @@ function resolveInsideWorkspace(workspacePath: string, value: string): string {
 function mcpResultText(result: unknown): string {
   if (!isRecord(result)) return "";
   const parts: string[] = [];
+  if (Array.isArray(result.contents)) {
+    for (const item of result.contents) {
+      if (!isRecord(item)) continue;
+      if (typeof item.text === "string") parts.push(item.text);
+      else if (typeof item.blob === "string") parts.push("[binary resource content omitted]");
+    }
+  }
   if (Array.isArray(result.content)) {
     for (const item of result.content) {
       if (!isRecord(item)) continue;

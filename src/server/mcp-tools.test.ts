@@ -9,6 +9,8 @@ const sdk = vi.hoisted(() => ({
   catalogOptions: [] as unknown[],
   called: [] as unknown[],
   callOptions: [] as unknown[],
+  resourceReads: [] as unknown[],
+  resourceReadOptions: [] as unknown[],
   closed: 0,
   transports: [] as { kind: string; input: unknown }[],
 }));
@@ -35,10 +37,30 @@ vi.mock("@modelcontextprotocol/client", () => ({
         ],
       };
     }
+    async listResources(_input: unknown, options: unknown) {
+      sdk.catalogOptions.push(options);
+      return {
+        resources: [
+          {
+            uri: "docs://guide",
+            name: "Guide",
+            description: "A guide.",
+            mimeType: "text/plain",
+          },
+        ],
+      };
+    }
     async callTool(input: unknown, options: unknown) {
       sdk.called.push(input);
       sdk.callOptions.push(options);
       return { content: [{ type: "text", text: "MCP result" }] };
+    }
+    async readResource(input: unknown, options: unknown) {
+      sdk.resourceReads.push(input);
+      sdk.resourceReadOptions.push(options);
+      return {
+        contents: [{ uri: "docs://guide", mimeType: "text/plain", text: "Resource body" }],
+      };
     }
     async close() {
       sdk.closed += 1;
@@ -87,7 +109,9 @@ describe("MCP tools", () => {
     expect(loaded.warnings).toEqual([]);
     expect(loaded.tools.map((tool) => tool.name)).toEqual([
       "localdocs_lookup",
+      "localdocs_read_mcp_resource",
       "remotedocs_lookup",
+      "remotedocs_read_mcp_resource",
     ]);
     await expect(loaded.tools[0]?.execute({ value: "guide" }, toolContext())).resolves.toBe(
       "MCP result",
@@ -96,8 +120,22 @@ describe("MCP tools", () => {
       expect.objectContaining({ name: "lookup", arguments: { value: "guide" } }),
     );
     expect(sdk.connectOptions).toEqual([{ timeout: 40_000 }, { timeout: 45_000 }]);
-    expect(sdk.catalogOptions).toEqual([{ timeout: 41_000 }, { timeout: 41_000 }]);
+    expect(sdk.catalogOptions).toEqual([
+      { timeout: 41_000 },
+      { timeout: 41_000 },
+      { timeout: 41_000 },
+      { timeout: 41_000 },
+    ]);
     expect(sdk.callOptions).toContainEqual(expect.objectContaining({ timeout: 42_000 }));
+    const resourceTool = loaded.tools.find((tool) => tool.name === "localdocs_read_mcp_resource");
+    await expect(resourceTool?.execute({ uri: "docs://guide" }, toolContext())).resolves.toBe(
+      "Resource body",
+    );
+    expect(sdk.resourceReads).toContainEqual({ uri: "docs://guide" });
+    expect(sdk.resourceReadOptions).toContainEqual(expect.objectContaining({ timeout: 42_000 }));
+    await expect(resourceTool?.execute({ uri: "docs://unknown" }, toolContext())).rejects.toThrow(
+      "not in the catalog",
+    );
     expect(sdk.transports).toContainEqual(
       expect.objectContaining({
         kind: "local",
