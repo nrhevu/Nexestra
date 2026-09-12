@@ -6659,6 +6659,15 @@ function KnowledgeDetailDialog({
               <span>Media type</span>
               <strong>{item.mediaType}</strong>
             </div>
+            {item.provenance && (
+              <div className="resource-details-wide">
+                <span>Source</span>
+                <p>
+                  Captured from message <code>{item.provenance.messageId}</code> in thread{" "}
+                  <code>{item.provenance.threadId}</code>.
+                </p>
+              </div>
+            )}
             <div className="revision-panel resource-details-wide">
               <span>Version history</span>
               {revisionsError && (
