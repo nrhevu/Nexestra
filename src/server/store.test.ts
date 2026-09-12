@@ -1137,6 +1137,12 @@ describe("FileStore", () => {
     if (pruned.kind !== "document") throw new Error("expected document");
     expect(pruned.revisions).toHaveLength(2);
     expect(pruned.currentRevisionId).toBe(current.currentRevisionId);
+    await expect(
+      store.pruneKnowledgeDocumentRevisions(item.id, {
+        keepLatest: 1,
+        expectedRevisionId: item.currentRevisionId,
+      }),
+    ).rejects.toMatchObject({ code: "conflict" });
   });
 
   it("captures a legacy document when a new message pins it and keeps provenance after replacement", async () => {

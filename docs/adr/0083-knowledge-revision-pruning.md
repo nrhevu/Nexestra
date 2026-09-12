@@ -9,6 +9,8 @@ Accepted.
 Document details expose an explicit action to keep the latest ten revisions. The server accepts a
 bounded keep-latest count from 1 through 100, always retaining the current revision and deleting only
 older revision files after the metadata update. No automatic pruning runs in the background.
+Requests carry the expected current revision ID, so a stale detail dialog is rejected after a newer
+replacement or restore.
 
 ## Consequences
 

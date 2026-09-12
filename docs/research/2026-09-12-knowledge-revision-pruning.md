@@ -6,4 +6,5 @@ removing older immutable files. The browser offers keep latest ten; the API boun
 one through one hundred for future tooling.
 
 Pruning is never automatic and does not alter message provenance. Users retain the existing export
-workflow for archival before deleting old bytes.
+workflow for archival before deleting old bytes. The action uses an expected revision guard to avoid
+pruning from a stale dialog after another update.

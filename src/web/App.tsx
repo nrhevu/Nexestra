@@ -7107,7 +7107,13 @@ function KnowledgeDetailDialog({
     try {
       const updated = await api<KnowledgeItem>(
         `/api/knowledge/${encodeURIComponent(item.id)}/revisions/prune`,
-        { method: "POST", body: JSON.stringify({ keepLatest: 10 }) },
+        {
+          method: "POST",
+          body: JSON.stringify({
+            keepLatest: 10,
+            expectedRevisionId: documentItem.currentRevisionId ?? "legacy",
+          }),
+        },
       );
       onChanged(updated, generation, "Older document revisions pruned.");
     } catch (caught) {

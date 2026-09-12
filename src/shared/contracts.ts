@@ -81,6 +81,7 @@ export const UpdateAttentionStateSchema = z.object({
 });
 export const PruneKnowledgeRevisionsSchema = z.object({
   keepLatest: z.number().int().min(1).max(100).default(10),
+  expectedRevisionId: z.string().min(1).optional(),
 });
 export type UpdateAttentionStateInput = z.infer<typeof UpdateAttentionStateSchema>;
 

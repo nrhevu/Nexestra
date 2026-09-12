@@ -976,7 +976,9 @@ export class FileStore {
       if (current?.kind !== "document") {
         throw new StoreError("not_found", "Knowledge document not found.");
       }
-      this.requireExpectedDocumentRevision(current, input.expectedRevisionId);
+      if (input.expectedRevisionId !== undefined) {
+        this.requireExpectedDocumentRevision(current, input.expectedRevisionId);
+      }
       const now = new Date().toISOString();
       const nextState = structuredClone(this.state);
       const createdPaths: string[] = [];
@@ -1040,7 +1042,9 @@ export class FileStore {
       if (current?.kind !== "document") {
         throw new StoreError("not_found", "Knowledge document not found.");
       }
-      this.requireExpectedDocumentRevision(current, input.expectedRevisionId);
+      if (input.expectedRevisionId !== undefined) {
+        this.requireExpectedDocumentRevision(current, input.expectedRevisionId);
+      }
       const nextState = structuredClone(this.state);
       const nextItem = nextState.knowledge[index];
       if (nextItem?.kind !== "document") {
@@ -1108,6 +1112,9 @@ export class FileStore {
       const current = this.state.knowledge[index];
       if (current?.kind !== "document")
         throw new StoreError("not_found", "Knowledge document not found.");
+      if (input.expectedRevisionId !== undefined) {
+        this.requireExpectedDocumentRevision(current, input.expectedRevisionId);
+      }
       const ordered = [...current.revisions].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
       const keep = new Set(ordered.slice(0, input.keepLatest).map((revision) => revision.id));
       if (current.currentRevisionId) keep.add(current.currentRevisionId);
