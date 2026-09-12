@@ -114,6 +114,12 @@ import {
 } from "./KnowledgeDocumentPreview.js";
 import { MessageLinkButton } from "./MessageLinkButton.js";
 import { MessageSearchDialog } from "./MessageSearchDialog.js";
+import {
+  readDesktopNotificationPreferences,
+  requestDesktopNotificationPermission,
+  showDesktopAttentionNotification,
+  writeDesktopNotificationPreferences,
+} from "./notification-preferences.js";
 import { RepositoryBranchPicker } from "./RepositoryBranchPicker.js";
 import { ReviewQueueView } from "./ReviewQueueView.js";
 import { RunHistoryView } from "./RunHistoryView.js";
@@ -240,6 +246,9 @@ export function App() {
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     return readBrowserValue("nexestra.theme") === "light" ? "light" : "dark";
   });
+  const [desktopNotificationsEnabled, setDesktopNotificationsEnabled] = useState(
+    () => readDesktopNotificationPreferences().enabled,
+  );
   const deferredRunActivities = useDeferredValue(runActivities);
   const [readState] = useState(() => new ReadState());
   const [conversationFilters, setConversationFilters] = useState(
@@ -274,6 +283,7 @@ export function App() {
   const workspaceGenerationRef = useRef(0);
   const activityRevisionRef = useRef(0);
   const workspaceActivityRevisionRef = useRef(0);
+  const attentionNotificationCountsRef = useRef(new Map<string, number>());
   const threadActivityRevisionRef = useRef<{ threadId: string; revision: number } | undefined>(
     undefined,
   );
@@ -1216,17 +1226,36 @@ export function App() {
     ),
   );
   useEffect(() => {
-    if (!hasWorkspaceActivity) return;
+    if (!hasWorkspaceActivity && !desktopNotificationsEnabled) return;
     const timer = window.setInterval(() => {
       void api<WorkspaceActivitySummary[]>("/api/activity/summaries")
         .then((summaries) => {
           const current = dataRef.current;
-          if (current) updateData({ ...current, workspaceActivitySummaries: summaries });
+          if (current) {
+            const previous = attentionNotificationCountsRef.current;
+            const next = new Map(
+              summaries.map((summary) => [summary.workspaceId, summary.attentionCount]),
+            );
+            if (desktopNotificationsEnabled) {
+              for (const summary of summaries) {
+                const previousCount = previous.get(summary.workspaceId);
+                if (previousCount === undefined || summary.attentionCount <= previousCount)
+                  continue;
+                const workspace = current.workspaces.find(
+                  (entry) => entry.id === summary.workspaceId,
+                );
+                if (workspace)
+                  showDesktopAttentionNotification(workspace.name, summary.attentionCount);
+              }
+            }
+            attentionNotificationCountsRef.current = next;
+            updateData({ ...current, workspaceActivitySummaries: summaries });
+          }
         })
         .catch(() => undefined);
     }, 5_000);
     return () => window.clearInterval(timer);
-  }, [hasWorkspaceActivity, updateData]);
+  }, [desktopNotificationsEnabled, hasWorkspaceActivity, updateData]);
 
   const openThread = (threadId: string) =>
     navigate(`/threads/${threadId}`, { view: "threads", surface: route.surface, threadId });
@@ -1237,6 +1266,23 @@ export function App() {
         ? document.activeElement
         : null;
     setModal("settings");
+  };
+
+  const toggleDesktopNotifications = async () => {
+    if (desktopNotificationsEnabled) {
+      writeDesktopNotificationPreferences(false);
+      setDesktopNotificationsEnabled(false);
+      flash("Desktop notifications disabled.");
+      return;
+    }
+    const granted = await requestDesktopNotificationPermission();
+    if (!granted) {
+      flash("Desktop notification permission was not granted.");
+      return;
+    }
+    writeDesktopNotificationPreferences(true);
+    setDesktopNotificationsEnabled(true);
+    flash("Desktop notifications enabled.");
   };
 
   const closeSettings = () => {
@@ -2474,6 +2520,8 @@ export function App() {
       {modal === "settings" && (
         <SettingsDialog
           data={data}
+          desktopNotificationsEnabled={desktopNotificationsEnabled}
+          onToggleDesktopNotifications={() => void toggleDesktopNotifications()}
           onClose={closeSettings}
           onExport={openWorkspaceExport}
           onInspectArchive={openWorkspaceArchiveInspection}
@@ -8093,6 +8141,8 @@ function shortCommit(commit?: string): string {
 
 function SettingsDialog({
   data,
+  desktopNotificationsEnabled,
+  onToggleDesktopNotifications,
   onClose,
   onRename,
   onReorder,
@@ -8101,6 +8151,8 @@ function SettingsDialog({
   onInspectArchive,
 }: {
   data: BootstrapData;
+  desktopNotificationsEnabled: boolean;
+  onToggleDesktopNotifications: () => void;
   onClose: () => void;
   onRename: (workspaceId: string, name: string) => Promise<void>;
   onReorder: (workspaceIds: string[]) => Promise<void>;
@@ -8193,6 +8245,18 @@ function SettingsDialog({
             {data.runtime.chatgpt.connected ? "Connected" : "Not connected"}
           </strong>
         </div>
+      </div>
+      <div className="settings-workspaces">
+        <span className="settings-section-title">Desktop notifications</span>
+        <p className="settings-hint">
+          Notify this browser when a workspace's attention count increases. The message contains no
+          task or transcript content.
+        </p>
+        <button type="button" className="secondary-button" onClick={onToggleDesktopNotifications}>
+          {desktopNotificationsEnabled
+            ? "Disable desktop notifications"
+            : "Enable desktop notifications"}
+        </button>
       </div>
       <div className="settings-workspaces">
         <span className="settings-section-title">Workspaces</span>

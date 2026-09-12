@@ -582,8 +582,8 @@ credentials.
   visibly. Files & links, Markdown export and agent context retain full-history reads. Finite
   pages replace their predecessor; the app does not virtualize one continuous transcript.
 
-- Needs attention reflects the selected workspace's current conditions. It has no desktop
-  notifications or cross-workspace monitoring. Run history separately lists ordinary failed chat
+- Needs attention reflects the selected workspace's current conditions. It has no cross-workspace
+  monitoring beyond bounded activity counts and opt-in browser notifications. Run history separately lists ordinary failed chat
   turns and links to their thread. Users can persist a bounded one-hour, four-hour, or one-day
   snooze or dismissal for a derived item in `state.json`; snoozes expire server-side and dismissals
   reappear when the item's `updatedAt` advances. The action history is bounded metadata only and

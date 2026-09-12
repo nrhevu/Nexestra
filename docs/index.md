@@ -124,3 +124,5 @@
     heterogeneous harness and model labels without exposing provider configuration or secrets.
 64. [Attention audit history research](research/2026-09-12-attention-audit-history.md): retain
     bounded workspace-scoped snooze and dismiss actions without alert content.
+65. [Opt-in desktop Attention notifications research](research/2026-09-12-opt-in-desktop-attention-notifications.md):
+    notify a browser about increased workspace counts only after explicit permission.
