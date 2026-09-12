@@ -231,8 +231,9 @@ Markdown source remains unchanged in the shared transcript and agent context.
 
 While an agent is active, the thread receives a live event stream with its current phase, tool
 activity, runtime-emitted reasoning, and in-progress answer. Reasoning is collapsed behind a
-**Thinking** disclosure. Custom OpenAI-compatible and Anthropic Messages providers stream response and reasoning deltas
-through their native SSE protocols. Codex and OpenCode stream the JSONL lifecycle events their CLIs
+**Thinking** disclosure. Custom OpenAI-compatible and Anthropic Messages providers stream response
+deltas through their native SSE protocols; OpenAI-compatible providers may also emit reasoning
+deltas. Codex and OpenCode stream the JSONL lifecycle events their CLIs
 expose. When a run completes successfully, transient thinking and tool activity disappear so the
 thread shows only the final answer. Durable tool records remain in the canonical transcript for
 recovery and audit; transient reasoning and text deltas are never persisted as chat messages.

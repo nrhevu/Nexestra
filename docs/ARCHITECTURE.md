@@ -451,9 +451,10 @@ following:
   model, optional API key, and the provider-neutral Master tool loop.
 
 Codex receives safe raster images through `--image`; OpenCode receives each local artifact through
-`--file`. Custom providers receive safe raster images as data URLs in the selected OpenAI protocol
-shape and up to 512 KB of attached text context. Image provider payloads are capped at 10 MB; larger
-artifacts remain indexed but are represented only by metadata.
+`--file`. Custom providers receive safe raster images in the selected protocol shape (data URLs for
+OpenAI-compatible protocols and base64 image blocks for Anthropic Messages) and up to 512 KB of
+attached text context. Image provider payloads are capped at 10 MB; larger artifacts remain indexed
+but are represented only by metadata.
 
 The Master tool registry provides repository list, glob, grep, read, exact edit, file write,
 multi-file patch, bounded shell, skill loading, per-run todos, bounded public web fetch/search,
