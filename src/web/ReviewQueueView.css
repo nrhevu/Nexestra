@@ -43,6 +43,24 @@
   opacity: 0.6;
 }
 
+.review-queue-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.review-queue-filter select {
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  padding: 6px 8px;
+  font: inherit;
+}
+
 .review-queue-list {
   display: grid;
   gap: 12px;

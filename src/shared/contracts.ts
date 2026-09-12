@@ -407,6 +407,7 @@ export const MessageFeedbackSchema = z.object({
   messageId: z.string(),
   value: z.enum(["positive", "negative"]),
   note: z.string().trim().max(500).optional(),
+  reviewStatus: z.enum(["open", "resolved"]).optional(),
   // These fields make quality metrics resilient to retries and shared triggers.
   // They remain optional so existing state files continue to load unchanged.
   agentId: z.string().optional(),
@@ -421,10 +422,16 @@ export const SetMessageFeedbackSchema = z.object({
 });
 export type SetMessageFeedbackInput = z.input<typeof SetMessageFeedbackSchema>;
 
+export const ReviewStatusUpdateSchema = z.object({
+  status: z.enum(["open", "resolved"]),
+});
+export type ReviewStatusUpdate = z.infer<typeof ReviewStatusUpdateSchema>;
+
 export const ReviewQueueRequestSchema = z.object({
   workspaceId: z.string().trim().min(1).max(200),
   agentId: z.string().trim().min(1).max(200).optional(),
   threadId: z.string().trim().min(1).max(200).optional(),
+  status: z.enum(["open", "resolved", "all"]).default("open"),
   cursor: z.string().min(1).max(2_048).optional(),
   limit: z.coerce.number().int().min(1).max(50).default(25),
 });

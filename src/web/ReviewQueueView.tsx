@@ -10,16 +10,26 @@ export interface ReviewQueueViewProps {
   workspaceId: string;
   refreshRevision?: number;
   onOpenMessage: (threadId: string, messageId: string) => void;
+  onSetReviewStatus: (
+    threadId: string,
+    messageId: string,
+    status: "open" | "resolved",
+  ) => Promise<void>;
 }
+
+type ReviewFilter = "open" | "resolved" | "all";
 
 export function ReviewQueueView({
   workspaceId,
   refreshRevision,
   onOpenMessage,
+  onSetReviewStatus,
 }: ReviewQueueViewProps) {
   const [page, setPage] = useState<ReviewQueuePage>();
+  const [status, setStatus] = useState<ReviewFilter>("open");
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [resolvingId, setResolvingId] = useState<string>();
   const [error, setError] = useState<string>();
   const requestRef = useRef(0);
 
@@ -30,7 +40,11 @@ export function ReviewQueueView({
       else setLoading(true);
       setError(undefined);
       try {
-        const params = new URLSearchParams({ workspaceId, limit: String(PAGE_LIMIT) });
+        const params = new URLSearchParams({
+          workspaceId,
+          status,
+          limit: String(PAGE_LIMIT),
+        });
         if (cursor) params.set("cursor", cursor);
         const parsed = ReviewQueuePageSchema.parse(
           await api<unknown>(`/api/reviews?${params.toString()}`),
@@ -49,7 +63,7 @@ export function ReviewQueueView({
         }
       }
     },
-    [workspaceId],
+    [status, workspaceId],
   );
 
   useEffect(() => {
@@ -61,6 +75,19 @@ export function ReviewQueueView({
       requestRef.current += 1;
     };
   }, [load, refreshRevision]);
+
+  const updateReviewStatus = async (item: ReviewQueueItem) => {
+    const nextStatus = item.feedback.reviewStatus === "resolved" ? "open" : "resolved";
+    setResolvingId(item.id);
+    try {
+      await onSetReviewStatus(item.message.threadId, item.message.id, nextStatus);
+      await load();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Review status could not be updated.");
+    } finally {
+      setResolvingId((current) => (current === item.id ? undefined : current));
+    }
+  };
 
   const rows = page?.items ?? [];
   const nextCursor = page?.page.nextCursor ?? null;
@@ -79,6 +106,18 @@ export function ReviewQueueView({
           Refresh
         </button>
       </header>
+      <label className="review-queue-filter">
+        <span>Review status</span>
+        <select
+          value={status}
+          onChange={(event) => setStatus(event.target.value as ReviewFilter)}
+          disabled={loading || loadingMore}
+        >
+          <option value="open">Open</option>
+          <option value="resolved">Resolved</option>
+          <option value="all">All</option>
+        </select>
+      </label>
       {page?.coverage.complete === false ? (
         <p className="review-queue-warning" role="status">
           Some conversations could not be scanned ({page.coverage.unavailableThreads}).
@@ -120,6 +159,17 @@ export function ReviewQueueView({
                   onClick={() => onOpenMessage(item.message.threadId, item.message.id)}
                 >
                   Open response
+                </button>
+                <button
+                  type="button"
+                  disabled={resolvingId !== undefined}
+                  onClick={() => void updateReviewStatus(item)}
+                >
+                  {resolvingId === item.id
+                    ? "Saving…"
+                    : item.feedback.reviewStatus === "resolved"
+                      ? "Reopen review"
+                      : "Mark reviewed"}
                 </button>
               </li>
             );

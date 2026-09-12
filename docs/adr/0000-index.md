@@ -62,3 +62,4 @@
 | [0058](0058-feedback-notes.md) | Accepted | Collect bounded context when marking an agent response needs work |
 | [0059](0059-safe-run-failure-kinds.md) | Accepted | Classify run failures without exposing raw error payloads in history |
 | [0060](0060-needs-work-review-queue.md) | Accepted | Provide a bounded workspace review queue for needs-work replies |
+| [0061](0061-explicit-review-resolution.md) | Accepted | Resolve and reopen needs-work reviews without changing source content |

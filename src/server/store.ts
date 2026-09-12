@@ -65,6 +65,7 @@ import {
   type ReviewQueuePage,
   ReviewQueuePageSchema,
   ReviewQueueRequestSchema,
+  ReviewStatusUpdateSchema,
   type RunHistoryAgentMetrics,
   type RunHistoryItem,
   type RunHistoryPage,
@@ -2283,6 +2284,7 @@ export class FileStore {
         messageId,
         value: input.value,
         agentId: messageEvent.message.author.id,
+        ...(input.value === "negative" ? { reviewStatus: "open" as const } : {}),
         ...(messageRunId ? { runId: messageRunId } : {}),
         ...(input.note
           ? (() => {
@@ -2297,6 +2299,80 @@ export class FileStore {
       await this.writeState(nextState);
       this.state = nextState;
       return structuredClone(feedback);
+    });
+  }
+
+  async setMessageReviewStatus(
+    threadId: string,
+    messageId: string,
+    rawInput: unknown,
+  ): Promise<MessageFeedback> {
+    const input = ReviewStatusUpdateSchema.parse(rawInput);
+    return this.withWrite(async () => {
+      this.requireThread(threadId);
+      const index =
+        this.historyIndexes.get(threadId) ?? (await this.primeTranscriptIndex(threadId));
+      const messageEntry = index.messageById.get(messageId);
+      if (!messageEntry) throw new StoreError("not_found", "Message not found in this thread.");
+      if (!index.identity || index.unreliable || index.missing) {
+        throw new StoreError("conflict", "The message transcript changed; reload and try again.");
+      }
+      const messageRead = await readTranscriptPageLines(
+        this.transcriptPath(threadId),
+        index.identity,
+        [messageEntry],
+      );
+      const line = messageRead.status === "ok" ? messageRead.lines[0] : undefined;
+      if (!line) {
+        throw new StoreError("conflict", "The message transcript changed; reload and try again.");
+      }
+      let messageEvent: TranscriptEvent | undefined;
+      try {
+        messageEvent = parseTranscriptEvent(stripTrailingNewline(line));
+      } catch {
+        throw new StoreError(
+          "conflict",
+          "The message transcript is unavailable; reload and try again.",
+        );
+      }
+      if (
+        messageEvent?.type !== "message.created" ||
+        messageEvent.message.id !== messageId ||
+        messageEvent.message.threadId !== threadId ||
+        messageEvent.sequence !== messageEntry.sequence ||
+        messageEvent.message.author.kind !== "agent"
+      ) {
+        throw new StoreError(
+          "conflict",
+          "The message transcript is unavailable; reload and try again.",
+        );
+      }
+      const existingIndex = this.state.messageFeedback.findIndex(
+        (entry) => entry.threadId === threadId && entry.messageId === messageId,
+      );
+      const existing = this.state.messageFeedback[existingIndex];
+      if (existing?.value !== "negative") {
+        throw new StoreError("not_found", "Needs-work review not found for this message.");
+      }
+      if (
+        (existing.agentId !== undefined && existing.agentId !== messageEvent.message.author.id) ||
+        (existing.runId !== undefined && existing.runId !== messageEvent.message.runId)
+      ) {
+        throw new StoreError(
+          "conflict",
+          "The message review provenance is unavailable; reload and try again.",
+        );
+      }
+      const nextState = structuredClone(this.state);
+      const updated = MessageFeedbackSchema.parse({
+        ...existing,
+        reviewStatus: input.status,
+        updatedAt: new Date().toISOString(),
+      });
+      nextState.messageFeedback[existingIndex] = updated;
+      await this.writeState(nextState);
+      this.state = nextState;
+      return this.redactedMessageFeedback(updated);
     });
   }
 
@@ -3105,6 +3181,7 @@ export class FileStore {
           cursor.agentId !== input.agentId ||
           cursor.threadId !== input.threadId ||
           cursor.status !== input.status ||
+          cursor.status !== input.status ||
           cursor.limit !== input.limit
         ) {
           throw new StoreError("invalid", "Run history cursor does not match this request.");
@@ -3411,6 +3488,8 @@ export class FileStore {
       const unavailableThreadIds = new Set<string>();
       for (const feedback of latestFeedback.values()) {
         if (feedback.value !== "negative") continue;
+        const reviewStatus = feedback.reviewStatus ?? "open";
+        if (input.status !== "all" && reviewStatus !== input.status) continue;
         const targetThread = threads.get(feedback.threadId);
         if (!targetThread) continue;
         const index =

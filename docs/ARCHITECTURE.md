@@ -563,7 +563,8 @@ credentials.
   revisiting negative replies across the workspace. It links to the canonical message but does not
   auto-resolve, rewrite prompts, or silently promote content. Message capture still opens a review
   dialog before promoting the unchanged, provenance-linked source into Knowledge; content correction
-  remains an explicit edit after capture. Needs-work ratings can carry an optional bounded note.
+  remains an explicit edit after capture. Needs-work ratings can carry an optional bounded note and
+  an explicit open/resolved review status; resolving changes metadata only.
 
 - Workspace export has no import/restore workflow and is not a complete backup. Snapshot inventory
   scans transcripts under the write barrier before a second read for ZIP generation. Stored ZIP

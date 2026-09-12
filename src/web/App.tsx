@@ -2003,6 +2003,15 @@ export function App() {
               workspaceId={data.workspace.id}
               refreshRevision={reviewQueueRefreshRevision}
               onOpenMessage={openMessage}
+              onSetReviewStatus={async (threadId, messageId, status) => {
+                await api(
+                  `/api/reviews/${encodeURIComponent(threadId)}/${encodeURIComponent(messageId)}`,
+                  { method: "PATCH", body: JSON.stringify({ status }) },
+                );
+                setReviewQueueRefreshRevision((revision) => revision + 1);
+                await refresh(true);
+                flash(status === "resolved" ? "Review marked complete." : "Review reopened.");
+              }}
             />
           ) : (
             <div className="surface-view" role="status">

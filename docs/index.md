@@ -56,3 +56,5 @@
     monitoring failures without copying raw provider or command errors into the history response.
 30. [Needs-work review queue research](research/2026-09-12-needs-work-review-queue.md): revisit
     bounded, redacted negative ratings before deliberate Knowledge capture.
+31. [Review resolution research](research/2026-09-12-review-resolution.md): record reversible,
+    explicit review completion while preserving ratings and source content.

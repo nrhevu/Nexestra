@@ -79,10 +79,47 @@ describe("ReviewQueueView", () => {
       json: async () => page(),
     } as Response);
     const onOpenMessage = vi.fn();
-    render(<ReviewQueueView workspaceId={workspaceId} onOpenMessage={onOpenMessage} />);
+    const onSetReviewStatus = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ReviewQueueView
+        workspaceId={workspaceId}
+        onOpenMessage={onOpenMessage}
+        onSetReviewStatus={onSetReviewStatus}
+      />,
+    );
     expect(await screen.findByText("A response that needs review.")).toBeVisible();
     expect(screen.getByText("Note: Add evidence")).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Open response" }));
     expect(onOpenMessage).toHaveBeenCalledExactlyOnceWith(thread.id, "message-reply");
+    await userEvent.click(screen.getByRole("button", { name: "Mark reviewed" }));
+    expect(onSetReviewStatus).toHaveBeenCalledExactlyOnceWith(
+      thread.id,
+      "message-reply",
+      "resolved",
+    );
+  });
+
+  it("can inspect resolved reviews and reopen them", async () => {
+    const resolvedPage = page();
+    const review = resolvedPage.items[0];
+    if (!review) throw new Error("expected review fixture");
+    review.feedback.reviewStatus = "resolved";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => resolvedPage,
+    } as Response);
+    const onSetReviewStatus = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ReviewQueueView
+        workspaceId={workspaceId}
+        onOpenMessage={vi.fn()}
+        onSetReviewStatus={onSetReviewStatus}
+      />,
+    );
+    await userEvent.selectOptions(screen.getByLabelText("Review status"), "resolved");
+    expect(await screen.findByText("A response that needs review.")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Reopen review" }));
+    expect(onSetReviewStatus).toHaveBeenCalledExactlyOnceWith(thread.id, "message-reply", "open");
   });
 });

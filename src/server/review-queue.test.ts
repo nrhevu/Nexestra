@@ -42,7 +42,10 @@ describe("review queue", () => {
     );
     expect(items.map((entry) => entry.id)).toEqual(["thread:a", "thread:b", "thread:c"]);
     const cursor = decodeReviewQueueCursor(
-      encodeReviewQueueCursor({ workspaceId: "workspace", limit: 1 }, items[0] as ReviewQueueItem),
+      encodeReviewQueueCursor(
+        { workspaceId: "workspace", status: "open", limit: 1 },
+        items[0] as ReviewQueueItem,
+      ),
     );
     expect(cursor).toBeDefined();
     if (!cursor) throw new Error("expected cursor");
@@ -92,6 +95,7 @@ describe("review queue", () => {
     expect(firstPage.page.nextCursor).toBeTruthy();
     expect(JSON.stringify(firstPage)).not.toContain("sk-review-secret");
     expect(firstPage.items[0]?.feedback.value).toBe("negative");
+    expect(firstPage.items[0]?.feedback.reviewStatus).toBe("open");
     expect(firstPage.items[0]?.message.content.length).toBeLessThanOrEqual(800);
 
     const secondPage = await store.listReviewQueue({
@@ -122,6 +126,21 @@ describe("review queue", () => {
     const scoped = await store.listReviewQueue({ workspaceId: workspace.id, limit: 50 });
     expect(scoped.items).toHaveLength(2);
     expect(JSON.stringify(scoped)).not.toContain(foreignMessage.id);
+
+    const resolved = await store.setMessageReviewStatus(thread.id, first.id, {
+      status: "resolved",
+    });
+    expect(resolved.reviewStatus).toBe("resolved");
+    expect(
+      (await store.listReviewQueue({ workspaceId: workspace.id, limit: 50 })).items,
+    ).toHaveLength(1);
+    expect(
+      (await store.listReviewQueue({ workspaceId: workspace.id, status: "resolved", limit: 50 }))
+        .items,
+    ).toHaveLength(1);
+    await expect(
+      store.setMessageReviewStatus(thread.id, first.id, { status: "open" }),
+    ).resolves.toMatchObject({ reviewStatus: "open" });
   });
 
   it("serves the review queue through the loopback API", async () => {
@@ -151,5 +170,11 @@ describe("review queue", () => {
         }),
       ],
     });
+    const resolved = await app.request(`/api/reviews/${thread.id}/${message.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "resolved" }),
+    });
+    expect(resolved.status).toBe(200);
+    expect(await resolved.json()).toMatchObject({ reviewStatus: "resolved" });
   });
 });

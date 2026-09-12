@@ -11,6 +11,7 @@ import {
   DelegateTaskSchema,
   MessageSearchRequestSchema,
   ReviewQueueRequestSchema,
+  ReviewStatusUpdateSchema,
   RunHistoryRequestSchema,
   SelectRepositorySourceBranchSchema,
   ThreadHistoryRequestSchema,
@@ -362,6 +363,17 @@ export function createApp(options: CreateAppOptions) {
   app.get("/api/reviews", async (context) => {
     const input = ReviewQueueRequestSchema.parse(context.req.query());
     return context.json(await options.store.listReviewQueue(input));
+  });
+
+  app.patch("/api/reviews/:threadId/:messageId", async (context) => {
+    const status = ReviewStatusUpdateSchema.parse(await context.req.json());
+    return context.json(
+      await options.store.setMessageReviewStatus(
+        context.req.param("threadId"),
+        context.req.param("messageId"),
+        status,
+      ),
+    );
   });
 
   app.get("/api/threads/:id/history", async (context) => {

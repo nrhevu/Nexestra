@@ -5,6 +5,7 @@ interface ReviewQueueCursorPayload {
   workspaceId: string;
   agentId?: string;
   threadId?: string;
+  status: "open" | "resolved" | "all";
   limit: number;
   updatedAt: string;
   id: string;
@@ -32,14 +33,22 @@ function decode(value: string): ReviewQueueCursorPayload | undefined {
     if (
       keys.some(
         (key) =>
-          !["version", "workspaceId", "agentId", "threadId", "limit", "updatedAt", "id"].includes(
-            key,
-          ),
+          ![
+            "version",
+            "workspaceId",
+            "agentId",
+            "threadId",
+            "status",
+            "limit",
+            "updatedAt",
+            "id",
+          ].includes(key),
       ) ||
       parsed.version !== 1 ||
       typeof parsed.workspaceId !== "string" ||
       parsed.workspaceId.length < 1 ||
       parsed.workspaceId.length > 200 ||
+      (parsed.status !== "open" && parsed.status !== "resolved" && parsed.status !== "all") ||
       typeof parsed.limit !== "number" ||
       !Number.isInteger(parsed.limit) ||
       parsed.limit < 1 ||
@@ -66,6 +75,7 @@ function decode(value: string): ReviewQueueCursorPayload | undefined {
       workspaceId: parsed.workspaceId,
       ...(typeof parsed.agentId === "string" ? { agentId: parsed.agentId } : {}),
       ...(typeof parsed.threadId === "string" ? { threadId: parsed.threadId } : {}),
+      status: parsed.status as "open" | "resolved" | "all",
       limit: parsed.limit,
       updatedAt: parsed.updatedAt,
       id: parsed.id,
@@ -81,6 +91,7 @@ export function encodeReviewQueueCursor(input: ReviewQueueRequest, item: ReviewQ
     workspaceId: input.workspaceId,
     ...(input.agentId !== undefined ? { agentId: input.agentId } : {}),
     ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
+    status: input.status,
     limit: input.limit,
     updatedAt: item.feedback.updatedAt,
     id: item.id,
