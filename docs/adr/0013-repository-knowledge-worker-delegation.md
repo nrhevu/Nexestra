@@ -47,7 +47,7 @@ from silently leaving assignable planned work in To do.
 Repository clones and retained worktrees consume disk until lifecycle controls are added. Private
 repositories depend on the current OS user's ambient Git/SSH configuration. ChatGPT OAuth Masters
 continue to run through Codex CLI and do not yet have the app-native planning and delegation bridge;
-the bridge is available to custom OpenAI-compatible Masters.
+the bridge is available to custom OpenAI-compatible and Anthropic Messages Masters.
 
 ## Status
 

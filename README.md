@@ -246,8 +246,8 @@ links or inline-code paths. Uploaded files remain immutable; workspace-file refe
 the current file contents.
 
 Artifacts on the triggering message are passed to the invoked agent. Codex receives image inputs,
-OpenCode receives file inputs, and custom OpenAI-compatible providers receive bounded text-file
-content and safe raster images in their native multimodal request shape.
+OpenCode receives file inputs, and custom providers receive bounded text-file content and safe
+raster images in their native multimodal request shape.
 
 The **Knowledge** surface stores workspace-scoped documents and Git repositories. Typing `#` in
 the composer opens the knowledge picker. Text documents are included as bounded context; binary

@@ -609,7 +609,8 @@ credentials.
   only, so reload requires selecting them again. Several drafts can keep several composer-sized
   file buckets until removed, sent, or the tab closes.
 
-- App-native `plan` and `delegate` are currently available to custom OpenAI-compatible Masters.
+- App-native `plan` and `delegate` are currently available to custom OpenAI-compatible and
+  Anthropic Messages Masters.
   ChatGPT OAuth Masters run through Codex CLI and do not yet receive this bridge.
 - Assignment branches can be deleted only when Git confirms they are merged; merge and push are not
   yet exposed. Finished worktrees can be removed explicitly, but dirty or untracked work is refused.
