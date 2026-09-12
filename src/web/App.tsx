@@ -1568,6 +1568,26 @@ export function App() {
     }
   };
 
+  const captureMessageAsKnowledge = async (message: Message) => {
+    const name = `Captured note ${message.createdAt.slice(0, 10)}`;
+    const handle = handleFromName(`note-${message.id.slice(0, 8)}`);
+    await mutate(
+      () =>
+        api("/api/knowledge/from-message", {
+          method: "POST",
+          body: JSON.stringify({
+            workspaceId: data?.workspace.id,
+            threadId: message.threadId,
+            messageId: message.id,
+            name,
+            handle,
+            description: `Captured from message ${message.id}.`,
+          }),
+        }),
+      `Saved message as #${handle}.`,
+    );
+  };
+
   const setSubmissionNotice = (workspaceId: string, threadId: string, message?: string) => {
     setPendingNotices((current) => {
       const next = { ...current };
@@ -1912,6 +1932,7 @@ export function App() {
                   );
                 }
               }}
+              onCaptureMessage={captureMessageAsKnowledge}
             />
           ) : (
             <EmptyThreads onCreate={() => setModal("thread")} />
@@ -2781,6 +2802,7 @@ function ThreadView(props: {
   onRetry: (runId: string) => Promise<unknown>;
   onToolDecision: (toolCallId: string, approved: boolean) => Promise<void>;
   onToolResponse: (toolCallId: string, answers: string[][]) => Promise<void>;
+  onCaptureMessage: (message: Message) => Promise<void>;
   onRequestRename: (thread: Thread) => void;
   onArchive: (threadId: string) => Promise<void>;
   onRestore: (threadId: string) => Promise<void>;
@@ -3223,6 +3245,7 @@ function ThreadView(props: {
           onRetry={props.onRetry}
           onToolDecision={props.onToolDecision}
           onToolResponse={props.onToolResponse}
+          onCaptureMessage={props.onCaptureMessage}
           readOnly={archived}
           messageTarget={props.messageTarget}
           historyWindowKind={props.history.intent?.kind ?? "latest"}
@@ -3655,6 +3678,7 @@ const ThreadTranscript = memo(function ThreadTranscript({
   onRetry,
   onToolDecision,
   onToolResponse,
+  onCaptureMessage,
   readOnly,
   messageTarget,
   historyWindowKind,
@@ -3676,6 +3700,7 @@ const ThreadTranscript = memo(function ThreadTranscript({
   onRetry: (runId: string) => Promise<unknown>;
   onToolDecision: (toolCallId: string, approved: boolean) => Promise<void>;
   onToolResponse: (toolCallId: string, answers: string[][]) => Promise<void>;
+  onCaptureMessage: (message: Message) => Promise<void>;
   readOnly: boolean;
   messageTarget?: { id: string };
   historyWindowKind: HistoryWindowKind;
@@ -3911,6 +3936,7 @@ const ThreadTranscript = memo(function ThreadTranscript({
                 agent={
                   message.author.kind === "agent" ? agentsById.get(message.author.id) : undefined
                 }
+                onCaptureMessage={onCaptureMessage}
               />
               {(runsByTrigger.get(message.id) ?? []).map((run) => (
                 <RunRow
@@ -3944,12 +3970,14 @@ function MessageRow({
   agent,
   knownHandles,
   knownKnowledgeHandles,
+  onCaptureMessage,
 }: {
   message: Message;
   artifacts: Artifact[];
   agent?: AgentView;
   knownHandles: ReadonlySet<string>;
   knownKnowledgeHandles: ReadonlySet<string>;
+  onCaptureMessage: (message: Message) => Promise<void>;
 }) {
   const agentAuthor = message.author.kind === "agent" ? message.author : undefined;
   return (
@@ -3973,6 +4001,15 @@ function MessageRow({
           )}
           <time>{formatTime(message.createdAt)}</time>
           <MessageLinkButton threadId={message.threadId} messageId={message.id} />
+          <button
+            type="button"
+            className="message-capture-button"
+            aria-label="Save message as Knowledge"
+            title="Save message as Knowledge"
+            onClick={() => void onCaptureMessage(message)}
+          >
+            <BookOpen size={14} />
+          </button>
         </div>
         {message.content && (
           <Suspense fallback={<p className="message-markdown-fallback">{message.content}</p>}>
