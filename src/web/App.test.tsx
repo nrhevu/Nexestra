@@ -273,7 +273,9 @@ describe("Activity-aware refresh", () => {
     render(<App />);
     const otherButton = await screen.findByRole("button", { name: "Switch to Other workspace" });
     expect(otherButton).toHaveTextContent("OW1");
-    expect(intervalSpy.mock.calls.filter(([, delay]) => delay === 5_000)).toHaveLength(1);
+    await waitFor(() =>
+      expect(intervalSpy.mock.calls.filter(([, delay]) => delay === 5_000)).toHaveLength(1),
+    );
 
     await act(async () => {
       summaryPoll?.();
