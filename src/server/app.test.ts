@@ -1500,6 +1500,33 @@ describe("HTTP app", () => {
       ]),
     );
   });
+
+  it("returns count-only activity summaries for every workspace", async () => {
+    const other = await store.createWorkspace({ name: "Other workspace" });
+    const task = await store.createTask({
+      workspaceId: other.id,
+      title: "Blocked",
+      status: "blocked",
+    });
+
+    const response = await app.request("/api/activity/summaries");
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Array<Record<string, unknown>>;
+    expect(body).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ workspaceId: other.id, attentionCount: 1, activeRunCount: 0 }),
+      ]),
+    );
+    const otherSummary = body.find((summary) => summary.workspaceId === other.id);
+    expect(otherSummary).toEqual({
+      workspaceId: other.id,
+      attentionCount: 1,
+      activeRunCount: 0,
+    });
+    expect(otherSummary).not.toHaveProperty("attention");
+    expect(task.workspaceId).toBe(other.id);
+  });
 });
 
 describe("HTTP message search", () => {

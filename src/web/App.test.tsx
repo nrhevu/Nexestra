@@ -15,6 +15,7 @@ import type {
   ThreadData,
   ThreadHistoryPage,
   WorkspaceActivityData,
+  WorkspaceActivitySummary,
 } from "../shared/contracts.js";
 import { runAttentionItem } from "../shared/contracts.js";
 import type { WorkspaceArchiveInspectionReport } from "../shared/workspace-archive-inspection-contracts.js";
@@ -230,6 +231,57 @@ function deferredDialogModule() {
 }
 
 describe("Activity-aware refresh", () => {
+  it("refreshes live cross-workspace activity summaries while a badge is active", async () => {
+    const otherWorkspace = {
+      ...workspace,
+      id: "workspace-other",
+      name: "Other workspace",
+      slug: "other-workspace",
+    };
+    const initialSummaries: WorkspaceActivitySummary[] = [
+      { workspaceId: workspace.id, attentionCount: 0, activeRunCount: 0 },
+      { workspaceId: otherWorkspace.id, attentionCount: 0, activeRunCount: 1 },
+    ];
+    const refreshedSummaries: WorkspaceActivitySummary[] = [
+      { workspaceId: workspace.id, attentionCount: 0, activeRunCount: 0 },
+      { workspaceId: otherWorkspace.id, attentionCount: 2, activeRunCount: 1 },
+    ];
+    let summaryPoll: (() => void) | undefined;
+    const intervalSpy = vi.spyOn(window, "setInterval").mockImplementation((handler, delay) => {
+      if (typeof handler === "function" && delay === 5_000) summaryPoll = handler;
+      return 1 as unknown as ReturnType<typeof window.setInterval>;
+    });
+    vi.spyOn(window, "clearInterval").mockImplementation(() => undefined);
+    let summaryReads = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap"))
+        return jsonResponse({
+          ...bootstrapData,
+          workspaces: [workspace, otherWorkspace],
+          workspaceActivitySummaries: initialSummaries,
+        });
+      if (path === "/api/activity/summaries") {
+        summaryReads += 1;
+        return jsonResponse(refreshedSummaries);
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", "/surfaces/agents");
+
+    render(<App />);
+    const otherButton = await screen.findByRole("button", { name: "Switch to Other workspace" });
+    expect(otherButton).toHaveTextContent("OW1");
+    expect(intervalSpy.mock.calls.filter(([, delay]) => delay === 5_000)).toHaveLength(1);
+
+    await act(async () => {
+      summaryPoll?.();
+    });
+    await waitFor(() => expect(otherButton).toHaveTextContent("OW3"));
+    expect(summaryReads).toBe(1);
+  });
+
   it("does not schedule background polling while the workspace is idle", async () => {
     window.history.replaceState({}, "", "/surfaces/agents");
     const intervalSpy = vi
