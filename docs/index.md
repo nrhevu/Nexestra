@@ -133,3 +133,4 @@
 69. [Read-only restore preflight research](research/2026-09-12-read-only-restore-preflight.md): inventory verified archive contents while deferring mutation, conflict policy, and rollback.
 70. [Target-aware restore preflight research](research/2026-09-12-target-aware-restore-preflight.md): detect local path collisions without uploading archive bytes or mutating state.
 71. [Workspace deletion preflight research](research/2026-09-12-workspace-deletion-preflight.md): surface bounded dependencies and active-work blockers before destructive deletion.
+72. [Workspace recovery manifest research](research/2026-09-12-workspace-recovery-manifest.md): hash bounded workspace-owned files without exposing credentials before transactional deletion.

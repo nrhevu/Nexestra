@@ -974,8 +974,32 @@ export const WorkspaceDeletionPreflightSchema = z.object({
     activeRuns: z.number().int().nonnegative().max(5_000),
   }),
   blockers: z.array(z.enum(["last_workspace", "active_runs", "active_assignments"])).max(3),
+  recoveryManifest: z.lazy(() => WorkspaceRecoveryManifestSchema).optional(),
 });
 export type WorkspaceDeletionPreflight = z.infer<typeof WorkspaceDeletionPreflightSchema>;
+
+export const WORKSPACE_RECOVERY_MANIFEST_MAX_ENTRIES = WORKSPACE_EXPORT_MAX_ENTRIES;
+export const WORKSPACE_RECOVERY_MANIFEST_MAX_BYTES = WORKSPACE_EXPORT_MAX_SOURCE_BYTES;
+
+export const WorkspaceRecoveryManifestEntrySchema = z.object({
+  path: z.string().min(1).max(1_024),
+  kind: z.enum(["state", "transcript", "artifact", "knowledge", "whiteboard"]),
+  bytes: z.number().int().nonnegative().max(WORKSPACE_RECOVERY_MANIFEST_MAX_BYTES),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+});
+export type WorkspaceRecoveryManifestEntry = z.infer<typeof WorkspaceRecoveryManifestEntrySchema>;
+
+export const WorkspaceRecoveryManifestSchema = z.object({
+  version: z.literal(1),
+  workspace: WorkspaceSchema.pick({ id: true, name: true }),
+  createdAt: z.string().datetime(),
+  totalBytes: z.number().int().nonnegative().max(WORKSPACE_RECOVERY_MANIFEST_MAX_BYTES),
+  entries: z
+    .array(WorkspaceRecoveryManifestEntrySchema)
+    .min(1)
+    .max(WORKSPACE_RECOVERY_MANIFEST_MAX_ENTRIES),
+});
+export type WorkspaceRecoveryManifest = z.infer<typeof WorkspaceRecoveryManifestSchema>;
 
 export const RunActivitySchema = z.object({
   runId: z.string(),

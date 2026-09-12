@@ -1086,6 +1086,20 @@ describe("Workspace settings", () => {
             activeRuns: 0,
           },
           blockers: ["last_workspace"],
+          recoveryManifest: {
+            version: 1,
+            workspace: { id: workspace.id, name: workspace.name },
+            createdAt: now,
+            totalBytes: 12,
+            entries: [
+              {
+                path: "state.json",
+                kind: "state",
+                bytes: 12,
+                sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              },
+            ],
+          },
         });
       }
       return jsonResponse({ error: { message: "Not found" } }, 404);
@@ -1105,6 +1119,9 @@ describe("Workspace settings", () => {
     expect(within(dialog).getByText("last workspace")).toBeVisible();
     expect(within(dialog).getByText("Workspaces remaining")).toBeVisible();
     expect(within(dialog).getByText("Nexestra")).toBeVisible();
+    expect(
+      within(dialog).getByRole("button", { name: "Download recovery manifest" }),
+    ).toBeVisible();
   });
 
   it("reorders workspaces with accessible move controls and keeps the active workspace active", async () => {

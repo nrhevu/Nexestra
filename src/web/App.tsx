@@ -8245,6 +8245,32 @@ function WorkspaceDeletionPreflightDialog({
             A future delete action would require typing the exact workspace name:{" "}
             <code>{plan.confirmationName}</code>
           </p>
+          {plan.recoveryManifest ? (
+            <div className="settings-hint">
+              <p>
+                Recovery manifest: {plan.recoveryManifest.entries.length.toLocaleString()} files,{" "}
+                {plan.recoveryManifest.totalBytes.toLocaleString()} bytes. It contains hashes and
+                paths only; credentials are excluded.
+              </p>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => {
+                  const blob = new Blob([JSON.stringify(plan.recoveryManifest, null, 2)], {
+                    type: "application/json",
+                  });
+                  const url = URL.createObjectURL(blob);
+                  const anchor = document.createElement("a");
+                  anchor.href = url;
+                  anchor.download = `${workspace.slug}-recovery-manifest.json`;
+                  anchor.click();
+                  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+                }}
+              >
+                Download recovery manifest
+              </button>
+            </div>
+          ) : null}
         </>
       )}
       <div className="modal-actions">

@@ -103,12 +103,16 @@ import {
   WORKSPACE_EXPORT_MAX_ENTRIES,
   WORKSPACE_EXPORT_MAX_SOURCE_BYTES,
   WORKSPACE_EXPORT_TIMEOUT_MS,
+  WORKSPACE_RECOVERY_MANIFEST_MAX_BYTES,
+  WORKSPACE_RECOVERY_MANIFEST_MAX_ENTRIES,
   WORKSPACE_WHITEBOARD_MAX_BYTES,
   type WorkAssignment,
   WorkAssignmentSchema,
   type Workspace,
   type WorkspaceDeletionPreflight,
   WorkspaceDeletionPreflightSchema,
+  type WorkspaceRecoveryManifest,
+  WorkspaceRecoveryManifestSchema,
   WorkspaceSchema,
   type WorkspaceWhiteboard,
   WorkspaceWhiteboardSchema,
@@ -585,6 +589,7 @@ export class FileStore {
     if (this.state.workspaces.length <= 1) blockers.push("last_workspace");
     if (activeRuns.length > 0) blockers.push("active_runs");
     if (activeAssignments.length > 0) blockers.push("active_assignments");
+    const recoveryManifest = await this.workspaceRecoveryManifest(workspaceId);
     return WorkspaceDeletionPreflightSchema.parse({
       workspace: { id: workspace.id, name: workspace.name },
       canDelete: blockers.length === 0,
@@ -604,6 +609,7 @@ export class FileStore {
         activeRuns: activeRuns.length,
       },
       blockers,
+      recoveryManifest,
     });
   }
 
@@ -4461,6 +4467,61 @@ export class FileStore {
     }
   }
 
+  /**
+   * Build a read-only, credential-free recovery manifest for a workspace. The
+   * manifest hashes the same bounded files that a workspace export can safely
+   * capture, while keeping all bytes on the server and making no state changes.
+   */
+  async workspaceRecoveryManifest(workspaceId: string): Promise<WorkspaceRecoveryManifest> {
+    const prepared = await this.prepareWorkspaceExport(workspaceId, {
+      timeoutMs: WORKSPACE_EXPORT_TIMEOUT_MS,
+    });
+    try {
+      const stateBytes = Buffer.from(JSON.stringify(prepared.state), "utf8");
+      let totalBytes = stateBytes.byteLength;
+      if (totalBytes > WORKSPACE_RECOVERY_MANIFEST_MAX_BYTES) {
+        throw new StoreError("invalid", "Workspace recovery manifest exceeds the size limit.");
+      }
+      const entries: WorkspaceRecoveryManifest["entries"] = [
+        {
+          path: "state.json",
+          kind: "state",
+          bytes: stateBytes.byteLength,
+          sha256: hashBytes(stateBytes),
+        },
+      ];
+      for (const file of prepared.files) {
+        if (entries.length >= WORKSPACE_RECOVERY_MANIFEST_MAX_ENTRIES) {
+          throw new StoreError("invalid", "Workspace recovery manifest entry limit exceeded.");
+        }
+        const kind: WorkspaceRecoveryManifest["entries"][number]["kind"] =
+          file.kind === "upload" ? "artifact" : file.kind === "document" ? "knowledge" : file.kind;
+        await prepared.validateFile(file);
+        const sha256 = await hashRecoveryFile(file.sourcePath, file.size, file.identity === null);
+        await prepared.validateFile(file);
+        totalBytes += file.size;
+        if (totalBytes > WORKSPACE_RECOVERY_MANIFEST_MAX_BYTES) {
+          throw new StoreError("invalid", "Workspace recovery manifest exceeds the size limit.");
+        }
+        entries.push({
+          path: file.archivePath,
+          kind,
+          bytes: file.size,
+          sha256,
+        });
+      }
+      return WorkspaceRecoveryManifestSchema.parse({
+        version: 1,
+        workspace: prepared.workspace,
+        createdAt: new Date().toISOString(),
+        totalBytes,
+        entries,
+      });
+    } finally {
+      await prepared.release();
+    }
+  }
+
   private async captureWorkspaceExport(
     workspaceId: string,
     guard: { assertActive(): void },
@@ -6058,6 +6119,41 @@ async function writeTextAtomic(file: string, content: string): Promise<void> {
 
 function hashBytes(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+async function hashRecoveryFile(
+  file: string,
+  expectedBytes: number,
+  allowMissingEmpty: boolean,
+): Promise<string> {
+  if (allowMissingEmpty) {
+    const details = await lstat(file).catch((error: unknown) => {
+      if (isNodeError(error, "ENOENT")) return undefined;
+      throw error;
+    });
+    if (!details) return hashBytes(new Uint8Array());
+  }
+  const hash = createHash("sha256");
+  let bytes = 0;
+  try {
+    for await (const chunk of createReadStream(file, { highWaterMark: 64 * 1024 })) {
+      bytes += (chunk as Buffer).byteLength;
+      hash.update(chunk as Buffer);
+      if (bytes > expectedBytes) {
+        throw new StoreError("conflict", "Workspace recovery source changed during hashing.");
+      }
+    }
+  } catch (error) {
+    if (error instanceof StoreError) throw error;
+    if (isNodeError(error, "ENOENT") && allowMissingEmpty && expectedBytes === 0) {
+      return hashBytes(new Uint8Array());
+    }
+    throw new StoreError("conflict", "Workspace recovery source is unavailable.");
+  }
+  if (bytes !== expectedBytes) {
+    throw new StoreError("conflict", "Workspace recovery source changed during hashing.");
+  }
+  return hash.digest("hex");
 }
 
 function transcriptIndexMaxSequence(index: TranscriptHistoryIndex): number {

@@ -379,6 +379,18 @@ describe("HTTP app", () => {
       blockers: [],
     });
 
+    await store.updateWorkspaceWhiteboard(created.id, { content: "Recovery note" });
+    const firstManifest = await store.workspaceRecoveryManifest(created.id);
+    const secondManifest = await store.workspaceRecoveryManifest(created.id);
+    expect(firstManifest.entries).toEqual(secondManifest.entries);
+    expect(firstManifest.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "state.json", kind: "state" }),
+        expect.objectContaining({ path: "whiteboard.md", kind: "whiteboard" }),
+      ]),
+    );
+    expect(firstManifest.entries.map((entry) => entry.path)).not.toContain("credentials.json");
+
     const activeRun: AgentRun = {
       id: "active-run",
       threadId: "missing-thread",
