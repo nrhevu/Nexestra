@@ -70,3 +70,5 @@
     redacted user request beside each needs-work response.
 37. [Review case export research](research/2026-09-12-review-case-export.md): carry loaded, redacted
     review rows with prompt and run provenance into offline evaluation tools.
+38. [Run-history telemetry export research](research/2026-09-12-run-history-telemetry-export.md):
+    carry bounded filtered run rows, cost telemetry, and complete summary into offline analysis.

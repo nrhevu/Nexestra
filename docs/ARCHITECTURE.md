@@ -180,6 +180,8 @@ These are current local estimates rather than provider invoices. See [ADR 0053](
 Failed and interrupted summaries also carry a safe failure kind, never raw provider or command
 output, so the monitoring list can guide recovery without widening the response's secret boundary.
 See [ADR 0059](adr/0059-safe-run-failure-kinds.md).
+The header can export the currently loaded page, active filters, coverage, cursors, and complete
+filtered summary as a bounded browser-generated `nexestra.run-history` JSON packet. See [ADR 0069](adr/0069-run-history-telemetry-export.md).
 
 Agent messages expose optional helpful/needs-work feedback controls. One bounded rating per message
 is stored in workspace metadata, returned with history, and included in workspace exports; the

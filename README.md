@@ -70,6 +70,10 @@ field so later review has context; helpful remains one click. Replies created by
 that produced them, so retries and delegated Worker/Master replies are compared against the right
 run; older replies without that provenance are included only when their trigger has one matching
 run. Ratings are user signals, not an automatic score or billing record.
+**Export loaded runs** downloads a bounded `nexestra.run-history` JSON packet containing the visible
+rows, active filters, pagination cursors, coverage, and the complete filtered summary. Load older
+pages first when they should be included; the packet contains no transcript text or raw provider
+errors.
 
 Open **Needs-work review** under Surfaces, or use `/needs-work review`, to revisit the latest
 negative rating for each agent reply across the workspace. The queue shows a bounded, redacted

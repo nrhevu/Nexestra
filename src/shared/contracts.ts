@@ -794,6 +794,32 @@ export const RunHistoryPageSchema = z.object({
 });
 export type RunHistoryPage = z.infer<typeof RunHistoryPageSchema>;
 
+export const RUN_HISTORY_EXPORT_MAX_ROWS = 100;
+
+export const RunHistoryExportSchema = z.object({
+  format: z.literal("nexestra.run-history"),
+  version: z.literal(1),
+  workspaceId: z.string(),
+  exportedAt: z.string().datetime(),
+  filters: z.object({
+    agentId: z.string().nullable(),
+    threadId: z.string().nullable(),
+    status: RunSchema.shape.status.nullable(),
+  }),
+  page: z.object({
+    number: z.number().int().positive(),
+    cursor: z.string().nullable(),
+    nextCursor: z.string().nullable(),
+  }),
+  summary: RunHistoryMetricsSchema,
+  coverage: z.object({
+    complete: z.boolean(),
+    unavailableThreads: z.number().int().nonnegative(),
+  }),
+  items: z.array(RunHistoryItemSchema).max(RUN_HISTORY_EXPORT_MAX_ROWS),
+});
+export type RunHistoryExport = z.infer<typeof RunHistoryExportSchema>;
+
 export const WORKSPACE_EXPORT_MAX_SOURCE_BYTES = 128 * 1024 * 1024;
 export const WORKSPACE_EXPORT_MAX_ARCHIVE_BYTES = 136 * 1024 * 1024;
 export const WORKSPACE_EXPORT_MAX_ENTRIES = 5_000;

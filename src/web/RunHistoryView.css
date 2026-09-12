@@ -24,7 +24,8 @@
   line-height: 1.3;
 }
 
-.run-history-refresh {
+.run-history-refresh,
+.run-history-export {
   flex: 0 0 auto;
   min-width: 24px;
   min-height: 30px;
@@ -38,12 +39,14 @@
   cursor: pointer;
 }
 
-.run-history-refresh:hover:not(:disabled) {
+.run-history-refresh:hover:not(:disabled),
+.run-history-export:hover:not(:disabled) {
   border-color: var(--accent);
   color: var(--accent);
 }
 
-.run-history-refresh:disabled {
+.run-history-refresh:disabled,
+.run-history-export:disabled {
   opacity: 0.5;
   cursor: default;
 }
@@ -394,6 +397,7 @@
 .run-history-open:focus-visible,
 .run-history-retry:focus-visible,
 .run-history-refresh:focus-visible,
+.run-history-export:focus-visible,
 .run-history-newer:focus-visible,
 .run-history-older:focus-visible,
 .run-history-more-error button:focus-visible {

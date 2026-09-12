@@ -513,6 +513,44 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
     expect(within(breakdown).getByText("1 run · no usage · 1.0 s")).toBeVisible();
   });
 
+  it("exports the loaded page with its active filters and summary", async () => {
+    const user = userEvent.setup();
+    const item = makeItem(
+      makeRun("run-export", {
+        usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 },
+      }),
+    );
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(
+        makePage([item], "next-cursor", {
+          summary: {
+            totalRuns: 2,
+            terminalRuns: 2,
+            totalDurationMs: 3_000,
+            usageRuns: 1,
+            totalTokens: 30,
+            byAgent: [],
+          },
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const createObjectURL = vi.fn(() => "blob:run-export");
+    vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL: vi.fn() });
+    const anchorClick = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => undefined);
+    renderView();
+
+    await screen.findByLabelText("Run run-export");
+    await user.selectOptions(screen.getByLabelText("Run status"), "completed");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await user.click(screen.getByRole("button", { name: "Export loaded runs" }));
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(anchorClick).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Export loaded runs" })).toBeEnabled();
+  });
+
   it("shows the coverage warning, safe date fallback, status, attempt, and archive label", async () => {
     const item = makeItem(
       makeRun("run-bad-dates", {

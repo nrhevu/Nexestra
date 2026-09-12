@@ -8,6 +8,7 @@ import type {
 } from "../shared/contracts.js";
 import { RunHistoryPageSchema, RunSchema } from "../shared/contracts.js";
 import { api } from "./api.js";
+import { runHistoryExportFilename, serializeRunHistoryExport } from "./run-history-export.js";
 import "./RunHistoryView.css";
 
 export interface RunHistoryViewProps {
@@ -432,6 +433,37 @@ export function RunHistoryView({
   const busy = loading || view.loadingMore;
   const summary = currentWorkspace ? view.page?.summary : undefined;
 
+  const exportLoadedRuns = () => {
+    if (!view.page || !summary || rows.length === 0 || view.coverage === null) return;
+    const blob = new Blob(
+      [
+        serializeRunHistoryExport({
+          workspaceId,
+          items: rows,
+          summary,
+          coverage: view.coverage,
+          filters: {
+            agentId: filters.agentId || null,
+            threadId: filters.threadId || null,
+            status: filters.status || null,
+          },
+          page: {
+            number: pageNumber,
+            cursor: view.page.cursor,
+            nextCursor: view.page.nextCursor,
+          },
+        }),
+      ],
+      { type: "application/json" },
+    );
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = runHistoryExportFilename(workspaceId);
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
+
   const handleAgentChange = (event: ChangeEvent<HTMLSelectElement>) => {
     setFilters((current) => ({ ...current, agentId: event.target.value }));
   };
@@ -461,6 +493,14 @@ export function RunHistoryView({
           onClick={() => void loadFirstPage()}
         >
           Refresh run history
+        </button>
+        <button
+          type="button"
+          className="run-history-export"
+          onClick={exportLoadedRuns}
+          disabled={busy || rows.length === 0}
+        >
+          Export loaded runs
         </button>
       </header>
 
