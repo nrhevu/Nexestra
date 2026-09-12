@@ -531,6 +531,10 @@ export function createApp(options: CreateAppOptions) {
     return context.json(await dispatcher.retry(context.req.param("id")), 201);
   });
 
+  app.post("/api/runs/:id/stop", async (context) => {
+    return context.json(await dispatcher.stopRun(context.req.param("id")));
+  });
+
   app.post("/api/tool-calls/:id/approve", (context) => {
     dispatcher.resolveToolApproval(context.req.param("id"), true);
     return context.body(null, 204);

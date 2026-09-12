@@ -76,3 +76,5 @@
     narrow needs-work triage by workspace-scoped agent or conversation while preserving cursor safety.
 40. [Anthropic Messages provider research](research/2026-09-12-anthropic-messages-provider.md):
     adapt Anthropic's bounded Messages and streaming tool-use protocol into the provider-neutral Master loop.
+41. [Stop normal agent runs research](research/2026-09-12-stop-normal-agent-runs.md):
+    reuse local abort signals to stop ordinary chat runs while preserving durable retry history.

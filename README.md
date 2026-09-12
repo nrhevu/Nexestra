@@ -237,6 +237,9 @@ deltas. Codex and OpenCode stream the JSONL lifecycle events their CLIs
 expose. When a run completes successfully, transient thinking and tool activity disappear so the
 thread shows only the final answer. Durable tool records remain in the canonical transcript for
 recovery and audit; transient reasoning and text deltas are never persisted as chat messages.
+Use **Stop** beside an active ordinary agent run to abort its local provider or CLI request. The
+run remains as an interrupted history row and can be retried explicitly; delegated Worker
+assignments continue to use Taskboard's process controls.
 
 The composer accepts up to 10 files per message, with a 20 MB per-file and 50 MB combined limit.
 Safe raster images render inline; other files download rather than execute in the browser. Every

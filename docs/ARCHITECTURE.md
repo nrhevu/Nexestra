@@ -428,6 +428,12 @@ the normal grace period. The assignment, run, and unfinished tool calls become `
 the task returns to To do and is unassigned. A stop request also repairs stale queued/running state
 left without an in-memory controller after a restart.
 
+Ordinary mentioned runs also own an abort controller from queue creation. The conversation's Stop
+action aborts CLI or custom-provider work, settles pending interaction promises, and persists an
+`interrupted` run without entering automatic retry. Assignment IDs remain owned by Taskboard so
+stopping them can also restore task and worktree state. Custom HTTP requests combine the run signal
+with their bounded timeout; a late provider result is rejected before a reply can be appended.
+
 The assignment ID is also the delegated Worker's durable run ID in the canonical thread JSONL.
 Native Worker tool events are normalized and persisted against that run, while reasoning and
 partial text remain in the dispatcher's bounded live projection. The Taskboard process endpoint

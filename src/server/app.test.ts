@@ -771,6 +771,42 @@ describe("HTTP app", () => {
     });
   });
 
+  it("stops an active ordinary run through the guarded run endpoint", async () => {
+    let releaseRunner: () => void = () => undefined;
+    runner.gate = new Promise<void>((resolve) => {
+      releaseRunner = resolve;
+    });
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const agent = await store.createAgent({
+      kind: "worker",
+      name: "Codex",
+      handle: "codex",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    const sent = await app.request(`/api/threads/${thread.id}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "@codex stop me" }),
+    });
+    expect(sent.status).toBe(201);
+    await vi.waitFor(() => expect(runner.lastInvocation).toBeDefined());
+    const [run] = app.dispatcher.activeRuns();
+    if (!run) throw new Error("expected active run");
+
+    const stopped = await app.request(`/api/runs/${run.id}/stop`, { method: "POST" });
+    expect(stopped.status).toBe(200);
+    await expect(stopped.json()).resolves.toMatchObject({ id: run.id, status: "interrupted" });
+    releaseRunner();
+    await app.dispatcher.waitForIdle();
+    const data = await store.threadData(thread.id);
+    expect(data.runs).toEqual([
+      expect.objectContaining({ id: run.id, agentId: agent.id, status: "interrupted" }),
+    ]);
+  });
+
   it("returns the persisted Worker process for a Taskboard task", async () => {
     const [workspace] = store.listWorkspaces();
     const [thread] = store.listThreads();

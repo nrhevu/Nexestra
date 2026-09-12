@@ -1942,6 +1942,14 @@ export function App() {
                   "Reply queued again.",
                 )
               }
+              onStopRun={async (runId) => {
+                await api(`/api/runs/${encodeURIComponent(runId)}/stop`, {
+                  method: "POST",
+                  body: "{}",
+                });
+                await refresh(true);
+                flash("Agent run stopped.");
+              }}
               onToolDecision={async (toolCallId, approved) => {
                 await api(`/api/tool-calls/${toolCallId}/${approved ? "approve" : "deny"}`, {
                   method: "POST",
@@ -2980,6 +2988,7 @@ function ThreadView(props: {
   attachments: File[];
   onAttachmentsChange: Dispatch<SetStateAction<File[]>>;
   onRetry: (runId: string) => Promise<unknown>;
+  onStopRun: (runId: string) => Promise<unknown>;
   onToolDecision: (toolCallId: string, approved: boolean) => Promise<void>;
   onToolResponse: (toolCallId: string, answers: string[][]) => Promise<void>;
   onCaptureMessage: (message: Message) => void;
@@ -3429,6 +3438,7 @@ function ThreadView(props: {
           knowledge={props.data.knowledge}
           feedback={props.threadData.feedback ?? []}
           onRetry={props.onRetry}
+          onStopRun={props.onStopRun}
           onToolDecision={props.onToolDecision}
           onToolResponse={props.onToolResponse}
           onCaptureMessage={props.onCaptureMessage}
@@ -3864,6 +3874,7 @@ const ThreadTranscript = memo(function ThreadTranscript({
   knowledge,
   feedback,
   onRetry,
+  onStopRun,
   onToolDecision,
   onToolResponse,
   onCaptureMessage,
@@ -3888,6 +3899,7 @@ const ThreadTranscript = memo(function ThreadTranscript({
   knowledge: KnowledgeItem[];
   feedback: MessageFeedback[];
   onRetry: (runId: string) => Promise<unknown>;
+  onStopRun: (runId: string) => Promise<unknown>;
   onToolDecision: (toolCallId: string, approved: boolean) => Promise<void>;
   onToolResponse: (toolCallId: string, answers: string[][]) => Promise<void>;
   onCaptureMessage: (message: Message) => void;
@@ -4144,6 +4156,7 @@ const ThreadTranscript = memo(function ThreadTranscript({
                     message.mentions.find((mention) => mention.agentId === run.agentId)?.handle
                   }
                   onRetry={onRetry}
+                  onStopRun={onStopRun}
                   toolCalls={toolCallsByRun.get(run.id) ?? []}
                   activity={activitiesByRun.get(run.id)}
                   knownHandles={knownAgentHandles}
@@ -4614,6 +4627,7 @@ function RunRow({
   agent,
   historicalHandle,
   onRetry,
+  onStopRun,
   toolCalls,
   activity,
   knownHandles,
@@ -4625,6 +4639,7 @@ function RunRow({
   agent?: AgentView;
   historicalHandle?: string;
   onRetry: (id: string) => Promise<unknown>;
+  onStopRun: (id: string) => Promise<unknown>;
   toolCalls: ToolCall[];
   activity?: RunActivity;
   knownHandles: ReadonlySet<string>;
@@ -4633,6 +4648,7 @@ function RunRow({
   readOnly: boolean;
 }) {
   const [retrying, setRetrying] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const handle = agent?.handle ?? historicalHandle;
   const toolActivity = toolCalls.length > 0 && (
     <div className="tool-activity">
@@ -4685,6 +4701,23 @@ function RunRow({
             <span>
               <b>{handle ? `@${handle}` : "Deleted agent"}</b> {detail}
             </span>
+            {!readOnly && (
+              <button
+                type="button"
+                className="stop-button"
+                disabled={stopping}
+                onClick={async () => {
+                  setStopping(true);
+                  try {
+                    await onStopRun(run.id);
+                  } finally {
+                    setStopping(false);
+                  }
+                }}
+              >
+                {stopping ? "Stopping…" : "Stop"}
+              </button>
+            )}
             <span className="typing-dots" role="status" aria-label="Agent is working">
               <i />
               <i />

@@ -307,6 +307,7 @@ export class AgentDispatcher {
           detail: "Waiting in the queue",
           updatedAt: now,
         });
+        this.runControllers.set(queued.id, new AbortController());
         this.notifyThread(queued.threadId, true);
         runs.push(queued);
         this.enqueueRun(queued, agent, trigger);
@@ -401,6 +402,40 @@ export class AgentDispatcher {
     }
   }
 
+  async stopRun(runId: string): Promise<AgentRun> {
+    const assignment = this.store.listAssignments().find((entry) => entry.id === runId);
+    if (assignment && (assignment.status === "queued" || assignment.status === "running")) {
+      throw new StoreError("conflict", "Worker assignments must be stopped from Taskboard.");
+    }
+    const run = this.liveRuns.get(runId);
+    if (!run) throw new StoreError("not_found", "Active run not found.");
+    if (!["queued", "running", "waiting_approval", "waiting_input"].includes(run.status)) {
+      throw new StoreError("conflict", "This run is no longer active.");
+    }
+    this.stoppingRunIds.add(runId);
+    this.runControllers.get(runId)?.abort(new Error("Agent run stopped by the user."));
+    for (const [toolCallId, approval] of this.pendingApprovals) {
+      if (approval.runId !== runId) continue;
+      this.pendingApprovals.delete(toolCallId);
+      approval.resolve(false);
+    }
+    for (const [toolCallId, input] of this.pendingInputs) {
+      if (input.runId !== runId) continue;
+      this.pendingInputs.delete(toolCallId);
+      input.resolve([]);
+    }
+    const stopped = await this.store.updateRun({
+      ...run,
+      status: "interrupted",
+      error: "Agent run stopped by the user.",
+      updatedAt: new Date().toISOString(),
+    });
+    this.liveRuns.set(runId, stopped);
+    this.updateActivity(stopped, "tool", "Run stopped");
+    this.notifyThread(run.threadId, true);
+    return stopped;
+  }
+
   async waitForIdle(): Promise<void> {
     while (this.queues.size > 0 || this.assignmentCompletions.size > 0) {
       await Promise.all([...this.queues.values(), ...this.assignmentCompletions]);
@@ -464,10 +499,13 @@ export class AgentDispatcher {
 
   private async execute(run: AgentRun, agent: Agent, trigger: Message): Promise<void> {
     this.busy.add(agent.id);
+    const controller = this.runControllers.get(run.id) ?? new AbortController();
+    this.runControllers.set(run.id, controller);
     const releaseThreadWrite = this.reserveThreadWrite(run.threadId);
     let currentRun = run;
     try {
       const runtime = await this.runner.runtimeStatus();
+      controller.signal.throwIfAborted();
       const readiness = agentView(agent, runtime, new Set());
       if (readiness.readiness !== "ready") throw new Error(readiness.readinessLabel);
       const running = await this.store.updateRun({
@@ -614,10 +652,12 @@ export class AgentDispatcher {
             this.liveRuns.set(currentRun.id, currentRun);
           },
         },
+        signal: controller.signal,
       };
       const response = this.store.redactSecrets(
         (await this.runner.invoke(agent, invocation)).trim(),
       );
+      controller.signal.throwIfAborted();
       if (!response) throw new Error("The agent returned an empty response.");
       await this.store.createAgentMessage(run.threadId, agent, response, trigger.id, currentRun.id);
       await this.store.updateRun({
@@ -626,17 +666,20 @@ export class AgentDispatcher {
         updatedAt: new Date().toISOString(),
       });
     } catch (error) {
-      const errorMessage = this.store.redactSecrets(
-        error instanceof Error ? error.message : "The agent encountered an unknown error.",
-      );
+      const stopped = controller.signal.aborted || this.stoppingRunIds.has(run.id);
+      const errorMessage = stopped
+        ? "Agent run stopped by the user."
+        : this.store.redactSecrets(
+            error instanceof Error ? error.message : "The agent encountered an unknown error.",
+          );
       await this.store.updateRun({
         ...currentRun,
-        status: "failed",
+        status: stopped ? "interrupted" : "failed",
         error: errorMessage,
         updatedAt: new Date().toISOString(),
       });
 
-      const isRetryable = this.isRetryableError(errorMessage);
+      const isRetryable = !stopped && this.isRetryableError(errorMessage);
       const retriesUsed = run.attempt - 1;
 
       if (isRetryable && retriesUsed < AgentDispatcher.MAX_AUTO_RETRIES) {

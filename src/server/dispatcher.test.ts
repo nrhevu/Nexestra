@@ -1043,6 +1043,42 @@ describe("mention dispatch", () => {
     ]);
   });
 
+  it("stops a normal chat run and preserves an interrupted durable run", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-dispatch-stop-chat-"));
+    const store = await FileStore.open({ root, workspacePath: root });
+    const runner = new GatedRunner();
+    const dispatcher = new AgentDispatcher(store, runner);
+    const chat = new ChatService(store, dispatcher);
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const agent = await store.createAgent({
+      kind: "worker",
+      name: "Codex",
+      handle: "codex",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+
+    const sent = chat.send(thread.id, { content: "@codex answer slowly" });
+    await runner.nextInvocationStarted();
+    const [run] = dispatcher.activeRuns();
+    if (!run) throw new Error("expected active run");
+    await expect(dispatcher.stopRun(run.id)).resolves.toMatchObject({
+      id: run.id,
+      status: "interrupted",
+      error: "Agent run stopped by the user.",
+    });
+    runner.release();
+    await Promise.all([sent, dispatcher.waitForIdle()]);
+
+    const data = await store.threadData(thread.id);
+    expect(data.runs).toEqual([
+      expect.objectContaining({ id: run.id, agentId: agent.id, status: "interrupted" }),
+    ]);
+    expect(data.messages.filter((message) => message.author.kind === "agent")).toHaveLength(0);
+  });
+
   it("lets an archive win over a retry whose thread lookup is still pending", async () => {
     const root = await mkdtemp(join(tmpdir(), "nexestra-retry-archive-"));
     const store = await FileStore.open({ root, workspacePath: root });

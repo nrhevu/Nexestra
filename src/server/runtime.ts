@@ -391,6 +391,7 @@ export class LocalAgentRunner implements AgentRunner {
             : { tool_choice: "none" }),
         },
         invocation.activityHooks,
+        invocation.signal,
       );
       const calls = parseChatToolCalls(payload);
       if (calls.length === 0) {
@@ -456,6 +457,7 @@ export class LocalAgentRunner implements AgentRunner {
           ...(toolsEnabled ? { tools: tools.definitions } : { tool_choice: "none" }),
         },
         invocation.activityHooks,
+        invocation.signal,
       );
       const calls = parseResponsesToolCalls(payload);
       if (calls.length === 0) {
@@ -524,6 +526,7 @@ export class LocalAgentRunner implements AgentRunner {
             : {}),
         },
         invocation.activityHooks,
+        invocation.signal,
       );
       const calls = parseAnthropicToolCalls(payload);
       if (calls.length === 0) {
@@ -559,6 +562,7 @@ export class LocalAgentRunner implements AgentRunner {
     headers: Record<string, string>,
     body: Record<string, unknown>,
     activityHooks?: AgentActivityHooks,
+    signal?: AbortSignal,
   ): Promise<unknown> {
     for (let attempt = 0; attempt <= 5; attempt += 1) {
       let response: Response;
@@ -567,15 +571,19 @@ export class LocalAgentRunner implements AgentRunner {
           method: "POST",
           headers,
           body: JSON.stringify(body),
-          signal: AbortSignal.timeout(3 * 60_000),
+          signal: signal
+            ? AbortSignal.any([signal, AbortSignal.timeout(3 * 60_000)])
+            : AbortSignal.timeout(3 * 60_000),
         });
       } catch (error) {
+        if (signal?.aborted) throw error;
         if (attempt >= 5) throw error;
         await retryDelay(attempt + 1);
         continue;
       }
       if (!response.ok) {
         const text = await readBoundedResponse(response, 1024 * 1024);
+        if (signal?.aborted) throw signal.reason ?? new Error("Provider request aborted.");
         if (attempt < 5 && isRetryableProviderStatus(response.status)) {
           await retryDelay(attempt + 1, response.headers);
           continue;

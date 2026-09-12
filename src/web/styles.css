@@ -1490,6 +1490,18 @@ kbd {
 .live-run-status b {
   color: #d3ced7;
 }
+.live-run-status .stop-button {
+  margin-left: auto;
+  border: 1px solid rgba(235, 112, 112, 0.3);
+  border-radius: 5px;
+  padding: 3px 8px;
+  background: transparent;
+  color: #e6a0a3;
+  font-size: 11px;
+}
+.live-run-status .stop-button:hover:not(:disabled) {
+  background: rgba(235, 112, 112, 0.1);
+}
 .live-run-response {
   position: relative;
   margin: 9px 0 0 36px;
