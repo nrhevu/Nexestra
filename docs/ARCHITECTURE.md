@@ -568,8 +568,10 @@ credentials.
 
 - Optional `surfaces` entries in `nexestra.config.json` compose domain-specific navigation cards.
   Their actions are an allowlisted set of trusted surfaces and their labels are bounded/redacted
-  before bootstrap. The browser evaluates no configured code, markup, URL, or command. Data-backed
-  widgets and custom forms are intentionally future work.
+  before bootstrap. Cards for Taskboard, Knowledge, Attention, and Agents show live counts from
+  the selected workspace; Run history and Needs-work review remain direct links. The browser
+  evaluates no configured code, markup, URL, or command. Data-backed widgets and custom forms are
+  intentionally future work.
 
 - Workspace export has no import/restore workflow and is not a complete backup. Snapshot inventory
   scans transcripts under the write barrier before a second read for ZIP generation. Stored ZIP

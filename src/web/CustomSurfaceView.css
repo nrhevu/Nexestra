@@ -52,6 +52,13 @@
   line-height: 1.45;
 }
 
+.custom-surface-card-count {
+  display: block;
+  margin: -4px 0 14px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
 .custom-surface-card button {
   display: inline-flex;
   align-items: center;

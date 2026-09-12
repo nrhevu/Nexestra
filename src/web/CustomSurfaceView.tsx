@@ -13,9 +13,11 @@ const ACTION_LABELS: Record<CustomSurfaceAction, string> = {
 
 export function CustomSurfaceView({
   surface,
+  counts,
   onAction,
 }: {
   surface: CustomSurface;
+  counts?: Partial<Record<CustomSurfaceAction, number>>;
   onAction: (action: CustomSurfaceAction) => void;
 }) {
   return (
@@ -33,6 +35,11 @@ export function CustomSurfaceView({
           <article className="custom-surface-card" key={card.id}>
             <h2>{card.title}</h2>
             {card.description ? <p>{card.description}</p> : null}
+            {counts?.[card.action] !== undefined ? (
+              <span className="custom-surface-card-count">
+                {counts[card.action]} matching items
+              </span>
+            ) : null}
             <button type="button" onClick={() => onAction(card.action)}>
               {ACTION_LABELS[card.action]} <ArrowRight size={15} />
             </button>

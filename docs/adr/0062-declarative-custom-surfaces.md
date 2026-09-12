@@ -22,6 +22,7 @@ JavaScript, URLs, or commands from configuration.
 ## Consequences
 
 Users can make a domain-specific launch surface, such as an “Inference lab” that groups model
-profiles, run comparison, and review, without changing the core data model. The first slice is a
-safe navigation composition. Data-backed widgets, custom forms, and executable plug-ins remain
-separate proposals requiring their own permission and persistence design.
+profiles, run comparison, and review, without changing the core data model. Cards that target
+Taskboard, Knowledge, Attention, and Agents also show live counts from the selected workspace.
+The first slice is a safe navigation composition. Data-backed widgets, custom forms, and executable
+plug-ins remain separate proposals requiring their own permission and persistence design.

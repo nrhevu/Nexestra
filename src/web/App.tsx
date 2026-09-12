@@ -2036,7 +2036,16 @@ export function App() {
               (surface) => surface.id === route.customSurfaceId,
             );
             return customSurface ? (
-              <CustomSurfaceView surface={customSurface} onAction={openCustomSurfaceAction} />
+              <CustomSurfaceView
+                surface={customSurface}
+                counts={{
+                  taskboard: data.tasks.filter((task) => task.status !== "done").length,
+                  knowledge: data.knowledge.length,
+                  attention: data.attention.length,
+                  agents: data.agents.filter((agent) => !agent.archived).length,
+                }}
+                onAction={openCustomSurfaceAction}
+              />
             ) : (
               <div className="surface-view" role="status">
                 This custom surface is unavailable.
