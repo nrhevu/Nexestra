@@ -551,7 +551,8 @@ credentials.
   write serialization. Its coverage describes the cached index; external transcript edits require
   a restart. Filtered pages are live and can change as statuses update. Filters/page position reset
   after leaving the surface, and deleted agents are labeled Unknown. It has no background polling,
-  run error/output search, cross-workspace aggregation or new run action controls.
+  run error/output search, cross-workspace aggregation or batch run actions. Failed and interrupted
+  rows can be retried individually through the existing guarded retry command.
 
 - Quality ratings are explicit single-user observations. They are attributed only when provenance
   resolves to one run, but there is no reviewed correction queue yet for turning a needs-work reply

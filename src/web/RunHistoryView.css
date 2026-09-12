@@ -258,6 +258,14 @@
   flex: 1 1 220px;
 }
 
+.run-history-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
 .run-history-identity {
   display: flex;
   align-items: baseline;
@@ -343,8 +351,8 @@
   overflow-wrap: anywhere;
 }
 
-.run-history-open {
-  flex: 0 0 auto;
+.run-history-open,
+.run-history-retry {
   min-width: 24px;
   min-height: 30px;
   padding: 5px 10px;
@@ -357,12 +365,25 @@
   cursor: pointer;
 }
 
-.run-history-open:hover {
+.run-history-open:hover,
+.run-history-retry:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
 
+.run-history-retry {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  color: var(--accent);
+}
+
+.run-history-open:disabled,
+.run-history-retry:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .run-history-open:focus-visible,
+.run-history-retry:focus-visible,
 .run-history-refresh:focus-visible,
 .run-history-newer:focus-visible,
 .run-history-older:focus-visible,
@@ -471,8 +492,13 @@
     padding-inline: 10px;
   }
 
-  .run-history-open {
+  .run-history-actions {
     width: 100%;
+  }
+
+  .run-history-open,
+  .run-history-retry {
+    flex: 1 1 120px;
   }
 
   .run-history-pagination {

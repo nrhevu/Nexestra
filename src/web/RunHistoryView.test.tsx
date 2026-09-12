@@ -143,6 +143,7 @@ function renderView(
     threads: Thread[];
     refreshRevision: number;
     onOpenRun: (item: RunHistoryItem) => void;
+    onRetryRun: (runId: string) => Promise<void>;
   }> = {},
 ) {
   return render(
@@ -152,6 +153,7 @@ function renderView(
       threads={overrides.threads ?? [makeThread("thread-a", "Planning")]}
       refreshRevision={overrides.refreshRevision}
       onOpenRun={overrides.onOpenRun ?? vi.fn()}
+      onRetryRun={overrides.onRetryRun ?? vi.fn(async () => undefined)}
     />,
   );
 }
@@ -284,6 +286,7 @@ describe("RunHistoryView race and refresh behavior", () => {
           agents={[makeAgent("agent-a", "Planner")]}
           threads={[makeThread("thread-a", "Planning")]}
           onOpenRun={vi.fn()}
+          onRetryRun={vi.fn(async () => undefined)}
         />
       </StrictMode>,
     );
@@ -315,6 +318,7 @@ describe("RunHistoryView race and refresh behavior", () => {
         agents={[makeAgent("agent-a", "Planner", "workspace-other")]}
         threads={[makeThread("thread-a", "Planning", "workspace-other")]}
         onOpenRun={vi.fn()}
+        onRetryRun={vi.fn(async () => undefined)}
       />,
     );
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
@@ -385,6 +389,7 @@ describe("RunHistoryView race and refresh behavior", () => {
         threads={[makeThread("thread-a", "Planning")]}
         refreshRevision={3}
         onOpenRun={vi.fn()}
+        onRetryRun={vi.fn(async () => undefined)}
       />,
     );
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
@@ -406,6 +411,7 @@ describe("RunHistoryView race and refresh behavior", () => {
         agents={[makeAgent("agent-a", "Planner")]}
         threads={[makeThread("thread-a", "Planning")]}
         onOpenRun={vi.fn()}
+        onRetryRun={vi.fn(async () => undefined)}
       />,
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -540,6 +546,27 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
     expect(within(card).getByText("Created not-a-date")).toBeVisible();
     expect(within(card).getByText("Updated still-bad")).toBeVisible();
     expect(within(card).getByText("Planning (archived)")).toBeVisible();
+  });
+
+  it("offers retry only for failed or interrupted runs", async () => {
+    const user = userEvent.setup();
+    const onRetryRun = vi.fn(async () => undefined);
+    const failed = makeItem(makeRun("run-failed", { status: "failed" }));
+    const interrupted = makeItem(makeRun("run-interrupted", { status: "interrupted" }));
+    const completed = makeItem(makeRun("run-completed", { status: "completed" }));
+    const fetchMock = vi.fn(async () => jsonResponse(makePage([failed, interrupted, completed])));
+    vi.stubGlobal("fetch", fetchMock);
+    renderView({ onRetryRun });
+
+    expect(await screen.findByLabelText("Run run-failed")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry run run-failed" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Retry run run-interrupted" })).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Retry run run-completed" }),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Retry run run-failed" }));
+    expect(onRetryRun).toHaveBeenCalledWith("run-failed");
   });
 
   it("keeps an honest empty state when coverage is unavailable", async () => {

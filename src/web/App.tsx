@@ -1969,6 +1969,19 @@ export function App() {
                 }
                 openMessage(thread.id, item.run.triggerMessageId);
               }}
+              onRetryRun={async (runId) => {
+                try {
+                  await api(`/api/runs/${encodeURIComponent(runId)}/retry`, {
+                    method: "POST",
+                    body: "{}",
+                  });
+                  setRunHistoryRefreshRevision((revision) => revision + 1);
+                  await refresh(true);
+                  flash("Reply queued again.");
+                } catch (caught) {
+                  setError(messageFrom(caught));
+                }
+              }}
             />
           ) : (
             <div className="surface-view" role="status">

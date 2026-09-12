@@ -16,6 +16,7 @@ export interface RunHistoryViewProps {
   threads: Thread[];
   refreshRevision?: number;
   onOpenRun: (item: RunHistoryItem) => void;
+  onRetryRun: (runId: string) => Promise<void>;
 }
 
 const PAGE_LIMIT = 50;
@@ -149,6 +150,7 @@ export function RunHistoryView({
   threads,
   refreshRevision,
   onOpenRun,
+  onRetryRun,
 }: RunHistoryViewProps) {
   const [filters, setFilters] = useState<RunHistoryFilters>({
     workspaceId,
@@ -157,6 +159,7 @@ export function RunHistoryView({
     status: "",
   });
   const [view, setView] = useState(() => initialViewState(workspaceId));
+  const [retryingRunId, setRetryingRunId] = useState<string>();
 
   const requestRef = useRef(0);
   const controllerRef = useRef<AbortController | null>(null);
@@ -424,6 +427,15 @@ export function RunHistoryView({
     setFilters((current) => ({ ...current, threadId: event.target.value }));
   };
 
+  const retryRun = async (runId: string) => {
+    setRetryingRunId(runId);
+    try {
+      await onRetryRun(runId);
+    } finally {
+      setRetryingRunId((current) => (current === runId ? undefined : current));
+    }
+  };
+
   return (
     <section className="run-history-view" aria-label="Run history">
       <header className="run-history-header">
@@ -609,14 +621,27 @@ export function RunHistoryView({
                         </time>
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      className="run-history-open"
-                      aria-label={`Open run: ${item.agentName} in #${item.threadName}`}
-                      onClick={() => onOpenRun(item)}
-                    >
-                      Open run
-                    </button>
+                    <div className="run-history-actions">
+                      {(item.run.status === "failed" || item.run.status === "interrupted") && (
+                        <button
+                          type="button"
+                          className="run-history-retry"
+                          aria-label={`Retry run ${item.run.id}`}
+                          disabled={busy || retryingRunId !== undefined}
+                          onClick={() => void retryRun(item.run.id)}
+                        >
+                          {retryingRunId === item.run.id ? "Retrying…" : "Retry run"}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="run-history-open"
+                        aria-label={`Open run: ${item.agentName} in #${item.threadName}`}
+                        onClick={() => onOpenRun(item)}
+                      >
+                        Open run
+                      </button>
+                    </div>
                   </article>
                 </li>
               ))}
