@@ -107,6 +107,10 @@ Settings also offers optional desktop notifications for increased Attention coun
 requested only after you enable the toggle; browser storage or denied permission does not affect the
 app, and notification text contains only the workspace name and count. See [ADR
 0097](docs/adr/0097-opt-in-desktop-attention-notifications.md).
+Custom surfaces can also include an `over_budget` card. It shows the selected workspace's complete
+coverage count and opens Run history with the same cost filter; incomplete telemetry leaves the
+count absent rather than presenting a misleading zero. See [ADR
+0098](docs/adr/0098-over-budget-custom-surface-card.md).
 
 Open **Needs-work review** under Surfaces, or use `/needs-work review`, to revisit the latest
 negative rating for each agent reply across the workspace. The queue shows a bounded, redacted

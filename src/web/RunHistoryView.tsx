@@ -19,6 +19,7 @@ import "./RunHistoryView.css";
 
 export interface RunHistoryViewProps {
   workspaceId: string;
+  initialCostFilter?: "all" | "over_budget";
   agents: AgentView[];
   threads: Thread[];
   workspaces?: Workspace[];
@@ -185,6 +186,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
 
 export function RunHistoryView({
   workspaceId,
+  initialCostFilter = "all",
   agents,
   threads,
   workspaces = [],
@@ -197,7 +199,7 @@ export function RunHistoryView({
     agentId: "",
     threadId: "",
     status: "",
-    cost: "all",
+    cost: initialCostFilter,
   });
   const [view, setView] = useState(() => initialViewState(workspaceId));
   const [retryingRunId, setRetryingRunId] = useState<string>();

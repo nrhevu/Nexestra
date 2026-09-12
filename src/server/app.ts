@@ -97,6 +97,9 @@ export function createApp(options: CreateAppOptions) {
     const hasReviewCard = customSurfaces.some((surface) =>
       surface.cards.some((card) => card.action === "reviews"),
     );
+    const hasOverBudgetCard = customSurfaces.some((surface) =>
+      surface.cards.some((card) => card.action === "over_budget"),
+    );
     const reviewCount = hasReviewCard
       ? (
           await options.store.listReviewQueue({
@@ -106,6 +109,11 @@ export function createApp(options: CreateAppOptions) {
           })
         ).total
       : undefined;
+    let overBudgetRunCount: number | undefined;
+    if (hasOverBudgetCard) {
+      const [summary] = await options.store.runHistoryTelemetrySummary(workspace.id);
+      if (summary?.coverage.complete) overBudgetRunCount = summary.overBudgetRuns ?? 0;
+    }
     const activity = workspaceActivity(
       options.store,
       workspace.id,
@@ -125,6 +133,7 @@ export function createApp(options: CreateAppOptions) {
       activeRuns: activity.activeRuns,
       attention: activity.attention,
       ...(reviewCount === undefined ? {} : { reviewCount }),
+      ...(overBudgetRunCount === undefined ? {} : { overBudgetRunCount }),
       workspaceActivitySummaries: workspaces.map((entry) => {
         const summary = workspaceActivity(options.store, entry.id, dispatcher.activeRuns(entry.id));
         return {

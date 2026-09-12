@@ -98,3 +98,4 @@
 | [0095](0095-agent-profile-labels-in-history.md) | Accepted | Label run history by bounded harness and model profile metadata |
 | [0096](0096-attention-audit-history.md) | Accepted | Keep a bounded workspace-scoped Attention action history |
 | [0097](0097-opt-in-desktop-attention-notifications.md) | Accepted | Offer opt-in browser notifications for increased Attention counts |
+| [0098](0098-over-budget-custom-surface-card.md) | Accepted | Add a read-only over-budget telemetry card to custom surfaces |

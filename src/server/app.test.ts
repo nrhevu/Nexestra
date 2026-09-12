@@ -185,6 +185,7 @@ describe("HTTP app", () => {
             cards: [
               { id: "runs", title: "Runs", action: "runs" },
               { id: "reviews", title: "Needs work", action: "reviews" },
+              { id: "budget", title: "Budget", action: "over_budget" },
             ],
           },
         ],
@@ -200,7 +201,20 @@ describe("HTTP app", () => {
       name: "Reviewer",
       handle: "reviewer",
       harness: "codex",
+      pricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 1, maxRunCostUsd: 0.001 },
     });
+    const run: AgentRun = {
+      id: "over-budget-bootstrap",
+      threadId: thread.id,
+      triggerMessageId: "trigger",
+      agentId: agent.id,
+      attempt: 1,
+      status: "completed",
+      createdAt: "2026-09-12T00:00:00.000Z",
+      updatedAt: "2026-09-12T00:00:01.000Z",
+      usage: { inputTokens: 1_000, outputTokens: 1_000, totalTokens: 2_000 },
+    };
+    await store.updateRun(run);
     const prompt = await store.createUserMessage(thread.id, "Review this", []);
     const reply = await store.createAgentMessage(thread.id, agent, "Needs work", prompt.id);
     await store.setMessageFeedback(thread.id, reply.id, { value: "negative" });
@@ -209,6 +223,7 @@ describe("HTTP app", () => {
     const body = (await response.json()) as {
       customSurfaces: Array<{ title: string; cards: Array<{ action: string }> }>;
       reviewCount: number;
+      overBudgetRunCount: number;
     };
     expect(body.customSurfaces).toEqual([
       expect.objectContaining({
@@ -216,10 +231,12 @@ describe("HTTP app", () => {
         cards: [
           expect.objectContaining({ action: "runs" }),
           expect.objectContaining({ action: "reviews" }),
+          expect.objectContaining({ action: "over_budget" }),
         ],
       }),
     ]);
     expect(body.reviewCount).toBe(1);
+    expect(body.overBudgetRunCount).toBe(1);
   });
 
   it("reads and saves a redacted workspace whiteboard within its workspace", async () => {

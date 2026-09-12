@@ -21,6 +21,7 @@ const surface: CustomSurface = {
       action: "agents",
     },
     { id: "runs", title: "Active runs", description: "", action: "runs" },
+    { id: "budget", title: "Budget watch", description: "", action: "over_budget" },
     { id: "reviews", title: "Needs-work", description: "", action: "reviews" },
   ],
 };
@@ -31,7 +32,7 @@ describe("CustomSurfaceView", () => {
     render(
       <CustomSurfaceView
         surface={surface}
-        counts={{ agents: 3, runs: 2, reviews: 4 }}
+        counts={{ agents: 3, runs: 2, reviews: 4, over_budget: 1 }}
         onAction={onAction}
       />,
     );
@@ -40,7 +41,10 @@ describe("CustomSurfaceView", () => {
     expect(screen.getByText("3 matching items")).toBeVisible();
     expect(screen.getByText("2 matching items")).toBeVisible();
     expect(screen.getByText("4 matching items")).toBeVisible();
+    expect(screen.getByText("1 matching items")).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Open Agents" }));
     expect(onAction).toHaveBeenCalledExactlyOnceWith("agents");
+    await userEvent.click(screen.getByRole("button", { name: "Open over-budget runs" }));
+    expect(onAction).toHaveBeenLastCalledWith("over_budget");
   });
 });

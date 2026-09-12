@@ -149,6 +149,7 @@ function lastFetchInput(mock: {
 function renderView(
   overrides: Partial<{
     workspaceId: string;
+    initialCostFilter: "all" | "over_budget";
     agents: AgentView[];
     threads: Thread[];
     workspaces: Workspace[];
@@ -160,6 +161,7 @@ function renderView(
   return render(
     <RunHistoryView
       workspaceId={overrides.workspaceId ?? workspaceId}
+      initialCostFilter={overrides.initialCostFilter}
       agents={overrides.agents ?? [makeAgent("agent-a", "Planner")]}
       threads={overrides.threads ?? [makeThread("thread-a", "Planning")]}
       workspaces={overrides.workspaces}
@@ -309,6 +311,15 @@ describe("RunHistoryView requests and filters", () => {
     await user.selectOptions(screen.getByLabelText("Run cost"), "over_budget");
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(pageParams(lastFetchInput(fetchMock)).get("cost")).toBe("over_budget");
+  });
+
+  it("starts with an over-budget filter requested by a custom surface", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(makePage([makeItem(makeRun("run-1"))])));
+    vi.stubGlobal("fetch", fetchMock);
+    renderView({ initialCostFilter: "over_budget" });
+    await screen.findByLabelText("Run run-1");
+    expect(pageParams(fetchInputAt(fetchMock, 0)).get("cost")).toBe("over_budget");
+    expect(screen.getByLabelText("Run cost")).toHaveValue("over_budget");
   });
 });
 

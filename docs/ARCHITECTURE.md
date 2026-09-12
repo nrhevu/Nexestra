@@ -626,9 +626,9 @@ credentials.
 - Optional `surfaces` entries in `nexestra.config.json` compose domain-specific navigation cards.
   Their actions are an allowlisted set of trusted surfaces and their labels are bounded/redacted
   before bootstrap. Cards for Taskboard, Knowledge, Attention, Needs-work review, and Agents show live counts from
-  the selected workspace; Run history and Needs-work review remain direct links. The browser
-  evaluates no configured code, markup, URL, or command. Data-backed widgets and custom forms are
-  intentionally future work.
+  the selected workspace; the `over_budget` card shows a complete-coverage budget count and opens
+  the matching Run history filter. Run history and Needs-work review remain direct links. The
+  browser evaluates no configured code, markup, URL, or command. Custom forms remain future work.
 
 - Taskboard's completed Worker process response may include a bounded `sourceMessage` projection for
   the latest assignment: the canonical agent reply with the assignment run ID. This powers a direct

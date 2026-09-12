@@ -3,6 +3,7 @@ import {
   AgentPricingSchema,
   AttentionAuditEntrySchema,
   CreateAgentSchema,
+  CustomSurfaceSchema,
   classifyRunFailure,
   extractKnowledgeHandles,
   extractMentionHandles,
@@ -34,6 +35,24 @@ describe("AttentionAuditEntrySchema", () => {
     });
     expect(
       AttentionAuditEntrySchema.safeParse({ ...entry, attentionId: "x".repeat(201) }).success,
+    ).toBe(false);
+  });
+});
+
+describe("CustomSurfaceSchema", () => {
+  it("accepts the over-budget telemetry action and rejects unknown actions", () => {
+    const base = {
+      id: "monitor",
+      title: "Monitor",
+      description: "",
+      cards: [{ id: "budget", title: "Budget", description: "", action: "over_budget" }],
+    };
+    expect(CustomSurfaceSchema.safeParse(base).success).toBe(true);
+    expect(
+      CustomSurfaceSchema.safeParse({
+        ...base,
+        cards: [{ ...base.cards[0], action: "provider_cost" }],
+      }).success,
     ).toBe(false);
   });
 });

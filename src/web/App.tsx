@@ -77,6 +77,7 @@ import type {
   AssignmentGitTrackedSummary,
   AttentionItem,
   BootstrapData,
+  CustomSurfaceAction,
   KnowledgeDocumentRevisions,
   KnowledgeItem,
   Message,
@@ -167,6 +168,7 @@ interface RouteState {
   threadId?: string;
   customSurfaceId?: string;
   messageTarget?: { id: string; source?: "unread" };
+  runCostFilter?: "over_budget";
 }
 
 type HistoryWindowKind = "latest" | "around" | "before" | "after" | "at";
@@ -1427,7 +1429,17 @@ export function App() {
       surface: "custom",
       customSurfaceId: surfaceId,
     });
-  const openCustomSurfaceAction = (action: Exclude<Surface, "custom">) => openSurface(action);
+  const openCustomSurfaceAction = (action: CustomSurfaceAction) => {
+    if (action === "over_budget") {
+      navigate("/surfaces/runs?cost=over_budget", {
+        view: "surfaces",
+        surface: "runs",
+        runCostFilter: "over_budget",
+      });
+      return;
+    }
+    openSurface(action);
+  };
 
   const selectWorkspace = async (workspaceId: string) => {
     if (workspaceId === workspaceIdRef.current) return;
@@ -2061,6 +2073,7 @@ export function App() {
             <RunHistoryView
               key={data.workspace.id}
               workspaceId={data.workspace.id}
+              initialCostFilter={route.runCostFilter}
               agents={data.agents}
               threads={data.threads}
               workspaces={data.workspaces}
@@ -2142,6 +2155,9 @@ export function App() {
                   knowledge: data.knowledge.length,
                   attention: data.attention.length,
                   runs: data.activeRuns.length,
+                  ...(data.overBudgetRunCount === undefined
+                    ? {}
+                    : { over_budget: data.overBudgetRunCount }),
                   agents: data.agents.filter((agent) => !agent.archived).length,
                   reviews: data.reviewCount ?? 0,
                 }}
@@ -8610,6 +8626,10 @@ function routeFromLocation(): RouteState {
       view: "surfaces",
       surface,
       ...(surface === "custom" && parts[2] ? { customSurfaceId: parts[2] } : {}),
+      ...(surface === "runs" &&
+      new URLSearchParams(window.location.search).get("cost") === "over_budget"
+        ? { runCostFilter: "over_budget" as const }
+        : {}),
     };
   }
   const messageId = new URLSearchParams(window.location.search).get("message");

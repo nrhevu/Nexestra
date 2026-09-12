@@ -7,6 +7,7 @@ const ACTION_LABELS: Record<CustomSurfaceAction, string> = {
   knowledge: "Open Knowledge",
   attention: "Open Attention",
   runs: "Open Run history",
+  over_budget: "Open over-budget runs",
   reviews: "Open Needs-work review",
   agents: "Open Agents",
   whiteboard: "Open Whiteboard",

@@ -20,6 +20,7 @@ export const CustomSurfaceActionSchema = z.enum([
   "knowledge",
   "attention",
   "runs",
+  "over_budget",
   "reviews",
   "agents",
   "whiteboard",
@@ -1240,6 +1241,7 @@ export interface BootstrapData {
   activeRuns: AgentRun[];
   attention: AttentionItem[];
   reviewCount?: number;
+  overBudgetRunCount?: number;
   workspaceActivitySummaries?: WorkspaceActivitySummary[];
   runtime: RuntimeStatus;
   workspacePath: string;

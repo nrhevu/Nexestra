@@ -126,3 +126,5 @@
     bounded workspace-scoped snooze and dismiss actions without alert content.
 65. [Opt-in desktop Attention notifications research](research/2026-09-12-opt-in-desktop-attention-notifications.md):
     notify a browser about increased workspace counts only after explicit permission.
+66. [Over-budget custom surface card research](research/2026-09-12-over-budget-custom-surface-card.md):
+    expose complete-coverage observed budget counts and filtered Run history navigation.
