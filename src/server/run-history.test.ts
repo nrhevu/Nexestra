@@ -328,6 +328,7 @@ describe("run history server", () => {
         {
           agentId: agent.id,
           agentName: "Runner",
+          agentHarness: "codex",
           totalRuns: 2,
           terminalRuns: 1,
           totalDurationMs: 65_250,
@@ -353,6 +354,70 @@ describe("run history server", () => {
     });
     expect(overBudget.items.map((item) => item.run.id)).toEqual(["run-duration"]);
     expect(overBudget.summary.overBudgetRuns).toBe(1);
+  });
+
+  it("labels run history with the configured harness and model without provider secrets", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected seeded workspace");
+    const worker = await store.createAgent({
+      kind: "worker",
+      name: "Open worker",
+      handle: "open-worker",
+      description: "",
+      instructions: "",
+      harness: "opencode",
+      model: "open-model",
+    });
+    const master = await store.createAgent({
+      kind: "master",
+      name: "Custom master",
+      handle: "custom-master",
+      description: "",
+      instructions: "",
+      accessMode: "ask",
+      provider: {
+        type: "custom",
+        name: "Private provider",
+        baseUrl: "https://provider.example.test/v1",
+        model: "private-model",
+        protocol: "openai-chat",
+        apiKey: "secret-key-value",
+      },
+    });
+    const thread = await createThread(store, "Profiles");
+    await store.updateRun(
+      makeRun("profile-worker", thread.id, worker.id, "2026-01-01T00:00:00.000Z"),
+    );
+    await store.updateRun(
+      makeRun("profile-master", thread.id, master.id, "2026-01-02T00:00:00.000Z"),
+    );
+
+    const page = await store.listRunHistory({ workspaceId: workspace.id, limit: 50 });
+    expect(page.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          run: expect.objectContaining({ id: "profile-worker" }),
+          agentHarness: "opencode",
+          agentModel: "open-model",
+        }),
+        expect.objectContaining({
+          run: expect.objectContaining({ id: "profile-master" }),
+          agentHarness: "custom",
+          agentModel: "private-model",
+        }),
+      ]),
+    );
+    const profiles = new Map(page.summary.byAgent.map((entry) => [entry.agentId, entry]));
+    expect(profiles.get(worker.id)).toEqual(
+      expect.objectContaining({ agentHarness: "opencode", agentModel: "open-model" }),
+    );
+    expect(profiles.get(master.id)).toEqual(
+      expect.objectContaining({ agentHarness: "custom", agentModel: "private-model" }),
+    );
+    const serialized = JSON.stringify(page);
+    expect(serialized).not.toContain("provider.example.test");
+    expect(serialized).not.toContain("secret-key-value");
   });
 
   it("does not flag a run at the exact configured cost limit", async () => {
@@ -553,6 +618,7 @@ describe("run history server", () => {
       {
         agentId: agentA.id,
         agentName: "Agent A",
+        agentHarness: "codex",
         totalRuns: 1,
         terminalRuns: 1,
         totalDurationMs: 0,
@@ -565,6 +631,7 @@ describe("run history server", () => {
       {
         agentId: agentB.id,
         agentName: "Agent B",
+        agentHarness: "codex",
         totalRuns: 1,
         terminalRuns: 1,
         totalDurationMs: 0,
@@ -835,6 +902,8 @@ describe("run history server", () => {
     const ghostItem = page.items.find((item) => item.run.id === "ghost-run");
     expect(ghostItem?.agentName).toBe("Unknown");
     expect(ghostItem?.agentHandle).toBeUndefined();
+    expect(ghostItem?.agentHarness).toBeUndefined();
+    expect(ghostItem?.agentModel).toBeUndefined();
   });
 
   it("lists from the in-memory projection without reading whole transcripts", async () => {

@@ -538,6 +538,8 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
               {
                 agentId: "agent-a",
                 agentName: "Planner",
+                agentHarness: "codex",
+                agentModel: "gpt-5.6",
                 totalRuns: 2,
                 terminalRuns: 2,
                 totalDurationMs: 3_000,
@@ -573,6 +575,7 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
 
     const breakdown = await screen.findByRole("region", { name: "Run history by agent" });
     expect(within(breakdown).getByText("Planner")).toBeVisible();
+    expect(within(breakdown).getByText("Codex · gpt-5.6")).toBeVisible();
     const summary = screen.getByLabelText("Run history summary");
     expect(within(summary).getByText("Helpful / needs work")).toBeVisible();
     expect(within(summary).getByText("Estimated cost")).toBeVisible();

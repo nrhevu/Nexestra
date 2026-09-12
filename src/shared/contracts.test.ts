@@ -242,6 +242,19 @@ describe("RunHistoryItemSchema", () => {
       false,
     );
   });
+
+  it("accepts bounded harness labels and rejects oversized model names", () => {
+    expect(
+      RunHistoryItemSchema.safeParse({ ...item, agentHarness: "opencode", agentModel: "model-x" })
+        .success,
+    ).toBe(true);
+    expect(RunHistoryItemSchema.safeParse({ ...item, agentHarness: "unknown" }).success).toBe(
+      false,
+    );
+    expect(RunHistoryItemSchema.safeParse({ ...item, agentModel: "m".repeat(201) }).success).toBe(
+      false,
+    );
+  });
 });
 
 describe("RunHistoryMetricsSchema", () => {

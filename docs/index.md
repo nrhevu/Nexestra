@@ -120,3 +120,5 @@
     compare count-only cost and usage aggregates while preserving workspace isolation.
 62. [Over-budget run filter research](research/2026-09-12-over-budget-run-filter.md): focus run
     history on observed estimates above configured per-agent limits.
+63. [Agent profile labels research](research/2026-09-12-agent-profile-labels.md): identify
+    heterogeneous harness and model labels without exposing provider configuration or secrets.

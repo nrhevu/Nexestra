@@ -766,10 +766,17 @@ export const RunHistoryTelemetryRequestSchema = z.object({
 });
 export type RunHistoryTelemetryRequest = z.infer<typeof RunHistoryTelemetryRequestSchema>;
 
+// Read-time labels identify the execution surface without exposing provider endpoints
+// or credentials. Historical rows may reflect the agent profile currently configured.
+export const RunHistoryAgentHarnessSchema = z.enum(["codex", "opencode", "custom"]);
+export type RunHistoryAgentHarness = z.infer<typeof RunHistoryAgentHarnessSchema>;
+
 export const RunHistoryItemSchema = z.object({
   run: RunSchema.omit({ error: true }).extend({ failureKind: RunFailureKindSchema.optional() }),
   agentName: z.string(),
   agentHandle: z.string().optional(),
+  agentHarness: RunHistoryAgentHarnessSchema.optional(),
+  agentModel: z.string().trim().max(200).optional(),
   threadName: z.string(),
   threadArchived: z.boolean(),
   // Delegated Worker runs carry their Taskboard title for monitoring context.
@@ -786,6 +793,8 @@ export type RunHistoryItem = z.infer<typeof RunHistoryItemSchema>;
 export const RunHistoryAgentMetricsSchema = z.object({
   agentId: z.string(),
   agentName: z.string(),
+  agentHarness: RunHistoryAgentHarnessSchema.optional(),
+  agentModel: z.string().trim().max(200).optional(),
   totalRuns: z.number().int().nonnegative(),
   terminalRuns: z.number().int().nonnegative(),
   totalDurationMs: z.number().int().nonnegative(),

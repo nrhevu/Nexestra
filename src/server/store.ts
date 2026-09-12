@@ -69,6 +69,7 @@ import {
   ReviewQueuePageSchema,
   ReviewQueueRequestSchema,
   ReviewStatusUpdateSchema,
+  type RunHistoryAgentHarness,
   type RunHistoryAgentMetrics,
   type RunHistoryItem,
   type RunHistoryPage,
@@ -371,6 +372,19 @@ function runEstimatedCostUsd(
       usage.outputTokens * pricing.outputUsdPerMillion) /
     1_000_000
   );
+}
+
+function runAgentProfile(agent: Agent | undefined): {
+  agentHarness?: RunHistoryAgentHarness;
+  agentModel?: string;
+} {
+  if (!agent) return {};
+  const agentHarness: RunHistoryAgentHarness = agent.kind === "worker" ? agent.harness : "custom";
+  const agentModel = agent.kind === "worker" ? agent.model : agent.provider.model;
+  return {
+    agentHarness,
+    ...(agentModel && agentModel.trim() !== "" ? { agentModel: agentModel.trim() } : {}),
+  };
 }
 
 interface FeedbackCounts {
@@ -3441,6 +3455,7 @@ export class FileStore {
           }
           const agentMetrics = metrics.byAgent.get(entry.agentId) ?? {
             agentId: entry.agentId,
+            ...runAgentProfile(agents.get(entry.agentId)),
             totalRuns: 0,
             terminalRuns: 0,
             totalDurationMs: 0,
@@ -3505,6 +3520,9 @@ export class FileStore {
           } = entry;
           return {
             ...withoutFeedback,
+            ...(withoutFeedback.agentModel === undefined
+              ? {}
+              : { agentModel: this.redactSecrets(withoutFeedback.agentModel) }),
             ...(feedbackCount !== undefined && feedbackCount > 0
               ? {
                   feedbackCount,
@@ -3594,6 +3612,19 @@ export class FileStore {
           },
           agentName: agent ? this.redactSecrets(agent.name) : "Unknown",
           agentHandle: agent ? this.redactHandleValue(agent.handle) : undefined,
+          ...(agent
+            ? (() => {
+                const profile = runAgentProfile(agent);
+                return {
+                  ...(profile.agentHarness === undefined
+                    ? {}
+                    : { agentHarness: profile.agentHarness }),
+                  ...(profile.agentModel === undefined
+                    ? {}
+                    : { agentModel: this.redactSecrets(profile.agentModel) }),
+                };
+              })()
+            : {}),
           threadName: thread ? this.redactSecrets(thread.name) : "Unknown",
           threadArchived: thread?.archived ?? false,
           ...(task ? { taskTitle: this.redactSecrets(task.title) } : {}),

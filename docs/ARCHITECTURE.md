@@ -201,6 +201,11 @@ unchanged. Run history renders it as a comparison table for multi-workspace user
 local page usable when that optional read fails. See [ADR 0093](adr/0093-cross-workspace-run-telemetry.md).
 Run history also supports a cursor-bound `cost=over_budget` filter, which selects only rows with a
 known estimate above the configured agent limit; unknown cost remains excluded. See [ADR 0094](adr/0094-over-budget-run-filter.md).
+Rows and per-agent summaries may include bounded `agentHarness` and `agentModel` labels derived from
+the current workspace profile. Models are redacted before response serialization; provider URLs,
+names, credentials, and transcripts remain outside telemetry. Deleted agents omit these optional
+labels, and profile changes can relabel older rows because the projection is read-time. See [ADR
+0095](adr/0095-agent-profile-labels-in-history.md).
 
 Agent messages expose optional helpful/needs-work feedback controls. One bounded rating per message
 is stored in workspace metadata, returned with history, and included in workspace exports; the

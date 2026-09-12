@@ -134,6 +134,22 @@ function formatAgentFeedback(agent: RunHistoryMetrics["byAgent"][number]): strin
   return ` · ${agent.positiveFeedbackCount ?? 0} helpful / ${agent.negativeFeedbackCount ?? 0} needs work`;
 }
 
+function formatAgentProfile(
+  agent: Pick<RunHistoryMetrics["byAgent"][number], "agentHarness" | "agentModel">,
+): string {
+  const harness =
+    agent.agentHarness === undefined
+      ? undefined
+      : agent.agentHarness === "codex"
+        ? "Codex"
+        : agent.agentHarness === "opencode"
+          ? "OpenCode"
+          : "Custom";
+  return [harness, agent.agentModel]
+    .filter((value): value is string => value !== undefined)
+    .join(" · ");
+}
+
 const FAILURE_KIND_LABELS: Record<NonNullable<RunHistoryItem["run"]["failureKind"]>, string> = {
   timeout: "Timed out",
   aborted: "Stopped before completion",
@@ -723,7 +739,14 @@ export function RunHistoryView({
               <ul>
                 {summary.byAgent.map((agent) => (
                   <li key={agent.agentId}>
-                    <span className="run-history-breakdown-name">{agent.agentName}</span>
+                    <span className="run-history-breakdown-name">
+                      <span>{agent.agentName}</span>
+                      {formatAgentProfile(agent) ? (
+                        <span className="run-history-agent-profile">
+                          {formatAgentProfile(agent)}
+                        </span>
+                      ) : null}
+                    </span>
                     <span className="run-history-breakdown-meta">
                       {agent.totalRuns} {agent.totalRuns === 1 ? "run" : "runs"} ·{" "}
                       {formatAgentUsage(agent)}
@@ -832,6 +855,11 @@ export function RunHistoryView({
                         <span className="run-history-agent">
                           {item.agentName}
                           {item.agentHandle !== undefined ? ` (${item.agentHandle})` : ""}
+                          {formatAgentProfile(item) ? (
+                            <span className="run-history-agent-profile">
+                              {formatAgentProfile(item)}
+                            </span>
+                          ) : null}
                         </span>
                         <span className="run-history-thread">
                           {item.threadName}
