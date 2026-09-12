@@ -221,7 +221,8 @@ or restoring it. The preview shows up to the first 128 KiB of source text, verif
 checksums and provides a download for that version. Text remains plain text, including Markdown
 and HTML; unsupported files have a download fallback. Previewing does not create or change versions.
 
-API clients can capture a saved message as Knowledge through `POST /api/knowledge/from-message`,
+Use **Save message as Knowledge** beside any message, or have an API client call
+`POST /api/knowledge/from-message`,
 supplying `threadId`, `messageId`, `name`, `handle`, and optional `description`/`workspaceId`.
 The immutable Markdown document retains source IDs and redacts known credentials. This does not
 summarize or verify the message; a dedicated browser capture dialog is not yet available.

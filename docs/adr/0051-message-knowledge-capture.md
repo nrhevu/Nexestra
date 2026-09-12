@@ -21,6 +21,7 @@ original transcript remains unchanged.
 ## Limits
 
 This endpoint is an explicit user/client capture operation, not an automatic summarizer or quality
-judgment. It does not verify claims in the source message, preserve attached binary files, or expose
-a dedicated browser capture dialog yet. Provenance identifies the source; it does not certify that
-the captured conclusion is correct.
+judgment. The thread UI offers one-click capture with generated metadata; custom names and handles
+remain available to API clients. It does not verify claims in the source message or preserve attached
+binary files. Provenance identifies the source; it does not certify that the captured conclusion is
+correct.
