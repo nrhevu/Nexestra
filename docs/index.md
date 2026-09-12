@@ -130,3 +130,4 @@
     expose complete-coverage observed budget counts and filtered Run history navigation.
 67. [Workspace archive identity check research](research/2026-09-12-workspace-archive-identity-check.md): compare a verified archive's manifest workspace ID with the active workspace before manual review.
 68. [Run history CSV export research](research/2026-09-12-run-history-csv-export.md): add a bounded, client-only spreadsheet export for loaded telemetry without transcript or error text.
+69. [Read-only restore preflight research](research/2026-09-12-read-only-restore-preflight.md): inventory verified archive contents while deferring mutation, conflict policy, and rollback.

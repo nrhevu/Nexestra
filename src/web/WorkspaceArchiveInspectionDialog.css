@@ -63,6 +63,33 @@
   color: var(--orange, #d18b47);
   line-height: 1.45;
 }
+.workspace-archive-restore-plan {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.workspace-archive-restore-plan h3 {
+  margin: 0;
+  font-size: 14px;
+}
+.workspace-archive-restore-blocker {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.workspace-archive-restore-blockers {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.workspace-archive-restore-counts {
+  margin: 0;
+}
 .workspace-archive-error {
   align-items: flex-start;
   flex-direction: column;

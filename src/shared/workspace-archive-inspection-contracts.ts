@@ -20,6 +20,27 @@ export type WorkspaceArchiveInspectionProgress = z.infer<
   typeof WorkspaceArchiveInspectionProgressSchema
 >;
 
+export const WorkspaceArchiveRestorePlanSchema = z.object({
+  workspace: WorkspaceExportManifestSchema.shape.workspace,
+  importSupported: z.boolean(),
+  counts: z.object({
+    threads: z.number().int().nonnegative().max(5_000),
+    agents: z.number().int().nonnegative().max(5_000),
+    tasks: z.number().int().nonnegative().max(5_000),
+    knowledge: z.number().int().nonnegative().max(5_000),
+    assignments: z.number().int().nonnegative().max(5_000),
+    attentionStates: z.number().int().nonnegative().max(5_000),
+    attentionAudit: z.number().int().nonnegative().max(5_000),
+  }),
+  pathConflicts: z.object({
+    checked: z.boolean(),
+    paths: z.array(z.string().min(1).max(1_024)).max(100),
+  }),
+  unsupportedEntries: z.array(z.string().min(1).max(1_024)).max(100),
+  blockers: z.array(z.string().min(1).max(500)).max(8),
+});
+export type WorkspaceArchiveRestorePlan = z.infer<typeof WorkspaceArchiveRestorePlanSchema>;
+
 export const WorkspaceArchiveInspectionReportSchema = z.object({
   manifest: WorkspaceExportManifestSchema,
   archiveBytes: z.number().int().positive().max(WORKSPACE_EXPORT_MAX_ARCHIVE_BYTES),
@@ -30,6 +51,7 @@ export const WorkspaceArchiveInspectionReportSchema = z.object({
       name: z.boolean(),
     })
     .optional(),
+  restorePlan: WorkspaceArchiveRestorePlanSchema.optional(),
 });
 export type WorkspaceArchiveInspectionReport = z.infer<
   typeof WorkspaceArchiveInspectionReportSchema

@@ -39,7 +39,9 @@ its payloads. Cancel or close to stop checking. Only Nexestra's stored ZIP v1 pr
 recompressed or encrypted archives are unsupported. A matching manifest does not prove authenticity,
 completeness or the ability to restore the data. When opened from a workspace, the inspector also
 warns if the archive's manifest belongs to a different workspace; the workspace ID is authoritative
-and the display name is informational. See
+and the display name is informational. After verification, **Plan restore** shows a bounded,
+read-only inventory and explicit blockers. It does not check a restore target or change local data;
+import, merge conflict handling and rollback remain unsupported. See
 [the inspection design](docs/adr/0047-local-workspace-archive-inspection.md).
 
 Both archive dialogs load when opened. Close or press Escape while loading; if loading fails or

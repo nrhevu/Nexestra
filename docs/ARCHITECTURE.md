@@ -652,7 +652,10 @@ credentials.
   exported state; foreign attention state remains excluded.
   Local archive inspection can compare the manifest workspace ID with the active workspace and warn
   on a mismatch, but identity matching does not add authenticity or restore support. See [ADR
-  0099](adr/0099-workspace-archive-identity-check.md).
+  0099](adr/0099-workspace-archive-identity-check.md). After integrity verification it can also
+  show a bounded, read-only restore preflight inventory; path conflicts are explicitly marked
+  unchecked because no target is opened. Import, merge policy and rollback remain future work. See
+  [ADR 0101](adr/0101-read-only-restore-preflight.md).
 
 - Conversation unread state belongs to one browser profile and origin. It counts all canonical
   messages and uses a read-through count, not a per-message receipt or proof of attention. Existing

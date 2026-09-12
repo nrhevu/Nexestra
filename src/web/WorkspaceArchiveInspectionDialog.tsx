@@ -72,6 +72,7 @@ export function WorkspaceArchiveInspectionDialog({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [progress, setProgress] = useState<WorkspaceArchiveInspectionProgress | null>(null);
   const [report, setReport] = useState<WorkspaceArchiveInspectionReport | null>(null);
+  const [showRestorePlan, setShowRestorePlan] = useState(false);
   const [error, setError] = useState<WorkspaceArchiveInspectionError | null>(null);
   const [pageIndex, setPageIndex] = useState(0);
   const titleId = useId();
@@ -160,6 +161,7 @@ export function WorkspaceArchiveInspectionDialog({
     setSelectedFile(next);
     setProgress(null);
     setReport(null);
+    setShowRestorePlan(false);
     setPageIndex(0);
     if (next.size === 0) {
       setError({ message: EMPTY_FILE_MESSAGE });
@@ -198,6 +200,7 @@ export function WorkspaceArchiveInspectionDialog({
     controllerRef.current = controller;
     busyRef.current = true;
     setProgress(null);
+    setShowRestorePlan(false);
     setPhase("busy");
     try {
       const result = await inspectArchiveInWorker(selectedFile, {
@@ -253,6 +256,7 @@ export function WorkspaceArchiveInspectionDialog({
     setSelectedFile(null);
     setProgress(null);
     setReport(null);
+    setShowRestorePlan(false);
     setError(null);
     setPageIndex(0);
     setPhase("idle");
@@ -375,6 +379,45 @@ export function WorkspaceArchiveInspectionDialog({
                   <dd>{formatBytes(report.payloadBytes)}</dd>
                 </div>
               </dl>
+              {report.restorePlan !== undefined && (
+                <section className="workspace-archive-restore-plan" aria-label="Restore preflight">
+                  {!showRestorePlan ? (
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => setShowRestorePlan(true)}
+                    >
+                      Plan restore
+                    </button>
+                  ) : (
+                    <>
+                      <h3>Restore preflight</h3>
+                      <p className="workspace-archive-restore-blocker">
+                        Restore is not available yet. This plan is an inventory only; no files or
+                        state were changed.
+                      </p>
+                      <ul className="workspace-archive-restore-blockers">
+                        {report.restorePlan.blockers.map((blocker) => (
+                          <li key={blocker}>{blocker}</li>
+                        ))}
+                      </ul>
+                      <dl className="workspace-archive-summary workspace-archive-restore-counts">
+                        {Object.entries(report.restorePlan.counts).map(([label, count]) => (
+                          <div key={label}>
+                            <dt>{label}</dt>
+                            <dd>{formatCount(count)}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                      <p className="workspace-archive-restore-blocker">
+                        {report.restorePlan.pathConflicts.checked
+                          ? `${formatCount(report.restorePlan.pathConflicts.paths.length)} path conflicts found.`
+                          : "Path conflicts were not checked because this browser has not started a restore."}
+                      </p>
+                    </>
+                  )}
+                </section>
+              )}
               <section
                 className="workspace-archive-table-scroll"
                 aria-label="Verified files, scroll for more columns"

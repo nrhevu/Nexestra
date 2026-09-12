@@ -3,6 +3,7 @@ import {
   WORKSPACE_EXPORT_MAX_ENTRIES,
   WORKSPACE_EXPORT_MAX_SOURCE_BYTES,
   type WorkspaceExportEntry,
+  type WorkspaceExportManifest,
   WorkspaceExportManifestSchema,
 } from "./contracts.js";
 import {
@@ -11,6 +12,8 @@ import {
   type WorkspaceArchiveInspectionProgress,
   type WorkspaceArchiveInspectionReport,
   WorkspaceArchiveInspectionReportSchema,
+  type WorkspaceArchiveRestorePlan,
+  WorkspaceArchiveRestorePlanSchema,
 } from "./workspace-archive-inspection-contracts.js";
 
 const LOCAL_HEADER_SIGNATURE = 0x04034b50;
@@ -254,6 +257,58 @@ function isConsistentEntryKind(entry: WorkspaceExportEntry, workspaceId: string)
 
 function readU8Array(buffer: ArrayBuffer): Uint8Array {
   return new Uint8Array(buffer);
+}
+
+const RESTORE_COUNT_LIMIT = 5_000;
+
+function boundedArrayCount(value: unknown): number {
+  return Array.isArray(value) ? Math.min(value.length, RESTORE_COUNT_LIMIT) : 0;
+}
+
+function restorePlan(
+  manifest: WorkspaceExportManifest,
+  stateBytes: Uint8Array | undefined,
+): WorkspaceArchiveRestorePlan {
+  const blockers = ["Restore into Nexestra is not supported for this archive format."];
+  let state: Record<string, unknown> | undefined;
+  if (stateBytes === undefined) {
+    blockers.push("The archive does not contain readable state metadata.");
+  } else {
+    try {
+      const parsed = JSON.parse(UTF8_DECODER.decode(stateBytes));
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error();
+      state = parsed as Record<string, unknown>;
+    } catch {
+      blockers.push("The state metadata could not be parsed for restore planning.");
+    }
+  }
+  const manifestCounts = {
+    threads: manifest.entries.filter((entry) => entry.kind === "transcript").length,
+    knowledge: manifest.entries.filter(
+      (entry) => entry.kind === "document" && /\/document$/.test(entry.path),
+    ).length,
+  };
+  const stateCount = (key: string, fallback: number): number =>
+    Array.isArray(state?.[key]) ? boundedArrayCount(state[key]) : fallback;
+  const plan: WorkspaceArchiveRestorePlan = {
+    workspace: manifest.workspace,
+    importSupported: manifest.importSupported,
+    counts: {
+      threads: stateCount("threads", manifestCounts.threads),
+      agents: boundedArrayCount(state?.agents),
+      tasks: boundedArrayCount(state?.tasks),
+      knowledge: stateCount("knowledge", manifestCounts.knowledge),
+      assignments: boundedArrayCount(state?.assignments),
+      attentionStates: boundedArrayCount(state?.attentionStates),
+      attentionAudit: boundedArrayCount(state?.attentionAudit),
+    },
+    pathConflicts: { checked: false, paths: [] },
+    unsupportedEntries: [],
+    blockers,
+  };
+  const parsed = WorkspaceArchiveRestorePlanSchema.safeParse(plan);
+  if (!parsed.success) throw invalid(MSG_INTERNAL);
+  return parsed.data;
 }
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
@@ -655,10 +710,12 @@ async function inspectWorkspaceArchiveImpl(
   const expectedSha256 = new Map(manifest.entries.map((entry) => [entry.path, entry.sha256]));
   let verifiedEntries = 0;
   let verifiedBytes = 0;
+  let stateBytes: Uint8Array | undefined;
   for (const entry of sorted) {
     assertActive();
     if (entry.name === MANIFEST_PATH) continue;
     const payload = await readBytes(entry.dataOffset, entry.dataOffset + entry.size);
+    if (entry.name === STATE_PATH) stateBytes = payload;
     if (crc32(payload) !== entry.crc) throw invalid(MSG_INTEGRITY, entry.name);
     assertActive();
     const actualSha256 = await sha256Hex(payload);
@@ -683,6 +740,7 @@ async function inspectWorkspaceArchiveImpl(
           },
         }
       : {}),
+    restorePlan: restorePlan(manifest, stateBytes),
   };
   const parsedReport = WorkspaceArchiveInspectionReportSchema.safeParse(report);
   if (!parsedReport.success) throw invalid(MSG_INTERNAL);

@@ -158,6 +158,38 @@ describe("WorkspaceArchiveInspectionDialog", () => {
     ).toBeInTheDocument();
   });
 
+  it("reveals a read-only restore preflight inventory after verification", async () => {
+    inspectMock.mockResolvedValue(
+      report([entry("state.json", { kind: "metadata" })], {
+        restorePlan: {
+          workspace: { id: "ws-archive", name: "Archived Alpha" },
+          importSupported: false,
+          counts: {
+            threads: 2,
+            agents: 3,
+            tasks: 4,
+            knowledge: 5,
+            assignments: 6,
+            attentionStates: 1,
+            attentionAudit: 7,
+          },
+          pathConflicts: { checked: false, paths: [] },
+          unsupportedEntries: [],
+          blockers: ["Restore into Nexestra is not supported for this archive format."],
+        },
+      }),
+    );
+    const user = userEvent.setup();
+    renderDialog();
+    await chooseAndCheck(user);
+    await user.click(await screen.findByRole("button", { name: "Plan restore" }));
+    expect(screen.getByRole("heading", { name: "Restore preflight" })).toBeInTheDocument();
+    expect(screen.getByText(/inventory only/i)).toBeInTheDocument();
+    expect(screen.getByText(/Restore into Nexestra is not supported/i)).toBeInTheDocument();
+    expect(screen.getByText("threads")).toBeInTheDocument();
+    expect(screen.getByText(/Path conflicts were not checked/)).toBeInTheDocument();
+  });
+
   it("shows real progress and paginates a large verified entry list", async () => {
     const pending = deferred<WorkspaceArchiveInspectionReport>();
     inspectMock.mockImplementation(async (_file, options) => {

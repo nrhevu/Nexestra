@@ -496,6 +496,18 @@ describe("workspace archive inspection engine", () => {
       built.manifest.entries.reduce((sum, entry) => sum + entry.bytes, 0),
     );
     expect(report.manifest.entries.length).toBe(centralEntryCount(built.bytes) - 1);
+    expect(report.restorePlan).toMatchObject({
+      importSupported: false,
+      counts: {
+        threads: 2,
+        knowledge: 1,
+        agents: 0,
+        tasks: 0,
+        assignments: 0,
+      },
+      pathConflicts: { checked: false, paths: [] },
+      unsupportedEntries: [],
+    });
 
     const extracted = unzipSync(built.bytes);
     for (const entry of report.manifest.entries) {
