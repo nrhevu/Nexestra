@@ -94,6 +94,17 @@ describe("run history server", () => {
       totalDurationMs: 65_250,
       usageRuns: 1,
       totalTokens: 1_250,
+      byAgent: [
+        {
+          agentId: agent.id,
+          agentName: "Runner",
+          totalRuns: 2,
+          terminalRuns: 1,
+          totalDurationMs: 65_250,
+          usageRuns: 1,
+          totalTokens: 1_250,
+        },
+      ],
     });
     expect(page.items.find((item) => item.run.id === "run-active")?.run.durationMs).toBeUndefined();
   });
@@ -182,6 +193,26 @@ describe("run history server", () => {
       expect(item.agentName).toBe(item.run.agentId === agentA.id ? "Agent A" : "Agent B");
       expect(item.agentHandle).toBe(item.run.agentId === agentA.id ? "agent-a" : "agent-b");
     }
+    expect(byThread.summary.byAgent).toEqual([
+      {
+        agentId: agentA.id,
+        agentName: "Agent A",
+        totalRuns: 1,
+        terminalRuns: 1,
+        totalDurationMs: 0,
+        usageRuns: 0,
+        totalTokens: 0,
+      },
+      {
+        agentId: agentB.id,
+        agentName: "Agent B",
+        totalRuns: 1,
+        terminalRuns: 1,
+        totalDurationMs: 0,
+        usageRuns: 0,
+        totalTokens: 0,
+      },
+    ]);
     const byStatus = await store.listRunHistory({
       workspaceId: workspace.id,
       status: "failed",

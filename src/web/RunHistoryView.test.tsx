@@ -90,6 +90,7 @@ function makePage(
       totalDurationMs: 0,
       usageRuns: 0,
       totalTokens: 0,
+      byAgent: [],
     },
     coverage: { complete: true, unavailableThreads: 0 },
     ...overrides,
@@ -443,6 +444,50 @@ describe("RunHistoryView race and refresh behavior", () => {
 });
 
 describe("RunHistoryView coverage, rows, and callbacks", () => {
+  it("shows the comparison breakdown by agent", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(
+        makePage([], null, {
+          summary: {
+            totalRuns: 3,
+            terminalRuns: 3,
+            totalDurationMs: 4_000,
+            usageRuns: 2,
+            totalTokens: 2_500,
+            byAgent: [
+              {
+                agentId: "agent-a",
+                agentName: "Planner",
+                totalRuns: 2,
+                terminalRuns: 2,
+                totalDurationMs: 3_000,
+                usageRuns: 2,
+                totalTokens: 2_500,
+              },
+              {
+                agentId: "agent-b",
+                agentName: "Reviewer",
+                totalRuns: 1,
+                terminalRuns: 1,
+                totalDurationMs: 1_000,
+                usageRuns: 0,
+                totalTokens: 0,
+              },
+            ],
+          },
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    renderView({ agents: [makeAgent("agent-a", "Planner"), makeAgent("agent-b", "Reviewer")] });
+
+    const breakdown = await screen.findByRole("region", { name: "Run history by agent" });
+    expect(within(breakdown).getByText("Planner")).toBeVisible();
+    expect(within(breakdown).getByText("2 runs · 2.5K tokens · 3.0 s")).toBeVisible();
+    expect(within(breakdown).getByText("Reviewer")).toBeVisible();
+    expect(within(breakdown).getByText("1 run · no usage · 1.0 s")).toBeVisible();
+  });
+
   it("shows the coverage warning, safe date fallback, status, attempt, and archive label", async () => {
     const item = makeItem(
       makeRun("run-bad-dates", {

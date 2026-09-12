@@ -172,7 +172,8 @@ refreshes the mounted listing. Terminal rows derive wall-clock duration from lif
 custom-provider usage, when reported, is normalized to optional input/output/total token counts.
 Each filtered response also includes aggregate run, duration, token, and usage-coverage metrics.
 See [ADR 0045](adr/0045-workspace-run-history.md), [ADR 0049](adr/0049-run-duration-metrics.md),
-and [ADR 0050](adr/0050-provider-usage-telemetry.md).
+and [ADR 0050](adr/0050-provider-usage-telemetry.md). It also includes a bounded per-agent
+breakdown using the same filters and complete cached summary set. See [ADR 0052](adr/0052-run-history-agent-comparison.md).
 
 Message content is stored and transported as unchanged Markdown. The browser renders it with
 GitHub Flavored Markdown and KaTeX inside the memoized transcript boundary. Raw HTML parsing is not

@@ -5690,6 +5690,7 @@ describe("Run history navigation", () => {
         totalDurationMs: 0,
         usageRuns: 0,
         totalTokens: 0,
+        byAgent: [],
       },
       coverage: { complete: true, unavailableThreads: 0 },
     };

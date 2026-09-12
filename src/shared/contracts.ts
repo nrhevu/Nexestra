@@ -559,12 +559,24 @@ export const RunHistoryItemSchema = z.object({
 });
 export type RunHistoryItem = z.infer<typeof RunHistoryItemSchema>;
 
+export const RunHistoryAgentMetricsSchema = z.object({
+  agentId: z.string(),
+  agentName: z.string(),
+  totalRuns: z.number().int().nonnegative(),
+  terminalRuns: z.number().int().nonnegative(),
+  totalDurationMs: z.number().int().nonnegative(),
+  usageRuns: z.number().int().nonnegative(),
+  totalTokens: z.number().int().nonnegative(),
+});
+export type RunHistoryAgentMetrics = z.infer<typeof RunHistoryAgentMetricsSchema>;
+
 export const RunHistoryMetricsSchema = z.object({
   totalRuns: z.number().int().nonnegative(),
   terminalRuns: z.number().int().nonnegative(),
   totalDurationMs: z.number().int().nonnegative(),
   usageRuns: z.number().int().nonnegative(),
   totalTokens: z.number().int().nonnegative(),
+  byAgent: z.array(RunHistoryAgentMetricsSchema).max(200).default([]),
 });
 export type RunHistoryMetrics = z.infer<typeof RunHistoryMetricsSchema>;
 
@@ -578,6 +590,7 @@ export const RunHistoryPageSchema = z.object({
     totalDurationMs: 0,
     usageRuns: 0,
     totalTokens: 0,
+    byAgent: [],
   }),
   coverage: z.object({
     complete: z.boolean(),

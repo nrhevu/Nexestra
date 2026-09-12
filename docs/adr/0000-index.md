@@ -53,3 +53,4 @@
 | [0049](0049-run-duration-metrics.md) | Accepted | Expose terminal run elapsed time in run history for performance and cost review |
 | [0050](0050-provider-usage-telemetry.md) | Accepted | Retain optional provider-reported token usage for local run cost comparisons |
 | [0051](0051-message-knowledge-capture.md) | Accepted | Capture canonical messages as Knowledge documents with source provenance |
+| [0052](0052-run-history-agent-comparison.md) | Accepted | Break run-history telemetry down by agent for harness comparison |

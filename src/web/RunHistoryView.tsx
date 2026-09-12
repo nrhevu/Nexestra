@@ -467,26 +467,47 @@ export function RunHistoryView({
       </fieldset>
 
       {summary ? (
-        <dl className="run-history-summary" aria-label="Run history summary">
-          <div>
-            <dt>Runs</dt>
-            <dd>{summary.totalRuns}</dd>
-          </div>
-          <div>
-            <dt>Terminal time</dt>
-            <dd>{formatDuration(summary.totalDurationMs)}</dd>
-          </div>
-          <div>
-            <dt>Tokens</dt>
-            <dd>{summary.usageRuns > 0 ? formatTokens(summary.totalTokens) : "—"}</dd>
-          </div>
-          <div>
-            <dt>Usage coverage</dt>
-            <dd>
-              {summary.usageRuns}/{summary.totalRuns}
-            </dd>
-          </div>
-        </dl>
+        <>
+          <dl className="run-history-summary" aria-label="Run history summary">
+            <div>
+              <dt>Runs</dt>
+              <dd>{summary.totalRuns}</dd>
+            </div>
+            <div>
+              <dt>Terminal time</dt>
+              <dd>{formatDuration(summary.totalDurationMs)}</dd>
+            </div>
+            <div>
+              <dt>Tokens</dt>
+              <dd>{summary.usageRuns > 0 ? formatTokens(summary.totalTokens) : "—"}</dd>
+            </div>
+            <div>
+              <dt>Usage coverage</dt>
+              <dd>
+                {summary.usageRuns}/{summary.totalRuns}
+              </dd>
+            </div>
+          </dl>
+          {summary.byAgent.length > 0 ? (
+            <section className="run-history-agent-breakdown" aria-label="Run history by agent">
+              <h2>By agent</h2>
+              <ul>
+                {summary.byAgent.map((agent) => (
+                  <li key={agent.agentId}>
+                    <span className="run-history-breakdown-name">{agent.agentName}</span>
+                    <span className="run-history-breakdown-meta">
+                      {agent.totalRuns} {agent.totalRuns === 1 ? "run" : "runs"} ·{" "}
+                      {agent.usageRuns > 0
+                        ? `${formatTokens(agent.totalTokens)} tokens`
+                        : "no usage"}{" "}
+                      · {formatDuration(agent.totalDurationMs)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+        </>
       ) : null}
 
       {currentWorkspace && view.phase === "loading" ? (

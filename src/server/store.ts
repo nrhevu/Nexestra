@@ -58,6 +58,7 @@ import {
   ReorderWorkspacesSchema,
   ReplaceKnowledgeDocumentSchema,
   RestoreKnowledgeDocumentRevisionSchema,
+  type RunHistoryAgentMetrics,
   type RunHistoryItem,
   type RunHistoryPage,
   RunHistoryPageSchema,
@@ -2911,6 +2912,11 @@ export class FileStore {
         }
       }
       summaries.sort(compareRunHistorySummaries);
+      const agents = new Map(
+        this.state.agents
+          .filter((agent) => agent.workspaceId === workspace.id)
+          .map((agent) => [agent.id, agent]),
+      );
       const summary = summaries.reduce(
         (metrics, entry) => {
           const durationMs = runDurationMs(entry);
@@ -2923,20 +2929,63 @@ export class FileStore {
             metrics.usageRuns += 1;
             metrics.totalTokens += entry.usage.totalTokens;
           }
+          const agentMetrics = metrics.byAgent.get(entry.agentId) ?? {
+            agentId: entry.agentId,
+            totalRuns: 0,
+            terminalRuns: 0,
+            totalDurationMs: 0,
+            usageRuns: 0,
+            totalTokens: 0,
+          };
+          agentMetrics.totalRuns += 1;
+          if (durationMs !== undefined) {
+            agentMetrics.terminalRuns += 1;
+            agentMetrics.totalDurationMs += durationMs;
+          }
+          if (entry.usage) {
+            agentMetrics.usageRuns += 1;
+            agentMetrics.totalTokens += entry.usage.totalTokens;
+          }
+          metrics.byAgent.set(entry.agentId, agentMetrics);
           return metrics;
         },
-        { totalRuns: 0, terminalRuns: 0, totalDurationMs: 0, usageRuns: 0, totalTokens: 0 },
+        {
+          totalRuns: 0,
+          terminalRuns: 0,
+          totalDurationMs: 0,
+          usageRuns: 0,
+          totalTokens: 0,
+          byAgent: new Map<string, Omit<RunHistoryAgentMetrics, "agentName">>(),
+        },
       );
+      const summaryByAgent = [...summary.byAgent.values()]
+        .map((entry) => ({
+          ...entry,
+          agentName: agents.has(entry.agentId)
+            ? this.redactSecrets(agents.get(entry.agentId)?.name ?? "Unknown")
+            : "Unknown",
+        }))
+        .sort(
+          (left, right) =>
+            right.totalRuns - left.totalRuns ||
+            right.totalTokens - left.totalTokens ||
+            left.agentName.localeCompare(right.agentName) ||
+            left.agentId.localeCompare(right.agentId),
+        )
+        .slice(0, 200);
+      const metrics = {
+        totalRuns: summary.totalRuns,
+        terminalRuns: summary.terminalRuns,
+        totalDurationMs: summary.totalDurationMs,
+        usageRuns: summary.usageRuns,
+        totalTokens: summary.totalTokens,
+        byAgent: summaryByAgent,
+      };
       const remaining =
         cursor === undefined
           ? summaries
           : summaries.filter((summary) => runHistorySummaryAfterCursor(summary, cursor));
       const pageSummaries = remaining.slice(0, input.limit);
-      const agents = new Map(
-        this.state.agents
-          .filter((agent) => agent.workspaceId === workspace.id)
-          .map((agent) => [agent.id, agent]),
-      );
       const threads = new Map(
         this.state.threads
           .filter((entry) => entry.workspaceId === workspace.id)
@@ -2974,7 +3023,7 @@ export class FileStore {
         workspaceId: workspace.id,
         items,
         page: { nextCursor },
-        summary,
+        summary: metrics,
         coverage: { complete: unavailableThreads === 0, unavailableThreads },
       });
     });
