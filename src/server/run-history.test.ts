@@ -65,6 +65,9 @@ describe("run history server", () => {
     if (!workspace) throw new Error("expected seeded workspace");
     const agent = await createWorkerAgent(store);
     const thread = await createThread(store);
+    await store.updateAgent(agent.id, {
+      pricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 2, cachedInputUsdPerMillion: 0.5 },
+    });
     const completed = makeRun(
       "run-duration",
       thread.id,
@@ -75,7 +78,12 @@ describe("run history server", () => {
     await store.updateRun({
       ...completed,
       updatedAt: "2026-01-01T00:01:05.250Z",
-      usage: { inputTokens: 1_000, outputTokens: 250, totalTokens: 1_250 },
+      usage: {
+        inputTokens: 1_000,
+        outputTokens: 250,
+        totalTokens: 1_250,
+        cachedInputTokens: 400,
+      },
     });
     await store.updateRun(
       makeRun("run-active", thread.id, agent.id, "2026-01-02T00:00:00.000Z", "running"),
@@ -87,6 +95,7 @@ describe("run history server", () => {
       inputTokens: 1_000,
       outputTokens: 250,
       totalTokens: 1_250,
+      cachedInputTokens: 400,
     });
     expect(page.summary).toEqual({
       totalRuns: 2,
@@ -104,8 +113,9 @@ describe("run history server", () => {
           usageRuns: 1,
           inputTokens: 1_000,
           outputTokens: 250,
-          cachedInputTokens: 0,
+          cachedInputTokens: 400,
           totalTokens: 1_250,
+          estimatedCostUsd: 0.0013,
         },
       ],
     });

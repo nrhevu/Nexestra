@@ -4541,6 +4541,9 @@ describe("Agent editing", () => {
     );
     await user.clear(instructions);
     await user.type(instructions, "Be concise.");
+    await user.type(within(dialog).getByLabelText("Input USD per million tokens"), "1");
+    await user.type(within(dialog).getByLabelText("Output USD per million tokens"), "2");
+    await user.type(within(dialog).getByLabelText("Cached input USD per million tokens"), "0.5");
     await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
 
     await waitFor(() => {
@@ -4557,6 +4560,11 @@ describe("Agent editing", () => {
       harness: "codex",
       model: null,
       reasoningEffort: null,
+      pricing: {
+        inputUsdPerMillion: 1,
+        outputUsdPerMillion: 2,
+        cachedInputUsdPerMillion: 0.5,
+      },
     });
     await screen.findByText("Agent updated.");
   });

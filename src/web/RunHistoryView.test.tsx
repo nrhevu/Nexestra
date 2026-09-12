@@ -466,6 +466,7 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
                 outputTokens: 500,
                 cachedInputTokens: 0,
                 totalTokens: 2_500,
+                estimatedCostUsd: 0.0125,
               },
               {
                 agentId: "agent-b",
@@ -490,7 +491,7 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
     const breakdown = await screen.findByRole("region", { name: "Run history by agent" });
     expect(within(breakdown).getByText("Planner")).toBeVisible();
     expect(
-      within(breakdown).getByText("2 runs · 2.5K tokens (2K in / 500 out) · 3.0 s"),
+      within(breakdown).getByText("2 runs · 2.5K tokens (2K in / 500 out) · $0.0125 · 3.0 s"),
     ).toBeVisible();
     expect(within(breakdown).getByText("Reviewer")).toBeVisible();
     expect(within(breakdown).getByText("1 run · no usage · 1.0 s")).toBeVisible();

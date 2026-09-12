@@ -168,6 +168,13 @@ export const UpdateKnowledgeSchema = z.object({
   description: z.string().trim().max(1_000).optional(),
 });
 
+export const AgentPricingSchema = z.object({
+  inputUsdPerMillion: z.number().finite().nonnegative().max(1_000_000).optional(),
+  outputUsdPerMillion: z.number().finite().nonnegative().max(1_000_000).optional(),
+  cachedInputUsdPerMillion: z.number().finite().nonnegative().max(1_000_000).optional(),
+});
+export type AgentPricing = z.infer<typeof AgentPricingSchema>;
+
 const AgentBaseSchema = z.object({
   id: z.string(),
   workspaceId: z.string(),
@@ -177,6 +184,7 @@ const AgentBaseSchema = z.object({
   instructions: z.string(),
   enabled: z.boolean(),
   archived: z.boolean(),
+  pricing: AgentPricingSchema.optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -227,6 +235,7 @@ const AgentInputBaseSchema = z.object({
   handle: HandleSchema,
   description: z.string().trim().max(240).default(""),
   instructions: z.string().trim().max(8_000).default(""),
+  pricing: AgentPricingSchema.optional(),
 });
 
 const ChatGptProviderInputSchema = z.object({
@@ -272,6 +281,7 @@ export const UpdateAgentSchema = z.strictObject({
   handle: HandleSchema.optional(),
   description: z.string().trim().max(240).optional(),
   instructions: z.string().trim().max(8_000).optional(),
+  pricing: AgentBaseSchema.shape.pricing.nullable().optional(),
   harness: z.enum(["codex", "opencode"]).optional(),
   model: WorkerModelSchema.nullable().optional(),
   reasoningEffort: WorkerReasoningEffortSchema.nullable().optional(),
@@ -570,6 +580,7 @@ export const RunHistoryAgentMetricsSchema = z.object({
   outputTokens: z.number().int().nonnegative(),
   cachedInputTokens: z.number().int().nonnegative(),
   totalTokens: z.number().int().nonnegative(),
+  estimatedCostUsd: z.number().finite().nonnegative().optional(),
 });
 export type RunHistoryAgentMetrics = z.infer<typeof RunHistoryAgentMetricsSchema>;
 

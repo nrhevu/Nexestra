@@ -320,6 +320,29 @@ function runDurationMs(summary: RunHistorySummary): number | undefined {
   return finished - started;
 }
 
+function runEstimatedCostUsd(
+  agent: Agent | undefined,
+  usage: NonNullable<AgentRun["usage"]>,
+): number | undefined {
+  const pricing = agent?.pricing;
+  if (
+    !pricing ||
+    pricing.inputUsdPerMillion === undefined ||
+    pricing.outputUsdPerMillion === undefined
+  ) {
+    return undefined;
+  }
+  const cachedInputTokens = Math.min(usage.cachedInputTokens ?? 0, usage.inputTokens);
+  const uncachedInputTokens = usage.inputTokens - cachedInputTokens;
+  const cachedRate = pricing.cachedInputUsdPerMillion ?? pricing.inputUsdPerMillion;
+  return (
+    (uncachedInputTokens * pricing.inputUsdPerMillion +
+      cachedInputTokens * cachedRate +
+      usage.outputTokens * pricing.outputUsdPerMillion) /
+    1_000_000
+  );
+}
+
 export class StoreError extends Error {
   constructor(
     readonly code: "not_found" | "conflict" | "invalid",
@@ -1355,6 +1378,7 @@ export class FileStore {
         instructions: input.instructions,
         enabled: true,
         archived: false,
+        ...(input.pricing ? { pricing: input.pricing } : {}),
         createdAt: now,
         updatedAt: now,
       };
@@ -1453,6 +1477,9 @@ export class FileStore {
         ...(input.handle !== undefined ? { handle: input.handle } : {}),
         ...(input.description !== undefined ? { description: input.description } : {}),
         ...(input.instructions !== undefined ? { instructions: input.instructions } : {}),
+        ...(input.pricing !== undefined && input.pricing !== null
+          ? { pricing: input.pricing }
+          : {}),
         ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
         ...(input.archived !== undefined ? { archived: input.archived } : {}),
       };
@@ -1480,6 +1507,7 @@ export class FileStore {
           delete (updated as { reasoningEffort?: unknown }).reasoningEffort;
         }
       }
+      if (input.pricing === null) delete (updated as { pricing?: unknown }).pricing;
       const nextState = structuredClone(this.state);
       nextState.agents[index] = updated;
       const credentialChanged = nextCredentials[id] !== this.credentials[id];
@@ -2951,6 +2979,11 @@ export class FileStore {
             agentMetrics.outputTokens += entry.usage.outputTokens;
             agentMetrics.cachedInputTokens += entry.usage.cachedInputTokens ?? 0;
             agentMetrics.totalTokens += entry.usage.totalTokens;
+            const estimatedCostUsd = runEstimatedCostUsd(agents.get(entry.agentId), entry.usage);
+            if (estimatedCostUsd !== undefined) {
+              agentMetrics.estimatedCostUsd =
+                (agentMetrics.estimatedCostUsd ?? 0) + estimatedCostUsd;
+            }
           }
           metrics.byAgent.set(entry.agentId, agentMetrics);
           return metrics;

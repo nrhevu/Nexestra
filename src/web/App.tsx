@@ -65,6 +65,7 @@ import {
   useState,
 } from "react";
 import type {
+  AgentPricing,
   AgentRun,
   AgentView,
   Artifact,
@@ -6054,6 +6055,7 @@ function AgentDialog({
       description: String(fields.get("description") ?? ""),
       instructions: String(fields.get("instructions") ?? ""),
     };
+    const pricing = readPricingInput(fields);
     const workerModel = String(fields.get("workerModel") ?? "").trim();
     const workerReasoningEffort = String(fields.get("reasoningEffort") ?? "").trim();
     let payload: Record<string, unknown>;
@@ -6067,10 +6069,12 @@ function AgentDialog({
               harness: workerHarness,
               ...(workerModel ? { model: workerModel } : {}),
               ...(workerReasoningEffort ? { reasoningEffort: workerReasoningEffort } : {}),
+              ...(pricing !== null ? { pricing } : {}),
             }
           : {
               accessMode: String(fields.get("accessMode") ?? "ask"),
               provider: buildProviderInput(providerMode, fields, false, false),
+              ...(pricing !== null ? { pricing } : {}),
             }),
       };
     } else if (kind === "worker") {
@@ -6079,12 +6083,14 @@ function AgentDialog({
         harness: workerHarness,
         model: workerModel || null,
         reasoningEffort: workerReasoningEffort || null,
+        pricing,
       };
     } else {
       payload = {
         ...common,
         accessMode: String(fields.get("accessMode") ?? "ask"),
         provider: buildProviderInput(providerMode, fields, removeCredential, hasCredential),
+        pricing,
       };
     }
     try {
@@ -6362,6 +6368,7 @@ function AgentDialog({
             <MasterAccessModeField agent={agent} />
           </>
         )}
+        <AgentPricingFields agent={agent} />
         <Field label="Custom instructions" optional>
           <textarea
             name="instructions"
@@ -6384,6 +6391,65 @@ function AgentDialog({
         />
       </form>
     </Modal>
+  );
+}
+
+function readPricingInput(fields: FormData): AgentPricing | null {
+  const read = (name: string): number | undefined => {
+    const raw = String(fields.get(name) ?? "").trim();
+    if (raw === "") return undefined;
+    const value = Number(raw);
+    return Number.isFinite(value) && value >= 0 ? value : undefined;
+  };
+  const pricing: AgentPricing = {
+    inputUsdPerMillion: read("inputUsdPerMillion"),
+    outputUsdPerMillion: read("outputUsdPerMillion"),
+    cachedInputUsdPerMillion: read("cachedInputUsdPerMillion"),
+  };
+  return Object.values(pricing).some((value) => value !== undefined) ? pricing : null;
+}
+
+function AgentPricingFields({ agent }: { agent?: AgentView }) {
+  const pricing = agent?.pricing;
+  return (
+    <Field
+      label="Cost rates"
+      optional
+      hint="Optional USD per million tokens. Estimates appear only when input and output rates are set."
+    >
+      <div className="form-grid">
+        <input
+          name="inputUsdPerMillion"
+          type="number"
+          min="0"
+          step="0.000001"
+          inputMode="decimal"
+          aria-label="Input USD per million tokens"
+          placeholder="Input $ / 1M"
+          defaultValue={pricing?.inputUsdPerMillion ?? ""}
+        />
+        <input
+          name="outputUsdPerMillion"
+          type="number"
+          min="0"
+          step="0.000001"
+          inputMode="decimal"
+          aria-label="Output USD per million tokens"
+          placeholder="Output $ / 1M"
+          defaultValue={pricing?.outputUsdPerMillion ?? ""}
+        />
+        <input
+          name="cachedInputUsdPerMillion"
+          type="number"
+          min="0"
+          step="0.000001"
+          inputMode="decimal"
+          aria-label="Cached input USD per million tokens"
+          placeholder="Cached input $ / 1M"
+          defaultValue={pricing?.cachedInputUsdPerMillion ?? ""}
+        />
+      </div>
+    </Field>
   );
 }
 

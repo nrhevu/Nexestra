@@ -174,6 +174,9 @@ Each filtered response also includes aggregate run, duration, token, and usage-c
 See [ADR 0045](adr/0045-workspace-run-history.md), [ADR 0049](adr/0049-run-duration-metrics.md),
 and [ADR 0050](adr/0050-provider-usage-telemetry.md). It also includes a bounded per-agent
 breakdown using the same filters and complete cached summary set. See [ADR 0052](adr/0052-run-history-agent-comparison.md).
+Agents may optionally carry user-supplied USD-per-million token rates; when input and output rates
+are present, the per-agent breakdown includes an estimated cost with cached-input pricing applied.
+These are current local estimates rather than provider invoices. See [ADR 0053](adr/0053-agent-pricing-profiles.md).
 
 Message content is stored and transported as unchanged Markdown. The browser renders it with
 GitHub Flavored Markdown and KaTeX inside the memoized transcript boundary. Raw HTML parsing is not

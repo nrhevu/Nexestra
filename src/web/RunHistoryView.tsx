@@ -100,11 +100,21 @@ function formatTokens(totalTokens: number): string {
   );
 }
 
+function formatUsd(value: number): string {
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 6,
+  }).format(value);
+}
+
 function formatAgentUsage(agent: RunHistoryMetrics["byAgent"][number]): string {
   if (agent.usageRuns === 0) return "no usage";
   const cached =
     agent.cachedInputTokens > 0 ? ` · ${formatTokens(agent.cachedInputTokens)} cached` : "";
-  return `${formatTokens(agent.totalTokens)} tokens (${formatTokens(agent.inputTokens)} in / ${formatTokens(agent.outputTokens)} out${cached})`;
+  const cost =
+    agent.estimatedCostUsd !== undefined ? ` · ${formatUsd(agent.estimatedCostUsd)}` : "";
+  return `${formatTokens(agent.totalTokens)} tokens (${formatTokens(agent.inputTokens)} in / ${formatTokens(agent.outputTokens)} out${cached})${cost}`;
 }
 
 function errorText(error: unknown, fallback: string): string {
