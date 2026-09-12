@@ -211,6 +211,13 @@ export function RunHistoryView({
     summaries: RunHistoryTelemetryResponse;
   }>({ phase: "idle", summaries: [] });
 
+  useEffect(() => {
+    setFilters((current) => {
+      const nextCost = initialCostFilter;
+      return current.cost === nextCost ? current : { ...current, cost: nextCost };
+    });
+  }, [initialCostFilter]);
+
   const requestRef = useRef(0);
   const controllerRef = useRef<AbortController | null>(null);
   const inFlightRef = useRef(false);

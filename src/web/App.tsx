@@ -462,7 +462,8 @@ export function App() {
     );
     if (
       nextRoute.view !== routeRef.current.view ||
-      nextRoute.threadId !== routeRef.current.threadId
+      nextRoute.threadId !== routeRef.current.threadId ||
+      nextRoute.runCostFilter !== routeRef.current.runCostFilter
     ) {
       historyRequestRef.current += 1;
     }
@@ -897,6 +898,7 @@ export function App() {
       if (
         nextRoute.view !== routeRef.current.view ||
         nextRoute.threadId !== routeRef.current.threadId ||
+        nextRoute.runCostFilter !== routeRef.current.runCostFilter ||
         !intentMatchesRoute
       ) {
         // Back to an identical bare URL still supersedes an ordinal lookup. Retain an

@@ -321,6 +321,28 @@ describe("RunHistoryView requests and filters", () => {
     expect(pageParams(fetchInputAt(fetchMock, 0)).get("cost")).toBe("over_budget");
     expect(screen.getByLabelText("Run cost")).toHaveValue("over_budget");
   });
+
+  it("clears the custom-surface cost filter when returning to ordinary Run history", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+      jsonResponse(makePage([makeItem(makeRun(`run-${pageParams(input).get("cost") ?? "all"}`))])),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const view = renderView({ initialCostFilter: "over_budget" });
+    await screen.findByLabelText("Run run-over_budget");
+    view.rerender(
+      <RunHistoryView
+        workspaceId={workspaceId}
+        agents={[makeAgent("agent-a", "Planner")]}
+        threads={[makeThread("thread-a", "Planning")]}
+        initialCostFilter="all"
+        onOpenRun={vi.fn()}
+        onRetryRun={vi.fn(async () => undefined)}
+      />,
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(pageParams(lastFetchInput(fetchMock)).has("cost")).toBe(false);
+    expect(screen.getByLabelText("Run cost")).toHaveValue("all");
+  });
 });
 
 describe("RunHistoryView race and refresh behavior", () => {
