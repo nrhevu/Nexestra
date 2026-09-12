@@ -93,11 +93,18 @@ export function createApp(options: CreateAppOptions) {
         description: options.store.redactSecrets(card.description),
       })),
     }));
-    const reviewQueue = await options.store.listReviewQueue({
-      workspaceId: workspace.id,
-      status: "open",
-      limit: 1,
-    });
+    const hasReviewCard = customSurfaces.some((surface) =>
+      surface.cards.some((card) => card.action === "reviews"),
+    );
+    const reviewCount = hasReviewCard
+      ? (
+          await options.store.listReviewQueue({
+            workspaceId: workspace.id,
+            status: "open",
+            limit: 1,
+          })
+        ).total
+      : undefined;
     const activity = workspaceActivity(
       options.store,
       workspace.id,
@@ -116,7 +123,7 @@ export function createApp(options: CreateAppOptions) {
       assignments: options.store.listAssignments(workspace.id),
       activeRuns: activity.activeRuns,
       attention: activity.attention,
-      reviewCount: reviewQueue.total,
+      ...(reviewCount === undefined ? {} : { reviewCount }),
       workspaceActivitySummaries: workspaces.map((entry) => {
         const summary = workspaceActivity(options.store, entry.id, dispatcher.activeRuns(entry.id));
         return {
