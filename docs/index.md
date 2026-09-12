@@ -78,3 +78,5 @@
     adapt Anthropic's bounded Messages and streaming tool-use protocol into the provider-neutral Master loop.
 41. [Stop normal agent runs research](research/2026-09-12-stop-normal-agent-runs.md):
     reuse local abort signals to stop ordinary chat runs while preserving durable retry history.
+42. [Per-run cost visibility research](research/2026-09-12-per-run-cost-visibility.md): show derived,
+    redacted estimated cost beside each run-history row for task-level harness comparison.

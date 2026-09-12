@@ -3448,6 +3448,9 @@ export class FileStore {
         const agent = agents.get(summary.agentId);
         const thread = threads.get(summary.threadId);
         const durationMs = runDurationMs(summary);
+        const estimatedCostUsd = summary.usage
+          ? runEstimatedCostUsd(agent, summary.usage)
+          : undefined;
         return {
           run: {
             id: summary.id,
@@ -3466,6 +3469,7 @@ export class FileStore {
           agentHandle: agent ? this.redactHandleValue(agent.handle) : undefined,
           threadName: thread ? this.redactSecrets(thread.name) : "Unknown",
           threadArchived: thread?.archived ?? false,
+          ...(estimatedCostUsd === undefined ? {} : { estimatedCostUsd }),
         };
       });
       const lastSummary = pageSummaries[pageSummaries.length - 1];

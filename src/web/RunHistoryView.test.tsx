@@ -564,6 +564,7 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
     );
     item.run.durationMs = 65_250;
     item.run.usage = { inputTokens: 1_000, outputTokens: 250, totalTokens: 1_250 };
+    item.estimatedCostUsd = 0.012345;
     const fetchMock = vi.fn(async () =>
       jsonResponse(
         makePage([item], null, {
@@ -582,6 +583,7 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
     expect(within(card).getByText("Attempt 2")).toBeVisible();
     expect(within(card).getByText("Duration 1m 05s")).toBeVisible();
     expect(within(card).getByText("Tokens 1.3K")).toBeVisible();
+    expect(within(card).getByText("Cost $0.012345")).toBeVisible();
     expect(within(card).getByText("Created not-a-date")).toBeVisible();
     expect(within(card).getByText("Updated still-bad")).toBeVisible();
     expect(

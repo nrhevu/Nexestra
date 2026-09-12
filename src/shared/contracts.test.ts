@@ -6,6 +6,7 @@ import {
   extractMentionHandles,
   handleFromName,
   ReorderWorkspacesSchema,
+  RunHistoryItemSchema,
   RunHistoryRequestSchema,
   ThreadHistoryRequestSchema,
   UpdateAgentSchema,
@@ -187,6 +188,36 @@ describe("RunHistoryRequestSchema", () => {
     );
     expect(RunHistoryRequestSchema.safeParse({ ...base, cursor: "a".repeat(2_048) }).success).toBe(
       true,
+    );
+  });
+});
+
+describe("RunHistoryItemSchema", () => {
+  const item = {
+    run: {
+      id: "run-1",
+      threadId: "thread-1",
+      triggerMessageId: "message-1",
+      agentId: "agent-1",
+      attempt: 1,
+      status: "completed" as const,
+      createdAt: "2026-09-12T00:00:00.000Z",
+      updatedAt: "2026-09-12T00:00:01.000Z",
+    },
+    agentName: "Planner",
+    threadName: "Planning",
+    threadArchived: false,
+  };
+
+  it("accepts an optional nonnegative per-run cost and rejects unsafe values", () => {
+    expect(RunHistoryItemSchema.safeParse({ ...item, estimatedCostUsd: 0.0013 }).success).toBe(
+      true,
+    );
+    expect(RunHistoryItemSchema.safeParse({ ...item, estimatedCostUsd: -0.01 }).success).toBe(
+      false,
+    );
+    expect(RunHistoryItemSchema.safeParse({ ...item, estimatedCostUsd: Number.NaN }).success).toBe(
+      false,
     );
   });
 });

@@ -176,7 +176,10 @@ and [ADR 0050](adr/0050-provider-usage-telemetry.md). It also includes a bounded
 breakdown using the same filters and complete cached summary set. See [ADR 0052](adr/0052-run-history-agent-comparison.md).
 Agents may optionally carry user-supplied USD-per-million token rates; when input and output rates
 are present, the per-agent breakdown includes an estimated cost with cached-input pricing applied.
-These are current local estimates rather than provider invoices. See [ADR 0053](adr/0053-agent-pricing-profiles.md).
+Each run-history row also carries that derived estimate when available, including in the bounded
+run-history export, so a retry or individual task can be compared without reconstructing aggregate
+totals. These are current local estimates rather than provider invoices. See [ADR 0053](adr/0053-agent-pricing-profiles.md)
+and [ADR 0073](adr/0073-per-run-cost-visibility.md).
 Failed and interrupted summaries also carry a safe failure kind, never raw provider or command
 output, so the monitoring list can guide recovery without widening the response's secret boundary.
 See [ADR 0059](adr/0059-safe-run-failure-kinds.md).

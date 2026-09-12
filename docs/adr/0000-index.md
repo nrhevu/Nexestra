@@ -73,3 +73,4 @@
 | [0070](0070-review-queue-agent-thread-filters.md) | Accepted | Filter needs-work reviews by workspace agent and thread |
 | [0071](0071-anthropic-messages-provider.md) | Accepted | Support Anthropic Messages as a custom Master provider |
 | [0072](0072-stop-normal-agent-runs.md) | Accepted | Stop normal agent runs from the conversation |
+| [0073](0073-per-run-cost-visibility.md) | Accepted | Show derived estimated cost on each run-history row |

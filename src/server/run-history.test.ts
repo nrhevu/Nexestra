@@ -275,6 +275,9 @@ describe("run history server", () => {
       totalTokens: 1_250,
       cachedInputTokens: 400,
     });
+    expect(page.items.find((item) => item.run.id === "run-duration")?.estimatedCostUsd).toBe(
+      0.0013,
+    );
     expect(page.summary).toEqual({
       totalRuns: 2,
       terminalRuns: 1,

@@ -666,6 +666,14 @@ export function RunHistoryView({
                             Tokens {formatTokens(item.run.usage.totalTokens)}
                           </span>
                         ) : null}
+                        {item.estimatedCostUsd !== undefined ? (
+                          <span
+                            className="run-history-cost"
+                            title="Estimated from this agent's local pricing profile"
+                          >
+                            Cost {formatUsd(item.estimatedCostUsd)}
+                          </span>
+                        ) : null}
                         <time className="run-history-date" dateTime={item.run.createdAt}>
                           Created {formatDate(item.run.createdAt)}
                         </time>

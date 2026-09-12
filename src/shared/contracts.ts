@@ -742,6 +742,9 @@ export const RunHistoryItemSchema = z.object({
   agentHandle: z.string().optional(),
   threadName: z.string(),
   threadArchived: z.boolean(),
+  // Derived from the agent's local pricing profile and provider-reported usage.
+  // It is omitted when either input is unavailable and is never persisted to transcripts.
+  estimatedCostUsd: z.number().finite().nonnegative().optional(),
 });
 export type RunHistoryItem = z.infer<typeof RunHistoryItemSchema>;
 
