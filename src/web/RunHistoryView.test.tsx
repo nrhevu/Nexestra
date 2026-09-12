@@ -5,7 +5,13 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgentView, RunHistoryItem, RunHistoryPage, Thread } from "../shared/contracts.js";
+import type {
+  AgentView,
+  RunHistoryItem,
+  RunHistoryPage,
+  Thread,
+  Workspace,
+} from "../shared/contracts.js";
 import { RunHistoryView } from "./RunHistoryView.js";
 
 const now = "2026-09-02T12:00:00.000Z";
@@ -42,6 +48,10 @@ function makeThread(id: string, name: string, ws = workspaceId, archived = false
     lastMessageAt: now,
     archived,
   };
+}
+
+function makeWorkspace(id: string, name: string): Workspace {
+  return { id, name, slug: name.toLowerCase(), createdAt: now, updatedAt: now };
 }
 
 function makeRun(
@@ -141,6 +151,7 @@ function renderView(
     workspaceId: string;
     agents: AgentView[];
     threads: Thread[];
+    workspaces: Workspace[];
     refreshRevision: number;
     onOpenRun: (item: RunHistoryItem) => void;
     onRetryRun: (runId: string) => Promise<void>;
@@ -151,6 +162,7 @@ function renderView(
       workspaceId={overrides.workspaceId ?? workspaceId}
       agents={overrides.agents ?? [makeAgent("agent-a", "Planner")]}
       threads={overrides.threads ?? [makeThread("thread-a", "Planning")]}
+      workspaces={overrides.workspaces}
       refreshRevision={overrides.refreshRevision}
       onOpenRun={overrides.onOpenRun ?? vi.fn()}
       onRetryRun={overrides.onRetryRun ?? vi.fn(async () => undefined)}
@@ -584,6 +596,46 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
     const card = await screen.findByLabelText("Run run-over-budget");
     expect(within(card).getByText("Cost $0.0125")).toBeVisible();
     expect(within(card).getByText("Over budget")).toBeVisible();
+  });
+
+  it("shows count-only telemetry across workspaces", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/runs/summary") {
+        return jsonResponse([
+          {
+            workspaceId,
+            totalRuns: 3,
+            terminalRuns: 3,
+            usageRuns: 2,
+            totalTokens: 2_500,
+            estimatedCostUsd: 0.0125,
+            estimatedCostRuns: 2,
+            overBudgetRuns: 1,
+            coverage: { complete: true, unavailableThreads: 0 },
+          },
+          {
+            workspaceId: "workspace-other",
+            totalRuns: 1,
+            terminalRuns: 1,
+            usageRuns: 0,
+            totalTokens: 0,
+            coverage: { complete: false, unavailableThreads: 1 },
+          },
+        ]);
+      }
+      return jsonResponse(makePage([]));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderView({
+      workspaces: [makeWorkspace(workspaceId, "Notes"), makeWorkspace("workspace-other", "Other")],
+    });
+
+    const comparison = await screen.findByRole("region", { name: "Run telemetry by workspace" });
+    expect(within(comparison).getByText("Notes")).toBeVisible();
+    expect(within(comparison).getByText("Other")).toBeVisible();
+    expect(within(comparison).getByText("$0.0125")).toBeVisible();
+    expect(within(comparison).getAllByText("1").length).toBeGreaterThan(0);
+    expect(fetchMock).toHaveBeenCalledWith("/api/runs/summary", expect.anything());
   });
 
   it("exports the loaded page with its active filters and summary", async () => {

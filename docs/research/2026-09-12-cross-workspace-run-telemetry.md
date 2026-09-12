@@ -8,3 +8,5 @@ aggregates across workspaces.
 The selected extension adds a count-only API projection with explicit coverage. It reuses the
 workspace run-history summary, keeps transcript and error payloads out of the response, supports a
 single workspace for isolation checks, and leaves the paged `/api/runs` contract untouched.
+Run history now renders the count-only response as a comparison table when multiple workspaces are
+available, while retaining the current workspace's paged rows if the comparison request fails.

@@ -197,7 +197,8 @@ filtered summary as a bounded browser-generated `nexestra.run-history` JSON pack
 `GET /api/runs/summary` provides the same aggregate telemetry as one count-only entry per workspace,
 or a single selected workspace when requested. It carries explicit transcript coverage and never
 returns rows, messages, tool calls, or raw errors; the existing paginated `/api/runs` contract is
-unchanged. See [ADR 0093](adr/0093-cross-workspace-run-telemetry.md).
+unchanged. Run history renders it as a comparison table for multi-workspace users and leaves the
+local page usable when that optional read fails. See [ADR 0093](adr/0093-cross-workspace-run-telemetry.md).
 
 Agent messages expose optional helpful/needs-work feedback controls. One bounded rating per message
 is stored in workspace metadata, returned with history, and included in workspace exports; the

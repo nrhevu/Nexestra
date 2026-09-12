@@ -164,6 +164,54 @@
   min-width: 0;
 }
 
+.run-history-telemetry {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.run-history-telemetry h2 {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.run-history-telemetry-table-wrap {
+  overflow-x: auto;
+}
+
+.run-history-telemetry table {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--text);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.run-history-telemetry th,
+.run-history-telemetry td {
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
+  text-align: right;
+}
+
+.run-history-telemetry thead th {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.run-history-telemetry th:first-child,
+.run-history-telemetry td:first-child {
+  text-align: left;
+}
+
 .run-history-breakdown-name {
   min-width: 0;
   color: var(--text);

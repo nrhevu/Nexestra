@@ -2017,6 +2017,7 @@ export function App() {
               workspaceId={data.workspace.id}
               agents={data.agents}
               threads={data.threads}
+              workspaces={data.workspaces}
               refreshRevision={runHistoryRefreshRevision}
               onOpenRun={(item) => {
                 if (data.workspace.id !== workspaceIdRef.current) return;

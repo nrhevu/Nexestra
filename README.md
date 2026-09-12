@@ -89,7 +89,8 @@ errors.
 For cross-workspace comparisons, `GET /api/runs/summary` returns count-only aggregates with token,
 estimated-cost, over-budget, and transcript-coverage fields. Supplying `workspaceId` restricts the
 response to one workspace; omitting it returns one entry per workspace. The paged `/api/runs` view
-and its cursors are unchanged.
+and its cursors are unchanged. Run history renders this comparison when multiple workspaces are
+available and keeps the local paged view usable if the comparison read fails.
 Enable **Auto-refresh newest page** when supervising active work; it checks the current filtered
 first page every 15 seconds, pauses on older pages, and never retries or changes run state.
 

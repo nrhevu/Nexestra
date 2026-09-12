@@ -14,3 +14,7 @@ coverage. It never returns run rows, messages, tool calls, or provider errors.
 The projection delegates to the existing complete run-history summary calculation, so pagination and
 cursor semantics remain unchanged. Incomplete transcript coverage is reported explicitly rather than
 silently presented as complete spend.
+
+Run history renders the projection as a workspace comparison table when more than one workspace is
+available. A failed comparison read leaves the local paged history usable and does not replace it with
+partial rows.

@@ -4,9 +4,15 @@ import type {
   RunHistoryItem,
   RunHistoryMetrics,
   RunHistoryPage,
+  RunHistoryTelemetryResponse,
   Thread,
+  Workspace,
 } from "../shared/contracts.js";
-import { RunHistoryPageSchema, RunSchema } from "../shared/contracts.js";
+import {
+  RunHistoryPageSchema,
+  RunHistoryTelemetryResponseSchema,
+  RunSchema,
+} from "../shared/contracts.js";
 import { api } from "./api.js";
 import { runHistoryExportFilename, serializeRunHistoryExport } from "./run-history-export.js";
 import "./RunHistoryView.css";
@@ -15,6 +21,7 @@ export interface RunHistoryViewProps {
   workspaceId: string;
   agents: AgentView[];
   threads: Thread[];
+  workspaces?: Workspace[];
   refreshRevision?: number;
   onOpenRun: (item: RunHistoryItem) => void;
   onRetryRun: (runId: string) => Promise<void>;
@@ -163,6 +170,7 @@ export function RunHistoryView({
   workspaceId,
   agents,
   threads,
+  workspaces = [],
   refreshRevision,
   onOpenRun,
   onRetryRun,
@@ -178,6 +186,10 @@ export function RunHistoryView({
   const [selectedRetryIds, setSelectedRetryIds] = useState<Set<string>>(() => new Set());
   const [batchRetrying, setBatchRetrying] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(false);
+  const [telemetry, setTelemetry] = useState<{
+    phase: "idle" | "loading" | "ready" | "error";
+    summaries: RunHistoryTelemetryResponse;
+  }>({ phase: "idle", summaries: [] });
 
   const requestRef = useRef(0);
   const controllerRef = useRef<AbortController | null>(null);
@@ -186,6 +198,32 @@ export function RunHistoryView({
   viewRef.current = view;
   const filtersKeyRef = useRef<string | null>(null);
   const revisionRef = useRef<number | undefined>(undefined);
+  const workspaceIdsKey = workspaces.map((workspace) => workspace.id).join(",");
+  const telemetryKey = `${workspaceIdsKey}:${refreshRevision ?? 0}`;
+
+  useEffect(() => {
+    if (workspaces.length < 2) {
+      setTelemetry({ phase: "idle", summaries: [] });
+      return;
+    }
+    const controller = new AbortController();
+    const workspaceIdsPart = telemetryKey.split(":")[0] ?? "";
+    const expectedWorkspaceIds = new Set(workspaceIdsPart.split(","));
+    setTelemetry((current) => ({ ...current, phase: "loading" }));
+    api<unknown>("/api/runs/summary", { signal: controller.signal })
+      .then((raw) => {
+        const parsed = RunHistoryTelemetryResponseSchema.safeParse(raw);
+        if (!parsed.success) throw new Error("Run telemetry response was invalid.");
+        setTelemetry({
+          phase: "ready",
+          summaries: parsed.data.filter((entry) => expectedWorkspaceIds.has(entry.workspaceId)),
+        });
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setTelemetry((current) => ({ ...current, phase: "error" }));
+      });
+    return () => controller.abort();
+  }, [telemetryKey, workspaces.length]);
 
   const updateView = useCallback(
     (updater: (current: RunHistoryViewState) => RunHistoryViewState) => {
@@ -673,6 +711,44 @@ export function RunHistoryView({
                   </li>
                 ))}
               </ul>
+            </section>
+          ) : null}
+          {telemetry.phase === "ready" && telemetry.summaries.length > 1 ? (
+            <section className="run-history-telemetry" aria-label="Run telemetry by workspace">
+              <h2>Workspace comparison</h2>
+              <div className="run-history-telemetry-table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th scope="col">Workspace</th>
+                      <th scope="col">Runs</th>
+                      <th scope="col">Tokens</th>
+                      <th scope="col">Estimated cost</th>
+                      <th scope="col">Over budget</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {telemetry.summaries.map((entry) => {
+                      const workspace = workspaces.find(
+                        (candidate) => candidate.id === entry.workspaceId,
+                      );
+                      return (
+                        <tr key={entry.workspaceId}>
+                          <th scope="row">{workspace?.name ?? entry.workspaceId}</th>
+                          <td>{entry.totalRuns}</td>
+                          <td>{entry.usageRuns > 0 ? formatTokens(entry.totalTokens) : "—"}</td>
+                          <td>
+                            {entry.estimatedCostUsd !== undefined
+                              ? formatUsd(entry.estimatedCostUsd)
+                              : "—"}
+                          </td>
+                          <td>{entry.overBudgetRuns ?? 0}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </section>
           ) : null}
         </>
