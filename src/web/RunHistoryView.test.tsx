@@ -461,7 +461,8 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
             usageRuns: 2,
             totalTokens: 2_500,
             estimatedCostUsd: 0.0125,
-            estimatedCostRuns: 2,
+            estimatedCostRuns: 3,
+            estimatedCostPerHelpfulUsd: 0.0125,
             feedbackCount: 2,
             positiveFeedbackCount: 1,
             negativeFeedbackCount: 1,
@@ -507,9 +508,11 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
     const summary = screen.getByLabelText("Run history summary");
     expect(within(summary).getByText("Helpful / needs work")).toBeVisible();
     expect(within(summary).getByText("Estimated cost")).toBeVisible();
-    expect(within(summary).getByText("$0.0125")).toBeVisible();
+    expect(within(summary).getAllByText("$0.0125")).toHaveLength(2);
     expect(within(summary).getByText("Cost coverage")).toBeVisible();
-    expect(within(summary).getAllByText("2/3")).toHaveLength(2);
+    expect(within(summary).getByText("Cost per helpful")).toBeVisible();
+    expect(within(summary).getByText("3/3")).toBeVisible();
+    expect(within(summary).getByText("2/3")).toBeVisible();
     expect(within(summary).getByText("1/1")).toBeVisible();
     expect(
       within(breakdown).getByText(

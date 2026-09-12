@@ -597,6 +597,14 @@ export function RunHistoryView({
                   : "—"}
               </dd>
             </div>
+            <div>
+              <dt>Cost per helpful</dt>
+              <dd>
+                {summary.estimatedCostPerHelpfulUsd !== undefined
+                  ? formatUsd(summary.estimatedCostPerHelpfulUsd)
+                  : "—"}
+              </dd>
+            </div>
           </dl>
           {summary.byAgent.length > 0 ? (
             <section className="run-history-agent-breakdown" aria-label="Run history by agent">

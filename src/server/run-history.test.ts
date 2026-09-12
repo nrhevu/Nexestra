@@ -331,7 +331,36 @@ describe("run history server", () => {
         },
       ],
     });
+    expect(page.summary.estimatedCostPerHelpfulUsd).toBeUndefined();
     expect(page.items.find((item) => item.run.id === "run-active")?.run.durationMs).toBeUndefined();
+  });
+
+  it("reports cost per helpful reply only with complete cost coverage", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected seeded workspace");
+    const agent = await createWorkerAgent(store);
+    await store.updateAgent(agent.id, {
+      pricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 },
+    });
+    const thread = await createThread(store, "Value");
+    const trigger = await store.createUserMessage(thread.id, "Plan this", []);
+    const run = {
+      ...makeRun("value-run", thread.id, agent.id, "2026-01-01T00:00:00.000Z"),
+      triggerMessageId: trigger.id,
+      usage: { inputTokens: 1_000, outputTokens: 250, totalTokens: 1_250 },
+    };
+    await store.updateRun(run);
+    const reply = await store.createAgentMessage(
+      thread.id,
+      agent,
+      "Helpful plan",
+      trigger.id,
+      run.id,
+    );
+    await store.setMessageFeedback(thread.id, reply.id, { value: "positive" });
+    const page = await store.listRunHistory({ workspaceId: workspace.id, limit: 50 });
+    expect(page.summary.estimatedCostPerHelpfulUsd).toBe(0.0015);
   });
 
   it("lists each run once with its latest status and deterministic newest-first order", async () => {

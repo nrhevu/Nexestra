@@ -3438,6 +3438,13 @@ export class FileStore {
         ...(summary.estimatedCostRuns === 0
           ? {}
           : { estimatedCostRuns: summary.estimatedCostRuns }),
+        ...(summary.estimatedCostUsd !== undefined &&
+        summary.estimatedCostRuns === summary.totalRuns &&
+        summary.positiveFeedbackCount > 0
+          ? {
+              estimatedCostPerHelpfulUsd: summary.estimatedCostUsd / summary.positiveFeedbackCount,
+            }
+          : {}),
         ...(summary.feedbackCount > 0
           ? {
               feedbackCount: summary.feedbackCount,

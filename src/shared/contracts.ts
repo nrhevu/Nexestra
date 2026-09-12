@@ -781,6 +781,8 @@ export const RunHistoryMetricsSchema = z.object({
   // Number of runs included in the estimate. A partial count keeps the sum
   // from being mistaken for complete spend when pricing or usage is missing.
   estimatedCostRuns: z.number().int().nonnegative().optional(),
+  // Only present when every matching run has an estimate and at least one reply was marked helpful.
+  estimatedCostPerHelpfulUsd: z.number().finite().nonnegative().optional(),
   byAgent: z.array(RunHistoryAgentMetricsSchema).max(200).default([]),
   feedbackCount: z.number().int().nonnegative().optional(),
   positiveFeedbackCount: z.number().int().nonnegative().optional(),

@@ -86,3 +86,5 @@
     transfer completed Worker replies from Taskboard through the existing reviewed capture flow.
 45. [Run-history task context research](research/2026-09-12-run-history-task-context.md): add
     redacted delegated Taskboard titles to monitoring rows without changing pagination semantics.
+46. [Quality-adjusted run cost research](research/2026-09-12-quality-adjusted-run-cost.md): relate
+    estimated spend to helpful feedback only when coverage is complete.
