@@ -96,3 +96,4 @@
 | [0093](0093-cross-workspace-run-telemetry.md) | Accepted | Expose count-only run telemetry across isolated workspaces |
 | [0094](0094-over-budget-run-filter.md) | Accepted | Filter run history to observed over-budget runs with cursor binding |
 | [0095](0095-agent-profile-labels-in-history.md) | Accepted | Label run history by bounded harness and model profile metadata |
+| [0096](0096-attention-audit-history.md) | Accepted | Keep a bounded workspace-scoped Attention action history |

@@ -163,4 +163,32 @@ describe("workspace attention", () => {
     await store.updateTask(task.id, { title: "Updated task" });
     expect(workspaceActivity(store, workspaceId, []).attention).toHaveLength(1);
   });
+
+  it("retains a bounded, workspace-isolated audit trail across restarts", async () => {
+    const root = store.root;
+    const other = await store.createWorkspace({ name: "Other" });
+    for (let index = 0; index < 205; index += 1) {
+      await store.updateAttentionState(workspaceId, `task:item-${index}`, {
+        action: index % 2 === 0 ? "dismiss" : "snooze",
+        kind: "task_blocked",
+        ...(index % 2 === 0 ? {} : { durationMinutes: 60 }),
+      });
+    }
+    await store.updateAttentionState(other.id, "task:foreign", {
+      action: "dismiss",
+      kind: "task_failed",
+    });
+
+    expect(store.listAttentionAudit(workspaceId)).toHaveLength(200);
+    expect(
+      store.listAttentionAudit(workspaceId).every((entry) => entry.workspaceId === workspaceId),
+    ).toBe(true);
+    expect(store.listAttentionAudit(other.id)).toEqual([
+      expect.objectContaining({ workspaceId: other.id, attentionId: "task:foreign" }),
+    ]);
+
+    const reopened = await FileStore.open({ root, workspacePath: root });
+    expect(reopened.listAttentionAudit(workspaceId)).toHaveLength(200);
+    expect(JSON.stringify(reopened.listAttentionAudit(workspaceId))).not.toContain("foreign");
+  });
 });

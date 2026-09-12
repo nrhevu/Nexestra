@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AgentPricingSchema,
+  AttentionAuditEntrySchema,
   CreateAgentSchema,
   classifyRunFailure,
   extractKnowledgeHandles,
@@ -14,6 +15,28 @@ import {
   ThreadHistoryRequestSchema,
   UpdateAgentSchema,
 } from "./contracts.js";
+
+describe("AttentionAuditEntrySchema", () => {
+  it("keeps audit metadata bounded and excludes alert content", () => {
+    const entry = AttentionAuditEntrySchema.parse({
+      workspaceId: "workspace",
+      attentionId: "task:one",
+      kind: "task_blocked",
+      action: "dismiss",
+      createdAt: "2026-09-12T00:00:00.000Z",
+    });
+    expect(entry).toEqual({
+      workspaceId: "workspace",
+      attentionId: "task:one",
+      kind: "task_blocked",
+      action: "dismiss",
+      createdAt: "2026-09-12T00:00:00.000Z",
+    });
+    expect(
+      AttentionAuditEntrySchema.safeParse({ ...entry, attentionId: "x".repeat(201) }).success,
+    ).toBe(false);
+  });
+});
 
 describe("AgentPricingSchema", () => {
   it("accepts an optional per-run limit and rejects unsafe values", () => {

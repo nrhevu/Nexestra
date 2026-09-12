@@ -99,6 +99,11 @@ telemetry. See [ADR 0095](docs/adr/0095-agent-profile-labels-in-history.md).
 Enable **Auto-refresh newest page** when supervising active work; it checks the current filtered
 first page every 15 seconds, pauses on older pages, and never retries or changes run state.
 
+Attention actions are also available as a bounded audit trail. Open **Needs attention** and choose
+**Refresh history** to load the newest 200 snooze or dismiss actions for the selected workspace;
+the log contains only action metadata and timestamps, not task or transcript content. See [ADR
+0096](docs/adr/0096-attention-audit-history.md).
+
 Open **Needs-work review** under Surfaces, or use `/needs-work review`, to revisit the latest
 negative rating for each agent reply across the workspace. The queue shows a bounded, redacted
 excerpt and note, and when reply provenance includes a user trigger, its bounded redacted prompt.

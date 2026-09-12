@@ -23,6 +23,9 @@ import {
   AgentSchema,
   type Artifact,
   ArtifactSchema,
+  ATTENTION_AUDIT_MAX_ENTRIES,
+  type AttentionAuditEntry,
+  AttentionAuditEntrySchema,
   type AttentionState,
   AttentionStateSchema,
   CreateAgentSchema,
@@ -152,6 +155,7 @@ const StateSchema = z.object({
   assignments: z.array(WorkAssignmentSchema),
   messageFeedback: z.array(MessageFeedbackSchema).default([]),
   attentionStates: z.array(AttentionStateSchema).default([]),
+  attentionAudit: z.array(AttentionAuditEntrySchema).default([]),
 });
 
 const VersionFiveStateSchema = z.object({
@@ -260,6 +264,7 @@ export interface WorkspaceExportState {
   assignments: WorkAssignment[];
   messageFeedback: MessageFeedback[];
   attentionStates: AttentionState[];
+  attentionAudit: AttentionAuditEntry[];
 }
 
 export interface PreparedWorkspaceExportFile {
@@ -676,6 +681,15 @@ export class FileStore {
     );
   }
 
+  listAttentionAudit(workspaceId?: string): AttentionAuditEntry[] {
+    return structuredClone(
+      this.state.attentionAudit
+        .filter((entry) => workspaceId === undefined || entry.workspaceId === workspaceId)
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+        .slice(0, ATTENTION_AUDIT_MAX_ENTRIES),
+    );
+  }
+
   async updateAttentionState(
     workspaceId: string | undefined,
     attentionId: string,
@@ -705,6 +719,21 @@ export class FileStore {
       );
       if (index >= 0) nextState.attentionStates[index] = next;
       else nextState.attentionStates.push(next);
+      const auditEntry = AttentionAuditEntrySchema.parse({
+        workspaceId: workspace.id,
+        attentionId,
+        kind: input.kind ?? "unknown",
+        action: input.action,
+        createdAt: now.toISOString(),
+        ...(next.snoozedUntil === undefined ? {} : { snoozedUntil: next.snoozedUntil }),
+      });
+      const foreignAudit = nextState.attentionAudit.filter(
+        (entry) => entry.workspaceId !== workspace.id,
+      );
+      const workspaceAudit = nextState.attentionAudit
+        .filter((entry) => entry.workspaceId === workspace.id)
+        .slice(-(ATTENTION_AUDIT_MAX_ENTRIES - 1));
+      nextState.attentionAudit = [...foreignAudit, ...workspaceAudit, auditEntry];
       await this.writeState(nextState);
       this.state = nextState;
       return structuredClone(next);
@@ -4396,6 +4425,9 @@ export class FileStore {
       assignments: structuredClone(assignments),
       messageFeedback: messageFeedback.map((entry) => this.redactedMessageFeedback(entry)),
       attentionStates: structuredClone(attentionStates),
+      attentionAudit: structuredClone(
+        this.state.attentionAudit.filter((entry) => entry.workspaceId === workspaceId),
+      ),
     };
     const files: PreparedWorkspaceExportFile[] = [];
     let sourceBytesTotal = 0;
@@ -5175,6 +5207,7 @@ function createInitialState(): PersistedState {
     assignments: [],
     messageFeedback: [],
     attentionStates: [],
+    attentionAudit: [],
   };
 }
 

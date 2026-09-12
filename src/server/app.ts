@@ -180,6 +180,11 @@ export function createApp(options: CreateAppOptions) {
     );
   });
 
+  app.get("/api/attention/history", (context) => {
+    const workspaceId = context.req.query("workspaceId");
+    return context.json(options.store.listAttentionAudit(workspaceId || undefined));
+  });
+
   app.get("/api/whiteboard", async (context) => {
     const workspaceId = context.req.query("workspaceId");
     return context.json(await options.store.getWorkspaceWhiteboard(workspaceId || undefined));

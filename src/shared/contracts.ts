@@ -70,8 +70,31 @@ export const AttentionStateSchema = z.object({
 });
 export type AttentionState = z.infer<typeof AttentionStateSchema>;
 
+export const AttentionKindSchema = z.enum([
+  "approval",
+  "input",
+  "task_blocked",
+  "task_failed",
+  "task_interrupted",
+  "unknown",
+]);
+export type AttentionKind = z.infer<typeof AttentionKindSchema>;
+
+export const AttentionAuditActionSchema = z.enum(["snooze", "dismiss"]);
+export const AttentionAuditEntrySchema = z.object({
+  workspaceId: z.string().min(1).max(200),
+  attentionId: z.string().min(1).max(200),
+  kind: AttentionKindSchema,
+  action: AttentionAuditActionSchema,
+  createdAt: z.string().datetime(),
+  snoozedUntil: z.string().datetime().optional(),
+});
+export type AttentionAuditEntry = z.infer<typeof AttentionAuditEntrySchema>;
+export const ATTENTION_AUDIT_MAX_ENTRIES = 200;
+
 export const UpdateAttentionStateSchema = z.object({
-  action: z.enum(["snooze", "dismiss"]),
+  action: AttentionAuditActionSchema,
+  kind: AttentionKindSchema.optional(),
   durationMinutes: z
     .number()
     .int()

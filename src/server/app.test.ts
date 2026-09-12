@@ -1598,6 +1598,34 @@ describe("HTTP app", () => {
     expect(otherSummary).not.toHaveProperty("attention");
     expect(task.workspaceId).toBe(other.id);
   });
+
+  it("returns workspace-scoped attention audit entries without content", async () => {
+    const other = await store.createWorkspace({ name: "Other workspace" });
+    await store.updateAttentionState(store.listWorkspaces()[0]?.id, "task:local", {
+      action: "dismiss",
+      kind: "task_blocked",
+    });
+    await store.updateAttentionState(other.id, "task:foreign", {
+      action: "dismiss",
+      kind: "task_failed",
+    });
+
+    const response = await app.request(
+      `/api/attention/history?workspaceId=${encodeURIComponent(other.id)}`,
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Array<Record<string, unknown>>;
+    expect(body).toEqual([
+      expect.objectContaining({
+        workspaceId: other.id,
+        attentionId: "task:foreign",
+        kind: "task_failed",
+        action: "dismiss",
+      }),
+    ]);
+    expect(JSON.stringify(body)).not.toContain("title");
+    expect(JSON.stringify(body)).not.toContain("detail");
+  });
 });
 
 describe("HTTP message search", () => {

@@ -122,3 +122,5 @@
     history on observed estimates above configured per-agent limits.
 63. [Agent profile labels research](research/2026-09-12-agent-profile-labels.md): identify
     heterogeneous harness and model labels without exposing provider configuration or secrets.
+64. [Attention audit history research](research/2026-09-12-attention-audit-history.md): retain
+    bounded workspace-scoped snooze and dismiss actions without alert content.

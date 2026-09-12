@@ -1,5 +1,8 @@
-import { ArrowRight, Check, CircleAlert } from "lucide-react";
-import type { AttentionItem } from "../shared/contracts.js";
+import { ArrowRight, Check, CircleAlert, RefreshCw } from "lucide-react";
+import { useState } from "react";
+import type { AttentionAuditEntry, AttentionItem } from "../shared/contracts.js";
+import { AttentionAuditEntrySchema } from "../shared/contracts.js";
+import { api } from "./api.js";
 import "./attention.css";
 
 const reasons: Record<AttentionItem["kind"], string> = {
@@ -11,6 +14,7 @@ const reasons: Record<AttentionItem["kind"], string> = {
 };
 
 export function AttentionView({
+  workspaceId,
   items,
   onThread,
   onTask,
@@ -18,6 +22,7 @@ export function AttentionView({
   onSnooze,
   onDismiss,
 }: {
+  workspaceId?: string;
   items: AttentionItem[];
   onThread: (id: string) => void;
   onTask: (id: string) => void;
@@ -25,6 +30,28 @@ export function AttentionView({
   onSnooze?: (id: string, durationMinutes?: number) => void;
   onDismiss?: (id: string) => void;
 }) {
+  const [audit, setAudit] = useState<AttentionAuditEntry[]>([]);
+  const [auditError, setAuditError] = useState("");
+  const [auditLoading, setAuditLoading] = useState(false);
+
+  async function loadAudit() {
+    if (!workspaceId) return;
+    setAuditLoading(true);
+    setAuditError("");
+    try {
+      const response = await api<unknown>(
+        `/api/attention/history?workspaceId=${encodeURIComponent(workspaceId)}`,
+      );
+      const parsed = AttentionAuditEntrySchema.array().max(200).safeParse(response);
+      if (!parsed.success) throw new Error("Attention history response is invalid.");
+      setAudit(parsed.data);
+    } catch (caught) {
+      setAuditError(caught instanceof Error ? caught.message : "Unable to load attention history.");
+    } finally {
+      setAuditLoading(false);
+    }
+  }
+
   return (
     <div className="surface-view attention-view">
       <header className="workspace-header">
@@ -117,6 +144,45 @@ export function AttentionView({
           ))}
         </ul>
       )}
+      {workspaceId ? (
+        <section className="attention-history" aria-label="Recent attention actions">
+          <div className="attention-history-header">
+            <h2>Recent actions</h2>
+            <button
+              className="ghost-button"
+              type="button"
+              onClick={() => void loadAudit()}
+              disabled={auditLoading}
+            >
+              <RefreshCw size={14} aria-hidden="true" />
+              {auditLoading ? "Loading…" : "Refresh history"}
+            </button>
+          </div>
+          {auditError ? (
+            <p className="attention-history-error" role="alert">
+              {auditError}
+            </p>
+          ) : null}
+          {audit.length > 0 ? (
+            <ul className="attention-history-list">
+              {audit.map((entry) => (
+                <li
+                  key={`${entry.createdAt}:${entry.attentionId}:${entry.action}:${entry.snoozedUntil ?? ""}`}
+                >
+                  <span>
+                    {entry.action === "snooze" ? "Snoozed" : "Dismissed"} · {entry.kind}
+                  </span>
+                  <time dateTime={entry.createdAt}>
+                    {new Date(entry.createdAt).toLocaleString()}
+                  </time>
+                </li>
+              ))}
+            </ul>
+          ) : auditError ? null : (
+            <p className="attention-history-empty">Refresh to load recent actions.</p>
+          )}
+        </section>
+      ) : null}
     </div>
   );
 }

@@ -172,4 +172,35 @@ describe("Needs attention", () => {
     expect(onSnooze).toHaveBeenCalledWith(item.id, 1440);
     expect(onDismiss).toHaveBeenCalledWith(item.id);
   });
+
+  it("loads a bounded recent-action history only when explicitly refreshed", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () => [
+            {
+              workspaceId: "workspace-a",
+              attentionId: "task:one",
+              kind: "task_blocked",
+              action: "dismiss",
+              createdAt: "2026-09-12T00:00:00.000Z",
+            },
+          ],
+        }) as Response,
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <AttentionView workspaceId="workspace-a" items={[]} onThread={vi.fn()} onTask={vi.fn()} />,
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Refresh history" }));
+    expect(await screen.findByText("Dismissed · task_blocked")).toBeVisible();
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith(
+      "/api/attention/history?workspaceId=workspace-a",
+      expect.anything(),
+    );
+    vi.unstubAllGlobals();
+  });
 });

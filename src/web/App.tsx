@@ -2109,6 +2109,7 @@ export function App() {
           })()
         ) : route.surface === "attention" ? (
           <AttentionView
+            workspaceId={data.workspace.id}
             items={data.attention}
             onThread={openThread}
             onRun={(threadId, runId) => {
@@ -2126,7 +2127,11 @@ export function App() {
                     `/api/attention/${encodeURIComponent(id)}/state?workspaceId=${encodeURIComponent(data.workspace.id)}`,
                     {
                       method: "POST",
-                      body: JSON.stringify({ action: "snooze", durationMinutes }),
+                      body: JSON.stringify({
+                        action: "snooze",
+                        durationMinutes,
+                        kind: data.attention.find((item) => item.id === id)?.kind,
+                      }),
                     },
                   );
                   await refresh(true);
@@ -2145,7 +2150,10 @@ export function App() {
                     `/api/attention/${encodeURIComponent(id)}/state?workspaceId=${encodeURIComponent(data.workspace.id)}`,
                     {
                       method: "POST",
-                      body: JSON.stringify({ action: "dismiss" }),
+                      body: JSON.stringify({
+                        action: "dismiss",
+                        kind: data.attention.find((item) => item.id === id)?.kind,
+                      }),
                     },
                   );
                   await refresh(true);

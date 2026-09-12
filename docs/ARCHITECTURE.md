@@ -207,6 +207,12 @@ names, credentials, and transcripts remain outside telemetry. Deleted agents omi
 labels, and profile changes can relabel older rows because the projection is read-time. See [ADR
 0095](adr/0095-agent-profile-labels-in-history.md).
 
+Attention snooze and dismiss operations append bounded metadata to `state.json`. The store retains
+up to 200 entries per workspace and exposes them through an explicit-refresh history endpoint; the
+surface returns only action, kind, and timestamp metadata. This audit does not change the derived
+attention projection and excludes titles, details, prompts, transcripts, and credentials. See [ADR
+0096](adr/0096-attention-audit-history.md).
+
 Agent messages expose optional helpful/needs-work feedback controls. One bounded rating per message
 is stored in workspace metadata, returned with history, and included in workspace exports; the
 canonical transcript remains unchanged. Generated replies also carry the producing run ID. Run
