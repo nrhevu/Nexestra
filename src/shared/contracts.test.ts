@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CreateAgentSchema,
+  classifyRunFailure,
   extractKnowledgeHandles,
   extractMentionHandles,
   handleFromName,
@@ -20,6 +21,15 @@ describe("extractMentionHandles", () => {
 
   it("does not treat a one-character handle as valid", () => {
     expect(extractMentionHandles("hello @x and @xy")).toEqual(["xy"]);
+  });
+});
+
+describe("classifyRunFailure", () => {
+  it("returns safe categories without exposing the original error", () => {
+    expect(classifyRunFailure("Agent timed out after 30 seconds.")).toBe("timeout");
+    expect(classifyRunFailure("verification command exited with code 1")).toBe("verification");
+    expect(classifyRunFailure("Provider returned HTTP 503")).toBe("provider");
+    expect(classifyRunFailure("opaque token-like failure")).toBe("unknown");
   });
 });
 

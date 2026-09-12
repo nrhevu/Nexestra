@@ -52,3 +52,5 @@
     retry at the failed or interrupted run where monitoring already happens.
 28. [Feedback note research](research/2026-09-12-feedback-notes.md): preserve human context beside
     needs-work ratings without turning them into automatic evaluation scores.
+29. [Safe run failure kinds research](research/2026-09-12-safe-run-failure-kinds.md): classify
+    monitoring failures without copying raw provider or command errors into the history response.

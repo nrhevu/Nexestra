@@ -177,6 +177,9 @@ breakdown using the same filters and complete cached summary set. See [ADR 0052]
 Agents may optionally carry user-supplied USD-per-million token rates; when input and output rates
 are present, the per-agent breakdown includes an estimated cost with cached-input pricing applied.
 These are current local estimates rather than provider invoices. See [ADR 0053](adr/0053-agent-pricing-profiles.md).
+Failed and interrupted summaries also carry a safe failure kind, never raw provider or command
+output, so the monitoring list can guide recovery without widening the response's secret boundary.
+See [ADR 0059](adr/0059-safe-run-failure-kinds.md).
 
 Agent messages expose optional helpful/needs-work feedback controls. One bounded rating per message
 is stored in workspace metadata, returned with history, and included in workspace exports; the
@@ -551,8 +554,9 @@ credentials.
   write serialization. Its coverage describes the cached index; external transcript edits require
   a restart. Filtered pages are live and can change as statuses update. Filters/page position reset
   after leaving the surface, and deleted agents are labeled Unknown. It has no background polling,
-  run error/output search, cross-workspace aggregation or batch run actions. Failed and interrupted
-  rows can be retried individually through the existing guarded retry command.
+  raw run-output search, cross-workspace aggregation or batch run actions. Failed and interrupted
+  rows can be retried individually through the existing guarded retry command. History exposes only
+  a bounded failure kind; exact error text remains in the canonical conversation view.
 
 - Quality ratings are explicit single-user observations. They are attributed only when provenance
   resolves to one run, but there is no reviewed correction queue yet for turning a needs-work reply

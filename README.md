@@ -56,6 +56,8 @@ Returning to the app also refreshes this list from the newest page with the curr
 If some conversations cannot be read, the list shows that its coverage is incomplete.
 Failed and interrupted rows also expose **Retry run**. The retry uses the server's stale-attempt and
 archived-thread checks, then refreshes the list after a new attempt is queued.
+Rows with failures show a safe kind such as **Timed out**, **Verification failed**, or **Provider
+error**; open the conversation for the bounded, redacted details.
 Terminal runs also show their elapsed wall-clock duration, helping compare slow runs and harnesses;
 queued and active runs omit this value until they finish.
 When a custom OpenAI-compatible provider reports usage, run history also shows its total input and

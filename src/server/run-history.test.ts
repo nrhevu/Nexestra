@@ -666,6 +666,7 @@ describe("run history server", () => {
     expect(redacted?.agentName).toBe("Alpha [REDACTED]");
     expect(redacted?.threadName).toBe("Sensitive [REDACTED]");
     expect("error" in (redacted?.run ?? {})).toBe(false);
+    expect(redacted?.run).toMatchObject({ failureKind: "unknown" });
     const ghostItem = page.items.find((item) => item.run.id === "ghost-run");
     expect(ghostItem?.agentName).toBe("Unknown");
     expect(ghostItem?.agentHandle).toBeUndefined();
@@ -742,6 +743,7 @@ describe("run history server", () => {
     const firstRaw = await first.text();
     expect(firstRaw).not.toContain("http-secret-leak");
     expect(firstRaw).not.toMatch(/"error"\s*:/);
+    expect(firstRaw).toContain('"failureKind":"provider"');
     const firstBody = JSON.parse(firstRaw) as {
       items: { run: { id: string } }[];
       page: { nextCursor: string | null };

@@ -60,3 +60,4 @@
 | [0056](0056-reviewed-message-knowledge-capture.md) | Accepted | Review and name a message before promoting it to Knowledge |
 | [0057](0057-retry-runs-from-history.md) | Accepted | Retry failed and interrupted runs from the monitoring surface |
 | [0058](0058-feedback-notes.md) | Accepted | Collect bounded context when marking an agent response needs work |
+| [0059](0059-safe-run-failure-kinds.md) | Accepted | Classify run failures without exposing raw error payloads in history |

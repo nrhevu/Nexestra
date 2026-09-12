@@ -1,5 +1,6 @@
 import { open, readFile } from "node:fs/promises";
 import { TextDecoder } from "node:util";
+import type { RunFailureKind } from "../shared/contracts.js";
 
 /**
  * Bounded conversation-history reader. The canonical JSONL transcript stays the
@@ -29,6 +30,7 @@ export interface RunHistorySummary {
   agentId: string;
   attempt: number;
   status: RunHistoryStatus;
+  failureKind?: RunFailureKind;
   createdAt: string;
   updatedAt: string;
   usage?: {

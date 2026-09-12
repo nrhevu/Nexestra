@@ -5,13 +5,7 @@ import { act, cleanup, render, screen, waitFor, within } from "@testing-library/
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type {
-  AgentRun,
-  AgentView,
-  RunHistoryItem,
-  RunHistoryPage,
-  Thread,
-} from "../shared/contracts.js";
+import type { AgentView, RunHistoryItem, RunHistoryPage, Thread } from "../shared/contracts.js";
 import { RunHistoryView } from "./RunHistoryView.js";
 
 const now = "2026-09-02T12:00:00.000Z";
@@ -50,7 +44,10 @@ function makeThread(id: string, name: string, ws = workspaceId, archived = false
   };
 }
 
-function makeRun(id: string, overrides: Partial<AgentRun> = {}): AgentRun {
+function makeRun(
+  id: string,
+  overrides: Partial<RunHistoryItem["run"]> = {},
+): RunHistoryItem["run"] {
   return {
     id,
     threadId: "thread-a",
@@ -64,7 +61,10 @@ function makeRun(id: string, overrides: Partial<AgentRun> = {}): AgentRun {
   };
 }
 
-function makeItem(run: AgentRun, overrides: Partial<RunHistoryItem> = {}): RunHistoryItem {
+function makeItem(
+  run: RunHistoryItem["run"],
+  overrides: Partial<RunHistoryItem> = {},
+): RunHistoryItem {
   return {
     run,
     agentName: "Planner",
@@ -520,6 +520,7 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
         attempt: 2,
         createdAt: "not-a-date",
         updatedAt: "still-bad",
+        failureKind: "unknown",
       }),
       { threadArchived: true },
     );
@@ -545,6 +546,11 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
     expect(within(card).getByText("Tokens 1.3K")).toBeVisible();
     expect(within(card).getByText("Created not-a-date")).toBeVisible();
     expect(within(card).getByText("Updated still-bad")).toBeVisible();
+    expect(
+      within(card).getByText(
+        "Failure details available in the conversation. Open the conversation for details.",
+      ),
+    ).toBeVisible();
     expect(within(card).getByText("Planning (archived)")).toBeVisible();
   });
 

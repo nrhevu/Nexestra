@@ -124,6 +124,19 @@ function formatAgentFeedback(agent: RunHistoryMetrics["byAgent"][number]): strin
   return ` · ${agent.positiveFeedbackCount ?? 0} helpful / ${agent.negativeFeedbackCount ?? 0} needs work`;
 }
 
+const FAILURE_KIND_LABELS: Record<NonNullable<RunHistoryItem["run"]["failureKind"]>, string> = {
+  timeout: "Timed out",
+  aborted: "Stopped before completion",
+  verification: "Verification failed",
+  unavailable: "Agent unavailable",
+  provider: "Provider error",
+  unknown: "Failure details available in the conversation",
+};
+
+function failureKindLabel(kind: RunHistoryItem["run"]["failureKind"]): string | undefined {
+  return kind === undefined ? undefined : FAILURE_KIND_LABELS[kind];
+}
+
 function errorText(error: unknown, fallback: string): string {
   return error instanceof Error && error.message !== "" ? error.message : fallback;
 }
@@ -620,6 +633,12 @@ export function RunHistoryView({
                           Updated {formatDate(item.run.updatedAt)}
                         </time>
                       </div>
+                      {failureKindLabel(item.run.failureKind) && (
+                        <p className="run-history-error-detail">
+                          {failureKindLabel(item.run.failureKind)}. Open the conversation for
+                          details.
+                        </p>
+                      )}
                     </div>
                     <div className="run-history-actions">
                       {(item.run.status === "failed" || item.run.status === "interrupted") && (

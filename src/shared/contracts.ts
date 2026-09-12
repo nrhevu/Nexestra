@@ -538,6 +538,41 @@ export const ArtifactSchema = z.object({
 });
 export type Artifact = z.infer<typeof ArtifactSchema>;
 
+export const RunFailureKindSchema = z.enum([
+  "timeout",
+  "aborted",
+  "verification",
+  "unavailable",
+  "provider",
+  "unknown",
+]);
+export type RunFailureKind = z.infer<typeof RunFailureKindSchema>;
+
+export function classifyRunFailure(error: string): RunFailureKind {
+  const normalized = error.toLowerCase();
+  if (normalized.includes("timed out") || normalized.includes("timeout")) return "timeout";
+  if (
+    normalized.includes("aborted") ||
+    normalized.includes("stopped") ||
+    normalized.includes("interrupted")
+  )
+    return "aborted";
+  if (
+    normalized.includes("verification") ||
+    normalized.includes("exit code") ||
+    normalized.includes("check failed")
+  )
+    return "verification";
+  if (
+    normalized.includes("unavailable") ||
+    normalized.includes("not found") ||
+    normalized.includes("not available")
+  )
+    return "unavailable";
+  if (/\b(?:provider|api|http|model)\b/.test(normalized)) return "provider";
+  return "unknown";
+}
+
 export const RunSchema = z.object({
   id: z.string(),
   threadId: z.string(),
@@ -583,7 +618,7 @@ export const RunHistoryRequestSchema = z.object({
 export type RunHistoryRequest = z.infer<typeof RunHistoryRequestSchema>;
 
 export const RunHistoryItemSchema = z.object({
-  run: RunSchema.omit({ error: true }),
+  run: RunSchema.omit({ error: true }).extend({ failureKind: RunFailureKindSchema.optional() }),
   agentName: z.string(),
   agentHandle: z.string().optional(),
   threadName: z.string(),
