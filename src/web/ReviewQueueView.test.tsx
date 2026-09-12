@@ -227,4 +227,53 @@ describe("ReviewQueueView", () => {
       "message-two",
     ]);
   });
+
+  it("captures selected reviews and clears only confirmed items", async () => {
+    const batch = page();
+    const first = batch.items[0];
+    if (!first) throw new Error("expected review fixture");
+    batch.items = [
+      first,
+      {
+        ...first,
+        id: "thread-research:message-two",
+        message: { ...first.message, id: "message-two" },
+      },
+    ];
+    batch.total = 2;
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => batch,
+    } as Response);
+    let finishCapture: (ids: string[]) => void = () => undefined;
+    const onCaptureSelected = vi.fn(
+      () =>
+        new Promise<string[]>((resolve) => {
+          finishCapture = resolve;
+        }),
+    );
+    render(
+      <ReviewQueueView
+        workspaceId={workspaceId}
+        onOpenMessage={vi.fn()}
+        onCaptureSelected={onCaptureSelected}
+        onSetReviewStatus={vi.fn().mockResolvedValue(undefined)}
+      />,
+    );
+    await screen.findAllByText("A response that needs review.");
+    await userEvent.click(screen.getByRole("button", { name: "Select all visible" }));
+    await userEvent.click(screen.getByRole("button", { name: "Capture selected (2)" }));
+    await waitFor(() => expect(onCaptureSelected).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("button", { name: /Mark selected reviewed/ })).toBeDisabled();
+    finishCapture([first.id]);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Capture selected (1)" })).toBeVisible(),
+    );
+    expect(onCaptureSelected).toHaveBeenCalledWith(batch.items);
+    const checkboxes = screen.getAllByRole("checkbox");
+    expect(checkboxes).toHaveLength(2);
+    expect(checkboxes[0]).not.toBeChecked();
+    expect(checkboxes[1]).toBeChecked();
+  });
 });

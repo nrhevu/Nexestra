@@ -83,6 +83,7 @@ import type {
   KnowledgeItem,
   Message,
   MessageFeedback,
+  ReviewQueueItem,
   RunActivity,
   Task,
   TaskProcessData,
@@ -194,6 +195,11 @@ type CaptureMessage = Pick<Message, "id" | "threadId" | "content" | "createdAt">
   author: Pick<Message["author"], "name">;
 };
 
+type BulkCaptureEntry = {
+  reviewId: string;
+  message: CaptureMessage;
+};
+
 interface LoginSession {
   id: string;
   status: "running" | "completed" | "failed" | "cancelled";
@@ -240,6 +246,10 @@ export function App() {
   const [knowledgeToEdit, setKnowledgeToEdit] = useState<KnowledgeItem>();
   const [knowledgeToDelete, setKnowledgeToDelete] = useState<KnowledgeItem>();
   const [messageToCapture, setMessageToCapture] = useState<CaptureMessage>();
+  const [bulkCaptureQueue, setBulkCaptureQueue] = useState<BulkCaptureEntry[]>([]);
+  const [bulkCaptureCurrent, setBulkCaptureCurrent] = useState<BulkCaptureEntry>();
+  const bulkCaptureResolverRef = useRef<((ids: string[]) => void) | undefined>(undefined);
+  const bulkCaptureSuccessRef = useRef<string[]>([]);
   const [agentToDelete, setAgentToDelete] = useState<AgentView>();
   const [agentToEdit, setAgentToEdit] = useState<AgentView>();
   const [workspaceDeletePreflight, setWorkspaceDeletePreflight] = useState<Workspace>();
@@ -951,7 +961,14 @@ export function App() {
     knowledgeInspectRef.current = undefined;
     setKnowledgeToEdit(undefined);
     setKnowledgeToDelete(undefined);
+    if (bulkCaptureResolverRef.current) {
+      bulkCaptureResolverRef.current(bulkCaptureSuccessRef.current);
+      bulkCaptureResolverRef.current = undefined;
+      bulkCaptureSuccessRef.current = [];
+    }
     setMessageToCapture(undefined);
+    setBulkCaptureQueue([]);
+    setBulkCaptureCurrent(undefined);
     setAgentToDelete(undefined);
     setThreadToRename(undefined);
     setMessageSearch(undefined);
@@ -1658,6 +1675,32 @@ export function App() {
     window.setTimeout(() => setNotice(undefined), 2_600);
   };
 
+  const startBulkCapture = (items: ReviewQueueItem[]): Promise<string[]> => {
+    const entries = items.map((item) => ({
+      reviewId: item.id,
+      message: {
+        id: item.message.id,
+        threadId: item.message.threadId,
+        content: item.message.content,
+        createdAt: item.message.createdAt,
+        author: { name: item.agent.name },
+      },
+    }));
+    if (entries.length === 0) return Promise.resolve([]);
+    return new Promise((resolve) => {
+      bulkCaptureResolverRef.current = resolve;
+      bulkCaptureSuccessRef.current = [];
+      const [first, ...remaining] = entries;
+      if (!first) {
+        resolve([]);
+        return;
+      }
+      setBulkCaptureQueue(remaining);
+      setBulkCaptureCurrent(first);
+      setMessageToCapture(first.message);
+    });
+  };
+
   const mutate = async (operation: () => Promise<unknown>, success: string) => {
     const generation = workspaceGenerationRef.current;
     try {
@@ -2135,6 +2178,7 @@ export function App() {
                   author: { name: item.agent.name },
                 })
               }
+              onCaptureSelected={startBulkCapture}
               onSetReviewStatus={async (threadId, messageId, status) => {
                 await api(
                   `/api/reviews/${encodeURIComponent(threadId)}/${encodeURIComponent(messageId)}`,
@@ -2526,7 +2570,25 @@ export function App() {
           key={`${messageToCapture.threadId}:${messageToCapture.id}`}
           data={data}
           message={messageToCapture}
-          onClose={() => setMessageToCapture(undefined)}
+          onClose={() => {
+            const resolver = bulkCaptureResolverRef.current;
+            if (resolver) {
+              const capturedIds = [...bulkCaptureSuccessRef.current];
+              resolver(capturedIds);
+              bulkCaptureResolverRef.current = undefined;
+              bulkCaptureSuccessRef.current = [];
+              setBulkCaptureQueue([]);
+              setBulkCaptureCurrent(undefined);
+              setMessageToCapture(undefined);
+              if (capturedIds.length > 0) {
+                flash(
+                  `${capturedIds.length} review${capturedIds.length === 1 ? "" : "s"} captured.`,
+                );
+              }
+              return;
+            }
+            setMessageToCapture(undefined);
+          }}
           onCreated={async () => {
             await refresh();
             if (route.threadId) {
@@ -2536,8 +2598,31 @@ export function App() {
                 true,
               );
             }
+            const currentBulk = bulkCaptureCurrent;
+            if (!currentBulk) {
+              setMessageToCapture(undefined);
+              flash("Message saved as reviewed Knowledge.");
+              return;
+            }
+            bulkCaptureSuccessRef.current = [
+              ...bulkCaptureSuccessRef.current,
+              currentBulk.reviewId,
+            ];
+            const [next, ...remaining] = bulkCaptureQueue;
+            if (next) {
+              setBulkCaptureQueue(remaining);
+              setBulkCaptureCurrent(next);
+              setMessageToCapture(next.message);
+              return;
+            }
+            const capturedIds = [...bulkCaptureSuccessRef.current];
+            bulkCaptureResolverRef.current?.(capturedIds);
+            bulkCaptureResolverRef.current = undefined;
+            bulkCaptureSuccessRef.current = [];
+            setBulkCaptureQueue([]);
+            setBulkCaptureCurrent(undefined);
             setMessageToCapture(undefined);
-            flash("Message saved as reviewed Knowledge.");
+            flash(`${capturedIds.length} review${capturedIds.length === 1 ? "" : "s"} captured.`);
           }}
         />
       )}

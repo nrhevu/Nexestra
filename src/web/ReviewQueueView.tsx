@@ -14,6 +14,7 @@ export interface ReviewQueueViewProps {
   refreshRevision?: number;
   onOpenMessage: (threadId: string, messageId: string) => void;
   onCaptureMessage?: (item: ReviewQueueItem) => void;
+  onCaptureSelected?: (items: ReviewQueueItem[]) => Promise<string[]>;
   onSetReviewStatus: (
     threadId: string,
     messageId: string,
@@ -30,6 +31,7 @@ export function ReviewQueueView({
   refreshRevision,
   onOpenMessage,
   onCaptureMessage,
+  onCaptureSelected,
   onSetReviewStatus,
 }: ReviewQueueViewProps) {
   const [page, setPage] = useState<ReviewQueuePage>();
@@ -41,6 +43,7 @@ export function ReviewQueueView({
   const [resolvingId, setResolvingId] = useState<string>();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkResolving, setBulkResolving] = useState(false);
+  const [bulkCapturing, setBulkCapturing] = useState(false);
   const [error, setError] = useState<string>();
   const requestRef = useRef(0);
 
@@ -110,7 +113,7 @@ export function ReviewQueueView({
     selectedRows.every((item) => item.feedback.reviewStatus === "resolved")
       ? "Reopen selected reviews"
       : "Mark selected reviewed";
-  const busy = loading || loadingMore || bulkResolving;
+  const busy = loading || loadingMore || bulkResolving || bulkCapturing;
   const nextCursor = page?.page.nextCursor ?? null;
 
   const exportLoadedReviews = () => {
@@ -146,6 +149,27 @@ export function ReviewQueueView({
       setError(caught instanceof Error ? caught.message : "Selected reviews could not be updated.");
     } finally {
       setBulkResolving(false);
+    }
+  };
+  const captureSelected = async () => {
+    if (!onCaptureSelected || selectedRows.length === 0) return;
+    setBulkCapturing(true);
+    setError(undefined);
+    try {
+      const successfulIds = await onCaptureSelected(selectedRows);
+      if (successfulIds.length > 0) {
+        setSelectedIds((current) => {
+          const next = new Set(current);
+          for (const id of successfulIds) next.delete(id);
+          return next;
+        });
+      }
+    } catch (caught) {
+      setError(
+        caught instanceof Error ? caught.message : "Selected reviews could not be captured.",
+      );
+    } finally {
+      setBulkCapturing(false);
     }
   };
 
@@ -184,10 +208,19 @@ export function ReviewQueueView({
           <button
             type="button"
             onClick={() => void resolveSelected()}
-            disabled={bulkResolving || selectedIds.size === 0}
+            disabled={busy || selectedIds.size === 0}
           >
             {bulkResolving ? "Updating…" : `${bulkLabel} (${selectedIds.size})`}
           </button>
+          {onCaptureSelected ? (
+            <button
+              type="button"
+              onClick={() => void captureSelected()}
+              disabled={busy || selectedIds.size === 0}
+            >
+              {bulkCapturing ? "Capturing…" : `Capture selected (${selectedIds.size})`}
+            </button>
+          ) : null}
         </div>
       </header>
       <div className="review-queue-filters">

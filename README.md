@@ -141,6 +141,9 @@ first page, and the active agent/thread selection is recorded in review-case exp
 Select open rows to mark a bounded visible batch reviewed sequentially; selection is cleared when the
 page or filters change.
 Use **Select all visible** for the loaded page, or clear the selection before choosing another batch.
+Use **Capture selected** to review and name visible rows one at a time through the same canonical
+Knowledge dialog. Confirmed rows are removed from selection; closing after a partial batch leaves the
+remaining rows selected for retry. See [ADR 0107](docs/adr/0107-bulk-review-knowledge-capture.md).
 
 Open **Needs attention** to review pending approvals, questions, and blocked or failed work. Each
 item can be snoozed for one hour, four hours, or one day, or dismissed; snoozes expire automatically,

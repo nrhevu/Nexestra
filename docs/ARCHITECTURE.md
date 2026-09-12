@@ -623,7 +623,10 @@ credentials.
   filters and are rejected when reused with a different selection. Changing a filter resets to the
   first page, and exports record the active filter IDs for reproducibility. Open rows can be selected
   on the loaded page and marked reviewed sequentially; selection is cleared when a fresh page or
-  filter changes.
+  filter changes. Selected rows can also be passed through the existing reviewed Knowledge dialog
+  sequentially. Every item still requires explicit name and handle confirmation, the server rereads
+  canonical thread/message IDs, and only confirmed IDs leave selection; a partial close or failure
+  leaves the remaining rows selected for retry. The queue is in-memory and limited to the loaded page.
 
 - Optional `surfaces` entries in `nexestra.config.json` compose domain-specific navigation cards.
   Their actions are an allowlisted set of trusted surfaces and their labels are bounded/redacted
