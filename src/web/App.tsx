@@ -2255,6 +2255,7 @@ export function App() {
             setTaskToInspect(undefined);
             openThread(threadId);
           }}
+          onCaptureMessage={(message) => setMessageToCapture(message)}
           onEdit={(task) => {
             setTaskToInspect(undefined);
             setTaskToEdit(task);
@@ -5379,6 +5380,7 @@ function TaskProcessDialog({
   data,
   onClose,
   onThread,
+  onCaptureMessage,
   onEdit,
   onDelete,
   onStopped,
@@ -5387,6 +5389,7 @@ function TaskProcessDialog({
   data: BootstrapData;
   onClose: () => void;
   onThread: (threadId: string) => void;
+  onCaptureMessage: (message: CaptureMessage) => void;
   onEdit: (task: Task) => void;
   onDelete: (task: Task) => void;
   onStopped: () => Promise<void>;
@@ -6014,7 +6017,17 @@ function TaskProcessDialog({
 
               {assignment.status === "completed" && assignment.result && (
                 <section className="task-process-result">
-                  <h3>Worker result</h3>
+                  <div className="task-process-result-header">
+                    <h3>Worker result</h3>
+                    {process.sourceMessage && (
+                      <button
+                        type="button"
+                        onClick={() => onCaptureMessage(process.sourceMessage!)}
+                      >
+                        Save as Knowledge
+                      </button>
+                    )}
+                  </div>
                   <Suspense
                     fallback={<p className="message-markdown-fallback">{assignment.result}</p>}
                   >

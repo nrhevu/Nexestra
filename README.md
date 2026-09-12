@@ -89,6 +89,11 @@ older reviews first when you need them in the packet.
 The queue can also be narrowed to one workspace agent or thread; changing any filter starts a fresh
 first page, and the active agent/thread selection is recorded in review-case exports.
 
+Completed Worker results in Taskboard also offer **Save as Knowledge** when their canonical reply is
+available. This opens the same reviewed capture dialog and preserves the Worker message's thread and
+run provenance; displayed result text is never trusted as a separate source. Legacy assignments
+without a matching reply keep the action hidden.
+
 Workspaces can add a domain-specific launch surface in `nexestra.config.json`:
 
 ```json

@@ -1165,6 +1165,10 @@ export interface TaskProcessData {
   run?: AgentRun;
   activity?: RunActivity;
   toolCalls: ToolCall[];
+  /** The canonical Worker reply that produced the latest assignment result. */
+  sourceMessage?: Pick<Message, "id" | "threadId" | "content" | "createdAt"> & {
+    author: Pick<Message["author"], "name">;
+  };
 }
 
 export function extractMentionHandles(content: string): string[] {

@@ -3113,6 +3113,20 @@ kbd {
   border-radius: 8px;
   background: rgba(45, 111, 81, 0.08);
 }
+.task-process-result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.task-process-result-header h3 {
+  margin: 0;
+}
+.task-process-result-header button {
+  color: #b9e8c9;
+  font-size: 11px;
+}
 .task-process-result .message-markdown,
 .task-process-result .message-markdown-fallback {
   color: #d4d8d5;

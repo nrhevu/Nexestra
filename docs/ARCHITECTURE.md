@@ -598,6 +598,11 @@ credentials.
   evaluates no configured code, markup, URL, or command. Data-backed widgets and custom forms are
   intentionally future work.
 
+- Taskboard's completed Worker process response may include a bounded `sourceMessage` projection for
+  the latest assignment: the canonical agent reply with the assignment run ID. This powers a direct
+  reviewed Knowledge capture action while the server rereads the transcript by thread/message ID;
+  assignment result text is presentation-only and legacy replies without provenance are omitted.
+
 - Whiteboard is a built-in workspace surface backed by `workspaces/<workspaceId>/whiteboard.md`.
   GET and PUT responses are workspace-scoped and redact known credentials. Markdown is bounded to
   64 KiB of UTF-8, written atomically with mode `0600`, and treated as user notes only; it cannot

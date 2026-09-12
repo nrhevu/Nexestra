@@ -88,6 +88,9 @@ export class AgentDispatcher {
     const thread = await this.store.threadData(assignment.threadId);
     const run = thread.runs.find((entry) => entry.id === assignment.id);
     const activity = this.liveActivities.get(assignment.id);
+    const sourceMessage = thread.messages.find(
+      (message) => message.author.kind === "agent" && message.runId === assignment.id,
+    );
     return {
       task,
       assignment,
@@ -95,6 +98,17 @@ export class AgentDispatcher {
       ...(run ? { run } : {}),
       ...(activity ? { activity: structuredClone(activity) } : {}),
       toolCalls: thread.toolCalls.filter((toolCall) => toolCall.runId === assignment.id),
+      ...(sourceMessage
+        ? {
+            sourceMessage: {
+              id: sourceMessage.id,
+              threadId: sourceMessage.threadId,
+              content: this.store.redactSecrets(sourceMessage.content),
+              createdAt: sourceMessage.createdAt,
+              author: { name: this.store.redactSecrets(sourceMessage.author.name) },
+            },
+          }
+        : {}),
     };
   }
 

@@ -82,3 +82,5 @@
     redacted estimated cost beside each run-history row for task-level harness comparison.
 43. [Run-history cost summary research](research/2026-09-12-run-history-cost-summary.md): add a
     filter-scoped estimated total with explicit coverage for harness price comparisons.
+44. [Task-result Knowledge capture research](research/2026-09-12-task-result-knowledge-capture.md):
+    transfer completed Worker replies from Taskboard through the existing reviewed capture flow.

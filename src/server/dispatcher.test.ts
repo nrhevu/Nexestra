@@ -795,6 +795,11 @@ describe("mention dispatch", () => {
       assignment: { id: assignment.id, status: "completed" },
       run: { id: assignment.id, status: "completed" },
       toolCalls: [{ runId: assignment.id, name: "read" }],
+      sourceMessage: {
+        threadId: thread.id,
+        content: "Implemented and committed the assigned change.",
+        author: { name: "Worker" },
+      },
     });
   });
 

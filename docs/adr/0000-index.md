@@ -75,3 +75,4 @@
 | [0072](0072-stop-normal-agent-runs.md) | Accepted | Stop normal agent runs from the conversation |
 | [0073](0073-per-run-cost-visibility.md) | Accepted | Show derived estimated cost on each run-history row |
 | [0074](0074-run-history-cost-summary.md) | Accepted | Summarize filter-scoped estimated run cost with coverage |
+| [0075](0075-task-result-knowledge-capture.md) | Accepted | Capture completed Worker results from Taskboard through canonical message provenance |
