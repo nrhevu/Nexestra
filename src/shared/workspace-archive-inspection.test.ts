@@ -515,6 +515,23 @@ describe("workspace archive inspection engine", () => {
     });
   });
 
+  it("reports whether a verified archive belongs to the expected workspace", async () => {
+    const sources: FixtureSource[] = [
+      { path: STATE_PATH, kind: "metadata", bytes: encoder.encode('{"workspaceId":"w1"}') },
+    ];
+    const built = await buildRealArchive(sources);
+
+    const matching = await inspectWorkspaceArchive(blobOf(built.bytes), {
+      expectedWorkspace: { id: "w1", name: "Workspace" },
+    });
+    expect(matching.workspaceMatch).toEqual({ id: true, name: true });
+
+    const different = await inspectWorkspaceArchive(blobOf(built.bytes), {
+      expectedWorkspace: { id: "other", name: "Workspace" },
+    });
+    expect(different.workspaceMatch).toEqual({ id: false, name: true });
+  });
+
   it("accepts no-descriptor stored layout and 12-byte descriptors with UTF-8 paths", async () => {
     const sources: FixtureSource[] = [
       { path: STATE_PATH, kind: "metadata", bytes: encoder.encode('{"ok":true}') },

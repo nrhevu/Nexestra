@@ -137,6 +137,27 @@ describe("WorkspaceArchiveInspectionDialog", () => {
     expect(typeof options?.onProgress).toBe("function");
   });
 
+  it("passes the active workspace identity and warns on a verified mismatch", async () => {
+    inspectMock.mockResolvedValue(
+      report([entry("state.json", { kind: "metadata" })], {
+        workspaceMatch: { id: false, name: true },
+      }),
+    );
+    const user = userEvent.setup();
+    renderDialog({ workspace: { id: "active-workspace", name: "Active workspace" } });
+
+    await chooseAndCheck(user);
+
+    const [, options] = inspectMock.mock.calls[0] ?? [];
+    expect(options?.expectedWorkspace).toEqual({
+      id: "active-workspace",
+      name: "Active workspace",
+    });
+    expect(
+      await screen.findByText(/archive belongs to a different workspace/i),
+    ).toBeInTheDocument();
+  });
+
   it("shows real progress and paginates a large verified entry list", async () => {
     const pending = deferred<WorkspaceArchiveInspectionReport>();
     inspectMock.mockImplementation(async (_file, options) => {

@@ -24,6 +24,12 @@ export const WorkspaceArchiveInspectionReportSchema = z.object({
   manifest: WorkspaceExportManifestSchema,
   archiveBytes: z.number().int().positive().max(WORKSPACE_EXPORT_MAX_ARCHIVE_BYTES),
   payloadBytes: z.number().int().nonnegative().max(WORKSPACE_EXPORT_MAX_ARCHIVE_BYTES),
+  workspaceMatch: z
+    .object({
+      id: z.boolean(),
+      name: z.boolean(),
+    })
+    .optional(),
 });
 export type WorkspaceArchiveInspectionReport = z.infer<
   typeof WorkspaceArchiveInspectionReportSchema
@@ -42,6 +48,10 @@ export interface WorkspaceArchiveInspectionRequest {
   type: "inspect";
   requestId: number;
   file: File;
+  expectedWorkspace?: {
+    id: string;
+    name: string;
+  };
 }
 
 export const WorkspaceArchiveInspectionReplySchema = z.discriminatedUnion("type", [

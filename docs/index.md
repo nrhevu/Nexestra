@@ -128,3 +128,4 @@
     notify a browser about increased workspace counts only after explicit permission.
 66. [Over-budget custom surface card research](research/2026-09-12-over-budget-custom-surface-card.md):
     expose complete-coverage observed budget counts and filtered Run history navigation.
+67. [Workspace archive identity check research](research/2026-09-12-workspace-archive-identity-check.md): compare a verified archive's manifest workspace ID with the active workspace before manual review.

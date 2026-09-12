@@ -60,6 +60,7 @@ interface InspectionRequestMessage {
   type: "inspect";
   requestId: number;
   file: File;
+  expectedWorkspace?: { id: string; name: string };
 }
 
 function zipFile(bytes = 3): File {
@@ -160,12 +161,16 @@ afterEach(() => {
 describe("inspectArchiveInWorker lifecycle", () => {
   it("returns the report and forwards sane progress without network calls", async () => {
     const onProgress = vi.fn();
-    const promise = inspectArchiveInWorker(zipFile(), { onProgress });
+    const promise = inspectArchiveInWorker(zipFile(), {
+      onProgress,
+      expectedWorkspace: { id: "workspace-a", name: "Workspace A" },
+    });
     const worker = workerAt(0);
     const request = requestFrom(worker);
     expect(request.type).toBe("inspect");
     expect(request.requestId).toBeGreaterThan(0);
     expect(request.file).toBeInstanceOf(File);
+    expect(request.expectedWorkspace).toEqual({ id: "workspace-a", name: "Workspace A" });
 
     const progress = progressReply(request.requestId);
     worker.emit("message", progress);

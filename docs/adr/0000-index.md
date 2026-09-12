@@ -99,3 +99,4 @@
 | [0096](0096-attention-audit-history.md) | Accepted | Keep a bounded workspace-scoped Attention action history |
 | [0097](0097-opt-in-desktop-attention-notifications.md) | Accepted | Offer opt-in browser notifications for increased Attention counts |
 | [0098](0098-over-budget-custom-surface-card.md) | Accepted | Add a read-only over-budget telemetry card to custom surfaces |
+| [0099](0099-workspace-archive-identity-check.md) | Accepted | Check exported workspace identity during local archive inspection |

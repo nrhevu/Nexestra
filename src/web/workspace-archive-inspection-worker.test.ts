@@ -100,17 +100,24 @@ describe("workspace archive inspection worker handler", () => {
     const requestId = 7;
     engine.inspectWorkspaceArchive.mockResolvedValue(report());
 
-    receive({ type: "inspect", requestId, file });
+    receive({
+      type: "inspect",
+      requestId,
+      file,
+      expectedWorkspace: { id: "workspace-a", name: "Workspace A" },
+    });
     await vi.waitFor(() => {
       expect(engine.inspectWorkspaceArchive).toHaveBeenCalledTimes(1);
     });
 
     const options = engine.inspectWorkspaceArchive.mock.calls[0]?.[1] as {
       onProgress: (value: WorkspaceArchiveInspectionProgress) => void;
+      expectedWorkspace?: { id: string; name: string };
     };
     expect(engine.inspectWorkspaceArchive.mock.calls[0]?.[0]).toBe(file);
     expect(options).toBeDefined();
     expect((options as { signal?: unknown }).signal).toBeUndefined();
+    expect(options.expectedWorkspace).toEqual({ id: "workspace-a", name: "Workspace A" });
     options.onProgress(progress());
 
     await vi.waitFor(() => {

@@ -94,6 +94,10 @@ export class WorkspaceArchiveInspectionError extends Error {
 export interface WorkspaceArchiveInspectionOptions {
   signal?: AbortSignal;
   onProgress?: (progress: WorkspaceArchiveInspectionProgress) => void;
+  expectedWorkspace?: {
+    id: string;
+    name: string;
+  };
 }
 
 interface BlobLike {
@@ -671,6 +675,14 @@ async function inspectWorkspaceArchiveImpl(
     manifest,
     archiveBytes: file.size,
     payloadBytes: totalBytes,
+    ...(options?.expectedWorkspace
+      ? {
+          workspaceMatch: {
+            id: manifest.workspace.id === options.expectedWorkspace.id,
+            name: manifest.workspace.name === options.expectedWorkspace.name,
+          },
+        }
+      : {}),
   };
   const parsedReport = WorkspaceArchiveInspectionReportSchema.safeParse(report);
   if (!parsedReport.success) throw invalid(MSG_INTERNAL);

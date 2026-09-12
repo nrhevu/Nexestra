@@ -58,6 +58,11 @@
 .workspace-archive-success {
   color: var(--green);
 }
+.workspace-archive-warning {
+  align-items: flex-start;
+  color: var(--orange, #d18b47);
+  line-height: 1.45;
+}
 .workspace-archive-error {
   align-items: flex-start;
   flex-direction: column;

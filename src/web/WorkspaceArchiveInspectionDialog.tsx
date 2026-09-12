@@ -1,6 +1,6 @@
 import { Check, FileArchive, LoaderCircle, RefreshCw, X } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { WORKSPACE_EXPORT_MAX_ARCHIVE_BYTES } from "../shared/contracts.js";
+import { WORKSPACE_EXPORT_MAX_ARCHIVE_BYTES, type Workspace } from "../shared/contracts.js";
 import {
   WORKSPACE_ARCHIVE_INSPECTION_PAGE_SIZE,
   type WorkspaceArchiveInspectionProgress,
@@ -11,6 +11,7 @@ import "./WorkspaceArchiveInspectionDialog.css";
 
 export interface WorkspaceArchiveInspectionDialogProps {
   onClose: () => void;
+  workspace?: Pick<Workspace, "id" | "name">;
 }
 
 export type WorkspaceArchiveInspectionPhase = "idle" | "busy" | "error" | "success";
@@ -65,6 +66,7 @@ function progressLabel(progress: WorkspaceArchiveInspectionProgress | null): str
 
 export function WorkspaceArchiveInspectionDialog({
   onClose,
+  workspace,
 }: WorkspaceArchiveInspectionDialogProps) {
   const [phase, setPhase] = useState<WorkspaceArchiveInspectionPhase>("idle");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -200,6 +202,7 @@ export function WorkspaceArchiveInspectionDialog({
     try {
       const result = await inspectArchiveInWorker(selectedFile, {
         signal: controller.signal,
+        ...(workspace ? { expectedWorkspace: workspace } : {}),
         onProgress: (next) => {
           if (requestId === requestIdRef.current) setProgress(next);
         },
@@ -235,7 +238,7 @@ export function WorkspaceArchiveInspectionDialog({
         if (controllerRef.current === controller) controllerRef.current = null;
       }
     }
-  }, [selectedFile]);
+  }, [selectedFile, workspace]);
 
   const handleCancel = () => {
     if (!busyRef.current) return;
@@ -341,6 +344,12 @@ export function WorkspaceArchiveInspectionDialog({
                 <Check size={15} />
                 Integrity verified
               </p>
+              {report.workspaceMatch !== undefined && !report.workspaceMatch.id && (
+                <p className="workspace-archive-status workspace-archive-warning" role="alert">
+                  This archive belongs to a different workspace. Its ZIP integrity is verified, but
+                  it should not be treated as a snapshot of the currently open workspace.
+                </p>
+              )}
               <dl className="workspace-archive-summary">
                 <div>
                   <dt>Workspace</dt>

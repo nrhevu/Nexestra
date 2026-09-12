@@ -32,6 +32,10 @@ export class WorkspaceArchiveInspectionClientError extends Error {
 export interface WorkspaceArchiveInspectionClientOptions {
   signal?: AbortSignal;
   onProgress?: (progress: WorkspaceArchiveInspectionProgress) => void;
+  expectedWorkspace?: {
+    id: string;
+    name: string;
+  };
 }
 
 let nextRequestId = 1;
@@ -243,6 +247,7 @@ export async function inspectArchiveInWorker(
       type: "inspect",
       requestId,
       file,
+      ...(options?.expectedWorkspace ? { expectedWorkspace: options.expectedWorkspace } : {}),
     };
     try {
       worker.postMessage(request);

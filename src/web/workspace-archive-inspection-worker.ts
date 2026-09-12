@@ -91,6 +91,10 @@ interface InspectionRequest {
   type: "inspect";
   requestId: number;
   file: BlobLike;
+  expectedWorkspace?: {
+    id: string;
+    name: string;
+  };
 }
 
 function parseInspectionRequest(value: unknown): InspectionRequest | undefined {
@@ -107,10 +111,31 @@ function parseInspectionRequest(value: unknown): InspectionRequest | undefined {
   if (!isBlobLike(record.file)) {
     return undefined;
   }
+  const expectedWorkspace = record.expectedWorkspace;
+  let parsedExpectedWorkspace: InspectionRequest["expectedWorkspace"];
+  if (expectedWorkspace !== undefined) {
+    if (typeof expectedWorkspace !== "object" || expectedWorkspace === null) return undefined;
+    const workspaceRecord = expectedWorkspace as Record<string, unknown>;
+    if (
+      typeof workspaceRecord.id !== "string" ||
+      workspaceRecord.id.length === 0 ||
+      workspaceRecord.id.length > 200 ||
+      typeof workspaceRecord.name !== "string" ||
+      workspaceRecord.name.length === 0 ||
+      workspaceRecord.name.length > 200
+    ) {
+      return undefined;
+    }
+    parsedExpectedWorkspace = {
+      id: workspaceRecord.id,
+      name: workspaceRecord.name,
+    };
+  }
   return {
     type: "inspect",
     requestId: record.requestId as number,
     file: record.file,
+    ...(parsedExpectedWorkspace ? { expectedWorkspace: parsedExpectedWorkspace } : {}),
   };
 }
 
@@ -152,6 +177,7 @@ workerScope.onmessage = (event): void => {
     try {
       const report: WorkspaceArchiveInspectionReport = await inspectWorkspaceArchive(file, {
         onProgress: reportProgress,
+        ...(request.expectedWorkspace ? { expectedWorkspace: request.expectedWorkspace } : {}),
       });
       workerScope.postMessage({ type: "result", requestId: request.requestId, report });
     } catch (error) {
