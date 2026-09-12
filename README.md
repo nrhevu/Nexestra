@@ -37,7 +37,9 @@ export. Select a ZIP and click **Check ZIP** to verify its manifest, file sizes,
 hashes. The file stays in your browser; the report names the workspace inside that archive and lists
 its payloads. Cancel or close to stop checking. Only Nexestra's stored ZIP v1 profile is supported;
 recompressed or encrypted archives are unsupported. A matching manifest does not prove authenticity,
-completeness or the ability to restore the data. See
+completeness or the ability to restore the data. When opened from a workspace, the inspector also
+warns if the archive's manifest belongs to a different workspace; the workspace ID is authoritative
+and the display name is informational. See
 [the inspection design](docs/adr/0047-local-workspace-archive-inspection.md).
 
 Both archive dialogs load when opened. Close or press Escape while loading; if loading fails or
@@ -87,7 +89,9 @@ run. Ratings are user signals, not an automatic score or billing record.
 **Export loaded runs** downloads a bounded `nexestra.run-history` JSON packet containing the visible
 rows, active filters, pagination cursors, coverage, and the complete filtered summary. Load older
 pages first when they should be included; the packet contains no transcript text or raw provider
-errors.
+errors. **Export CSV** downloads the same loaded rows as escaped spreadsheet columns for status,
+duration, usage, cost, budget, and bounded agent labels; it also excludes transcript and raw error
+text.
 For cross-workspace comparisons, `GET /api/runs/summary` returns count-only aggregates with token,
 estimated-cost, over-budget, and transcript-coverage fields. Supplying `workspaceId` restricts the
 response to one workspace; omitting it returns one entry per workspace. The paged `/api/runs` view
