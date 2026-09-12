@@ -372,7 +372,8 @@
 }
 
 .run-history-open,
-.run-history-retry {
+.run-history-retry,
+.run-history-retry-selected {
   min-width: 24px;
   min-height: 30px;
   padding: 5px 10px;
@@ -386,7 +387,8 @@
 }
 
 .run-history-open:hover,
-.run-history-retry:hover {
+.run-history-retry:hover,
+.run-history-retry-selected:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
@@ -396,14 +398,35 @@
   color: var(--accent);
 }
 
+.run-history-retry-selected {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  color: var(--accent);
+}
+
+.run-history-select-retry {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  flex: 0 0 auto;
+  margin-right: 2px;
+}
+
+.run-history-select-retry input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
 .run-history-open:disabled,
-.run-history-retry:disabled {
+.run-history-retry:disabled,
+.run-history-retry-selected:disabled {
   opacity: 0.55;
   cursor: default;
 }
 
 .run-history-open:focus-visible,
 .run-history-retry:focus-visible,
+.run-history-retry-selected:focus-visible,
 .run-history-refresh:focus-visible,
 .run-history-export:focus-visible,
 .run-history-newer:focus-visible,

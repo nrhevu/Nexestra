@@ -668,6 +668,29 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
     expect(onRetryRun).toHaveBeenCalledWith("run-failed");
   });
 
+  it("retries multiple selected failed runs in order", async () => {
+    const user = userEvent.setup();
+    const onRetryRun = vi.fn(async () => undefined);
+    const failed = makeItem(makeRun("run-failed", { status: "failed" }));
+    const interrupted = makeItem(makeRun("run-interrupted", { status: "interrupted" }));
+    const fetchMock = vi.fn(async () => jsonResponse(makePage([failed, interrupted])));
+    vi.stubGlobal("fetch", fetchMock);
+    renderView({ onRetryRun });
+
+    await screen.findByLabelText("Run run-failed");
+    await user.click(screen.getByRole("checkbox", { name: "Select run run-failed for retry" }));
+    await user.click(
+      screen.getByRole("checkbox", { name: "Select run run-interrupted for retry" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Retry selected (2)" }));
+
+    await waitFor(() => expect(onRetryRun).toHaveBeenCalledTimes(2));
+    expect(onRetryRun.mock.calls.map(([runId]) => runId)).toEqual([
+      "run-failed",
+      "run-interrupted",
+    ]);
+  });
+
   it("keeps an honest empty state when coverage is unavailable", async () => {
     const fetchMock = vi.fn(async () =>
       jsonResponse(makePage([], null, { coverage: { complete: false, unavailableThreads: 1 } })),

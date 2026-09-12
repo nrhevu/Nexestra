@@ -55,8 +55,9 @@ that started it and keeps your drafts and selected files. Use **Refresh run hist
 **Refresh** to update statuses and return to the newest page; leaving the surface resets its filters.
 Returning to the app also refreshes this list from the newest page with the current filters.
 If some conversations cannot be read, the list shows that its coverage is incomplete.
-Failed and interrupted rows also expose **Retry run**. The retry uses the server's stale-attempt and
-archived-thread checks, then refreshes the list after a new attempt is queued.
+Failed and interrupted rows also expose **Retry run**. Select several visible failed or interrupted
+rows and choose **Retry selected** to queue them sequentially. Each retry uses the server's
+stale-attempt and archived-thread checks, then refreshes the list after a new attempt is queued.
 Rows with failures show a safe kind such as **Timed out**, **Verification failed**, or **Provider
 error**; open the conversation for the bounded, redacted details.
 Delegated Worker rows also show their redacted Taskboard title when the assignment can be matched;

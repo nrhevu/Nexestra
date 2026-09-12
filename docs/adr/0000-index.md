@@ -79,3 +79,4 @@
 | [0076](0076-run-history-task-context.md) | Accepted | Show delegated Taskboard titles in run-history rows |
 | [0077](0077-quality-adjusted-run-cost.md) | Accepted | Show complete-coverage estimated cost per helpful reply |
 | [0078](0078-opt-in-run-history-refresh.md) | Accepted | Add user-controlled refresh for the newest run-history page |
+| [0079](0079-batch-run-retry.md) | Accepted | Retry selected failed or interrupted runs sequentially from history |

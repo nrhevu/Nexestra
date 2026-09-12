@@ -175,6 +175,8 @@ export function RunHistoryView({
   });
   const [view, setView] = useState(() => initialViewState(workspaceId));
   const [retryingRunId, setRetryingRunId] = useState<string>();
+  const [selectedRetryIds, setSelectedRetryIds] = useState<Set<string>>(() => new Set());
+  const [batchRetrying, setBatchRetrying] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(false);
 
   const requestRef = useRef(0);
@@ -252,6 +254,7 @@ export function RunHistoryView({
       loadingMore: false,
       failedAction: null,
     }));
+    setSelectedRetryIds(new Set());
     try {
       const response = await requestPage(buildParams(), controller);
       if (requestId !== requestRef.current) return;
@@ -493,6 +496,21 @@ export function RunHistoryView({
     }
   };
 
+  const retryableRows = rows.filter(
+    (item) => item.run.status === "failed" || item.run.status === "interrupted",
+  );
+  const selectedRetryRows = retryableRows.filter((item) => selectedRetryIds.has(item.run.id));
+  const retrySelected = async () => {
+    if (selectedRetryRows.length === 0 || batchRetrying) return;
+    setBatchRetrying(true);
+    try {
+      for (const item of selectedRetryRows) await onRetryRun(item.run.id);
+      setSelectedRetryIds(new Set());
+    } finally {
+      setBatchRetrying(false);
+    }
+  };
+
   return (
     <section className="run-history-view" aria-label="Run history">
       <header className="run-history-header">
@@ -506,6 +524,16 @@ export function RunHistoryView({
         >
           Refresh run history
         </button>
+        {retryableRows.length > 0 ? (
+          <button
+            type="button"
+            className="run-history-retry-selected"
+            disabled={busy || batchRetrying || selectedRetryRows.length === 0}
+            onClick={() => void retrySelected()}
+          >
+            {batchRetrying ? "Retrying selected…" : `Retry selected (${selectedRetryRows.length})`}
+          </button>
+        ) : null}
         <button
           type="button"
           className="run-history-export"
@@ -680,6 +708,24 @@ export function RunHistoryView({
               {rows.map((item) => (
                 <li key={`${item.run.threadId}:${item.run.id}`} className="run-history-row">
                   <article className="run-history-item" aria-label={`Run ${item.run.id}`}>
+                    {item.run.status === "failed" || item.run.status === "interrupted" ? (
+                      <label className="run-history-select-retry">
+                        <input
+                          type="checkbox"
+                          aria-label={`Select run ${item.run.id} for retry`}
+                          checked={selectedRetryIds.has(item.run.id)}
+                          disabled={busy || batchRetrying || retryingRunId !== undefined}
+                          onChange={() => {
+                            setSelectedRetryIds((current) => {
+                              const next = new Set(current);
+                              if (next.has(item.run.id)) next.delete(item.run.id);
+                              else next.add(item.run.id);
+                              return next;
+                            });
+                          }}
+                        />
+                      </label>
+                    ) : null}
                     <div className="run-history-main">
                       <div className="run-history-identity">
                         <span className="run-history-agent">
