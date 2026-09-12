@@ -569,7 +569,7 @@ credentials.
   write serialization. Its coverage describes the cached index; external transcript edits require
   a restart. Filtered pages are live and can change as statuses update. Filters/page position reset
   after leaving the surface, and deleted agents are labeled Unknown. It has no background polling,
-  raw run-output search, cross-workspace aggregation or batch run actions. The browser offers an
+  raw run-output search or cross-workspace aggregation. The browser offers an
   opt-in 15-second refresh for the newest page, but there is no default or server-side background
   polling. Failed and interrupted rows can be retried individually or as a sequential selection of visible rows through the existing guarded retry command. History exposes only
   a bounded failure kind; exact error text remains in the canonical conversation view. Delegated
