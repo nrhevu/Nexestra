@@ -487,6 +487,13 @@ export type ReviewQueueRequest = z.infer<typeof ReviewQueueRequestSchema>;
 export const ReviewQueueItemSchema = z.object({
   id: z.string(),
   feedback: MessageFeedbackSchema,
+  prompt: z
+    .object({
+      id: z.string(),
+      content: z.string().max(800),
+      createdAt: z.string(),
+    })
+    .optional(),
   message: z.object({
     id: z.string(),
     threadId: z.string(),

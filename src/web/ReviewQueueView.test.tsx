@@ -56,6 +56,11 @@ function page(): ReviewQueuePage {
           agentId: agent.id,
           updatedAt: now,
         },
+        prompt: {
+          id: "message-prompt",
+          content: "Investigate the request",
+          createdAt: now,
+        },
         message: {
           id: "message-reply",
           threadId: thread.id,
@@ -91,6 +96,7 @@ describe("ReviewQueueView", () => {
       />,
     );
     expect(await screen.findByText("A response that needs review.")).toBeVisible();
+    expect(screen.getByText("Investigate the request")).toBeVisible();
     expect(screen.getByText("1 matching review")).toBeVisible();
     expect(screen.getByText("Note: Add evidence")).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Open response" }));

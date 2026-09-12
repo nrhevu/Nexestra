@@ -157,6 +157,11 @@ export function ReviewQueueView({
                     {new Date(item.feedback.updatedAt).toLocaleString()}
                   </time>
                 </div>
+                {item.prompt ? (
+                  <p className="review-queue-prompt">
+                    <strong>Prompt:</strong> {item.prompt.content}
+                  </p>
+                ) : null}
                 <p className="review-queue-content">{item.message.content}</p>
                 {item.feedback.note ? (
                   <p className="review-queue-note">Note: {item.feedback.note}</p>

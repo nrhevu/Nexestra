@@ -77,11 +77,16 @@ describe("review queue", () => {
       },
     });
     const thread = await store.createThread({ name: "Research" });
+    const prompt = await store.createUserMessage(
+      thread.id,
+      "Investigate this request sk-review-secret",
+      [],
+    );
     const first = await store.createAgentMessage(
       thread.id,
       agent,
       "First response sk-review-secret",
-      "trigger-1",
+      prompt.id,
     );
     const second = await store.createAgentMessage(thread.id, agent, "Second response", "trigger-2");
     await store.setMessageFeedback(thread.id, first.id, {
@@ -98,6 +103,13 @@ describe("review queue", () => {
     expect(firstPage.items[0]?.feedback.value).toBe("negative");
     expect(firstPage.items[0]?.feedback.reviewStatus).toBe("open");
     expect(firstPage.items[0]?.message.content.length).toBeLessThanOrEqual(800);
+    const allReviews = await store.listReviewQueue({ workspaceId: workspace.id, limit: 50 });
+    const firstReview = allReviews.items.find((item) => item.message.id === first.id);
+    expect(firstReview?.prompt).toMatchObject({
+      id: prompt.id,
+      content: "Investigate this request [REDACTED]",
+    });
+    expect(JSON.stringify(firstReview?.prompt)).not.toContain("sk-review-secret");
 
     const secondPage = await store.listReviewQueue({
       workspaceId: workspace.id,

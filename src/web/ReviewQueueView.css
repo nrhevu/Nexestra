@@ -107,6 +107,20 @@
   line-height: 1.5;
 }
 
+.review-queue-prompt {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--accent, #8aa8ff);
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
+.review-queue-prompt strong {
+  color: var(--text-primary);
+}
+
 .review-queue-note {
   margin: 0 0 12px;
   color: var(--text-secondary);

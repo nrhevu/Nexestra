@@ -567,7 +567,9 @@ credentials.
   an explicit open/resolved review status; resolving changes metadata only. Review queue responses
   also include a filter-scoped total for the current snapshot, while keyset pagination and coverage
   warnings remain unchanged. Each queue row can open the same capture dialog directly; the bounded
-  queue excerpt is context only and the server reads the canonical transcript by ID.
+  queue excerpt is context only and the server reads the canonical transcript by ID. When available,
+  rows also include the redacted, 800-character user prompt identified by the reply's durable
+  `triggerMessageId`; missing provenance omits that optional context.
 
 - Optional `surfaces` entries in `nexestra.config.json` compose domain-specific navigation cards.
   Their actions are an allowlisted set of trusted surfaces and their labels are bounded/redacted

@@ -3555,10 +3555,15 @@ export class FileStore {
         if (input.agentId && metadata.authorId !== input.agentId) continue;
         const targetAgent = agents.get(metadata.authorId);
         if (!targetAgent) continue;
+        const promptEntry = metadata.triggerMessageId
+          ? index.messageById.get(metadata.triggerMessageId)
+          : undefined;
+        const readEntries =
+          promptEntry && promptEntry.id !== entry.id ? [entry, promptEntry] : [entry];
         const read = await readTranscriptPageLines(
           this.transcriptPath(targetThread.id),
           index.identity,
-          [entry],
+          readEntries,
         );
         const line = read.status === "ok" ? read.lines[0] : undefined;
         if (!line) {
@@ -3584,9 +3589,33 @@ export class FileStore {
         }
         const message = event.message;
         const redactedContent = this.redactSecrets(message.content);
+        const promptLine = promptEntry && read.status === "ok" ? read.lines[1] : undefined;
+        let prompt: ReviewQueueItem["prompt"];
+        if (promptLine) {
+          try {
+            const promptEvent = parseTranscriptEvent(stripTrailingNewline(promptLine));
+            if (
+              promptEvent?.type === "message.created" &&
+              promptEvent.message.id === promptEntry?.id &&
+              promptEvent.message.threadId === targetThread.id &&
+              promptEvent.message.author.kind === "user"
+            ) {
+              const promptContent = this.redactSecrets(promptEvent.message.content);
+              prompt = {
+                id: promptEvent.message.id,
+                content:
+                  promptContent.length > 800 ? `${promptContent.slice(0, 799)}…` : promptContent,
+                createdAt: promptEvent.message.createdAt,
+              };
+            }
+          } catch {
+            // A malformed prompt must not hide an otherwise valid review item.
+          }
+        }
         items.push({
           id: `${targetThread.id}:${message.id}`,
           feedback: this.redactedMessageFeedback(feedback),
+          ...(prompt ? { prompt } : {}),
           message: {
             id: message.id,
             threadId: message.threadId,

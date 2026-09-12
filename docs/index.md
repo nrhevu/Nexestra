@@ -66,3 +66,5 @@
     redacted Markdown planning surface per workspace.
 35. [Whiteboard export research](research/2026-09-12-whiteboard-workspace-export.md): preserve saved
     planning notes in the existing redacted workspace ZIP workflow.
+36. [Review prompt context research](research/2026-09-12-review-prompt-context.md): show the bounded,
+    redacted user request beside each needs-work response.
