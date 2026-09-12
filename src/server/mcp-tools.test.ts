@@ -128,6 +128,7 @@ describe("MCP tools", () => {
     ]);
     expect(sdk.callOptions).toContainEqual(expect.objectContaining({ timeout: 42_000 }));
     const resourceTool = loaded.tools.find((tool) => tool.name === "localdocs_read_mcp_resource");
+    expect(resourceTool?.description).toContain("docs://guide");
     await expect(resourceTool?.execute({ uri: "docs://guide" }, toolContext())).resolves.toBe(
       "Resource body",
     );

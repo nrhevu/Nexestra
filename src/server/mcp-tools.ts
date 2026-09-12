@@ -93,10 +93,15 @@ export async function loadMcpTools(
       );
       if (allowedUris.size > 0) {
         const name = normalizeToolName(`${serverName}_read_mcp_resource`);
+        const catalog = [...allowedUris].slice(0, 50).join("\n- ");
         tools.push({
           type: "function",
           name,
-          description: `Read a cataloged MCP resource from ${serverName}.`,
+          description:
+            `Read a cataloged MCP resource from ${serverName}. Available URIs:\n- ${catalog}`.slice(
+              0,
+              2_000,
+            ),
           parameters: {
             type: "object",
             properties: { uri: { type: "string", maxLength: 2_000 } },
