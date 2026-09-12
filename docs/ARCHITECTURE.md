@@ -180,6 +180,9 @@ Each run-history row also carries that derived estimate when available, includin
 run-history export, so a retry or individual task can be compared without reconstructing aggregate
 totals. These are current local estimates rather than provider invoices. See [ADR 0053](adr/0053-agent-pricing-profiles.md)
 and [ADR 0073](adr/0073-per-run-cost-visibility.md).
+The same filtered summary now includes the optional total estimated cost and the number of runs
+that contributed to it, so partial pricing coverage is visible in the UI and export. See
+[ADR 0074](adr/0074-run-history-cost-summary.md).
 Failed and interrupted summaries also carry a safe failure kind, never raw provider or command
 output, so the monitoring list can guide recovery without widening the response's secret boundary.
 See [ADR 0059](adr/0059-safe-run-failure-kinds.md).

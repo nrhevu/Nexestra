@@ -7,6 +7,7 @@ import {
   handleFromName,
   ReorderWorkspacesSchema,
   RunHistoryItemSchema,
+  RunHistoryMetricsSchema,
   RunHistoryRequestSchema,
   ThreadHistoryRequestSchema,
   UpdateAgentSchema,
@@ -217,6 +218,33 @@ describe("RunHistoryItemSchema", () => {
       false,
     );
     expect(RunHistoryItemSchema.safeParse({ ...item, estimatedCostUsd: Number.NaN }).success).toBe(
+      false,
+    );
+  });
+});
+
+describe("RunHistoryMetricsSchema", () => {
+  const metrics = {
+    totalRuns: 2,
+    terminalRuns: 2,
+    totalDurationMs: 1_000,
+    usageRuns: 1,
+    totalTokens: 100,
+    byAgent: [],
+  };
+
+  it("accepts partial cost coverage and rejects unsafe totals", () => {
+    expect(
+      RunHistoryMetricsSchema.safeParse({
+        ...metrics,
+        estimatedCostUsd: 0.0013,
+        estimatedCostRuns: 1,
+      }).success,
+    ).toBe(true);
+    expect(RunHistoryMetricsSchema.safeParse({ ...metrics, estimatedCostUsd: -0.01 }).success).toBe(
+      false,
+    );
+    expect(RunHistoryMetricsSchema.safeParse({ ...metrics, estimatedCostRuns: 1.5 }).success).toBe(
       false,
     );
   });

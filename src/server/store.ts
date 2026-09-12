@@ -3329,6 +3329,11 @@ export class FileStore {
           if (entry.usage) {
             metrics.usageRuns += 1;
             metrics.totalTokens += entry.usage.totalTokens;
+            const estimatedCostUsd = runEstimatedCostUsd(agents.get(entry.agentId), entry.usage);
+            if (estimatedCostUsd !== undefined) {
+              metrics.estimatedCostUsd = (metrics.estimatedCostUsd ?? 0) + estimatedCostUsd;
+              metrics.estimatedCostRuns = (metrics.estimatedCostRuns ?? 0) + 1;
+            }
           }
           const feedback = feedbackByRun.get(feedbackRunKey(entry.threadId, entry.id));
           if (feedback) {
@@ -3383,6 +3388,8 @@ export class FileStore {
           totalDurationMs: 0,
           usageRuns: 0,
           totalTokens: 0,
+          estimatedCostUsd: undefined as number | undefined,
+          estimatedCostRuns: 0,
           feedbackCount: 0,
           positiveFeedbackCount: 0,
           negativeFeedbackCount: 0,
@@ -3425,6 +3432,12 @@ export class FileStore {
         totalDurationMs: summary.totalDurationMs,
         usageRuns: summary.usageRuns,
         totalTokens: summary.totalTokens,
+        ...(summary.estimatedCostUsd === undefined
+          ? {}
+          : { estimatedCostUsd: summary.estimatedCostUsd }),
+        ...(summary.estimatedCostRuns === 0
+          ? {}
+          : { estimatedCostRuns: summary.estimatedCostRuns }),
         ...(summary.feedbackCount > 0
           ? {
               feedbackCount: summary.feedbackCount,

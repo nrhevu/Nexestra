@@ -80,3 +80,5 @@
     reuse local abort signals to stop ordinary chat runs while preserving durable retry history.
 42. [Per-run cost visibility research](research/2026-09-12-per-run-cost-visibility.md): show derived,
     redacted estimated cost beside each run-history row for task-level harness comparison.
+43. [Run-history cost summary research](research/2026-09-12-run-history-cost-summary.md): add a
+    filter-scoped estimated total with explicit coverage for harness price comparisons.

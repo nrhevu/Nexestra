@@ -570,6 +570,20 @@ export function RunHistoryView({
               <dd>{summary.usageRuns > 0 ? formatTokens(summary.totalTokens) : "—"}</dd>
             </div>
             <div>
+              <dt>Estimated cost</dt>
+              <dd>
+                {summary.estimatedCostUsd !== undefined ? formatUsd(summary.estimatedCostUsd) : "—"}
+              </dd>
+            </div>
+            <div>
+              <dt>Cost coverage</dt>
+              <dd>
+                {(summary.estimatedCostRuns ?? 0) > 0
+                  ? `${summary.estimatedCostRuns}/${summary.totalRuns}`
+                  : "—"}
+              </dd>
+            </div>
+            <div>
               <dt>Usage coverage</dt>
               <dd>
                 {summary.usageRuns}/{summary.totalRuns}

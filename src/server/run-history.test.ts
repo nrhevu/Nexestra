@@ -284,6 +284,8 @@ describe("run history server", () => {
       totalDurationMs: 65_250,
       usageRuns: 1,
       totalTokens: 1_250,
+      estimatedCostUsd: 0.0013,
+      estimatedCostRuns: 1,
       byAgent: [
         {
           agentId: agent.id,

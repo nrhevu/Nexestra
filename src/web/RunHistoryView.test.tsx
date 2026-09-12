@@ -460,6 +460,8 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
             totalDurationMs: 4_000,
             usageRuns: 2,
             totalTokens: 2_500,
+            estimatedCostUsd: 0.0125,
+            estimatedCostRuns: 2,
             feedbackCount: 2,
             positiveFeedbackCount: 1,
             negativeFeedbackCount: 1,
@@ -502,8 +504,12 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
 
     const breakdown = await screen.findByRole("region", { name: "Run history by agent" });
     expect(within(breakdown).getByText("Planner")).toBeVisible();
-    expect(screen.getByText("Helpful / needs work")).toBeVisible();
-    expect(screen.getByText("1/1")).toBeVisible();
+    const summary = screen.getByLabelText("Run history summary");
+    expect(within(summary).getByText("Helpful / needs work")).toBeVisible();
+    expect(within(summary).getByText("Estimated cost")).toBeVisible();
+    expect(within(summary).getByText("Cost coverage")).toBeVisible();
+    expect(within(summary).getAllByText("2/3")).toHaveLength(2);
+    expect(within(summary).getByText("1/1")).toBeVisible();
     expect(
       within(breakdown).getByText(
         "2 runs · 2.5K tokens (2K in / 500 out) · $0.0125 · 1 helpful / 1 needs work · 3.0 s",

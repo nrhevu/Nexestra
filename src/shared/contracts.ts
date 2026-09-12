@@ -773,6 +773,12 @@ export const RunHistoryMetricsSchema = z.object({
   totalDurationMs: z.number().int().nonnegative(),
   usageRuns: z.number().int().nonnegative(),
   totalTokens: z.number().int().nonnegative(),
+  // Sum of read-time estimates for runs with usage and complete pricing.
+  // It is omitted when no matching run has an estimate.
+  estimatedCostUsd: z.number().finite().nonnegative().optional(),
+  // Number of runs included in the estimate. A partial count keeps the sum
+  // from being mistaken for complete spend when pricing or usage is missing.
+  estimatedCostRuns: z.number().int().nonnegative().optional(),
   byAgent: z.array(RunHistoryAgentMetricsSchema).max(200).default([]),
   feedbackCount: z.number().int().nonnegative().optional(),
   positiveFeedbackCount: z.number().int().nonnegative().optional(),
