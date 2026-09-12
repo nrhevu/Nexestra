@@ -507,6 +507,7 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
     const summary = screen.getByLabelText("Run history summary");
     expect(within(summary).getByText("Helpful / needs work")).toBeVisible();
     expect(within(summary).getByText("Estimated cost")).toBeVisible();
+    expect(within(summary).getByText("$0.0125")).toBeVisible();
     expect(within(summary).getByText("Cost coverage")).toBeVisible();
     expect(within(summary).getAllByText("2/3")).toHaveLength(2);
     expect(within(summary).getByText("1/1")).toBeVisible();
