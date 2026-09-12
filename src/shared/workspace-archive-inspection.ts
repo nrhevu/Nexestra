@@ -26,6 +26,7 @@ const LOCAL_HEADER_LENGTH = 30;
 const CENTRAL_HEADER_LENGTH = 46;
 const MAX_CENTRAL_DIRECTORY_BYTES = 8 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 8 * 1024 * 1024;
+const MAX_RESTORE_STATE_BYTES = 8 * 1024 * 1024;
 const MAX_NOTICE_BYTES = 64 * 1024;
 const MAX_ARCHIVE_PATH_BYTES = 1_024;
 const ALLOWED_FLAG_BITS = 0x0808;
@@ -273,6 +274,8 @@ function restorePlan(
   let state: Record<string, unknown> | undefined;
   if (stateBytes === undefined) {
     blockers.push("The archive does not contain readable state metadata.");
+  } else if (stateBytes.byteLength > MAX_RESTORE_STATE_BYTES) {
+    blockers.push("The state metadata is too large for a browser restore preflight.");
   } else {
     try {
       const parsed = JSON.parse(UTF8_DECODER.decode(stateBytes));
