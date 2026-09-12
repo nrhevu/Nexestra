@@ -76,3 +76,4 @@
 | [0073](0073-per-run-cost-visibility.md) | Accepted | Show derived estimated cost on each run-history row |
 | [0074](0074-run-history-cost-summary.md) | Accepted | Summarize filter-scoped estimated run cost with coverage |
 | [0075](0075-task-result-knowledge-capture.md) | Accepted | Capture completed Worker results from Taskboard through canonical message provenance |
+| [0076](0076-run-history-task-context.md) | Accepted | Show delegated Taskboard titles in run-history rows |

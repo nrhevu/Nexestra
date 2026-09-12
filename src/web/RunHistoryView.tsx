@@ -662,6 +662,9 @@ export function RunHistoryView({
                           {item.threadName}
                           {item.threadArchived ? " (archived)" : ""}
                         </span>
+                        {item.taskTitle ? (
+                          <span className="run-history-task">Task: {item.taskTitle}</span>
+                        ) : null}
                       </div>
                       <div className="run-history-meta">
                         <span

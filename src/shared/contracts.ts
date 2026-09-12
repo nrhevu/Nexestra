@@ -742,6 +742,8 @@ export const RunHistoryItemSchema = z.object({
   agentHandle: z.string().optional(),
   threadName: z.string(),
   threadArchived: z.boolean(),
+  // Delegated Worker runs carry their Taskboard title for monitoring context.
+  taskTitle: z.string().max(512).optional(),
   // Derived from the agent's local pricing profile and provider-reported usage.
   // It is omitted when either input is unavailable and is never persisted to transcripts.
   estimatedCostUsd: z.number().finite().nonnegative().optional(),

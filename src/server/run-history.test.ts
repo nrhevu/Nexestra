@@ -134,6 +134,35 @@ describe("run history server", () => {
     expect(failed.summary.negativeFeedbackCount).toBe(1);
   });
 
+  it("includes delegated task titles and omits unrelated legacy runs", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected seeded workspace");
+    const agent = await createWorkerAgent(store);
+    const thread = await createThread(store, "Delegation");
+    const task = await store.createTask({ workspaceId: workspace.id, title: "Document the API" });
+    const run = makeRun("assignment-run", thread.id, agent.id, "2026-01-03T00:00:00.000Z");
+    await store.updateRun(run);
+    await store.createAssignment({
+      id: run.id,
+      workspaceId: workspace.id,
+      taskId: task.id,
+      threadId: thread.id,
+      masterRunId: "master-run",
+      workerAgentId: agent.id,
+      repositoryId: "repository",
+      status: "completed",
+      branch: "nexestra/assignment-run",
+      worktreePath: "worktrees/assignment-run",
+      createdAt: run.createdAt,
+      updatedAt: run.updatedAt,
+    });
+    await store.updateRun(makeRun("legacy-run", thread.id, agent.id, "2026-01-02T00:00:00.000Z"));
+    const page = await store.listRunHistory({ workspaceId: workspace.id, limit: 50 });
+    expect(page.items.find((item) => item.run.id === run.id)?.taskTitle).toBe("Document the API");
+    expect(page.items.find((item) => item.run.id === "legacy-run")?.taskTitle).toBeUndefined();
+  });
+
   it("keeps retry ratings scoped to the run id carried by the reply", async () => {
     const store = await openStore();
     const [workspace] = store.listWorkspaces();

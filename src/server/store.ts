@@ -3457,6 +3457,11 @@ export class FileStore {
           .filter((entry) => entry.workspaceId === workspace.id)
           .map((entry) => [entry.id, entry]),
       );
+      const taskByAssignmentId = new Map(
+        this.state.assignments
+          .filter((entry) => entry.workspaceId === workspace.id)
+          .map((entry) => [entry.id, this.state.tasks.find((task) => task.id === entry.taskId)]),
+      );
       const items = pageSummaries.map((summary): RunHistoryItem => {
         const agent = agents.get(summary.agentId);
         const thread = threads.get(summary.threadId);
@@ -3464,6 +3469,7 @@ export class FileStore {
         const estimatedCostUsd = summary.usage
           ? runEstimatedCostUsd(agent, summary.usage)
           : undefined;
+        const task = taskByAssignmentId.get(summary.id);
         return {
           run: {
             id: summary.id,
@@ -3482,6 +3488,7 @@ export class FileStore {
           agentHandle: agent ? this.redactHandleValue(agent.handle) : undefined,
           threadName: thread ? this.redactSecrets(thread.name) : "Unknown",
           threadArchived: thread?.archived ?? false,
+          ...(task ? { taskTitle: this.redactSecrets(task.title) } : {}),
           ...(estimatedCostUsd === undefined ? {} : { estimatedCostUsd }),
         };
       });

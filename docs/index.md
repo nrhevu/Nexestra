@@ -84,3 +84,5 @@
     filter-scoped estimated total with explicit coverage for harness price comparisons.
 44. [Task-result Knowledge capture research](research/2026-09-12-task-result-knowledge-capture.md):
     transfer completed Worker replies from Taskboard through the existing reviewed capture flow.
+45. [Run-history task context research](research/2026-09-12-run-history-task-context.md): add
+    redacted delegated Taskboard titles to monitoring rows without changing pagination semantics.
