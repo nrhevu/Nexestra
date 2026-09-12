@@ -798,7 +798,7 @@ describe("mention dispatch", () => {
       sourceMessage: {
         threadId: thread.id,
         content: "Implemented and committed the assigned change.",
-        author: { name: "Worker" },
+        author: { name: "Builder" },
       },
     });
   });

@@ -6022,7 +6022,10 @@ function TaskProcessDialog({
                     {process.sourceMessage && (
                       <button
                         type="button"
-                        onClick={() => onCaptureMessage(process.sourceMessage!)}
+                        onClick={() => {
+                          const sourceMessage = process.sourceMessage;
+                          if (sourceMessage) onCaptureMessage(sourceMessage);
+                        }}
                       >
                         Save as Knowledge
                       </button>
