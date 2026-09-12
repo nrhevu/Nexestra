@@ -839,6 +839,8 @@ export const RunHistoryTelemetrySummarySchema = z.object({
   }),
 });
 export type RunHistoryTelemetrySummary = z.infer<typeof RunHistoryTelemetrySummarySchema>;
+export const RunHistoryTelemetryResponseSchema = z.array(RunHistoryTelemetrySummarySchema).max(200);
+export type RunHistoryTelemetryResponse = z.infer<typeof RunHistoryTelemetryResponseSchema>;
 
 export const RunHistoryPageSchema = z.object({
   workspaceId: z.string(),

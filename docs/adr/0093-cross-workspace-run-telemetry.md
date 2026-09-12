@@ -7,7 +7,7 @@ Accepted.
 ## Decision
 
 Expose `GET /api/runs/summary` as a count-only telemetry projection. Without a workspace query it
-returns one aggregate per workspace; with `workspaceId` it returns only that workspace. Each entry
+returns one aggregate per first 200 workspaces; with `workspaceId` it returns only that workspace. Each entry
 contains run counts, token totals, local estimated cost coverage, over-budget count, and transcript
 coverage. It never returns run rows, messages, tool calls, or provider errors.
 
