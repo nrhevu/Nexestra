@@ -613,7 +613,8 @@ credentials.
   lifecycle record they emit, while custom OpenAI-compatible providers provide token-level text.
   Thinking shows only reasoning or summaries explicitly emitted by a runtime; hidden model
   chain-of-thought is unavailable.
-- Queues live in process. A restart marks runs interrupted, and the user must click Retry.
+- Queues live in process. A restart marks runs interrupted; the user can click Retry from the
+  conversation controls or the corresponding Run history row.
 - Markdown code blocks do not yet have syntax highlighting, and web links are not unfurled.
 - Artifact deletion, nested replies, reactions, and multi-user authentication are not supported.
 - Transcripts use one file per thread, not one file for the entire workspace; this boundary reduces
