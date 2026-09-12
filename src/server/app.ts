@@ -76,13 +76,15 @@ export function createApp(options: CreateAppOptions) {
   app.get("/api/health", (context) => context.json({ ok: true, version: "0.1.0" }));
 
   app.get("/api/bootstrap", async (context) => {
-    const workspaces = options.store.listWorkspaces();
+    const workspaces = options.store.listActiveWorkspaces();
     const requestedWorkspaceId = context.req.query("workspaceId");
     const workspace =
       requestedWorkspaceId === undefined
         ? workspaces[0]
         : options.store.getWorkspace(requestedWorkspaceId);
-    if (!workspace) throw new StoreError("not_found", "Workspace not found.");
+    if (!workspace || workspace.archived === true) {
+      throw new StoreError("not_found", "Workspace not found.");
+    }
     const runtime = await runner.runtimeStatus();
     const harnessConfig = await loadHarnessConfig(options.store.workspacePath);
     const customSurfaces = harnessConfig.surfaces.map((surface) => ({
@@ -122,6 +124,7 @@ export function createApp(options: CreateAppOptions) {
     );
     const data: BootstrapData = {
       workspaces,
+      archivedWorkspaces: options.store.listArchivedWorkspaces(),
       workspace,
       agents: options.store
         .listAgents(workspace.id)
@@ -154,9 +157,11 @@ export function createApp(options: CreateAppOptions) {
     const requestedWorkspaceId = context.req.query("workspaceId");
     const workspace =
       requestedWorkspaceId === undefined
-        ? options.store.listWorkspaces()[0]
+        ? options.store.listActiveWorkspaces()[0]
         : options.store.getWorkspace(requestedWorkspaceId);
-    if (!workspace) throw new StoreError("not_found", "Workspace not found.");
+    if (!workspace || workspace.archived === true) {
+      throw new StoreError("not_found", "Workspace not found.");
+    }
     return context.json(
       workspaceActivity(options.store, workspace.id, dispatcher.activeRuns(workspace.id)),
     );
@@ -164,7 +169,7 @@ export function createApp(options: CreateAppOptions) {
 
   app.get("/api/activity/summaries", (context) =>
     context.json(
-      options.store.listWorkspaces().map((workspace) => {
+      options.store.listActiveWorkspaces().map((workspace) => {
         const activity = workspaceActivity(
           options.store,
           workspace.id,
@@ -210,7 +215,7 @@ export function createApp(options: CreateAppOptions) {
     );
   });
 
-  app.get("/api/workspaces", (context) => context.json(options.store.listWorkspaces()));
+  app.get("/api/workspaces", (context) => context.json(options.store.listActiveWorkspaces()));
 
   app.post("/api/workspaces", async (context) => {
     return context.json(await options.store.createWorkspace(await context.req.json()), 201);
@@ -221,6 +226,24 @@ export function createApp(options: CreateAppOptions) {
       await options.store.updateWorkspace(context.req.param("id"), await context.req.json()),
     );
   });
+
+  app.post("/api/workspaces/:id/archive", async (context) => {
+    return context.json(
+      await options.store.archiveWorkspace(
+        context.req.param("id"),
+        await context.req.json(),
+        dispatcher.activeRuns(context.req.param("id")),
+      ),
+    );
+  });
+
+  app.post("/api/workspaces/:id/restore", async (context) => {
+    return context.json(await options.store.restoreWorkspace(context.req.param("id")));
+  });
+
+  app.get("/api/workspaces/archived", (context) =>
+    context.json(options.store.listArchivedWorkspaces()),
+  );
 
   app.put("/api/workspaces/order", async (context) => {
     return context.json(await options.store.reorderWorkspaces(await context.req.json()));

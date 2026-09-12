@@ -135,3 +135,4 @@
 71. [Workspace deletion preflight research](research/2026-09-12-workspace-deletion-preflight.md): surface bounded dependencies and active-work blockers before destructive deletion.
 72. [Workspace recovery manifest research](research/2026-09-12-workspace-recovery-manifest.md): hash bounded workspace-owned files without exposing credentials before transactional deletion.
 73. [Knowledge revision comparison research](research/2026-09-12-knowledge-revision-comparison.md): compare redacted text revisions locally with bounded line-diff limits.
+74. [Reversible workspace archive research](research/2026-09-12-reversible-workspace-archive.md): hide inactive workspaces atomically while preserving their local data for restore.

@@ -12,6 +12,7 @@ export const WorkspaceSchema = z.object({
   slug: z.string(),
   createdAt: z.string(),
   updatedAt: z.string(),
+  archived: z.boolean().optional(),
 });
 export type Workspace = z.infer<typeof WorkspaceSchema>;
 
@@ -114,6 +115,11 @@ export const CreateWorkspaceSchema = z.object({
 });
 
 export const UpdateWorkspaceSchema = CreateWorkspaceSchema;
+
+export const ArchiveWorkspaceSchema = z.object({
+  confirmationName: z.string().trim().min(1).max(60),
+});
+export type ArchiveWorkspaceInput = z.infer<typeof ArchiveWorkspaceSchema>;
 
 export const ReorderWorkspacesSchema = z.object({
   workspaceIds: z
@@ -1276,6 +1282,7 @@ export function runAttentionItem(
 
 export interface BootstrapData {
   workspaces: Workspace[];
+  archivedWorkspaces?: Workspace[];
   workspace: Workspace;
   agents: AgentView[];
   threads: Thread[];

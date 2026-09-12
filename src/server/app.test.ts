@@ -409,6 +409,73 @@ describe("HTTP app", () => {
     expect(store.listWorkspaces().map((entry) => entry.id)).toEqual([seeded.id, created.id]);
   });
 
+  it("archives and restores a workspace without moving its owned state", async () => {
+    const [first] = store.listWorkspaces();
+    if (!first) throw new Error("expected seeded workspace");
+    const second = await store.createWorkspace({ name: "Archive me" });
+    const wrong = await app.request(`/api/workspaces/${first.id}/archive`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ confirmationName: "wrong" }),
+    });
+    expect(wrong.status).toBe(409);
+
+    const archived = await app.request(`/api/workspaces/${first.id}/archive`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ confirmationName: first.name }),
+    });
+    expect(archived.status).toBe(200);
+    await expect(archived.json()).resolves.toMatchObject({ id: first.id, archived: true });
+    expect(store.listActiveWorkspaces().map((entry) => entry.id)).toEqual([second.id]);
+    await expect(app.request(`/api/bootstrap?workspaceId=${first.id}`)).resolves.toMatchObject({
+      status: 404,
+    });
+    const activeResponse = await app.request("/api/workspaces");
+    await expect(activeResponse.json()).resolves.toEqual([
+      expect.objectContaining({ id: second.id }),
+    ]);
+
+    const restored = await app.request(`/api/workspaces/${first.id}/restore`, {
+      method: "POST",
+      body: "{}",
+    });
+    expect(restored.status).toBe(200);
+    await expect(restored.json()).resolves.toMatchObject({ id: first.id, archived: false });
+    expect(store.listActiveWorkspaces().map((entry) => entry.id)).toEqual([first.id, second.id]);
+  });
+
+  it("rejects archiving the last active workspace and active work", async () => {
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected seeded workspace");
+    const last = await app.request(`/api/workspaces/${workspace.id}/archive`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ confirmationName: workspace.name }),
+    });
+    expect(last.status).toBe(409);
+    await expect(last.json()).resolves.toMatchObject({
+      error: { message: expect.stringContaining("last active") },
+    });
+
+    const second = await store.createWorkspace({ name: "Busy workspace" });
+    const activeRun: AgentRun = {
+      id: "busy-archive-run",
+      threadId: "missing-thread",
+      triggerMessageId: "message",
+      agentId: "agent",
+      attempt: 1,
+      status: "running",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const busy = await store
+      .archiveWorkspace(second.id, { confirmationName: second.name }, [activeRun])
+      .catch((error: unknown) => error);
+    expect(busy).toMatchObject({ code: "conflict" });
+    expect(store.getWorkspace(second.id)).toMatchObject({ archived: false });
+  });
+
   it.each(["bootstrap", "activity"])(
     "rejects an explicitly unknown workspace for %s instead of returning another workspace",
     async (endpoint) => {

@@ -243,6 +243,7 @@ export function App() {
   const [agentToDelete, setAgentToDelete] = useState<AgentView>();
   const [agentToEdit, setAgentToEdit] = useState<AgentView>();
   const [workspaceDeletePreflight, setWorkspaceDeletePreflight] = useState<Workspace>();
+  const [workspaceArchiveTarget, setWorkspaceArchiveTarget] = useState<Workspace>();
   const [threadToRename, setThreadToRename] = useState<Thread>();
   const [messageSearch, setMessageSearch] = useState<{
     query: string;
@@ -2549,6 +2550,15 @@ export function App() {
           onExport={openWorkspaceExport}
           onInspectArchive={openWorkspaceArchiveInspection}
           onDeletePreflight={setWorkspaceDeletePreflight}
+          onArchive={(workspace) => setWorkspaceArchiveTarget(workspace)}
+          onRestore={async (workspaceId) => {
+            await api(`/api/workspaces/${encodeURIComponent(workspaceId)}/restore`, {
+              method: "POST",
+              body: "{}",
+            });
+            await refresh(true);
+            flash("Workspace restored.");
+          }}
           onRename={async (workspaceId, name) => {
             await renameWorkspace(workspaceId, name);
             flash("Workspace renamed.");
@@ -2567,6 +2577,31 @@ export function App() {
         <WorkspaceDeletionPreflightDialog
           workspace={workspaceDeletePreflight}
           onClose={() => setWorkspaceDeletePreflight(undefined)}
+        />
+      )}
+      {workspaceArchiveTarget && (
+        <WorkspaceArchiveWorkspaceDialog
+          workspace={workspaceArchiveTarget}
+          onClose={() => setWorkspaceArchiveTarget(undefined)}
+          onArchived={async (confirmationName) => {
+            const workspaceId = workspaceArchiveTarget.id;
+            await api(`/api/workspaces/${encodeURIComponent(workspaceId)}/archive`, {
+              method: "POST",
+              body: JSON.stringify({ confirmationName }),
+            });
+            const wasCurrent = workspaceIdRef.current === workspaceId;
+            if (wasCurrent) {
+              workspaceGenerationRef.current += 1;
+              workspaceIdRef.current = undefined;
+              writeBrowserValue("nexestra.workspaceId", null);
+              routeRef.current = { view: "threads", surface: "agents" };
+              window.history.replaceState({}, "", "/");
+              setRoute(routeRef.current);
+            }
+            setWorkspaceArchiveTarget(undefined);
+            await refresh(true, wasCurrent ? undefined : workspaceIdRef.current);
+            flash("Workspace archived. Its data remains available for restore.");
+          }}
         />
       )}
       {(modal === "export" || modal === "archive-inspection") &&
@@ -8290,6 +8325,64 @@ function WorkspaceDeletionPreflightDialog({
   );
 }
 
+function WorkspaceArchiveWorkspaceDialog({
+  workspace,
+  onClose,
+  onArchived,
+}: {
+  workspace: Workspace;
+  onClose: () => void;
+  onArchived: (confirmationName: string) => Promise<void>;
+}) {
+  const [confirmationName, setConfirmationName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const submit = async () => {
+    setBusy(true);
+    setError(undefined);
+    try {
+      await onArchived(confirmationName);
+    } catch (caught) {
+      setError(messageFrom(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal title={`Archive ${workspace.name}?`} eyebrow="REVERSIBLE ARCHIVE" onClose={onClose}>
+      <p>
+        Archiving hides this workspace from the active rail and keeps its transcripts, artifacts,
+        Knowledge, repositories, worktrees, and credentials unchanged for later restore.
+      </p>
+      <label htmlFor="archive-workspace-confirmation">Type the exact workspace name</label>
+      <input
+        id="archive-workspace-confirmation"
+        value={confirmationName}
+        onChange={(event) => setConfirmationName(event.target.value)}
+        maxLength={60}
+      />
+      {error && (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="modal-actions">
+        <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="danger-button"
+          onClick={() => void submit()}
+          disabled={busy || confirmationName !== workspace.name}
+        >
+          {busy ? "Archiving…" : "Archive workspace"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 function SettingsDialog({
   data,
   desktopNotificationsEnabled,
@@ -8301,6 +8394,8 @@ function SettingsDialog({
   onExport,
   onInspectArchive,
   onDeletePreflight,
+  onArchive,
+  onRestore,
 }: {
   data: BootstrapData;
   desktopNotificationsEnabled: boolean;
@@ -8312,15 +8407,23 @@ function SettingsDialog({
   onExport: () => void;
   onInspectArchive: () => void;
   onDeletePreflight: (workspace: Workspace) => void;
+  onArchive: (workspace: Workspace) => void;
+  onRestore: (workspaceId: string) => Promise<void>;
 }) {
   const [copied, setCopied] = useState(false);
   const [draftName, setDraftName] = useState(data.workspace.name);
   const [saving, setSaving] = useState(false);
   const [reloading, setReloading] = useState(false);
   const [error, setError] = useState<string>();
+  const [archivedWorkspaces, setArchivedWorkspaces] = useState<Workspace[]>([]);
+  const [restoringWorkspaceId, setRestoringWorkspaceId] = useState<string>();
+  const [archiveError, setArchiveError] = useState<string>();
   useEffect(() => {
     setDraftName(data.workspace.name);
   }, [data.workspace.name]);
+  useEffect(() => {
+    setArchivedWorkspaces(data.archivedWorkspaces ?? []);
+  }, [data.archivedWorkspaces]);
 
   const move = async (workspaceId: string, delta: number) => {
     const index = data.workspaces.findIndex((entry) => entry.id === workspaceId);
@@ -8446,6 +8549,15 @@ function SettingsDialog({
                 <button
                   type="button"
                   className="danger-button"
+                  aria-label={`Archive ${workspace.name}`}
+                  disabled={saving}
+                  onClick={() => onArchive(workspace)}
+                >
+                  <Archive size={13} />
+                </button>
+                <button
+                  type="button"
+                  className="danger-button"
                   aria-label={`Deletion preflight for ${workspace.name}`}
                   disabled={saving}
                   onClick={() => onDeletePreflight(workspace)}
@@ -8456,6 +8568,44 @@ function SettingsDialog({
             </li>
           ))}
         </ol>
+        <div className="archived-workspaces">
+          <span className="settings-section-title">Archived workspaces</span>
+          {archiveError && <p className="form-error">{archiveError}</p>}
+          {archivedWorkspaces.length === 0 ? (
+            <p className="settings-hint">No archived workspaces.</p>
+          ) : (
+            <ul className="workspace-order archived" aria-label="Archived workspaces">
+              {archivedWorkspaces.map((workspace) => (
+                <li key={workspace.id}>
+                  <span className="workspace-order-name" title={workspace.name}>
+                    {workspace.name}
+                  </span>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={restoringWorkspaceId !== undefined}
+                    onClick={async () => {
+                      setRestoringWorkspaceId(workspace.id);
+                      setArchiveError(undefined);
+                      try {
+                        await onRestore(workspace.id);
+                        setArchivedWorkspaces((current) =>
+                          current.filter((entry) => entry.id !== workspace.id),
+                        );
+                      } catch (caught) {
+                        setArchiveError(messageFrom(caught));
+                      } finally {
+                        setRestoringWorkspaceId(undefined);
+                      }
+                    }}
+                  >
+                    {restoringWorkspaceId === workspace.id ? "Restoring…" : "Restore"}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
         <form
           className="settings-rename"
           onSubmit={async (event) => {

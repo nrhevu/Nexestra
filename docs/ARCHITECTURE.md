@@ -694,9 +694,11 @@ credentials.
 - OpenCode `plan` is an application policy, not an independent OS or container sandbox.
 - Workspaces can be renamed and reordered from Settings. A read-only deletion preflight reports
   bounded counts, saved-credential count and active-work blockers, and includes a downloadable,
-  credential-free recovery manifest with file hashes; deletion, tombstones and rollback are not yet
-  supported. See [ADR 0103](adr/0103-workspace-deletion-preflight.md) and [ADR
-  0104](adr/0104-workspace-recovery-manifest.md).
+  credential-free recovery manifest with file hashes. A confirmed soft archive marks a workspace
+  inactive in `state.json` and can be reversed from Settings without moving owned files; physical
+  trash moves, purge, and rollback journals are not yet supported. See [ADR
+  0103](adr/0103-workspace-deletion-preflight.md), [ADR 0104](adr/0104-workspace-recovery-manifest.md),
+  and [ADR 0106](adr/0106-reversible-workspace-archive.md).
 - Device OAuth displays raw Codex CLI instructions; it does not yet use `codex app-server` JSON-RPC.
 - Anthropic Messages currently uses the common text/tool-use path; provider-specific server tools,
   prompt-caching controls and extended-thinking options are not exposed.

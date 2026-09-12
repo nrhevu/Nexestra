@@ -1064,7 +1064,7 @@ describe("Workspace settings", () => {
   });
 
   it("opens a read-only workspace deletion preflight with blockers and counts", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _requestInit?: RequestInit) => {
       const path = String(input);
       if (path === "/api/bootstrap") return jsonResponse(bootstrapData);
       if (path === `/api/workspaces/${workspace.id}/delete/preflight`) {
@@ -1102,6 +1102,9 @@ describe("Workspace settings", () => {
           },
         });
       }
+      if (path === `/api/workspaces/${workspace.id}/archive`) {
+        return jsonResponse({ ...workspace, archived: true });
+      }
       return jsonResponse({ error: { message: "Not found" } }, 404);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -1122,6 +1125,27 @@ describe("Workspace settings", () => {
     expect(
       within(dialog).getByRole("button", { name: "Download recovery manifest" }),
     ).toBeVisible();
+    await user.click(within(dialog).getByText("Close", { selector: "button" }));
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Local workspace" })).getByRole("button", {
+        name: "Archive Nexestra",
+      }),
+    );
+    const archiveDialog = await screen.findByRole("dialog", { name: "Archive Nexestra?" });
+    await user.type(
+      within(archiveDialog).getByLabelText("Type the exact workspace name"),
+      workspace.name,
+    );
+    await user.click(within(archiveDialog).getByRole("button", { name: "Archive workspace" }));
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([value, requestInit]) =>
+            String(value) === `/api/workspaces/${workspace.id}/archive` &&
+            requestInit?.method === "POST",
+        ),
+      ).toBe(true);
+    });
   });
 
   it("reorders workspaces with accessible move controls and keeps the active workspace active", async () => {

@@ -106,3 +106,4 @@
 | [0103](0103-workspace-deletion-preflight.md) | Accepted | Add a read-only workspace deletion safety preflight |
 | [0104](0104-workspace-recovery-manifest.md) | Accepted | Add a read-only credential-free workspace recovery manifest |
 | [0105](0105-knowledge-revision-comparison.md) | Accepted | Compare bounded Knowledge document revisions |
+| [0106](0106-reversible-workspace-archive.md) | Accepted | Add reversible soft workspace archival |

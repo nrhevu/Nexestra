@@ -21,6 +21,7 @@ import {
   type Agent,
   type AgentRun,
   AgentSchema,
+  ArchiveWorkspaceSchema,
   type Artifact,
   ArtifactSchema,
   ATTENTION_AUDIT_MAX_ENTRIES,
@@ -553,6 +554,18 @@ export class FileStore {
     return structuredClone(this.state.workspaces);
   }
 
+  listActiveWorkspaces(): Workspace[] {
+    return structuredClone(
+      this.state.workspaces.filter((workspace) => workspace.archived !== true),
+    );
+  }
+
+  listArchivedWorkspaces(): Workspace[] {
+    return structuredClone(
+      this.state.workspaces.filter((workspace) => workspace.archived === true),
+    );
+  }
+
   getWorkspace(id: string): Workspace | undefined {
     const workspace = this.state.workspaces.find((entry) => entry.id === id);
     return workspace ? structuredClone(workspace) : undefined;
@@ -562,7 +575,9 @@ export class FileStore {
     workspaceId: string,
     activeRuns: readonly AgentRun[] = [],
   ): Promise<WorkspaceDeletionPreflight> {
-    const workspace = this.state.workspaces.find((entry) => entry.id === workspaceId);
+    const workspace = this.state.workspaces.find(
+      (entry) => entry.id === workspaceId && entry.archived !== true,
+    );
     if (!workspace) throw new StoreError("not_found", "Workspace not found.");
     const agents = this.state.agents.filter((entry) => entry.workspaceId === workspaceId);
     const threads = this.state.threads.filter((entry) => entry.workspaceId === workspaceId);
@@ -586,7 +601,7 @@ export class FileStore {
       );
     }
     const blockers: WorkspaceDeletionPreflight["blockers"] = [];
-    if (this.state.workspaces.length <= 1) blockers.push("last_workspace");
+    if (this.listActiveWorkspaces().length <= 1) blockers.push("last_workspace");
     if (activeRuns.length > 0) blockers.push("active_runs");
     if (activeAssignments.length > 0) blockers.push("active_assignments");
     const recoveryManifest = await this.workspaceRecoveryManifest(workspaceId);
@@ -595,7 +610,7 @@ export class FileStore {
       canDelete: blockers.length === 0,
       confirmationName: workspace.name,
       counts: {
-        workspacesRemaining: this.state.workspaces.length,
+        workspacesRemaining: this.listActiveWorkspaces().length,
         agents: agents.length,
         credentialBearingAgents: agents.filter((agent) => Object.hasOwn(this.credentials, agent.id))
           .length,
@@ -913,6 +928,7 @@ export class FileStore {
         slug: uniqueWorkspaceSlug(input.name, this.state.workspaces),
         createdAt: now,
         updatedAt: now,
+        archived: false,
       });
       const thread = createThreadRecord(workspace.id, "general", now, []);
       const next = {
@@ -950,10 +966,72 @@ export class FileStore {
     });
   }
 
+  async archiveWorkspace(
+    id: string,
+    rawInput: unknown,
+    activeRuns: readonly AgentRun[] = [],
+  ): Promise<Workspace> {
+    const input = ArchiveWorkspaceSchema.parse(rawInput);
+    return this.withWrite(async () => {
+      const current = this.state.workspaces.find((workspace) => workspace.id === id);
+      if (!current || current.archived === true) {
+        throw new StoreError("not_found", "Workspace not found.");
+      }
+      if (input.confirmationName !== current.name) {
+        throw new StoreError("conflict", "Type the exact workspace name to archive it.");
+      }
+      if (this.state.workspaces.filter((workspace) => workspace.archived !== true).length <= 1) {
+        throw new StoreError("conflict", "The last active workspace cannot be archived.");
+      }
+      if (activeRuns.length > 0) {
+        throw new StoreError("conflict", "Wait for active agent runs to finish before archiving.");
+      }
+      const activeAssignments = this.state.assignments.filter(
+        (assignment) =>
+          assignment.workspaceId === id &&
+          (assignment.status === "queued" || assignment.status === "running"),
+      );
+      if (activeAssignments.length > 0) {
+        throw new StoreError(
+          "conflict",
+          "Wait for active Worker assignments to finish before archiving.",
+        );
+      }
+      const nextState = structuredClone(this.state);
+      const index = nextState.workspaces.findIndex((workspace) => workspace.id === id);
+      const next = nextState.workspaces[index];
+      if (!next) throw new StoreError("not_found", "Workspace not found.");
+      next.archived = true;
+      next.updatedAt = new Date().toISOString();
+      await this.writeState(nextState);
+      this.state = nextState;
+      return structuredClone(next);
+    });
+  }
+
+  async restoreWorkspace(id: string): Promise<Workspace> {
+    return this.withWrite(async () => {
+      const current = this.state.workspaces.find((workspace) => workspace.id === id);
+      if (current?.archived !== true) {
+        throw new StoreError("not_found", "Archived workspace not found.");
+      }
+      const nextState = structuredClone(this.state);
+      const index = nextState.workspaces.findIndex((workspace) => workspace.id === id);
+      const next = nextState.workspaces[index];
+      if (!next) throw new StoreError("not_found", "Archived workspace not found.");
+      next.archived = false;
+      next.updatedAt = new Date().toISOString();
+      await this.writeState(nextState);
+      this.state = nextState;
+      return structuredClone(next);
+    });
+  }
+
   async reorderWorkspaces(rawInput: unknown): Promise<Workspace[]> {
     const { workspaceIds } = ReorderWorkspacesSchema.parse(rawInput);
     return this.withWrite(async () => {
-      const byId = new Map(this.state.workspaces.map((workspace) => [workspace.id, workspace]));
+      const active = this.state.workspaces.filter((workspace) => workspace.archived !== true);
+      const byId = new Map(active.map((workspace) => [workspace.id, workspace]));
       if (workspaceIds.length !== byId.size || workspaceIds.some((id) => !byId.has(id))) {
         throw new StoreError(
           "conflict",
@@ -962,11 +1040,14 @@ export class FileStore {
       }
       const next = {
         ...this.state,
-        workspaces: workspaceIds.map((id) => this.requireWorkspace(id)),
+        workspaces: [
+          ...workspaceIds.map((id) => byId.get(id) as Workspace),
+          ...this.state.workspaces.filter((workspace) => workspace.archived === true),
+        ],
       };
       await this.writeState(next);
       this.state = next;
-      return this.listWorkspaces();
+      return this.listActiveWorkspaces();
     });
   }
 
@@ -3745,7 +3826,7 @@ export class FileStore {
   async runHistoryTelemetrySummary(workspaceId?: string): Promise<RunHistoryTelemetrySummary[]> {
     const workspaces = workspaceId
       ? [this.requireWorkspace(workspaceId)]
-      : this.listWorkspaces().slice(0, 200);
+      : this.listActiveWorkspaces().slice(0, 200);
     const pages = await Promise.all(
       workspaces.map((workspace) => this.listRunHistory({ workspaceId: workspace.id, limit: 1 })),
     );
@@ -4328,8 +4409,8 @@ export class FileStore {
 
   private requireWorkspace(id?: string): Workspace {
     const workspace = id
-      ? this.state.workspaces.find((entry) => entry.id === id)
-      : this.state.workspaces[0];
+      ? this.state.workspaces.find((entry) => entry.id === id && entry.archived !== true)
+      : this.state.workspaces.find((entry) => entry.archived !== true);
     if (!workspace) throw new StoreError("not_found", "Workspace not found.");
     return workspace;
   }

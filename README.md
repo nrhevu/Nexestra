@@ -22,7 +22,10 @@ Settings can rename any workspace and reorder the rail. The order is saved in `s
 restored after a restart. Each workspace also has a **Deletion preflight** action that reports
 bounded data counts, saved-credential count, active runs/assignments, and the exact name a future
 delete flow would require. It also offers a credential-free recovery manifest with bounded file
-paths, sizes, and SHA-256 hashes. It is read-only; deletion and rollback are not yet supported.
+paths, sizes, and SHA-256 hashes. **Archive workspace** is a reversible soft archive: it hides a
+workspace from the active rail after exact-name confirmation while leaving its files and credentials
+untouched; restore is available from Settings. Physical trash moves and permanent deletion are not
+yet supported.
 
 Choose **Export selected workspace** in Settings or use `/export workspace`, then **Download ZIP**,
 to export workspace metadata, active and archived conversations, uploaded files and retained
