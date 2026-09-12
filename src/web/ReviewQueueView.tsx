@@ -104,6 +104,12 @@ export function ReviewQueueView({
   };
 
   const rows = page?.items ?? [];
+  const selectedRows = rows.filter((item) => selectedIds.has(item.id));
+  const bulkLabel =
+    selectedRows.length > 0 &&
+    selectedRows.every((item) => item.feedback.reviewStatus === "resolved")
+      ? "Reopen selected reviews"
+      : "Mark selected reviewed";
   const busy = loading || loadingMore || bulkResolving;
   const nextCursor = page?.page.nextCursor ?? null;
 
@@ -128,7 +134,11 @@ export function ReviewQueueView({
     setBulkResolving(true);
     try {
       for (const item of selected) {
-        await onSetReviewStatus(item.message.threadId, item.message.id, "resolved");
+        await onSetReviewStatus(
+          item.message.threadId,
+          item.message.id,
+          item.feedback.reviewStatus === "resolved" ? "open" : "resolved",
+        );
       }
       setSelectedIds(new Set());
       await load();
@@ -161,7 +171,7 @@ export function ReviewQueueView({
             onClick={() => void resolveSelected()}
             disabled={bulkResolving || selectedIds.size === 0}
           >
-            {bulkResolving ? "Marking…" : `Mark selected reviewed (${selectedIds.size})`}
+            {bulkResolving ? "Updating…" : `${bulkLabel} (${selectedIds.size})`}
           </button>
         </div>
       </header>
@@ -253,7 +263,7 @@ export function ReviewQueueView({
                         return next;
                       })
                     }
-                    disabled={bulkResolving || item.feedback.reviewStatus === "resolved"}
+                    disabled={bulkResolving}
                   />
                   Select
                 </label>

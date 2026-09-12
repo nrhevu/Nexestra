@@ -141,6 +141,12 @@ describe("ReviewQueueView", () => {
     );
     await userEvent.selectOptions(screen.getByLabelText("Review status"), "resolved");
     expect(await screen.findByText("A response that needs review.")).toBeVisible();
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select review for Reviewer" }));
+    await userEvent.click(screen.getByRole("button", { name: /Reopen selected reviews/ }));
+    await waitFor(() =>
+      expect(onSetReviewStatus).toHaveBeenCalledWith(thread.id, "message-reply", "open"),
+    );
+    onSetReviewStatus.mockClear();
     await userEvent.click(screen.getByRole("button", { name: "Reopen review" }));
     expect(onSetReviewStatus).toHaveBeenCalledExactlyOnceWith(thread.id, "message-reply", "open");
   });
