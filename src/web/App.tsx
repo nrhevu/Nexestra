@@ -2096,18 +2096,20 @@ export function App() {
               else openThread(threadId);
             }}
             onTask={(id) => void inspectTask(id)}
-            onSnooze={(id) => {
+            onSnooze={(id, durationMinutes = 60) => {
               void (async () => {
                 try {
                   await api(
                     `/api/attention/${encodeURIComponent(id)}/state?workspaceId=${encodeURIComponent(data.workspace.id)}`,
                     {
                       method: "POST",
-                      body: JSON.stringify({ action: "snooze", durationMinutes: 60 }),
+                      body: JSON.stringify({ action: "snooze", durationMinutes }),
                     },
                   );
                   await refresh(true);
-                  flash("Attention item snoozed for one hour.");
+                  flash(
+                    `Attention item snoozed for ${durationMinutes >= 1440 ? "one day" : durationMinutes >= 240 ? "four hours" : "one hour"}.`,
+                  );
                 } catch (caught) {
                   setError(messageFrom(caught));
                 }

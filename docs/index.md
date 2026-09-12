@@ -92,3 +92,5 @@
     the newest monitoring page current without disturbing older-page navigation.
 48. [Attention snooze and dismissal research](research/2026-09-12-attention-snooze-dismiss.md): defer
     derived workspace attention items with bounded, durable metadata.
+49. [Attention snooze durations research](research/2026-09-12-attention-snooze-durations.md): provide
+    fixed one-hour, four-hour, and one-day deferral choices.

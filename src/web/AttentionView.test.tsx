@@ -164,8 +164,12 @@ describe("Needs attention", () => {
     );
 
     await userEvent.click(screen.getByRole("button", { name: "Snooze 1h" }));
+    await userEvent.click(screen.getByRole("button", { name: "4h" }));
+    await userEvent.click(screen.getByRole("button", { name: "1d" }));
     await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
     expect(onSnooze).toHaveBeenCalledWith(item.id);
+    expect(onSnooze).toHaveBeenCalledWith(item.id, 240);
+    expect(onSnooze).toHaveBeenCalledWith(item.id, 1440);
     expect(onDismiss).toHaveBeenCalledWith(item.id);
   });
 });

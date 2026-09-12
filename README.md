@@ -97,8 +97,8 @@ The queue can also be narrowed to one workspace agent or thread; changing any fi
 first page, and the active agent/thread selection is recorded in review-case exports.
 
 Open **Needs attention** to review pending approvals, questions, and blocked or failed work. Each
-item can be snoozed for one hour or dismissed; snoozes expire automatically, while dismissals return
-when the underlying run or task changes.
+item can be snoozed for one hour, four hours, or one day, or dismissed; snoozes expire automatically,
+while dismissals return when the underlying run or task changes.
 
 Completed Worker results in Taskboard also offer **Save as Knowledge** when their canonical reply is
 available. This opens the same reviewed capture dialog and preserves the Worker message's thread and

@@ -22,7 +22,7 @@ export function AttentionView({
   onThread: (id: string) => void;
   onTask: (id: string) => void;
   onRun?: (threadId: string, runId: string) => void;
-  onSnooze?: (id: string) => void;
+  onSnooze?: (id: string, durationMinutes?: number) => void;
   onDismiss?: (id: string) => void;
 }) {
   return (
@@ -83,9 +83,29 @@ export function AttentionView({
               ) : null}
               <div className="attention-actions">
                 {onSnooze && (
-                  <button type="button" className="ghost-button" onClick={() => onSnooze(item.id)}>
-                    Snooze 1h
-                  </button>
+                  <fieldset className="attention-snooze-actions" aria-label="Snooze duration">
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => onSnooze(item.id)}
+                    >
+                      Snooze 1h
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => onSnooze(item.id, 240)}
+                    >
+                      4h
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => onSnooze(item.id, 1440)}
+                    >
+                      1d
+                    </button>
+                  </fieldset>
                 )}
                 {onDismiss && (
                   <button type="button" className="ghost-button" onClick={() => onDismiss(item.id)}>
