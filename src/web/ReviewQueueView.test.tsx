@@ -211,9 +211,15 @@ describe("ReviewQueueView", () => {
       />,
     );
     await screen.findAllByText("A response that needs review.");
-    const checks = screen.getAllByRole("checkbox");
-    await userEvent.click(checks[0] as HTMLElement);
-    await userEvent.click(checks[1] as HTMLElement);
+    await userEvent.click(screen.getByRole("button", { name: "Select all visible" }));
+    expect(
+      screen.getAllByRole("checkbox").every((checkbox) => (checkbox as HTMLInputElement).checked),
+    ).toBe(true);
+    await userEvent.click(screen.getByRole("button", { name: "Clear selection" }));
+    expect(
+      screen.getAllByRole("checkbox").some((checkbox) => (checkbox as HTMLInputElement).checked),
+    ).toBe(false);
+    await userEvent.click(screen.getByRole("button", { name: "Select all visible" }));
     await userEvent.click(screen.getByRole("button", { name: /Mark selected reviewed/ }));
     await waitFor(() => expect(onSetReviewStatus).toHaveBeenCalledTimes(2));
     expect(onSetReviewStatus.mock.calls.map((call) => call[1])).toEqual([
