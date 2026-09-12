@@ -23,6 +23,8 @@ import {
   AgentSchema,
   type Artifact,
   ArtifactSchema,
+  type AttentionState,
+  AttentionStateSchema,
   CreateAgentSchema,
   CreateKnowledgeDocumentSchema,
   CreateKnowledgeFromMessageSchema,
@@ -85,6 +87,7 @@ import {
   ToolCallSchema,
   type UpdateAgentInput,
   UpdateAgentSchema,
+  UpdateAttentionStateSchema,
   UpdateKnowledgeSchema,
   UpdateTaskSchema,
   UpdateWorkspaceSchema,
@@ -143,6 +146,7 @@ const StateSchema = z.object({
   knowledge: z.array(KnowledgeItemSchema),
   assignments: z.array(WorkAssignmentSchema),
   messageFeedback: z.array(MessageFeedbackSchema).default([]),
+  attentionStates: z.array(AttentionStateSchema).default([]),
 });
 
 const VersionFiveStateSchema = z.object({
@@ -643,6 +647,49 @@ export class FileStore {
         .filter((assignment) => workspaceId === undefined || assignment.workspaceId === workspaceId)
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
     );
+  }
+
+  listAttentionStates(workspaceId?: string): AttentionState[] {
+    return structuredClone(
+      this.state.attentionStates.filter(
+        (entry) => workspaceId === undefined || entry.workspaceId === workspaceId,
+      ),
+    );
+  }
+
+  async updateAttentionState(
+    workspaceId: string | undefined,
+    attentionId: string,
+    rawInput: unknown,
+  ): Promise<AttentionState> {
+    const input = UpdateAttentionStateSchema.parse(rawInput);
+    const workspace = this.requireWorkspace(workspaceId);
+    return this.withWrite(async () => {
+      const now = new Date();
+      const next: AttentionState =
+        input.action === "dismiss"
+          ? AttentionStateSchema.parse({
+              workspaceId: workspace.id,
+              attentionId,
+              dismissedAt: now.toISOString(),
+            })
+          : AttentionStateSchema.parse({
+              workspaceId: workspace.id,
+              attentionId,
+              snoozedUntil: new Date(
+                now.getTime() + (input.durationMinutes ?? 60) * 60_000,
+              ).toISOString(),
+            });
+      const nextState = structuredClone(this.state);
+      const index = nextState.attentionStates.findIndex(
+        (entry) => entry.workspaceId === workspace.id && entry.attentionId === attentionId,
+      );
+      if (index >= 0) nextState.attentionStates[index] = next;
+      else nextState.attentionStates.push(next);
+      await this.writeState(nextState);
+      this.state = nextState;
+      return structuredClone(next);
+    });
   }
 
   getCredential(agentId: string): string | undefined {
@@ -5002,6 +5049,7 @@ function createInitialState(): PersistedState {
     knowledge: [],
     assignments: [],
     messageFeedback: [],
+    attentionStates: [],
   };
 }
 

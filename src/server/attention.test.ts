@@ -146,4 +146,21 @@ describe("workspace attention", () => {
     await store.updateTask(blocked.id, { status: "in_progress" });
     expect(workspaceActivity(store, workspaceId, []).attention).toEqual([]);
   });
+
+  it("hides snoozed items and keeps dismissals hidden until the item updates", async () => {
+    const task = await store.createTask({ title: "Snooze me", status: "blocked" });
+    const first = workspaceActivity(store, workspaceId, []).attention;
+    expect(first).toHaveLength(1);
+    const item = first[0];
+    if (!item) throw new Error("expected attention item");
+    await store.updateAttentionState(workspaceId, item.id, {
+      action: "snooze",
+      durationMinutes: 60,
+    });
+    expect(workspaceActivity(store, workspaceId, []).attention).toEqual([]);
+    await store.updateAttentionState(workspaceId, item.id, { action: "dismiss" });
+    expect(workspaceActivity(store, workspaceId, []).attention).toEqual([]);
+    await store.updateTask(task.id, { title: "Updated task" });
+    expect(workspaceActivity(store, workspaceId, []).attention).toHaveLength(1);
+  });
 });

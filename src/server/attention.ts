@@ -10,7 +10,7 @@ import type { FileStore } from "./store.js";
 
 type AttentionStore = Pick<
   FileStore,
-  "listAgents" | "listThreads" | "listTasks" | "listAssignments"
+  "listAgents" | "listThreads" | "listTasks" | "listAssignments" | "listAttentionStates"
 >;
 
 export function workspaceActivity(
@@ -76,5 +76,16 @@ export function workspaceActivity(
   }
 
   attention.sort(compareAttentionItems);
-  return { workspaceId, activeRuns, attention };
+  const now = Date.now();
+  const states = new Map(
+    store.listAttentionStates(workspaceId).map((state) => [state.attentionId, state]),
+  );
+  const visible = attention.filter((item) => {
+    const state = states.get(item.id);
+    if (!state) return true;
+    if (state.dismissedAt && item.updatedAt < state.dismissedAt) return false;
+    if (state.snoozedUntil && Date.parse(state.snoozedUntil) > now) return false;
+    return true;
+  });
+  return { workspaceId, activeRuns, attention: visible };
 }

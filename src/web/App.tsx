@@ -2096,6 +2096,40 @@ export function App() {
               else openThread(threadId);
             }}
             onTask={(id) => void inspectTask(id)}
+            onSnooze={(id) => {
+              void (async () => {
+                try {
+                  await api(
+                    `/api/attention/${encodeURIComponent(id)}/state?workspaceId=${encodeURIComponent(data.workspace.id)}`,
+                    {
+                      method: "POST",
+                      body: JSON.stringify({ action: "snooze", durationMinutes: 60 }),
+                    },
+                  );
+                  await refresh(true);
+                  flash("Attention item snoozed for one hour.");
+                } catch (caught) {
+                  setError(messageFrom(caught));
+                }
+              })();
+            }}
+            onDismiss={(id) => {
+              void (async () => {
+                try {
+                  await api(
+                    `/api/attention/${encodeURIComponent(id)}/state?workspaceId=${encodeURIComponent(data.workspace.id)}`,
+                    {
+                      method: "POST",
+                      body: JSON.stringify({ action: "dismiss" }),
+                    },
+                  );
+                  await refresh(true);
+                  flash("Attention item dismissed.");
+                } catch (caught) {
+                  setError(messageFrom(caught));
+                }
+              })();
+            }}
           />
         ) : route.surface === "agents" ? (
           <AgentsView

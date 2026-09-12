@@ -141,4 +141,31 @@ describe("Needs attention", () => {
     expect(onRun).not.toHaveBeenCalled();
     expect(onThread).not.toHaveBeenCalled();
   });
+
+  it("offers snooze and dismiss actions for each item", async () => {
+    const onSnooze = vi.fn();
+    const onDismiss = vi.fn();
+    const item: AttentionItem = {
+      id: "task:one",
+      kind: "task_blocked",
+      title: "Blocked task",
+      detail: "Needs attention",
+      taskId: "one",
+      updatedAt: "2026-09-12T00:00:00.000Z",
+    };
+    render(
+      <AttentionView
+        items={[item]}
+        onThread={vi.fn()}
+        onTask={vi.fn()}
+        onSnooze={onSnooze}
+        onDismiss={onDismiss}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Snooze 1h" }));
+    await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(onSnooze).toHaveBeenCalledWith(item.id);
+    expect(onDismiss).toHaveBeenCalledWith(item.id);
+  });
 });

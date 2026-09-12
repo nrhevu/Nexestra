@@ -62,6 +62,25 @@ export const UpdateWorkspaceWhiteboardSchema = z.object({
 });
 export type UpdateWorkspaceWhiteboardInput = z.infer<typeof UpdateWorkspaceWhiteboardSchema>;
 
+export const AttentionStateSchema = z.object({
+  workspaceId: z.string().min(1),
+  attentionId: z.string().min(1).max(200),
+  snoozedUntil: z.string().datetime().optional(),
+  dismissedAt: z.string().datetime().optional(),
+});
+export type AttentionState = z.infer<typeof AttentionStateSchema>;
+
+export const UpdateAttentionStateSchema = z.object({
+  action: z.enum(["snooze", "dismiss"]),
+  durationMinutes: z
+    .number()
+    .int()
+    .min(1)
+    .max(7 * 24 * 60)
+    .optional(),
+});
+export type UpdateAttentionStateInput = z.infer<typeof UpdateAttentionStateSchema>;
+
 export const CreateWorkspaceSchema = z.object({
   name: z.string().trim().min(1).max(60),
 });

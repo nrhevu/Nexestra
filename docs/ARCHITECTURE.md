@@ -559,8 +559,11 @@ credentials.
   pages replace their predecessor; the app does not virtualize one continuous transcript.
 
 - Needs attention reflects the selected workspace's current conditions. It has no historical
-  notification log, snoozing, dismissal, desktop notifications, or cross-workspace
+  notification log, desktop notifications, or cross-workspace
   monitoring. Run history separately lists ordinary failed chat turns and links to their thread.
+  Users can persist a bounded snooze or dismissal for a derived item in `state.json`; snoozes expire
+  server-side and dismissals reappear when the item's `updatedAt` advances. There is no audit history
+  or restore control.
   Changes from another client are
   discovered on return, a visible online event or explicit refresh; idle clients do not continuously
   exchange updates.

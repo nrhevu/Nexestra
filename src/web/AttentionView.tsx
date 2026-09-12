@@ -15,11 +15,15 @@ export function AttentionView({
   onThread,
   onTask,
   onRun,
+  onSnooze,
+  onDismiss,
 }: {
   items: AttentionItem[];
   onThread: (id: string) => void;
   onTask: (id: string) => void;
   onRun?: (threadId: string, runId: string) => void;
+  onSnooze?: (id: string) => void;
+  onDismiss?: (id: string) => void;
 }) {
   return (
     <div className="surface-view attention-view">
@@ -77,6 +81,18 @@ export function AttentionView({
                   Open thread <ArrowRight size={15} />
                 </button>
               ) : null}
+              <div className="attention-actions">
+                {onSnooze && (
+                  <button type="button" className="ghost-button" onClick={() => onSnooze(item.id)}>
+                    Snooze 1h
+                  </button>
+                )}
+                {onDismiss && (
+                  <button type="button" className="ghost-button" onClick={() => onDismiss(item.id)}>
+                    Dismiss
+                  </button>
+                )}
+              </div>
             </li>
           ))}
         </ul>

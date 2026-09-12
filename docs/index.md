@@ -90,3 +90,5 @@
     estimated spend to helpful feedback only when coverage is complete.
 47. [Opt-in run-history refresh research](research/2026-09-12-opt-in-run-history-refresh.md): keep
     the newest monitoring page current without disturbing older-page navigation.
+48. [Attention snooze and dismissal research](research/2026-09-12-attention-snooze-dismiss.md): defer
+    derived workspace attention items with bounded, durable metadata.
