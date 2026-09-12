@@ -385,6 +385,15 @@ export function createApp(options: CreateAppOptions) {
     return context.json(await options.store.threadData(context.req.param("id")));
   });
 
+  app.put("/api/threads/:id/messages/:messageId/feedback", async (context) => {
+    const feedback = await options.store.setMessageFeedback(
+      context.req.param("id"),
+      context.req.param("messageId"),
+      await context.req.json(),
+    );
+    return context.json(feedback);
+  });
+
   app.get("/api/threads/:id/export", async (context) => {
     const threadId = context.req.param("id");
     const thread = options.store.getThread(threadId);

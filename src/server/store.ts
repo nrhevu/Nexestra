@@ -43,6 +43,8 @@ import {
   MESSAGE_SEARCH_QUERY_MAX_LENGTH,
   MESSAGE_SEARCH_SNIPPET_MAX_CHARS,
   type Message,
+  type MessageFeedback,
+  MessageFeedbackSchema,
   MessageRequestIdSchema,
   MessageSchema,
   type MessageSearchAuthor,
@@ -64,6 +66,7 @@ import {
   RunHistoryPageSchema,
   RunHistoryRequestSchema,
   RunSchema,
+  SetMessageFeedbackSchema,
   type Task,
   TaskSchema,
   type Thread,
@@ -123,6 +126,7 @@ const StateSchema = z.object({
   tasks: z.array(TaskSchema),
   knowledge: z.array(KnowledgeItemSchema),
   assignments: z.array(WorkAssignmentSchema),
+  messageFeedback: z.array(MessageFeedbackSchema).default([]),
 });
 
 const VersionFiveStateSchema = z.object({
@@ -229,6 +233,7 @@ export interface WorkspaceExportState {
   tasks: Task[];
   knowledge: KnowledgeItem[];
   assignments: WorkAssignment[];
+  messageFeedback: MessageFeedback[];
 }
 
 export interface PreparedWorkspaceExportFile {
@@ -2101,7 +2106,85 @@ export class FileStore {
       toolCalls: [...toolCalls.values()].sort((left, right) =>
         left.createdAt.localeCompare(right.createdAt),
       ),
+      feedback: this.state.messageFeedback
+        .filter((entry) => entry.threadId === thread.id)
+        .map((entry) => this.redactedMessageFeedback(entry)),
     };
+  }
+
+  async setMessageFeedback(
+    threadId: string,
+    messageId: string,
+    rawInput: unknown,
+  ): Promise<MessageFeedback | null> {
+    const input = SetMessageFeedbackSchema.parse(rawInput);
+    return this.withWrite(async () => {
+      this.requireThread(threadId);
+      const index =
+        this.historyIndexes.get(threadId) ?? (await this.primeTranscriptIndex(threadId));
+      const messageEntry = index.messageById.get(messageId);
+      if (!messageEntry) {
+        throw new StoreError("not_found", "Message not found in this thread.");
+      }
+      if (!index.identity || index.unreliable || index.missing) {
+        throw new StoreError("conflict", "The message transcript changed; reload and try again.");
+      }
+      const messageRead = await readTranscriptPageLines(
+        this.transcriptPath(threadId),
+        index.identity,
+        [messageEntry],
+      );
+      if (messageRead.status !== "ok" || messageRead.lines[0] === undefined) {
+        throw new StoreError("conflict", "The message transcript changed; reload and try again.");
+      }
+      let messageEvent: TranscriptEvent | undefined;
+      try {
+        messageEvent = parseTranscriptEvent(stripTrailingNewline(messageRead.lines[0]));
+      } catch {
+        throw new StoreError(
+          "conflict",
+          "The message transcript is unavailable; reload and try again.",
+        );
+      }
+      if (messageEvent?.type !== "message.created") {
+        throw new StoreError(
+          "conflict",
+          "The message transcript is unavailable; reload and try again.",
+        );
+      }
+      if (messageEvent.message.author.kind !== "agent") {
+        throw new StoreError("invalid", "Only agent messages can be rated.");
+      }
+      const nextState = structuredClone(this.state);
+      const existingIndex = nextState.messageFeedback.findIndex(
+        (entry) => entry.threadId === threadId && entry.messageId === messageId,
+      );
+      if (input.value === null) {
+        if (existingIndex >= 0) nextState.messageFeedback.splice(existingIndex, 1);
+        if (existingIndex >= 0) {
+          await this.writeState(nextState);
+          this.state = nextState;
+        }
+        return null;
+      }
+      const feedback = MessageFeedbackSchema.parse({
+        threadId,
+        messageId,
+        value: input.value,
+        ...(input.note
+          ? (() => {
+              const note = this.redactSecrets(input.note);
+              return note ? { note } : {};
+            })()
+          : {}),
+        updatedAt: new Date().toISOString(),
+      });
+      if (existingIndex >= 0) nextState.messageFeedback[existingIndex] = feedback;
+      else nextState.messageFeedback.push(feedback);
+      await this.writeState(nextState);
+      this.state = nextState;
+      return structuredClone(feedback);
+    });
   }
 
   async transcriptSnapshot(threadId: string): Promise<string> {
@@ -2728,6 +2811,7 @@ export class FileStore {
           artifacts: [],
           runs: [],
           toolCalls: [],
+          feedback: [],
           activeRuns: activeRuns.map((run) => this.redactedRun(run)),
           page: {
             totalMessages: 0,
@@ -2831,6 +2915,13 @@ export class FileStore {
       const pageToolCalls = plan.toolEntries
         .map((entry) => toolCalls.get(entry.id))
         .filter((toolCall): toolCall is ToolCall => toolCall !== undefined);
+      const pageFeedback = this.state.messageFeedback
+        .filter(
+          (entry) =>
+            entry.threadId === thread.id &&
+            pageMessages.some((message) => message.id === entry.messageId),
+        )
+        .map((entry) => structuredClone(entry));
       if (
         pageMessages.length !== plan.messageEntries.length ||
         pageArtifacts.length !== plan.artifactEntries.length ||
@@ -2845,6 +2936,7 @@ export class FileStore {
         artifacts: pageArtifacts.map((artifact) => this.redactedArtifact(artifact)),
         runs: pageRuns.map((run) => this.redactedRun(run)),
         toolCalls: pageToolCalls.map((toolCall) => this.redactedToolCall(toolCall)),
+        feedback: pageFeedback.map((entry) => this.redactedMessageFeedback(entry)),
         activeRuns: activeRuns.map((run) => this.redactedRun(run)),
         page: {
           totalMessages: index.messages.length,
@@ -3195,6 +3287,12 @@ export class FileStore {
       name: this.redactSecrets(thread.name),
       slug: this.redactSecrets(thread.slug),
     };
+  }
+
+  private redactedMessageFeedback(feedback: MessageFeedback): MessageFeedback {
+    const copy = structuredClone(feedback);
+    if (copy.note !== undefined) copy.note = this.redactSecrets(copy.note).slice(0, 500);
+    return copy;
   }
 
   private runHistorySummaryOf(run: AgentRun): RunHistorySummary {
@@ -3557,6 +3655,9 @@ export class FileStore {
     const tasks = this.state.tasks.filter((entry) => entry.workspaceId === workspaceId);
     const knowledge = this.state.knowledge.filter((entry) => entry.workspaceId === workspaceId);
     const assignments = this.state.assignments.filter((entry) => entry.workspaceId === workspaceId);
+    const messageFeedback = this.state.messageFeedback.filter((entry) =>
+      threads.some((thread) => thread.id === entry.threadId),
+    );
     this.validateWorkspaceExportJoins(workspaceId);
     const canonicalRoot = await realpath(this.root);
     const security = workspaceExportSecurity(Object.values(this.credentials));
@@ -3570,6 +3671,7 @@ export class FileStore {
       tasks: structuredClone(tasks),
       knowledge: structuredClone(knowledge),
       assignments: structuredClone(assignments),
+      messageFeedback: messageFeedback.map((entry) => this.redactedMessageFeedback(entry)),
     };
     const files: PreparedWorkspaceExportFile[] = [];
     let sourceBytesTotal = 0;
@@ -4286,6 +4388,7 @@ function createInitialState(): PersistedState {
     tasks: [],
     knowledge: [],
     assignments: [],
+    messageFeedback: [],
   };
 }
 

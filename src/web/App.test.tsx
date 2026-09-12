@@ -3499,6 +3499,71 @@ describe("Message knowledge capture", () => {
     });
     expect(await screen.findByText("Saved message as #note-message.")).toBeVisible();
   });
+
+  it("records helpful feedback for an agent response", async () => {
+    const thread = activityThread("thread-feedback", "Research");
+    const message: Message = {
+      id: "message-feedback",
+      threadId: thread.id,
+      sequence: 1,
+      author: {
+        kind: "agent",
+        id: workerAgent.id,
+        name: workerAgent.name,
+        handle: workerAgent.handle,
+      },
+      content: "A concise answer.",
+      mentions: [],
+      knowledgeReferences: [],
+      artifactIds: [],
+      createdAt: now,
+    };
+    const transcript: ThreadData = {
+      thread,
+      messages: [message],
+      artifacts: [],
+      runs: [],
+      toolCalls: [],
+    };
+    const feedback = {
+      threadId: thread.id,
+      messageId: message.id,
+      value: "positive" as const,
+      updatedAt: now,
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        return jsonResponse({ ...bootstrapData, threads: [thread], agents: [workerAgent] });
+      }
+      if (path === historyUrl(thread)) return jsonResponse(historySnapshot(transcript));
+      if (
+        path === `/api/threads/${thread.id}/messages/${message.id}/feedback` &&
+        init?.method === "PUT"
+      ) {
+        return jsonResponse(feedback);
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await screen.findByText(message.content);
+    await user.click(screen.getByRole("button", { name: "Mark response helpful" }));
+
+    await waitFor(() => {
+      const request = fetchMock.mock.calls.find(
+        ([input, init]) =>
+          String(input) === `/api/threads/${thread.id}/messages/${message.id}/feedback` &&
+          init?.method === "PUT",
+      );
+      expect(request).toBeDefined();
+      expect(JSON.parse(String(request?.[1]?.body))).toEqual({ value: "positive" });
+    });
+    expect(screen.getByRole("button", { name: "Mark response helpful" })).toHaveClass("active");
+  });
 });
 
 describe("Agent deletion", () => {

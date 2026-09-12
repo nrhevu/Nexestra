@@ -166,7 +166,8 @@ describe("workspace export", () => {
       [],
       [{ name: "blob.bin", mediaType: "application/octet-stream", bytes: uploadBytes }],
     );
-    await store.createAgentMessage(thread.id, agent, "Reply to upload", message.id);
+    const reply = await store.createAgentMessage(thread.id, agent, "Reply to upload", message.id);
+    await store.setMessageFeedback(thread.id, reply.id, { value: "positive", note: "Useful" });
     const document = await store.createKnowledgeDocument(
       { name: "Plan", handle: "plan", description: "doc" },
       { name: "plan.md", mediaType: "text/markdown", bytes: new TextEncoder().encode("# Plan") },
@@ -208,6 +209,9 @@ describe("workspace export", () => {
     expect(state.workspaces[0].id).toBe(workspace.id);
     expect(state.threads.map((entry: { id: string }) => entry.id)).toContain(thread.id);
     expect(state.knowledge).toHaveLength(1);
+    expect(state.messageFeedback).toEqual([
+      expect.objectContaining({ threadId: thread.id, messageId: reply.id, value: "positive" }),
+    ]);
 
     const manifest = JSON.parse(decode(zipEntry(zip, "manifest.json")));
     expect(manifest.format).toBe("nexestra.workspace-export");

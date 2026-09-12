@@ -470,6 +470,83 @@ describe("FileStore", () => {
     });
   });
 
+  it("persists one quality rating per agent message and exposes it in history", async () => {
+    const store = await openStore();
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const agent = await store.createAgent({
+      kind: "worker",
+      name: "Reviewer",
+      handle: "reviewer",
+      harness: "codex",
+    });
+    const message = await store.createAgentMessage(thread.id, agent, "Useful answer.", "trigger");
+
+    const positive = await store.setMessageFeedback(thread.id, message.id, {
+      value: "positive",
+      note: "Keep this level of detail.",
+    });
+    expect(positive).toMatchObject({
+      threadId: thread.id,
+      messageId: message.id,
+      value: "positive",
+      note: "Keep this level of detail.",
+    });
+    await expect(store.threadData(thread.id)).resolves.toMatchObject({
+      feedback: [positive],
+    });
+    await expect(
+      store.historyPage(
+        thread.workspaceId,
+        thread.id,
+        { workspaceId: thread.workspaceId, limit: 50 },
+        [],
+      ),
+    ).resolves.toMatchObject({ feedback: [positive] });
+
+    const negative = await store.setMessageFeedback(thread.id, message.id, { value: "negative" });
+    expect(negative).toMatchObject({ value: "negative", messageId: message.id });
+    await expect(
+      store.setMessageFeedback(thread.id, message.id, { value: null }),
+    ).resolves.toBeNull();
+    await expect(store.threadData(thread.id)).resolves.toMatchObject({ feedback: [] });
+    const reopened = await FileStore.open({ root: store.root, workspacePath: store.workspacePath });
+    await expect(reopened.threadData(thread.id)).resolves.toMatchObject({ feedback: [] });
+  });
+
+  it("rejects user-message ratings and redacts secrets from feedback notes", async () => {
+    const store = await openStore();
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const userMessage = await store.createUserMessage(thread.id, "A note", []);
+    await expect(
+      store.setMessageFeedback(thread.id, userMessage.id, { value: "positive" }),
+    ).rejects.toMatchObject({ code: "invalid" });
+    const secret = "sk-feedback-secret";
+    const agent = await store.createAgent({
+      kind: "master",
+      name: "Maya",
+      handle: "maya",
+      provider: {
+        type: "custom",
+        name: "Gateway",
+        baseUrl: "http://127.0.0.1:11434/v1",
+        model: "model",
+        protocol: "openai-chat",
+        apiKey: secret,
+      },
+    });
+    const reply = await store.createAgentMessage(thread.id, agent, "Reply", userMessage.id);
+    await store.setMessageFeedback(thread.id, reply.id, {
+      value: "negative",
+      note: `Please inspect ${secret}`,
+    });
+    const state = await readFile(store.stateFile, "utf8");
+    expect(state).not.toContain(secret);
+    const data = await store.threadData(thread.id);
+    expect(data.feedback?.[0]?.note).toBe("Please inspect [REDACTED]");
+  });
+
   it("bounds the display label of a reference URL longer than the artifact name limit", async () => {
     const store = await openStore();
     const [thread] = store.listThreads();

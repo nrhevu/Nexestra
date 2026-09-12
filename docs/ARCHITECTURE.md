@@ -178,6 +178,10 @@ Agents may optionally carry user-supplied USD-per-million token rates; when inpu
 are present, the per-agent breakdown includes an estimated cost with cached-input pricing applied.
 These are current local estimates rather than provider invoices. See [ADR 0053](adr/0053-agent-pricing-profiles.md).
 
+Agent messages expose optional helpful/needs-work feedback controls. One bounded rating per message
+is stored in workspace metadata, returned with history, and included in workspace exports; the
+canonical transcript remains unchanged. See [ADR 0054](adr/0054-message-quality-feedback.md).
+
 Message content is stored and transported as unchanged Markdown. The browser renders it with
 GitHub Flavored Markdown and KaTeX inside the memoized transcript boundary. Raw HTML parsing is not
 enabled, the Markdown renderer removes unsafe URL schemes, and HTTP(S) links use isolated tabs.

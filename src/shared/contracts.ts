@@ -399,6 +399,21 @@ export const MessageSchema = z.object({
 });
 export type Message = z.infer<typeof MessageSchema>;
 
+export const MessageFeedbackSchema = z.object({
+  threadId: z.string(),
+  messageId: z.string(),
+  value: z.enum(["positive", "negative"]),
+  note: z.string().trim().max(500).optional(),
+  updatedAt: z.string(),
+});
+export type MessageFeedback = z.infer<typeof MessageFeedbackSchema>;
+
+export const SetMessageFeedbackSchema = z.object({
+  value: MessageFeedbackSchema.shape.value.nullable(),
+  note: z.string().trim().max(500).optional(),
+});
+export type SetMessageFeedbackInput = z.input<typeof SetMessageFeedbackSchema>;
+
 export const MessageRequestIdSchema = z
   .string()
   .uuid()
@@ -936,6 +951,7 @@ export interface ThreadData {
   artifacts: Artifact[];
   runs: AgentRun[];
   toolCalls: ToolCall[];
+  feedback?: MessageFeedback[];
 }
 
 export interface TaskProcessData {
@@ -1021,6 +1037,7 @@ export const ThreadHistoryPageSchema = z.object({
   artifacts: z.array(ArtifactSchema),
   runs: z.array(RunSchema),
   toolCalls: z.array(ToolCallSchema),
+  feedback: z.array(MessageFeedbackSchema).optional(),
   activeRuns: z.array(RunSchema),
   page: z.object({
     totalMessages: z.number().int().nonnegative(),

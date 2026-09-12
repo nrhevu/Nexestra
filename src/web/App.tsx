@@ -41,6 +41,8 @@ import {
   SquareCode,
   Strikethrough,
   TerminalSquare,
+  ThumbsDown,
+  ThumbsUp,
   Trash2,
   Unplug,
   Upload,
@@ -76,6 +78,7 @@ import type {
   KnowledgeDocumentRevisions,
   KnowledgeItem,
   Message,
+  MessageFeedback,
   RunActivity,
   Task,
   TaskProcessData,
@@ -1589,6 +1592,28 @@ export function App() {
     );
   };
 
+  const setMessageFeedback = async (
+    message: Message,
+    value: "positive" | "negative" | null,
+  ): Promise<void> => {
+    try {
+      const feedback = await api<MessageFeedback | null>(
+        `/api/threads/${encodeURIComponent(message.threadId)}/messages/${encodeURIComponent(message.id)}/feedback`,
+        { method: "PUT", body: JSON.stringify({ value }) },
+      );
+      const current = historyPageRef.current;
+      if (!current || current.thread.id !== message.threadId) return;
+      const nextFeedback =
+        current.feedback?.filter((entry) => entry.messageId !== message.id) ?? [];
+      if (feedback) nextFeedback.push(feedback);
+      const next = { ...current, feedback: nextFeedback };
+      historyPageRef.current = next;
+      setHistoryPage(next);
+    } catch (caught) {
+      setError(messageFrom(caught));
+    }
+  };
+
   const setSubmissionNotice = (workspaceId: string, threadId: string, message?: string) => {
     setPendingNotices((current) => {
       const next = { ...current };
@@ -1934,6 +1959,7 @@ export function App() {
                 }
               }}
               onCaptureMessage={captureMessageAsKnowledge}
+              onMessageFeedback={setMessageFeedback}
             />
           ) : (
             <EmptyThreads onCreate={() => setModal("thread")} />
@@ -2804,6 +2830,7 @@ function ThreadView(props: {
   onToolDecision: (toolCallId: string, approved: boolean) => Promise<void>;
   onToolResponse: (toolCallId: string, answers: string[][]) => Promise<void>;
   onCaptureMessage: (message: Message) => Promise<void>;
+  onMessageFeedback: (message: Message, value: "positive" | "negative" | null) => Promise<void>;
   onRequestRename: (thread: Thread) => void;
   onArchive: (threadId: string) => Promise<void>;
   onRestore: (threadId: string) => Promise<void>;
@@ -3243,10 +3270,12 @@ function ThreadView(props: {
           runActivities={props.runActivities}
           agents={props.data.agents}
           knowledge={props.data.knowledge}
+          feedback={props.threadData.feedback ?? []}
           onRetry={props.onRetry}
           onToolDecision={props.onToolDecision}
           onToolResponse={props.onToolResponse}
           onCaptureMessage={props.onCaptureMessage}
+          onMessageFeedback={props.onMessageFeedback}
           readOnly={archived}
           messageTarget={props.messageTarget}
           historyWindowKind={props.history.intent?.kind ?? "latest"}
@@ -3676,10 +3705,12 @@ const ThreadTranscript = memo(function ThreadTranscript({
   runActivities,
   agents,
   knowledge,
+  feedback,
   onRetry,
   onToolDecision,
   onToolResponse,
   onCaptureMessage,
+  onMessageFeedback,
   readOnly,
   messageTarget,
   historyWindowKind,
@@ -3698,10 +3729,12 @@ const ThreadTranscript = memo(function ThreadTranscript({
   runActivities: RunActivity[];
   agents: AgentView[];
   knowledge: KnowledgeItem[];
+  feedback: MessageFeedback[];
   onRetry: (runId: string) => Promise<unknown>;
   onToolDecision: (toolCallId: string, approved: boolean) => Promise<void>;
   onToolResponse: (toolCallId: string, answers: string[][]) => Promise<void>;
   onCaptureMessage: (message: Message) => Promise<void>;
+  onMessageFeedback: (message: Message, value: "positive" | "negative" | null) => Promise<void>;
   readOnly: boolean;
   messageTarget?: { id: string };
   historyWindowKind: HistoryWindowKind;
@@ -3934,10 +3967,12 @@ const ThreadTranscript = memo(function ThreadTranscript({
                   ])
                 }
                 knownKnowledgeHandles={knownKnowledgeHandles}
+                feedback={feedback.find((entry) => entry.messageId === message.id)}
                 agent={
                   message.author.kind === "agent" ? agentsById.get(message.author.id) : undefined
                 }
                 onCaptureMessage={onCaptureMessage}
+                onMessageFeedback={onMessageFeedback}
               />
               {(runsByTrigger.get(message.id) ?? []).map((run) => (
                 <RunRow
@@ -3969,18 +4004,31 @@ function MessageRow({
   message,
   artifacts,
   agent,
+  feedback,
   knownHandles,
   knownKnowledgeHandles,
   onCaptureMessage,
+  onMessageFeedback,
 }: {
   message: Message;
   artifacts: Artifact[];
   agent?: AgentView;
+  feedback?: MessageFeedback;
   knownHandles: ReadonlySet<string>;
   knownKnowledgeHandles: ReadonlySet<string>;
   onCaptureMessage: (message: Message) => Promise<void>;
+  onMessageFeedback: (message: Message, value: "positive" | "negative" | null) => Promise<void>;
 }) {
   const agentAuthor = message.author.kind === "agent" ? message.author : undefined;
+  const [feedbackPending, setFeedbackPending] = useState(false);
+  const rateMessage = async (value: "positive" | "negative") => {
+    setFeedbackPending(true);
+    try {
+      await onMessageFeedback(message, feedback?.value === value ? null : value);
+    } finally {
+      setFeedbackPending(false);
+    }
+  };
   return (
     <article className="message">
       {agentAuthor ? (
@@ -4011,6 +4059,31 @@ function MessageRow({
           >
             <BookOpen size={14} />
           </button>
+          {agentAuthor ? (
+            <fieldset className="message-feedback">
+              <legend>Rate agent response</legend>
+              <button
+                type="button"
+                className={feedback?.value === "positive" ? "active" : ""}
+                aria-label="Mark response helpful"
+                title="Mark response helpful"
+                disabled={feedbackPending}
+                onClick={() => void rateMessage("positive")}
+              >
+                <ThumbsUp size={14} />
+              </button>
+              <button
+                type="button"
+                className={feedback?.value === "negative" ? "active" : ""}
+                aria-label="Mark response needs work"
+                title="Mark response needs work"
+                disabled={feedbackPending}
+                onClick={() => void rateMessage("negative")}
+              >
+                <ThumbsDown size={14} />
+              </button>
+            </fieldset>
+          ) : null}
         </div>
         {message.content && (
           <Suspense fallback={<p className="message-markdown-fallback">{message.content}</p>}>

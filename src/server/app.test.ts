@@ -1653,4 +1653,52 @@ describe("conversation history HTTP routes", () => {
     const missingMetadata = await app.request("/api/threads/missing/metadata");
     expect(missingMetadata.status).toBe(404);
   });
+
+  it("writes and clears agent message feedback through the HTTP route", async () => {
+    const [workspace] = store.listWorkspaces();
+    const thread = store.listThreads(workspace?.id ?? "")[0];
+    if (!workspace || !thread) throw new Error("expected seeded workspace");
+    const agent = await store.createAgent({
+      kind: "worker",
+      name: "Reviewer",
+      handle: "reviewer",
+      harness: "codex",
+    });
+    const userMessage = await store.createUserMessage(thread.id, "Question", []);
+    const reply = await store.createAgentMessage(thread.id, agent, "Answer", userMessage.id);
+    const rated = await app.request(`/api/threads/${thread.id}/messages/${reply.id}/feedback`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ value: "positive", note: "Useful." }),
+    });
+    expect(rated.status).toBe(200);
+    await expect(rated.json()).resolves.toMatchObject({
+      threadId: thread.id,
+      messageId: reply.id,
+      value: "positive",
+      note: "Useful.",
+    });
+    const history = await app.request(
+      `/api/threads/${thread.id}/history?workspaceId=${workspace.id}&limit=10`,
+    );
+    await expect(history.json()).resolves.toMatchObject({
+      feedback: [expect.objectContaining({ messageId: reply.id, value: "positive" })],
+    });
+    const cleared = await app.request(`/api/threads/${thread.id}/messages/${reply.id}/feedback`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ value: null }),
+    });
+    expect(cleared.status).toBe(200);
+    await expect(cleared.json()).resolves.toBeNull();
+    const rejected = await app.request(
+      `/api/threads/${thread.id}/messages/${userMessage.id}/feedback`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ value: "positive" }),
+      },
+    );
+    expect(rejected.status).toBe(400);
+  });
 });
