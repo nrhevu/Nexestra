@@ -26,4 +26,6 @@ inferred from token counts.
 ## Limits
 
 The breakdown remains dependent on the run-history coverage report and provider telemetry remains
-optional. It does not yet calculate billing costs or quality-adjusted value.
+optional. User-maintained pricing now supports estimate-only aggregate cost and complete-coverage
+cost per helpful reply; provider billing invoices and per-agent quality-adjusted value remain out of
+scope.

@@ -17,5 +17,6 @@ References:
 - [Codeg README: Token Usage](https://github.com/xintaofei/codeg#readme)
 - [OpenTelemetry GenAI metrics](https://github.com/open-telemetry/semantic-conventions/blob/main/docs/gen-ai/gen-ai-metrics.md)
 
-Known gap: provider pricing, quality scores, and cross-workspace aggregates still require an
-explicit policy and data model; this change intentionally records usage only.
+Known gap: billing invoices, cross-workspace aggregates, and richer quality models still require an
+explicit policy and data model. Later increments add user-maintained pricing estimates and a
+complete-coverage cost-per-helpful comparison without treating either as a provider invoice.
