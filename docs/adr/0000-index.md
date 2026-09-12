@@ -59,3 +59,4 @@
 | [0055](0055-run-quality-attribution.md) | Accepted | Attribute message ratings to exact producing runs for retry-safe comparison |
 | [0056](0056-reviewed-message-knowledge-capture.md) | Accepted | Review and name a message before promoting it to Knowledge |
 | [0057](0057-retry-runs-from-history.md) | Accepted | Retry failed and interrupted runs from the monitoring surface |
+| [0058](0058-feedback-notes.md) | Accepted | Collect bounded context when marking an agent response needs work |

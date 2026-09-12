@@ -1092,6 +1092,15 @@ kbd {
   padding: 0;
   border: 0;
 }
+.message-feedback-note {
+  max-width: min(420px, 100%);
+  padding: 2px 7px;
+  border-left: 2px solid var(--accent);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
 .message-feedback legend {
   position: absolute;
   width: 1px;

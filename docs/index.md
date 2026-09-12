@@ -50,3 +50,5 @@
     explicit source preview and naming step before promoting a message to durable Knowledge.
 27. [Run history recovery research](research/2026-09-12-run-history-recovery.md): expose guarded
     retry at the failed or interrupted run where monitoring already happens.
+28. [Feedback note research](research/2026-09-12-feedback-notes.md): preserve human context beside
+    needs-work ratings without turning them into automatic evaluation scores.

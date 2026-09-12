@@ -1577,11 +1577,15 @@ export function App() {
   const setMessageFeedback = async (
     message: Message,
     value: "positive" | "negative" | null,
+    note?: string,
   ): Promise<void> => {
     try {
       const feedback = await api<MessageFeedback | null>(
         `/api/threads/${encodeURIComponent(message.threadId)}/messages/${encodeURIComponent(message.id)}/feedback`,
-        { method: "PUT", body: JSON.stringify({ value }) },
+        {
+          method: "PUT",
+          body: JSON.stringify({ value, ...(note?.trim() ? { note: note.trim() } : {}) }),
+        },
       );
       // Run history aggregates quality ratings across the whole workspace;
       // refresh its projection as soon as a rating is durably accepted.
@@ -2848,7 +2852,11 @@ function ThreadView(props: {
   onToolDecision: (toolCallId: string, approved: boolean) => Promise<void>;
   onToolResponse: (toolCallId: string, answers: string[][]) => Promise<void>;
   onCaptureMessage: (message: Message) => void;
-  onMessageFeedback: (message: Message, value: "positive" | "negative" | null) => Promise<void>;
+  onMessageFeedback: (
+    message: Message,
+    value: "positive" | "negative" | null,
+    note?: string,
+  ) => Promise<void>;
   onRequestRename: (thread: Thread) => void;
   onArchive: (threadId: string) => Promise<void>;
   onRestore: (threadId: string) => Promise<void>;
@@ -3752,7 +3760,11 @@ const ThreadTranscript = memo(function ThreadTranscript({
   onToolDecision: (toolCallId: string, approved: boolean) => Promise<void>;
   onToolResponse: (toolCallId: string, answers: string[][]) => Promise<void>;
   onCaptureMessage: (message: Message) => void;
-  onMessageFeedback: (message: Message, value: "positive" | "negative" | null) => Promise<void>;
+  onMessageFeedback: (
+    message: Message,
+    value: "positive" | "negative" | null,
+    note?: string,
+  ) => Promise<void>;
   readOnly: boolean;
   messageTarget?: { id: string };
   historyWindowKind: HistoryWindowKind;
@@ -4035,11 +4047,20 @@ function MessageRow({
   knownHandles: ReadonlySet<string>;
   knownKnowledgeHandles: ReadonlySet<string>;
   onCaptureMessage: (message: Message) => void;
-  onMessageFeedback: (message: Message, value: "positive" | "negative" | null) => Promise<void>;
+  onMessageFeedback: (
+    message: Message,
+    value: "positive" | "negative" | null,
+    note?: string,
+  ) => Promise<void>;
 }) {
   const agentAuthor = message.author.kind === "agent" ? message.author : undefined;
   const [feedbackPending, setFeedbackPending] = useState(false);
+  const [feedbackNoteOpen, setFeedbackNoteOpen] = useState(false);
   const rateMessage = async (value: "positive" | "negative") => {
+    if (value === "negative" && feedback?.value !== "negative") {
+      setFeedbackNoteOpen(true);
+      return;
+    }
     setFeedbackPending(true);
     try {
       await onMessageFeedback(message, feedback?.value === value ? null : value);
@@ -4048,73 +4069,148 @@ function MessageRow({
     }
   };
   return (
-    <article className="message">
-      {agentAuthor ? (
-        agent ? (
-          <Avatar agent={agent} />
+    <>
+      <article className="message">
+        {agentAuthor ? (
+          agent ? (
+            <Avatar agent={agent} />
+          ) : (
+            <HistoricalAgentAvatar name={agentAuthor.name} handle={agentAuthor.handle} />
+          )
         ) : (
-          <HistoricalAgentAvatar name={agentAuthor.name} handle={agentAuthor.handle} />
-        )
-      ) : (
-        <span className="avatar avatar-purple">ME</span>
-      )}
-      <div>
-        <div className="message-meta">
-          <strong>{message.author.name}</strong>
-          {agentAuthor && (
-            <span className="agent-badge">
-              {agent ? (agent.kind === "master" ? "MASTER" : "WORKER") : "AGENT"}
-            </span>
-          )}
-          <time>{formatTime(message.createdAt)}</time>
-          <MessageLinkButton threadId={message.threadId} messageId={message.id} />
-          <button
-            type="button"
-            className="message-capture-button"
-            aria-label="Save message as Knowledge"
-            title="Save message as Knowledge"
-            onClick={() => void onCaptureMessage(message)}
-          >
-            <BookOpen size={14} />
-          </button>
-          {agentAuthor ? (
-            <fieldset className="message-feedback">
-              <legend>Rate agent response</legend>
-              <button
-                type="button"
-                className={feedback?.value === "positive" ? "active" : ""}
-                aria-label="Mark response helpful"
-                title="Mark response helpful"
-                disabled={feedbackPending}
-                onClick={() => void rateMessage("positive")}
-              >
-                <ThumbsUp size={14} />
-              </button>
-              <button
-                type="button"
-                className={feedback?.value === "negative" ? "active" : ""}
-                aria-label="Mark response needs work"
-                title="Mark response needs work"
-                disabled={feedbackPending}
-                onClick={() => void rateMessage("negative")}
-              >
-                <ThumbsDown size={14} />
-              </button>
-            </fieldset>
-          ) : null}
-        </div>
-        {message.content && (
-          <Suspense fallback={<p className="message-markdown-fallback">{message.content}</p>}>
-            <RichMessage
-              content={message.content}
-              knownHandles={knownHandles}
-              knownKnowledgeHandles={knownKnowledgeHandles}
-            />
-          </Suspense>
+          <span className="avatar avatar-purple">ME</span>
         )}
-        {artifacts.length > 0 && <MessageArtifacts artifacts={artifacts} />}
-      </div>
-    </article>
+        <div>
+          <div className="message-meta">
+            <strong>{message.author.name}</strong>
+            {agentAuthor && (
+              <span className="agent-badge">
+                {agent ? (agent.kind === "master" ? "MASTER" : "WORKER") : "AGENT"}
+              </span>
+            )}
+            <time>{formatTime(message.createdAt)}</time>
+            <MessageLinkButton threadId={message.threadId} messageId={message.id} />
+            <button
+              type="button"
+              className="message-capture-button"
+              aria-label="Save message as Knowledge"
+              title="Save message as Knowledge"
+              onClick={() => void onCaptureMessage(message)}
+            >
+              <BookOpen size={14} />
+            </button>
+            {agentAuthor ? (
+              <>
+                <fieldset className="message-feedback">
+                  <legend>Rate agent response</legend>
+                  <button
+                    type="button"
+                    className={feedback?.value === "positive" ? "active" : ""}
+                    aria-label="Mark response helpful"
+                    title="Mark response helpful"
+                    disabled={feedbackPending || feedbackNoteOpen}
+                    onClick={() => void rateMessage("positive")}
+                  >
+                    <ThumbsUp size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    className={feedback?.value === "negative" ? "active" : ""}
+                    aria-label="Mark response needs work"
+                    title="Mark response needs work"
+                    disabled={feedbackPending || feedbackNoteOpen}
+                    onClick={() => void rateMessage("negative")}
+                  >
+                    <ThumbsDown size={14} />
+                  </button>
+                </fieldset>
+                {feedback?.note && <span className="message-feedback-note">{feedback.note}</span>}
+              </>
+            ) : null}
+          </div>
+          {message.content && (
+            <Suspense fallback={<p className="message-markdown-fallback">{message.content}</p>}>
+              <RichMessage
+                content={message.content}
+                knownHandles={knownHandles}
+                knownKnowledgeHandles={knownKnowledgeHandles}
+              />
+            </Suspense>
+          )}
+          {artifacts.length > 0 && <MessageArtifacts artifacts={artifacts} />}
+        </div>
+      </article>
+      {feedbackNoteOpen && (
+        <FeedbackNoteDialog
+          message={message}
+          onClose={() => setFeedbackNoteOpen(false)}
+          onSave={async (note) => {
+            setFeedbackPending(true);
+            try {
+              await onMessageFeedback(message, "negative", note);
+              setFeedbackNoteOpen(false);
+            } finally {
+              setFeedbackPending(false);
+            }
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function FeedbackNoteDialog({
+  message,
+  onClose,
+  onSave,
+}: {
+  message: Message;
+  onClose: () => void;
+  onSave: (note: string) => Promise<void>;
+}) {
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string>();
+
+  return (
+    <Modal title="What needs work?" eyebrow="RESPONSE FEEDBACK" onClose={onClose}>
+      <p className="modal-help">
+        Add a short note to make this signal useful when you compare runs or review Knowledge later.
+        The note stays with this message and is redacted before it is stored.
+      </p>
+      <form
+        onSubmit={async (event) => {
+          event.preventDefault();
+          setSaving(true);
+          setFormError(undefined);
+          try {
+            await onSave(note);
+          } catch (caught) {
+            setFormError(messageFrom(caught));
+          } finally {
+            setSaving(false);
+          }
+        }}
+      >
+        <Field label="Feedback note" optional hint={`About ${message.author.name}'s response`}>
+          <textarea
+            aria-label="Feedback note"
+            value={note}
+            onChange={(event) => setNote(event.target.value)}
+            rows={4}
+            maxLength={500}
+            placeholder="For example: correct direction, but missing the rollback step."
+          />
+        </Field>
+        {formError && (
+          <p className="form-error">
+            <CircleAlert size={14} />
+            {formError}
+          </p>
+        )}
+        <ModalActions onClose={onClose} saving={saving} submitLabel="Save needs-work rating" />
+      </form>
+    </Modal>
   );
 }
 

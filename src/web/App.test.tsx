@@ -3567,6 +3567,80 @@ describe("Message knowledge capture", () => {
     });
     expect(screen.getByRole("button", { name: "Mark response helpful" })).toHaveClass("active");
   });
+
+  it("collects an optional note before recording needs-work feedback", async () => {
+    const thread = activityThread("thread-feedback-note", "Research");
+    const message: Message = {
+      id: "message-feedback-note",
+      threadId: thread.id,
+      sequence: 1,
+      author: {
+        kind: "agent",
+        id: workerAgent.id,
+        name: workerAgent.name,
+        handle: workerAgent.handle,
+      },
+      content: "An answer that needs a correction.",
+      mentions: [],
+      knowledgeReferences: [],
+      artifactIds: [],
+      createdAt: now,
+    };
+    const transcript: ThreadData = {
+      thread,
+      messages: [message],
+      artifacts: [],
+      runs: [],
+      toolCalls: [],
+    };
+    const feedback = {
+      threadId: thread.id,
+      messageId: message.id,
+      value: "negative" as const,
+      note: "Missing the rollback step.",
+      updatedAt: now,
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) {
+        return jsonResponse({ ...bootstrapData, threads: [thread], agents: [workerAgent] });
+      }
+      if (path === historyUrl(thread)) return jsonResponse(historySnapshot(transcript));
+      if (
+        path === `/api/threads/${thread.id}/messages/${message.id}/feedback` &&
+        init?.method === "PUT"
+      ) {
+        return jsonResponse(feedback);
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", `/threads/${thread.id}`);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await screen.findByText(message.content);
+    await user.click(screen.getByRole("button", { name: "Mark response needs work" }));
+    const dialog = screen.getByRole("dialog", { name: "What needs work?" });
+    await user.type(within(dialog).getByRole("textbox", { name: "Feedback note" }), feedback.note);
+    await user.click(within(dialog).getByRole("button", { name: "Save needs-work rating" }));
+
+    await waitFor(() => {
+      const request = fetchMock.mock.calls.find(
+        ([input, init]) =>
+          String(input) === `/api/threads/${thread.id}/messages/${message.id}/feedback` &&
+          init?.method === "PUT",
+      );
+      expect(request).toBeDefined();
+      expect(JSON.parse(String(request?.[1]?.body))).toEqual({
+        value: "negative",
+        note: feedback.note,
+      });
+    });
+    expect(screen.queryByRole("dialog", { name: "What needs work?" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mark response needs work" })).toHaveClass("active");
+    expect(screen.getByText(feedback.note)).toBeVisible();
+  });
 });
 
 describe("Agent deletion", () => {

@@ -62,7 +62,8 @@ When a custom OpenAI-compatible provider reports usage, run history also shows i
 output token count. Missing or partial provider usage is left blank; these counts are estimates from
 the provider and are not billing records. The surface also summarizes matching run count, terminal
 time, token total, usage coverage, and explicit helpful/needs-work ratings above the paged rows.
-Per-agent rows show the same rating counts. Replies created by the harness retain the exact run ID
+Per-agent rows show the same rating counts. Marking a response **needs work** opens an optional note
+field so later review has context; helpful remains one click. Replies created by the harness retain the exact run ID
 that produced them, so retries and delegated Worker/Master replies are compared against the right
 run; older replies without that provenance are included only when their trigger has one matching
 run. Ratings are user signals, not an automatic score or billing record.
