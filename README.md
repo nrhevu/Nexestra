@@ -144,7 +144,9 @@ item can be snoozed for one hour, four hours, or one day, or dismissed; snoozes 
 while dismissals return when the underlying run or task changes.
 Workspace exports retain this bounded attention metadata for the selected workspace.
 Knowledge document details offer an explicit **Keep latest 10 revisions** action; the current revision
-is always retained and pruning never runs automatically.
+is always retained and pruning never runs automatically. When two revisions exist, select both to
+view a bounded, redacted line diff; binary or oversized content falls back to metadata and download
+links. Comparison never changes a revision. See [ADR 0105](docs/adr/0105-knowledge-revision-comparison.md).
 
 Completed Worker results in Taskboard also offer **Save as Knowledge** when their canonical reply is
 available. This opens the same reviewed capture dialog and preserves the Worker message's thread and

@@ -134,3 +134,4 @@
 70. [Target-aware restore preflight research](research/2026-09-12-target-aware-restore-preflight.md): detect local path collisions without uploading archive bytes or mutating state.
 71. [Workspace deletion preflight research](research/2026-09-12-workspace-deletion-preflight.md): surface bounded dependencies and active-work blockers before destructive deletion.
 72. [Workspace recovery manifest research](research/2026-09-12-workspace-recovery-manifest.md): hash bounded workspace-owned files without exposing credentials before transactional deletion.
+73. [Knowledge revision comparison research](research/2026-09-12-knowledge-revision-comparison.md): compare redacted text revisions locally with bounded line-diff limits.

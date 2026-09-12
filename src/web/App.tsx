@@ -116,6 +116,7 @@ import {
   KnowledgeDocumentPreview,
   type KnowledgeDocumentPreviewHandle,
 } from "./KnowledgeDocumentPreview.js";
+import { KnowledgeRevisionComparison } from "./KnowledgeRevisionComparison.js";
 import { MessageLinkButton } from "./MessageLinkButton.js";
 import { MessageSearchDialog } from "./MessageSearchDialog.js";
 import {
@@ -7366,6 +7367,13 @@ function KnowledgeDetailDialog({
                   );
                 })}
               </section>
+              {revisions && revisions.revisions.length >= 2 && (
+                <KnowledgeRevisionComparison
+                  documentId={item.id}
+                  revisions={revisions}
+                  disabled={pruning || replacing || restoringRevisionId !== undefined}
+                />
+              )}
               {revisions && revisions.revisions.length > 10 && (
                 <button
                   type="button"

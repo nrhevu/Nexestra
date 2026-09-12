@@ -3651,6 +3651,81 @@ kbd {
   opacity: 0.55;
   cursor: default;
 }
+.knowledge-revision-comparison {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.015);
+}
+.revision-comparison-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.revision-comparison-header > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.revision-comparison-header small,
+.revision-comparison-selection,
+.revision-comparison-result p {
+  color: var(--quiet);
+  font-size: 10px;
+  line-height: 1.45;
+}
+.revision-comparison-selection {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+.revision-comparison-selection label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+}
+.revision-comparison-selection span {
+  overflow-wrap: anywhere;
+}
+.revision-comparison-result {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.revision-comparison-result p {
+  margin: 0;
+}
+.knowledge-diff {
+  max-height: 300px;
+  overflow: auto;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: #111318;
+  color: #bab6bf;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font:
+    11px / 1.5 "Noto Sans Mono",
+    monospace;
+}
+.knowledge-diff span {
+  display: block;
+}
+.knowledge-diff-added {
+  color: #a7e8b2;
+  background: rgba(72, 180, 93, 0.12);
+}
+.knowledge-diff-removed {
+  color: #f0a7a7;
+  background: rgba(190, 70, 70, 0.12);
+}
 .replace-file {
   display: flex;
   flex-direction: column;

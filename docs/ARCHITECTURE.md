@@ -681,10 +681,12 @@ credentials.
   upstream or the clone HEAD, so even an unchanged branch from a refreshed source can require the
   clone's integration branch to be advanced manually before Git allows deletion.
 - Document versions have no automatic retention limit; an explicit keep-latest action can prune
-  older revisions while preserving the current revision. Permanent Knowledge deletion removes its
-  versions, so historical references to a deleted item cannot load those bytes. Old
-  messages without a pinned revision use current contents. Changing a repository source still
-  requires deleting and creating the item again.
+  older revisions while preserving the current revision. The detail view can compare two existing
+  revisions through server-redacted previews and a bounded local line diff; binary, invalid, or
+  oversized previews fall back to metadata and download links. Permanent Knowledge deletion removes
+  its versions, so historical references to a deleted item cannot load those bytes. Old messages
+  without a pinned revision use current contents. Changing a repository source still requires
+  deleting and creating the item again. See [ADR 0105](adr/0105-knowledge-revision-comparison.md).
 - A crash during cloning can leave a `source.retrying-*` staging directory. It is preserved for
   manual review instead of being auto-removed, because no ownership record exists for it.
 - Tasks created before the delegation-completion guard may remain unassigned; their process dialog
