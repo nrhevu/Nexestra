@@ -138,6 +138,23 @@ export function createApp(options: CreateAppOptions) {
     );
   });
 
+  app.get("/api/activity/summaries", (context) =>
+    context.json(
+      options.store.listWorkspaces().map((workspace) => {
+        const activity = workspaceActivity(
+          options.store,
+          workspace.id,
+          dispatcher.activeRuns(workspace.id),
+        );
+        return {
+          workspaceId: workspace.id,
+          attentionCount: activity.attention.length,
+          activeRunCount: activity.activeRuns.length,
+        };
+      }),
+    ),
+  );
+
   app.post("/api/attention/:id/state", async (context) => {
     const workspaceId = context.req.query("workspaceId");
     return context.json(

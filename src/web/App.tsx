@@ -1210,6 +1210,24 @@ export function App() {
     };
   }, [activeWorkspaceId, hasBackgroundRuns, refresh, updateData]);
 
+  const hasWorkspaceActivity = Boolean(
+    data?.workspaceActivitySummaries?.some(
+      (summary) => summary.attentionCount > 0 || summary.activeRunCount > 0,
+    ),
+  );
+  useEffect(() => {
+    if (!hasWorkspaceActivity) return;
+    const timer = window.setInterval(() => {
+      void api<WorkspaceActivitySummary[]>("/api/activity/summaries")
+        .then((summaries) => {
+          const current = dataRef.current;
+          if (current) updateData({ ...current, workspaceActivitySummaries: summaries });
+        })
+        .catch(() => undefined);
+    }, 5_000);
+    return () => window.clearInterval(timer);
+  }, [hasWorkspaceActivity, updateData]);
+
   const openThread = (threadId: string) =>
     navigate(`/threads/${threadId}`, { view: "threads", surface: route.surface, threadId });
 

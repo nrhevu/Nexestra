@@ -86,3 +86,4 @@
 | [0083](0083-knowledge-revision-pruning.md) | Accepted | Explicitly prune bounded old Knowledge document revisions |
 | [0084](0084-review-queue-bulk-resolution.md) | Accepted | Resolve selected visible review rows sequentially |
 | [0085](0085-workspace-activity-summary.md) | Accepted | Show bounded cross-workspace activity counts in the rail |
+| [0086](0086-live-workspace-activity-refresh.md) | Accepted | Refresh nonzero cross-workspace activity badges conditionally |

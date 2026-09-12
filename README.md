@@ -16,6 +16,8 @@ tasks; Threads, Surfaces, and Settings live in the navigation panel beside that 
 workspace also creates its initial `general` thread.
 The workspace rail shows compact counts for active runs and attention items in other workspaces;
 those counts refresh with normal bootstrap revalidation or an explicit refresh and expose no details.
+While any badge is nonzero, the browser refreshes these counts every five seconds; idle workspaces
+are not polled.
 Settings can rename any workspace and reorder the rail. The order is saved in `state.json` and
 restored after a restart.
 

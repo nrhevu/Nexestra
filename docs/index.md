@@ -102,3 +102,5 @@
     selected visible needs-work rows reviewed in order.
 53. [Workspace activity summary research](research/2026-09-12-workspace-activity-summary.md): show
     bounded active-run and attention counts across the workspace rail.
+54. [Live workspace activity refresh research](research/2026-09-12-live-workspace-activity-refresh.md):
+    conditionally poll count-only activity summaries while work is active.
