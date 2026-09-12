@@ -738,6 +738,11 @@ export class FileStore {
     if (!message) throw new StoreError("not_found", "Message not found in this thread.");
     const content = this.redactSecrets(message.content);
     if (!content.trim()) throw new StoreError("invalid", "Cannot capture an empty message.");
+    const capturedContent = [
+      `> Captured from message \`${message.id}\` in thread \`${thread.id}\` on ${message.createdAt}.`,
+      "",
+      content,
+    ].join("\n");
     return this.createKnowledgeDocument(
       {
         workspaceId: thread.workspaceId,
@@ -748,7 +753,7 @@ export class FileStore {
       {
         name: `${input.name}.md`,
         mediaType: "text/markdown",
-        bytes: Buffer.from(content, "utf8"),
+        bytes: Buffer.from(capturedContent, "utf8"),
       },
       { source: "message", threadId: thread.id, messageId: message.id },
     );

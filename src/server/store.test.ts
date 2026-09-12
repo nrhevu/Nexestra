@@ -365,6 +365,9 @@ describe("FileStore", () => {
       messageId: message.id,
     });
     const content = await readFile(store.knowledgePath(item), "utf8");
+    expect(content).toContain(
+      `Captured from message \`${message.id}\` in thread \`${thread.id}\` on ${message.createdAt}.`,
+    );
     expect(content).toContain("Decision: use the local-first path.");
     expect(content).not.toContain("super-secret-value");
     const duplicates = await Promise.all([

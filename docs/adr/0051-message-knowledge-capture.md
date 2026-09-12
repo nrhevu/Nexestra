@@ -18,7 +18,8 @@ empty content, redacts known credentials, and creates an immutable Markdown docu
 The document stores source thread and message IDs as provenance. No agent is invoked and the
 original transcript remains unchanged. Capturing the same source message again returns its existing
 document, preserving one Knowledge record per source message even if a retry supplies different
-metadata.
+metadata. The Markdown payload also begins with a redacted source header, keeping provenance
+legible when the file is viewed or exported without the surrounding state metadata.
 
 ## Limits
 
