@@ -533,6 +533,8 @@ export const ReviewQueueExportSchema = z.object({
   version: z.literal(1),
   workspaceId: z.string(),
   status: z.enum(["open", "resolved", "all"]),
+  agentId: z.string().trim().min(1).max(200).optional(),
+  threadId: z.string().trim().min(1).max(200).optional(),
   exportedAt: z.string(),
   cases: z.array(ReviewQueueItemSchema).max(REVIEW_QUEUE_EXPORT_MAX_CASES),
 });

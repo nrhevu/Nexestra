@@ -72,3 +72,5 @@
     review rows with prompt and run provenance into offline evaluation tools.
 38. [Run-history telemetry export research](research/2026-09-12-run-history-telemetry-export.md):
     carry bounded filtered run rows, cost telemetry, and complete summary into offline analysis.
+39. [Review queue agent and thread filters research](research/2026-09-12-review-queue-agent-thread-filters.md):
+    narrow needs-work triage by workspace-scoped agent or conversation while preserving cursor safety.

@@ -2026,6 +2026,8 @@ export function App() {
             <ReviewQueueView
               key={data.workspace.id}
               workspaceId={data.workspace.id}
+              agents={data.agents}
+              threads={data.threads}
               refreshRevision={reviewQueueRefreshRevision}
               onOpenMessage={openMessage}
               onCaptureMessage={(item) =>

@@ -86,6 +86,8 @@ existing review dialog and explicit capture; each queue row also offers **Captur
 to open that dialog directly. **Export loaded reviews** downloads a bounded JSON review-case packet
 containing the visible redacted rows, prompt context, feedback note and stable message/run IDs; load
 older reviews first when you need them in the packet.
+The queue can also be narrowed to one workspace agent or thread; changing any filter starts a fresh
+first page, and the active agent/thread selection is recorded in review-case exports.
 
 Workspaces can add a domain-specific launch surface in `nexestra.config.json`:
 

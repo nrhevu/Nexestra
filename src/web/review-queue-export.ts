@@ -8,12 +8,15 @@ export function serializeReviewQueueExport(
   page: ReviewQueuePage,
   status: "open" | "resolved" | "all",
   exportedAt = new Date().toISOString(),
+  filters?: { agentId?: string; threadId?: string },
 ): string {
   const payload = ReviewQueueExportSchema.parse({
     format: "nexestra.review-cases",
     version: 1,
     workspaceId: page.workspaceId,
     status,
+    ...(filters?.agentId ? { agentId: filters.agentId } : {}),
+    ...(filters?.threadId ? { threadId: filters.threadId } : {}),
     exportedAt,
     cases: page.items.slice(0, REVIEW_QUEUE_EXPORT_MAX_CASES),
   });

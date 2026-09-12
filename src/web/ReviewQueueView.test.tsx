@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentView, ReviewQueuePage, Thread } from "../shared/contracts.js";
@@ -95,6 +95,8 @@ describe("ReviewQueueView", () => {
     render(
       <ReviewQueueView
         workspaceId={workspaceId}
+        agents={[agent]}
+        threads={[thread]}
         onOpenMessage={onOpenMessage}
         onCaptureMessage={onCaptureMessage}
         onSetReviewStatus={onSetReviewStatus}
@@ -141,5 +143,38 @@ describe("ReviewQueueView", () => {
     expect(await screen.findByText("A response that needs review.")).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Reopen review" }));
     expect(onSetReviewStatus).toHaveBeenCalledExactlyOnceWith(thread.id, "message-reply", "open");
+  });
+
+  it("applies agent and thread filters without carrying a stale cursor", async () => {
+    const requests: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      requests.push(String(input));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => page(),
+      } as Response;
+    });
+    render(
+      <ReviewQueueView
+        workspaceId={workspaceId}
+        agents={[agent]}
+        threads={[thread]}
+        onOpenMessage={vi.fn()}
+        onSetReviewStatus={vi.fn().mockResolvedValue(undefined)}
+      />,
+    );
+    expect(await screen.findByText("A response that needs review.")).toBeVisible();
+
+    await userEvent.selectOptions(screen.getByLabelText("Agent"), agent.id);
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests.at(-1)).toContain(`agentId=${agent.id}`);
+    expect(requests.at(-1)).not.toContain("cursor=");
+
+    await userEvent.selectOptions(screen.getByLabelText("Thread"), thread.id);
+    await waitFor(() => expect(requests).toHaveLength(3));
+    expect(requests.at(-1)).toContain(`agentId=${agent.id}`);
+    expect(requests.at(-1)).toContain(`threadId=${thread.id}`);
+    expect(requests.at(-1)).not.toContain("cursor=");
   });
 });

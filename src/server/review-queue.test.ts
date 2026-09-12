@@ -111,6 +111,17 @@ describe("review queue", () => {
     });
     expect(JSON.stringify(firstReview?.prompt)).not.toContain("sk-review-secret");
 
+    await expect(
+      store.listReviewQueue({ workspaceId: workspace.id, agentId: agent.id, limit: 50 }),
+    ).resolves.toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({ agent: expect.objectContaining({ id: agent.id }) }),
+      ]),
+    });
+    await expect(
+      store.listReviewQueue({ workspaceId: workspace.id, threadId: thread.id, limit: 50 }),
+    ).resolves.toMatchObject({ total: 2 });
+
     const secondPage = await store.listReviewQueue({
       workspaceId: workspace.id,
       limit: 1,
@@ -128,6 +139,9 @@ describe("review queue", () => {
       instructions: "",
       harness: "codex",
     });
+    await expect(
+      store.listReviewQueue({ workspaceId: workspace.id, agentId: foreignAgent.id, limit: 50 }),
+    ).rejects.toMatchObject({ code: "not_found" });
     const foreignThread = await store.createThread({ workspaceId: foreign.id, name: "Foreign" });
     const foreignMessage = await store.createAgentMessage(
       foreignThread.id,

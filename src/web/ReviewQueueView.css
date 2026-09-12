@@ -59,6 +59,17 @@
   font-size: 13px;
 }
 
+.review-queue-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-bottom: 16px;
+}
+
+.review-queue-filters .review-queue-filter {
+  margin-bottom: 0;
+}
+
 .review-queue-filter select {
   border: 1px solid var(--border-strong);
   border-radius: 7px;
@@ -181,6 +192,11 @@
 
   .review-queue-header-actions {
     justify-content: flex-start;
+  }
+
+  .review-queue-filters {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .review-queue-item-meta time {

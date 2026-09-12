@@ -70,3 +70,4 @@
 | [0066](0066-whiteboard-workspace-export.md) | Accepted | Include saved whiteboard notes in workspace ZIP exports |
 | [0068](0068-review-case-export.md) | Accepted | Export a bounded packet of loaded, redacted review cases |
 | [0069](0069-run-history-telemetry-export.md) | Accepted | Export bounded loaded run-history telemetry with filters and summary |
+| [0070](0070-review-queue-agent-thread-filters.md) | Accepted | Filter needs-work reviews by workspace agent and thread |

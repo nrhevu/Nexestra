@@ -49,6 +49,16 @@ describe("review queue export", () => {
     expect(payload.cases).toEqual(page.items);
   });
 
+  it("records the active agent and thread filters", () => {
+    const payload = JSON.parse(
+      serializeReviewQueueExport(page, "open", undefined, {
+        agentId: "agent-1",
+        threadId: "thread-1",
+      }),
+    ) as Record<string, unknown>;
+    expect(payload).toMatchObject({ agentId: "agent-1", threadId: "thread-1" });
+  });
+
   it("uses a safe deterministic filename", () => {
     expect(reviewQueueExportFilename("workspace / private", new Date("2026-09-12T00:00:00Z"))).toBe(
       "nexestra-review-cases-workspace-private-2026-09-12.json",

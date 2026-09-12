@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ReviewQueueItem, ReviewQueuePage } from "../shared/contracts.js";
+import type { AgentView, ReviewQueueItem, ReviewQueuePage, Thread } from "../shared/contracts.js";
 import { ReviewQueuePageSchema } from "../shared/contracts.js";
 import { api } from "./api.js";
 import { reviewQueueExportFilename, serializeReviewQueueExport } from "./review-queue-export.js";
@@ -9,6 +9,8 @@ const PAGE_LIMIT = 25;
 
 export interface ReviewQueueViewProps {
   workspaceId: string;
+  agents?: AgentView[];
+  threads?: Thread[];
   refreshRevision?: number;
   onOpenMessage: (threadId: string, messageId: string) => void;
   onCaptureMessage?: (item: ReviewQueueItem) => void;
@@ -23,6 +25,8 @@ type ReviewFilter = "open" | "resolved" | "all";
 
 export function ReviewQueueView({
   workspaceId,
+  agents = [],
+  threads = [],
   refreshRevision,
   onOpenMessage,
   onCaptureMessage,
@@ -30,6 +34,8 @@ export function ReviewQueueView({
 }: ReviewQueueViewProps) {
   const [page, setPage] = useState<ReviewQueuePage>();
   const [status, setStatus] = useState<ReviewFilter>("open");
+  const [agentId, setAgentId] = useState("");
+  const [threadId, setThreadId] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [resolvingId, setResolvingId] = useState<string>();
@@ -48,6 +54,8 @@ export function ReviewQueueView({
           status,
           limit: String(PAGE_LIMIT),
         });
+        if (agentId) params.set("agentId", agentId);
+        if (threadId) params.set("threadId", threadId);
         if (cursor) params.set("cursor", cursor);
         const parsed = ReviewQueuePageSchema.parse(
           await api<unknown>(`/api/reviews?${params.toString()}`),
@@ -66,7 +74,7 @@ export function ReviewQueueView({
         }
       }
     },
-    [status, workspaceId],
+    [agentId, status, threadId, workspaceId],
   );
 
   useEffect(() => {
@@ -97,9 +105,12 @@ export function ReviewQueueView({
 
   const exportLoadedReviews = () => {
     if (!page || rows.length === 0) return;
-    const blob = new Blob([serializeReviewQueueExport(page, status)], {
-      type: "application/json",
-    });
+    const blob = new Blob(
+      [serializeReviewQueueExport(page, status, undefined, { agentId, threadId })],
+      {
+        type: "application/json",
+      },
+    );
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
@@ -131,18 +142,51 @@ export function ReviewQueueView({
           </button>
         </div>
       </header>
-      <label className="review-queue-filter">
-        <span>Review status</span>
-        <select
-          value={status}
-          onChange={(event) => setStatus(event.target.value as ReviewFilter)}
-          disabled={loading || loadingMore}
-        >
-          <option value="open">Open</option>
-          <option value="resolved">Resolved</option>
-          <option value="all">All</option>
-        </select>
-      </label>
+      <div className="review-queue-filters">
+        <label className="review-queue-filter">
+          <span>Review status</span>
+          <select
+            value={status}
+            onChange={(event) => setStatus(event.target.value as ReviewFilter)}
+            disabled={loading || loadingMore}
+          >
+            <option value="open">Open</option>
+            <option value="resolved">Resolved</option>
+            <option value="all">All</option>
+          </select>
+        </label>
+        <label className="review-queue-filter">
+          <span>Agent</span>
+          <select
+            value={agentId}
+            onChange={(event) => setAgentId(event.target.value)}
+            disabled={loading || loadingMore}
+          >
+            <option value="">All agents</option>
+            {agents.map((agent) => (
+              <option key={agent.id} value={agent.id}>
+                {agent.name} (@{agent.handle})
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="review-queue-filter">
+          <span>Thread</span>
+          <select
+            value={threadId}
+            onChange={(event) => setThreadId(event.target.value)}
+            disabled={loading || loadingMore}
+          >
+            <option value="">All threads</option>
+            {threads.map((thread) => (
+              <option key={thread.id} value={thread.id}>
+                {thread.name}
+                {thread.archived ? " (archived)" : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
       {page?.coverage.complete === false ? (
         <p className="review-queue-warning" role="status">
           Some conversations could not be scanned ({page.coverage.unavailableThreads}).

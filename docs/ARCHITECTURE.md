@@ -573,7 +573,10 @@ credentials.
   rows also include the redacted, 800-character user prompt identified by the reply's durable
   `triggerMessageId`; missing provenance omits that optional context. The browser can export up to
   200 loaded rows as a typed `nexestra.review-cases` JSON packet for offline evaluation or prompt
-  improvement; the packet contains only the queue projection and never reads transcript files.
+  improvement; the packet contains only the queue projection and never reads transcript files. The
+  queue supports optional workspace-scoped agent and thread filters; keyset cursors encode those
+  filters and are rejected when reused with a different selection. Changing a filter resets to the
+  first page, and exports record the active filter IDs for reproducibility.
 
 - Optional `surfaces` entries in `nexestra.config.json` compose domain-specific navigation cards.
   Their actions are an allowlisted set of trusted surfaces and their labels are bounded/redacted
