@@ -1129,6 +1129,11 @@ export interface WorkspaceActivityData {
   activeRuns: AgentRun[];
   attention: AttentionItem[];
 }
+export interface WorkspaceActivitySummary {
+  workspaceId: string;
+  attentionCount: number;
+  activeRunCount: number;
+}
 
 export function compareAttentionItems(left: AttentionItem, right: AttentionItem): number {
   const leftGroup = left.kind === "approval" || left.kind === "input" ? 0 : 1;
@@ -1171,6 +1176,7 @@ export interface BootstrapData {
   assignments: WorkAssignment[];
   activeRuns: AgentRun[];
   attention: AttentionItem[];
+  workspaceActivitySummaries?: WorkspaceActivitySummary[];
   runtime: RuntimeStatus;
   workspacePath: string;
   dataPath: string;

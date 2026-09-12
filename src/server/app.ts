@@ -111,6 +111,14 @@ export function createApp(options: CreateAppOptions) {
       assignments: options.store.listAssignments(workspace.id),
       activeRuns: activity.activeRuns,
       attention: activity.attention,
+      workspaceActivitySummaries: workspaces.map((entry) => {
+        const summary = workspaceActivity(options.store, entry.id, dispatcher.activeRuns(entry.id));
+        return {
+          workspaceId: entry.id,
+          attentionCount: summary.attention.length,
+          activeRunCount: summary.activeRuns.length,
+        };
+      }),
       runtime,
       workspacePath: options.store.workspacePath,
       dataPath: options.store.root,

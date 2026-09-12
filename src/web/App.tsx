@@ -93,6 +93,7 @@ import type {
   WorkAssignment,
   Workspace,
   WorkspaceActivityData,
+  WorkspaceActivitySummary,
 } from "../shared/contracts.js";
 import {
   compareAttentionItems,
@@ -1802,6 +1803,7 @@ export function App() {
       />
       <WorkspaceRail
         workspaces={data.workspaces}
+        activitySummaries={data.workspaceActivitySummaries}
         activeWorkspaceId={data.workspace.id}
         onWorkspace={(workspaceId) => void selectWorkspace(workspaceId)}
         onCreate={() => setModal("workspace")}
@@ -2573,6 +2575,7 @@ function ThreadRunBadge({ runs }: { runs: AgentRun[] }) {
 
 function WorkspaceRail(props: {
   workspaces: Workspace[];
+  activitySummaries?: WorkspaceActivitySummary[];
   activeWorkspaceId: string;
   onWorkspace: (id: string) => void;
   onCreate: () => void;
@@ -2580,23 +2583,36 @@ function WorkspaceRail(props: {
   return (
     <nav className="app-rail" aria-label="Workspaces">
       <div className="workspace-switcher">
-        {props.workspaces.map((workspace) => (
-          <button
-            className={
-              workspace.id === props.activeWorkspaceId
-                ? "workspace-button active"
-                : "workspace-button"
-            }
-            type="button"
-            key={workspace.id}
-            onClick={() => props.onWorkspace(workspace.id)}
-            aria-label={`Switch to ${workspace.name}`}
-            aria-current={workspace.id === props.activeWorkspaceId ? "page" : undefined}
-            title={workspace.name}
-          >
-            {workspaceInitials(workspace.name)}
-          </button>
-        ))}
+        {props.workspaces.map((workspace) => {
+          const summary = props.activitySummaries?.find(
+            (entry) => entry.workspaceId === workspace.id,
+          );
+          return (
+            <button
+              className={
+                workspace.id === props.activeWorkspaceId
+                  ? "workspace-button active"
+                  : "workspace-button"
+              }
+              type="button"
+              key={workspace.id}
+              onClick={() => props.onWorkspace(workspace.id)}
+              aria-label={`Switch to ${workspace.name}`}
+              aria-current={workspace.id === props.activeWorkspaceId ? "page" : undefined}
+              title={workspace.name}
+            >
+              {workspaceInitials(workspace.name)}
+              {summary && summary.attentionCount + summary.activeRunCount > 0 ? (
+                <span
+                  className="workspace-activity-badge"
+                  title={`${summary.attentionCount} attention, ${summary.activeRunCount} active runs`}
+                >
+                  {summary.attentionCount + summary.activeRunCount}
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
       </div>
       <button
         className="workspace-button workspace-add"

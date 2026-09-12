@@ -10,6 +10,8 @@ The far-left rail switches between workspaces, while the adjacent panel owns the
 and Settings navigation. **Needs attention** is available directly from workspace navigation and
 collects pending decisions and task failures across the selected workspace. Settings exposes
 workspace rename and rail reordering; the stored order is restored on restart.
+Bootstrap also carries only active-run and attention counts for each workspace so the rail can signal
+activity elsewhere; these counts update during bootstrap revalidation and explicit refresh.
 
 ## Components
 

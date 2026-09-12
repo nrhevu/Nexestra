@@ -100,3 +100,5 @@
     explicitly selected old immutable document revisions while retaining recent history.
 52. [Review queue bulk resolution research](research/2026-09-12-review-queue-bulk-resolution.md): mark
     selected visible needs-work rows reviewed in order.
+53. [Workspace activity summary research](research/2026-09-12-workspace-activity-summary.md): show
+    bounded active-run and attention counts across the workspace rail.

@@ -14,6 +14,8 @@ Milestone M9 is a fresh rebuild focused on two primary workflows:
 Workspaces are selected from the far-left rail. Each workspace has its own threads, agents, and
 tasks; Threads, Surfaces, and Settings live in the navigation panel beside that rail. Creating a
 workspace also creates its initial `general` thread.
+The workspace rail shows compact counts for active runs and attention items in other workspaces;
+those counts refresh with normal bootstrap revalidation or an explicit refresh and expose no details.
 Settings can rename any workspace and reorder the rail. The order is saved in `state.json` and
 restored after a restart.
 
