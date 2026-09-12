@@ -16,7 +16,9 @@ Expose `POST /api/knowledge/from-message` with thread/message IDs plus the new d
 handle, and description. The server reads the canonical message, checks workspace ownership, rejects
 empty content, redacts known credentials, and creates an immutable Markdown document revision.
 The document stores source thread and message IDs as provenance. No agent is invoked and the
-original transcript remains unchanged.
+original transcript remains unchanged. Capturing the same source message again returns its existing
+document, preserving one Knowledge record per source message even if a retry supplies different
+metadata.
 
 ## Limits
 

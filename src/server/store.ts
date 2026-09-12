@@ -726,6 +726,14 @@ export class FileStore {
         event.type === "message.created" && event.message.id === input.messageId,
     )?.message;
     if (!message) throw new StoreError("not_found", "Message not found in this thread.");
+    const existing = this.listKnowledge(thread.workspaceId).find(
+      (item): item is KnowledgeDocument =>
+        item.kind === "document" &&
+        item.provenance?.source === "message" &&
+        item.provenance.threadId === thread.id &&
+        item.provenance.messageId === message.id,
+    );
+    if (existing) return existing;
     const content = this.redactSecrets(message.content);
     if (!content.trim()) throw new StoreError("invalid", "Cannot capture an empty message.");
     return this.createKnowledgeDocument(
