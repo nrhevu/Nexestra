@@ -88,3 +88,5 @@
     redacted delegated Taskboard titles to monitoring rows without changing pagination semantics.
 46. [Quality-adjusted run cost research](research/2026-09-12-quality-adjusted-run-cost.md): relate
     estimated spend to helpful feedback only when coverage is complete.
+47. [Opt-in run-history refresh research](research/2026-09-12-opt-in-run-history-refresh.md): keep
+    the newest monitoring page current without disturbing older-page navigation.

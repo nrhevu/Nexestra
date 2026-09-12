@@ -78,3 +78,4 @@
 | [0075](0075-task-result-knowledge-capture.md) | Accepted | Capture completed Worker results from Taskboard through canonical message provenance |
 | [0076](0076-run-history-task-context.md) | Accepted | Show delegated Taskboard titles in run-history rows |
 | [0077](0077-quality-adjusted-run-cost.md) | Accepted | Show complete-coverage estimated cost per helpful reply |
+| [0078](0078-opt-in-run-history-refresh.md) | Accepted | Add user-controlled refresh for the newest run-history page |

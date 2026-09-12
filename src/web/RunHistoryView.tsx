@@ -22,6 +22,7 @@ export interface RunHistoryViewProps {
 
 const PAGE_LIMIT = 50;
 const FETCH_TIMEOUT_MS = 30_000;
+const AUTO_REFRESH_MS = 15_000;
 const RUN_STATUSES = RunSchema.shape.status.options;
 type RunStatus = (typeof RUN_STATUSES)[number];
 
@@ -174,6 +175,7 @@ export function RunHistoryView({
   });
   const [view, setView] = useState(() => initialViewState(workspaceId));
   const [retryingRunId, setRetryingRunId] = useState<string>();
+  const [autoRefresh, setAutoRefresh] = useState(false);
 
   const requestRef = useRef(0);
   const controllerRef = useRef<AbortController | null>(null);
@@ -406,6 +408,16 @@ export function RunHistoryView({
     [],
   );
 
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const timer = window.setInterval(() => {
+      if (viewRef.current.previousCursors.length === 0 && !inFlightRef.current) {
+        void loadFirstPage();
+      }
+    }, AUTO_REFRESH_MS);
+    return () => window.clearInterval(timer);
+  }, [autoRefresh, loadFirstPage]);
+
   const agentOptions = useMemo(
     () =>
       agents
@@ -502,6 +514,14 @@ export function RunHistoryView({
         >
           Export loaded runs
         </button>
+        <label className="run-history-auto-refresh">
+          <input
+            type="checkbox"
+            checked={autoRefresh}
+            onChange={(event) => setAutoRefresh(event.target.checked)}
+          />
+          Auto-refresh newest page
+        </label>
       </header>
 
       <fieldset className="run-history-filters">

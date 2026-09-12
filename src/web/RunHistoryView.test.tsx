@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -204,6 +204,48 @@ describe("RunHistoryView requests and filters", () => {
     expect(filtered.has("cursor")).toBe(false);
     expect(screen.getByText("Page 1")).toBeInTheDocument();
     expect(screen.queryByLabelText("Run run-2")).not.toBeInTheDocument();
+  });
+
+  it("refreshes the newest page only when opt-in auto-refresh is enabled", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+      jsonResponse(
+        makePage(
+          [makeItem(makeRun("run-1"))],
+          pageParams(input).get("cursor") ? null : "cursor-older",
+        ),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    renderView();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const toggle = screen.getByRole("checkbox", { name: "Auto-refresh newest page" });
+    expect(toggle).not.toBeChecked();
+    fireEvent.click(toggle);
+    await act(async () => {
+      vi.advanceTimersByTime(15_000);
+      await Promise.resolve();
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole("button", { name: "Older runs" }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    await act(async () => {
+      vi.advanceTimersByTime(15_000);
+      await Promise.resolve();
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    fireEvent.click(toggle);
+    await act(async () => {
+      vi.advanceTimersByTime(15_000);
+      await Promise.resolve();
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it("sends agent and conversation filters and scopes options to the workspace", async () => {

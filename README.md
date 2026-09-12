@@ -78,6 +78,8 @@ run. Ratings are user signals, not an automatic score or billing record.
 rows, active filters, pagination cursors, coverage, and the complete filtered summary. Load older
 pages first when they should be included; the packet contains no transcript text or raw provider
 errors.
+Enable **Auto-refresh newest page** when supervising active work; it checks the current filtered
+first page every 15 seconds, pauses on older pages, and never retries or changes run state.
 
 Open **Needs-work review** under Surfaces, or use `/needs-work review`, to revisit the latest
 negative rating for each agent reply across the workspace. The queue shows a bounded, redacted

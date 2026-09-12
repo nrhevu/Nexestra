@@ -38,6 +38,14 @@
   font-size: 12px;
   cursor: pointer;
 }
+.run-history-auto-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted, #a7a3ad);
+  font-size: 12px;
+  white-space: nowrap;
+}
 
 .run-history-refresh:hover:not(:disabled),
 .run-history-export:hover:not(:disabled) {
