@@ -5625,6 +5625,13 @@ describe("Run history navigation", () => {
         },
       ],
       page: { nextCursor: null },
+      summary: {
+        totalRuns: 1,
+        terminalRuns: 0,
+        totalDurationMs: 0,
+        usageRuns: 0,
+        totalTokens: 0,
+      },
       coverage: { complete: true, unavailableThreads: 0 },
     };
   }

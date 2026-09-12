@@ -542,10 +542,26 @@ export const RunHistoryItemSchema = z.object({
 });
 export type RunHistoryItem = z.infer<typeof RunHistoryItemSchema>;
 
+export const RunHistoryMetricsSchema = z.object({
+  totalRuns: z.number().int().nonnegative(),
+  terminalRuns: z.number().int().nonnegative(),
+  totalDurationMs: z.number().int().nonnegative(),
+  usageRuns: z.number().int().nonnegative(),
+  totalTokens: z.number().int().nonnegative(),
+});
+export type RunHistoryMetrics = z.infer<typeof RunHistoryMetricsSchema>;
+
 export const RunHistoryPageSchema = z.object({
   workspaceId: z.string(),
   items: z.array(RunHistoryItemSchema).max(100),
   page: z.object({ nextCursor: z.string().nullable() }),
+  summary: RunHistoryMetricsSchema.default({
+    totalRuns: 0,
+    terminalRuns: 0,
+    totalDurationMs: 0,
+    usageRuns: 0,
+    totalTokens: 0,
+  }),
   coverage: z.object({
     complete: z.boolean(),
     unavailableThreads: z.number().int().nonnegative(),

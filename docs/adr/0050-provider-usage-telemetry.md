@@ -17,9 +17,10 @@ record. Chat Completions and Responses payloads, including SSE terminal events, 
 same shape. Invalid or partial usage objects are ignored. Codex and OpenCode runs remain valid
 without usage because their CLIs do not consistently expose it.
 
-Usage is retained in the canonical JSONL run event and returned by run history. The UI shows a
-compact total-token value when present. Credentials, prompts, and provider payloads are never stored
-as telemetry.
+Usage is retained in the canonical JSONL run event and returned by run history. The filtered run
+history response also reports aggregate token totals and how many matching runs supplied usage, so
+users can compare a harness without paging through every row. The UI shows compact totals when
+present. Credentials, prompts, and provider payloads are never stored as telemetry.
 
 ## Limits
 

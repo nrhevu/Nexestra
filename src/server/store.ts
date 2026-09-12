@@ -2863,6 +2863,22 @@ export class FileStore {
         }
       }
       summaries.sort(compareRunHistorySummaries);
+      const summary = summaries.reduce(
+        (metrics, entry) => {
+          const durationMs = runDurationMs(entry);
+          metrics.totalRuns += 1;
+          if (durationMs !== undefined) {
+            metrics.terminalRuns += 1;
+            metrics.totalDurationMs += durationMs;
+          }
+          if (entry.usage) {
+            metrics.usageRuns += 1;
+            metrics.totalTokens += entry.usage.totalTokens;
+          }
+          return metrics;
+        },
+        { totalRuns: 0, terminalRuns: 0, totalDurationMs: 0, usageRuns: 0, totalTokens: 0 },
+      );
       const remaining =
         cursor === undefined
           ? summaries
@@ -2910,6 +2926,7 @@ export class FileStore {
         workspaceId: workspace.id,
         items,
         page: { nextCursor },
+        summary,
         coverage: { complete: unavailableThreads === 0, unavailableThreads },
       });
     });

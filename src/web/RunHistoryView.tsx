@@ -1,5 +1,11 @@
 import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AgentView, RunHistoryItem, RunHistoryPage, Thread } from "../shared/contracts.js";
+import type {
+  AgentView,
+  RunHistoryItem,
+  RunHistoryMetrics,
+  RunHistoryPage,
+  Thread,
+} from "../shared/contracts.js";
 import { RunHistoryPageSchema, RunSchema } from "../shared/contracts.js";
 import { api } from "./api.js";
 import "./RunHistoryView.css";
@@ -33,6 +39,7 @@ interface RunPage {
   items: RunHistoryItem[];
   nextCursor: string | null;
   cursor: string | null;
+  summary: RunHistoryMetrics;
 }
 
 interface RunHistoryViewState {
@@ -208,7 +215,12 @@ export function RunHistoryView({
       if (requestId !== requestRef.current) return;
       updateView((current) => ({
         ...current,
-        page: { items: response.items, nextCursor: response.page.nextCursor, cursor: null },
+        page: {
+          items: response.items,
+          nextCursor: response.page.nextCursor,
+          cursor: null,
+          summary: response.summary,
+        },
         previousCursors: [],
         coverage: response.coverage,
         phase: "ready",
@@ -251,6 +263,7 @@ export function RunHistoryView({
             items: response.items,
             nextCursor: response.page.nextCursor,
             cursor: currentPage.nextCursor,
+            summary: response.summary,
           },
           previousCursors: [...current.previousCursors, current.page.cursor],
           coverage: response.coverage,
@@ -292,7 +305,12 @@ export function RunHistoryView({
         if (current.previousCursors.at(-1) !== cursor) return current;
         return {
           ...current,
-          page: { items: response.items, nextCursor: response.page.nextCursor, cursor },
+          page: {
+            items: response.items,
+            nextCursor: response.page.nextCursor,
+            cursor,
+            summary: response.summary,
+          },
           previousCursors: current.previousCursors.slice(0, -1),
           coverage: response.coverage,
           loadingMore: false,
@@ -373,6 +391,7 @@ export function RunHistoryView({
   const pageNumber = currentWorkspace ? view.previousCursors.length + 1 : 1;
   const loading = currentWorkspace && view.phase === "loading";
   const busy = loading || view.loadingMore;
+  const summary = currentWorkspace ? view.page?.summary : undefined;
 
   const handleAgentChange = (event: ChangeEvent<HTMLSelectElement>) => {
     setFilters((current) => ({ ...current, agentId: event.target.value }));
@@ -446,6 +465,29 @@ export function RunHistoryView({
           </select>
         </label>
       </fieldset>
+
+      {summary ? (
+        <dl className="run-history-summary" aria-label="Run history summary">
+          <div>
+            <dt>Runs</dt>
+            <dd>{summary.totalRuns}</dd>
+          </div>
+          <div>
+            <dt>Terminal time</dt>
+            <dd>{formatDuration(summary.totalDurationMs)}</dd>
+          </div>
+          <div>
+            <dt>Tokens</dt>
+            <dd>{summary.usageRuns > 0 ? formatTokens(summary.totalTokens) : "—"}</dd>
+          </div>
+          <div>
+            <dt>Usage coverage</dt>
+            <dd>
+              {summary.usageRuns}/{summary.totalRuns}
+            </dd>
+          </div>
+        </dl>
+      ) : null}
 
       {currentWorkspace && view.phase === "loading" ? (
         <p className="run-history-status-text" role="status">

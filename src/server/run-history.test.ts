@@ -88,6 +88,13 @@ describe("run history server", () => {
       outputTokens: 250,
       totalTokens: 1_250,
     });
+    expect(page.summary).toEqual({
+      totalRuns: 2,
+      terminalRuns: 1,
+      totalDurationMs: 65_250,
+      usageRuns: 1,
+      totalTokens: 1_250,
+    });
     expect(page.items.find((item) => item.run.id === "run-active")?.run.durationMs).toBeUndefined();
   });
 

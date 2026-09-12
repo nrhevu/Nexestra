@@ -84,6 +84,13 @@ function makePage(
     workspaceId,
     items,
     page: { nextCursor },
+    summary: {
+      totalRuns: items.length,
+      terminalRuns: 0,
+      totalDurationMs: 0,
+      usageRuns: 0,
+      totalTokens: 0,
+    },
     coverage: { complete: true, unavailableThreads: 0 },
     ...overrides,
   };

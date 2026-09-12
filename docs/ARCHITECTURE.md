@@ -170,6 +170,7 @@ objects plus previous cursors. Open run uses the canonical trigger message link,
 draft/file retention and immediate invalidation on workspace switches. Global Refresh/resume also
 refreshes the mounted listing. Terminal rows derive wall-clock duration from lifecycle timestamps;
 custom-provider usage, when reported, is normalized to optional input/output/total token counts.
+Each filtered response also includes aggregate run, duration, token, and usage-coverage metrics.
 See [ADR 0045](adr/0045-workspace-run-history.md), [ADR 0049](adr/0049-run-duration-metrics.md),
 and [ADR 0050](adr/0050-provider-usage-telemetry.md).
 
