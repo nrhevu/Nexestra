@@ -566,7 +566,8 @@ credentials.
   remains an explicit edit after capture. Needs-work ratings can carry an optional bounded note and
   an explicit open/resolved review status; resolving changes metadata only. Review queue responses
   also include a filter-scoped total for the current snapshot, while keyset pagination and coverage
-  warnings remain unchanged.
+  warnings remain unchanged. Each queue row can open the same capture dialog directly; the bounded
+  queue excerpt is context only and the server reads the canonical transcript by ID.
 
 - Optional `surfaces` entries in `nexestra.config.json` compose domain-specific navigation cards.
   Their actions are an allowlisted set of trusted surfaces and their labels are bounded/redacted

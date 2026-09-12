@@ -176,6 +176,10 @@ interface HistoryFocusTarget {
   block: "start" | "end";
 }
 
+type CaptureMessage = Pick<Message, "id" | "threadId" | "content" | "createdAt"> & {
+  author: Pick<Message["author"], "name">;
+};
+
 interface LoginSession {
   id: string;
   status: "running" | "completed" | "failed" | "cancelled";
@@ -221,7 +225,7 @@ export function App() {
   const knowledgeInspectRef = useRef<KnowledgeItem | undefined>(undefined);
   const [knowledgeToEdit, setKnowledgeToEdit] = useState<KnowledgeItem>();
   const [knowledgeToDelete, setKnowledgeToDelete] = useState<KnowledgeItem>();
-  const [messageToCapture, setMessageToCapture] = useState<Message>();
+  const [messageToCapture, setMessageToCapture] = useState<CaptureMessage>();
   const [agentToDelete, setAgentToDelete] = useState<AgentView>();
   const [agentToEdit, setAgentToEdit] = useState<AgentView>();
   const [threadToRename, setThreadToRename] = useState<Thread>();
@@ -2015,6 +2019,15 @@ export function App() {
               workspaceId={data.workspace.id}
               refreshRevision={reviewQueueRefreshRevision}
               onOpenMessage={openMessage}
+              onCaptureMessage={(item) =>
+                setMessageToCapture({
+                  id: item.message.id,
+                  threadId: item.message.threadId,
+                  content: item.message.content,
+                  createdAt: item.message.createdAt,
+                  author: { name: item.agent.name },
+                })
+              }
               onSetReviewStatus={async (threadId, messageId, status) => {
                 await api(
                   `/api/reviews/${encodeURIComponent(threadId)}/${encodeURIComponent(messageId)}`,
@@ -7453,7 +7466,7 @@ function CaptureKnowledgeDialog({
   onCreated,
 }: {
   data: BootstrapData;
-  message: Message;
+  message: CaptureMessage;
   onClose: () => void;
   onCreated: () => Promise<void>;
 }) {
@@ -7479,8 +7492,8 @@ function CaptureKnowledgeDialog({
         </section>
       </div>
       <p className="modal-help">
-        Review the source before saving it. The captured document keeps this message unchanged and
-        records its thread and message IDs for later verification.
+        Review the source before saving it. The server captures the canonical message unchanged and
+        records its thread and message IDs for later verification. Queue previews may be shortened.
       </p>
       <form
         onSubmit={async (event) => {

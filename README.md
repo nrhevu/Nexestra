@@ -76,7 +76,8 @@ excerpt and note, reports conversations that could not be scanned, and opens the
 message. The header also reports the number of matching reviews across the current status filter,
 before pagination. Use **Mark reviewed** to close an item without changing its rating or source;
 the status filter can reopen or inspect resolved items. Promotion to Knowledge still requires the
-existing review dialog and explicit capture.
+existing review dialog and explicit capture; each queue row also offers **Capture as Knowledge**
+to open that dialog directly.
 
 Workspaces can add a domain-specific launch surface in `nexestra.config.json`:
 

@@ -80,11 +80,13 @@ describe("ReviewQueueView", () => {
       json: async () => page(),
     } as Response);
     const onOpenMessage = vi.fn();
+    const onCaptureMessage = vi.fn();
     const onSetReviewStatus = vi.fn().mockResolvedValue(undefined);
     render(
       <ReviewQueueView
         workspaceId={workspaceId}
         onOpenMessage={onOpenMessage}
+        onCaptureMessage={onCaptureMessage}
         onSetReviewStatus={onSetReviewStatus}
       />,
     );
@@ -93,6 +95,8 @@ describe("ReviewQueueView", () => {
     expect(screen.getByText("Note: Add evidence")).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Open response" }));
     expect(onOpenMessage).toHaveBeenCalledExactlyOnceWith(thread.id, "message-reply");
+    await userEvent.click(screen.getByRole("button", { name: "Capture as Knowledge" }));
+    expect(onCaptureMessage).toHaveBeenCalledExactlyOnceWith(page().items[0]);
     await userEvent.click(screen.getByRole("button", { name: "Mark reviewed" }));
     expect(onSetReviewStatus).toHaveBeenCalledExactlyOnceWith(
       thread.id,

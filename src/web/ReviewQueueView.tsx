@@ -10,6 +10,7 @@ export interface ReviewQueueViewProps {
   workspaceId: string;
   refreshRevision?: number;
   onOpenMessage: (threadId: string, messageId: string) => void;
+  onCaptureMessage?: (item: ReviewQueueItem) => void;
   onSetReviewStatus: (
     threadId: string,
     messageId: string,
@@ -23,6 +24,7 @@ export function ReviewQueueView({
   workspaceId,
   refreshRevision,
   onOpenMessage,
+  onCaptureMessage,
   onSetReviewStatus,
 }: ReviewQueueViewProps) {
   const [page, setPage] = useState<ReviewQueuePage>();
@@ -165,6 +167,11 @@ export function ReviewQueueView({
                 >
                   Open response
                 </button>
+                {onCaptureMessage ? (
+                  <button type="button" onClick={() => onCaptureMessage(item)}>
+                    Capture as Knowledge
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   disabled={resolvingId !== undefined}
