@@ -84,3 +84,4 @@
 | [0081](0081-attention-snooze-durations.md) | Accepted | Offer bounded one-hour, four-hour, and one-day attention snoozes |
 | [0082](0082-attention-state-workspace-export.md) | Accepted | Preserve selected workspace attention metadata in portable exports |
 | [0083](0083-knowledge-revision-pruning.md) | Accepted | Explicitly prune bounded old Knowledge document revisions |
+| [0084](0084-review-queue-bulk-resolution.md) | Accepted | Resolve selected visible review rows sequentially |

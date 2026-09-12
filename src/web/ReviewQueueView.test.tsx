@@ -177,4 +177,42 @@ describe("ReviewQueueView", () => {
     expect(requests.at(-1)).toContain(`threadId=${thread.id}`);
     expect(requests.at(-1)).not.toContain("cursor=");
   });
+
+  it("marks selected open reviews in page order", async () => {
+    const batch = page();
+    const first = batch.items[0];
+    if (!first) throw new Error("expected review fixture");
+    batch.items = [
+      first,
+      {
+        ...first,
+        id: "thread-research:message-two",
+        message: { ...first.message, id: "message-two" },
+      },
+    ];
+    batch.total = 2;
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => batch,
+    } as Response);
+    const onSetReviewStatus = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ReviewQueueView
+        workspaceId={workspaceId}
+        onOpenMessage={vi.fn()}
+        onSetReviewStatus={onSetReviewStatus}
+      />,
+    );
+    await screen.findAllByText("A response that needs review.");
+    const checks = screen.getAllByRole("checkbox");
+    await userEvent.click(checks[0] as HTMLElement);
+    await userEvent.click(checks[1] as HTMLElement);
+    await userEvent.click(screen.getByRole("button", { name: /Mark selected reviewed/ }));
+    await waitFor(() => expect(onSetReviewStatus).toHaveBeenCalledTimes(2));
+    expect(onSetReviewStatus.mock.calls.map((call) => call[1])).toEqual([
+      "message-reply",
+      "message-two",
+    ]);
+  });
 });

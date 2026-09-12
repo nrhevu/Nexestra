@@ -98,3 +98,5 @@
     preserve selected workspace monitoring triage in portable ZIP state.
 51. [Knowledge revision pruning research](research/2026-09-12-knowledge-revision-pruning.md): remove
     explicitly selected old immutable document revisions while retaining recent history.
+52. [Review queue bulk resolution research](research/2026-09-12-review-queue-bulk-resolution.md): mark
+    selected visible needs-work rows reviewed in order.

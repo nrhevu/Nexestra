@@ -39,6 +39,8 @@ export function ReviewQueueView({
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [resolvingId, setResolvingId] = useState<string>();
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkResolving, setBulkResolving] = useState(false);
   const [error, setError] = useState<string>();
   const requestRef = useRef(0);
 
@@ -80,6 +82,7 @@ export function ReviewQueueView({
   useEffect(() => {
     requestRef.current += 1;
     setPage(undefined);
+    setSelectedIds(new Set());
     void refreshRevision;
     void load();
     return () => {
@@ -101,6 +104,7 @@ export function ReviewQueueView({
   };
 
   const rows = page?.items ?? [];
+  const busy = loading || loadingMore || bulkResolving;
   const nextCursor = page?.page.nextCursor ?? null;
 
   const exportLoadedReviews = () => {
@@ -118,6 +122,22 @@ export function ReviewQueueView({
     anchor.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
   };
+  const resolveSelected = async () => {
+    const selected = rows.filter((item) => selectedIds.has(item.id));
+    if (selected.length === 0) return;
+    setBulkResolving(true);
+    try {
+      for (const item of selected) {
+        await onSetReviewStatus(item.message.threadId, item.message.id, "resolved");
+      }
+      setSelectedIds(new Set());
+      await load();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Selected reviews could not be updated.");
+    } finally {
+      setBulkResolving(false);
+    }
+  };
 
   return (
     <section className="review-queue-view" aria-label="Needs-work review queue">
@@ -130,15 +150,18 @@ export function ReviewQueueView({
           </p>
         </div>
         <div className="review-queue-header-actions">
-          <button type="button" onClick={() => void load()} disabled={loading || loadingMore}>
+          <button type="button" onClick={() => void load()} disabled={busy}>
             Refresh
+          </button>
+          <button type="button" onClick={exportLoadedReviews} disabled={busy || rows.length === 0}>
+            Export loaded reviews
           </button>
           <button
             type="button"
-            onClick={exportLoadedReviews}
-            disabled={loading || loadingMore || rows.length === 0}
+            onClick={() => void resolveSelected()}
+            disabled={bulkResolving || selectedIds.size === 0}
           >
-            Export loaded reviews
+            {bulkResolving ? "Marking…" : `Mark selected reviewed (${selectedIds.size})`}
           </button>
         </div>
       </header>
@@ -148,7 +171,7 @@ export function ReviewQueueView({
           <select
             value={status}
             onChange={(event) => setStatus(event.target.value as ReviewFilter)}
-            disabled={loading || loadingMore}
+            disabled={busy}
           >
             <option value="open">Open</option>
             <option value="resolved">Resolved</option>
@@ -160,7 +183,7 @@ export function ReviewQueueView({
           <select
             value={agentId}
             onChange={(event) => setAgentId(event.target.value)}
-            disabled={loading || loadingMore}
+            disabled={busy}
           >
             <option value="">All agents</option>
             {agents.map((agent) => (
@@ -175,7 +198,7 @@ export function ReviewQueueView({
           <select
             value={threadId}
             onChange={(event) => setThreadId(event.target.value)}
-            disabled={loading || loadingMore}
+            disabled={busy}
           >
             <option value="">All threads</option>
             {threads.map((thread) => (
@@ -217,6 +240,23 @@ export function ReviewQueueView({
           {rows.map((item: ReviewQueueItem) => {
             return (
               <li key={item.id} className="review-queue-item">
+                <label>
+                  <input
+                    type="checkbox"
+                    aria-label={`Select review for ${item.agent.name}`}
+                    checked={selectedIds.has(item.id)}
+                    onChange={(event) =>
+                      setSelectedIds((current) => {
+                        const next = new Set(current);
+                        if (event.target.checked) next.add(item.id);
+                        else next.delete(item.id);
+                        return next;
+                      })
+                    }
+                    disabled={bulkResolving || item.feedback.reviewStatus === "resolved"}
+                  />
+                  Select
+                </label>
                 <div className="review-queue-item-meta">
                   <strong>{item.agent.name}</strong>
                   <span>#{item.thread.name}</span>
@@ -246,7 +286,7 @@ export function ReviewQueueView({
                 ) : null}
                 <button
                   type="button"
-                  disabled={resolvingId !== undefined}
+                  disabled={busy || resolvingId !== undefined}
                   onClick={() => void updateReviewStatus(item)}
                 >
                   {resolvingId === item.id
@@ -264,7 +304,7 @@ export function ReviewQueueView({
         <div className="review-queue-pagination">
           <button
             type="button"
-            disabled={loadingMore}
+            disabled={busy}
             onClick={() => {
               void load(nextCursor, true);
             }}

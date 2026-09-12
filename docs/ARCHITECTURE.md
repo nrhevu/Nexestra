@@ -595,7 +595,9 @@ credentials.
   improvement; the packet contains only the queue projection and never reads transcript files. The
   queue supports optional workspace-scoped agent and thread filters; keyset cursors encode those
   filters and are rejected when reused with a different selection. Changing a filter resets to the
-  first page, and exports record the active filter IDs for reproducibility.
+  first page, and exports record the active filter IDs for reproducibility. Open rows can be selected
+  on the loaded page and marked reviewed sequentially; selection is cleared when a fresh page or
+  filter changes.
 
 - Optional `surfaces` entries in `nexestra.config.json` compose domain-specific navigation cards.
   Their actions are an allowlisted set of trusted surfaces and their labels are bounded/redacted
