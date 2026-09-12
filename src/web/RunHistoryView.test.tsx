@@ -220,30 +220,31 @@ describe("RunHistoryView requests and filters", () => {
     renderView();
     await act(async () => {
       await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
     });
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     const toggle = screen.getByRole("checkbox", { name: "Auto-refresh newest page" });
     expect(toggle).not.toBeChecked();
     fireEvent.click(toggle);
     await act(async () => {
-      vi.advanceTimersByTime(15_000);
-      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(15_000);
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
     fireEvent.click(screen.getByRole("button", { name: "Older runs" }));
     await act(async () => {
       await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
     });
     expect(fetchMock).toHaveBeenCalledTimes(3);
     await act(async () => {
-      vi.advanceTimersByTime(15_000);
-      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(15_000);
     });
     expect(fetchMock).toHaveBeenCalledTimes(3);
     fireEvent.click(toggle);
     await act(async () => {
-      vi.advanceTimersByTime(15_000);
-      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(15_000);
     });
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
