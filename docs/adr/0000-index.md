@@ -82,3 +82,4 @@
 | [0079](0079-batch-run-retry.md) | Accepted | Retry selected failed or interrupted runs sequentially from history |
 | [0080](0080-attention-snooze-dismiss.md) | Accepted | Defer or dismiss derived workspace attention items with bounded metadata |
 | [0081](0081-attention-snooze-durations.md) | Accepted | Offer bounded one-hour, four-hour, and one-day attention snoozes |
+| [0082](0082-attention-state-workspace-export.md) | Accepted | Preserve selected workspace attention metadata in portable exports |

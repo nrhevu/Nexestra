@@ -1066,4 +1066,32 @@ describe("workspace export", () => {
       { code: "invalid" },
     );
   });
+
+  it("preserves selected workspace attention state without exporting foreign state", async () => {
+    const { store } = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected seeded workspace");
+    const other = await store.createWorkspace({ name: "Other" });
+    await store.updateAttentionState(workspace.id, "task:selected", { action: "dismiss" });
+    await store.updateAttentionState(other.id, "task:foreign", { action: "dismiss" });
+    const archive = await createWorkspaceExport({ store, workspaceId: workspace.id });
+    try {
+      const file = await readFile(archive.path);
+      const zip = extractZip(
+        file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength) as ArrayBuffer,
+      );
+      const state = JSON.parse(decode(zipEntry(zip, "state.json"))) as {
+        attentionStates: Array<{ workspaceId: string; attentionId: string }>;
+      };
+      expect(state.attentionStates).toEqual([
+        {
+          workspaceId: workspace.id,
+          attentionId: "task:selected",
+          dismissedAt: expect.any(String),
+        },
+      ]);
+    } finally {
+      await archive.dispose();
+    }
+  });
 });

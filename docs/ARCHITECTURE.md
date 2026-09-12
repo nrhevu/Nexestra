@@ -620,6 +620,8 @@ credentials.
   entries avoid compression work; the browser holds a bounded ZIP Blob. Known-credential redaction
   cannot discover other secrets or decode arbitrary binary encodings. Hashes are integrity checks,
   not signatures. A process crash can leave a private archive in operating-system temporary storage.
+  The selected workspace's bounded attention snooze and dismissal metadata is included in the
+  exported state; foreign attention state remains excluded.
 
 - Conversation unread state belongs to one browser profile and origin. It counts all canonical
   messages and uses a read-through count, not a per-message receipt or proof of attention. Existing

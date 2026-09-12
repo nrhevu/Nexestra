@@ -94,3 +94,5 @@
     derived workspace attention items with bounded, durable metadata.
 49. [Attention snooze durations research](research/2026-09-12-attention-snooze-durations.md): provide
     fixed one-hour, four-hour, and one-day deferral choices.
+50. [Attention state workspace export research](research/2026-09-12-attention-state-workspace-export.md):
+    preserve selected workspace monitoring triage in portable ZIP state.

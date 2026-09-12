@@ -99,6 +99,7 @@ first page, and the active agent/thread selection is recorded in review-case exp
 Open **Needs attention** to review pending approvals, questions, and blocked or failed work. Each
 item can be snoozed for one hour, four hours, or one day, or dismissed; snoozes expire automatically,
 while dismissals return when the underlying run or task changes.
+Workspace exports retain this bounded attention metadata for the selected workspace.
 
 Completed Worker results in Taskboard also offer **Save as Knowledge** when their canonical reply is
 available. This opens the same reviewed capture dialog and preserves the Worker message's thread and

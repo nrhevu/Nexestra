@@ -254,6 +254,7 @@ export interface WorkspaceExportState {
   knowledge: KnowledgeItem[];
   assignments: WorkAssignment[];
   messageFeedback: MessageFeedback[];
+  attentionStates: AttentionState[];
 }
 
 export interface PreparedWorkspaceExportFile {
@@ -4257,6 +4258,9 @@ export class FileStore {
     const messageFeedback = this.state.messageFeedback.filter((entry) =>
       threads.some((thread) => thread.id === entry.threadId),
     );
+    const attentionStates = this.state.attentionStates.filter(
+      (entry) => entry.workspaceId === workspaceId,
+    );
     this.validateWorkspaceExportJoins(workspaceId);
     const canonicalRoot = await realpath(this.root);
     const security = workspaceExportSecurity(Object.values(this.credentials));
@@ -4271,6 +4275,7 @@ export class FileStore {
       knowledge: structuredClone(knowledge),
       assignments: structuredClone(assignments),
       messageFeedback: messageFeedback.map((entry) => this.redactedMessageFeedback(entry)),
+      attentionStates: structuredClone(attentionStates),
     };
     const files: PreparedWorkspaceExportFile[] = [];
     let sourceBytesTotal = 0;
