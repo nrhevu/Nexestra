@@ -50,3 +50,5 @@
 | [0046](0046-portable-workspace-export.md) | Accepted | Export bounded workspace archives with credential exclusions and delivered-byte hashes |
 | [0047](0047-local-workspace-archive-inspection.md) | Accepted | Inspect stored workspace ZIP integrity locally in a cancellable browser Worker |
 | [0048](0048-deferred-workspace-archive-dialogs.md) | Accepted | Load archive dialogs on demand with bounded retry, focus restoration and navigation guards |
+| [0049](0049-run-duration-metrics.md) | Accepted | Expose terminal run elapsed time in run history for performance and cost review |
+| [0050](0050-provider-usage-telemetry.md) | Accepted | Retain optional provider-reported token usage for local run cost comparisons |

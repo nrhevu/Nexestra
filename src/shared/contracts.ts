@@ -505,6 +505,19 @@ export const RunSchema = z.object({
     "interrupted",
   ]),
   error: z.string().optional(),
+  // Elapsed wall-clock time for terminal runs. Older transcripts omit this
+  // derived field, so consumers must treat it as optional.
+  durationMs: z.number().int().nonnegative().optional(),
+  // OpenAI-compatible providers may report token usage. CLI harnesses often
+  // omit it, so telemetry remains optional and never blocks a run.
+  usage: z
+    .object({
+      inputTokens: z.number().int().nonnegative(),
+      outputTokens: z.number().int().nonnegative(),
+      totalTokens: z.number().int().nonnegative(),
+      cachedInputTokens: z.number().int().nonnegative().optional(),
+    })
+    .optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

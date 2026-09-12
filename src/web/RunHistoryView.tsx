@@ -77,6 +77,22 @@ function formatDate(value: string): string {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
 }
 
+function formatDuration(durationMs: number): string {
+  if (durationMs < 1_000) return `${durationMs} ms`;
+  const seconds = durationMs / 1_000;
+  if (seconds < 60) return `${seconds.toFixed(seconds >= 10 ? 0 : 1)} s`;
+  const totalSeconds = Math.floor(seconds);
+  const minutes = Math.floor(totalSeconds / 60);
+  const remainder = totalSeconds % 60;
+  return `${minutes}m ${String(remainder).padStart(2, "0")}s`;
+}
+
+function formatTokens(totalTokens: number): string {
+  return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(
+    totalTokens,
+  );
+}
+
 function errorText(error: unknown, fallback: string): string {
   return error instanceof Error && error.message !== "" ? error.message : fallback;
 }
@@ -483,6 +499,16 @@ export function RunHistoryView({
                           {statusLabel(item.run.status)}
                         </span>
                         <span className="run-history-attempt">Attempt {item.run.attempt}</span>
+                        {item.run.durationMs !== undefined ? (
+                          <span className="run-history-duration">
+                            Duration {formatDuration(item.run.durationMs)}
+                          </span>
+                        ) : null}
+                        {item.run.usage ? (
+                          <span className="run-history-usage" title="Provider-reported token usage">
+                            Tokens {formatTokens(item.run.usage.totalTokens)}
+                          </span>
+                        ) : null}
                         <time className="run-history-date" dateTime={item.run.createdAt}>
                           Created {formatDate(item.run.createdAt)}
                         </time>

@@ -594,6 +594,25 @@ export class AgentDispatcher {
             await this.store.updateToolCall(toolCall);
             this.notifyThread(run.threadId, true);
           },
+          usage: (usage) => {
+            const previous = currentRun.usage;
+            currentRun = {
+              ...currentRun,
+              usage: {
+                inputTokens: (previous?.inputTokens ?? 0) + usage.inputTokens,
+                outputTokens: (previous?.outputTokens ?? 0) + usage.outputTokens,
+                totalTokens: (previous?.totalTokens ?? 0) + usage.totalTokens,
+                ...(previous?.cachedInputTokens !== undefined ||
+                usage.cachedInputTokens !== undefined
+                  ? {
+                      cachedInputTokens:
+                        (previous?.cachedInputTokens ?? 0) + (usage.cachedInputTokens ?? 0),
+                    }
+                  : {}),
+              },
+            };
+            this.liveRuns.set(currentRun.id, currentRun);
+          },
         },
       };
       const response = this.store.redactSecrets(

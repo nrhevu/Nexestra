@@ -253,6 +253,8 @@
 }
 
 .run-history-attempt,
+.run-history-duration,
+.run-history-usage,
 .run-history-date {
   color: var(--muted);
   font-size: 11px;

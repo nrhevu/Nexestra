@@ -168,7 +168,10 @@ in-memory summary projection is rebuilt at startup and extended after durable ap
 sorts cached summaries without reading whole transcripts. The surface retains one page of run
 objects plus previous cursors. Open run uses the canonical trigger message link, with app-owned
 draft/file retention and immediate invalidation on workspace switches. Global Refresh/resume also
-refreshes the mounted listing. See [ADR 0045](adr/0045-workspace-run-history.md).
+refreshes the mounted listing. Terminal rows derive wall-clock duration from lifecycle timestamps;
+custom-provider usage, when reported, is normalized to optional input/output/total token counts.
+See [ADR 0045](adr/0045-workspace-run-history.md), [ADR 0049](adr/0049-run-duration-metrics.md),
+and [ADR 0050](adr/0050-provider-usage-telemetry.md).
 
 Message content is stored and transported as unchanged Markdown. The browser renders it with
 GitHub Flavored Markdown and KaTeX inside the memoized transcript boundary. Raw HTML parsing is not
@@ -468,7 +471,8 @@ completion. Responses requests ask for an automatic reasoning summary and parse 
 reasoning-summary and reasoning-text deltas; compatible Chat Completions providers may expose
 reasoning through `reasoning_content` or `reasoning`. Codex
 `exec --json` and OpenCode `run --format json --thinking` stdout is parsed incrementally, including
-records split across process chunks. Native CLI tool events are normalized into the same durable
+records split across process chunks and tolerate UTF-8 byte-order marks or interleaved diagnostics
+without dropping later valid events. Native CLI tool events are normalized into the same durable
 `tool.updated` history used by the provider-neutral Master. Reasoning content is redacted, bounded,
 and kept only in the process-local run projection. The UI presents it in a collapsed disclosure
 while the run is active. After successful completion, the run row—including thinking and tool

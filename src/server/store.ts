@@ -301,6 +301,23 @@ interface FileStoreOptions {
   workspacePath?: string;
 }
 
+const TERMINAL_RUN_STATUSES = new Set<RunHistorySummary["status"]>([
+  "completed",
+  "failed",
+  "interrupted",
+]);
+
+/** Derive elapsed time only when a run has a known terminal timestamp. */
+function runDurationMs(summary: RunHistorySummary): number | undefined {
+  if (!TERMINAL_RUN_STATUSES.has(summary.status)) return undefined;
+  const started = Date.parse(summary.createdAt);
+  const finished = Date.parse(summary.updatedAt);
+  if (!Number.isFinite(started) || !Number.isFinite(finished) || finished < started) {
+    return undefined;
+  }
+  return finished - started;
+}
+
 export class StoreError extends Error {
   constructor(
     readonly code: "not_found" | "conflict" | "invalid",
@@ -2864,6 +2881,7 @@ export class FileStore {
       const items = pageSummaries.map((summary): RunHistoryItem => {
         const agent = agents.get(summary.agentId);
         const thread = threads.get(summary.threadId);
+        const durationMs = runDurationMs(summary);
         return {
           run: {
             id: summary.id,
@@ -2872,6 +2890,8 @@ export class FileStore {
             agentId: summary.agentId,
             attempt: summary.attempt,
             status: summary.status,
+            ...(durationMs === undefined ? {} : { durationMs }),
+            ...(summary.usage ? { usage: structuredClone(summary.usage) } : {}),
             createdAt: summary.createdAt,
             updatedAt: summary.updatedAt,
           },
@@ -3034,6 +3054,7 @@ export class FileStore {
       status: run.status,
       createdAt: run.createdAt,
       updatedAt: run.updatedAt,
+      ...(run.usage ? { usage: structuredClone(run.usage) } : {}),
     };
   }
 

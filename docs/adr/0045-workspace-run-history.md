@@ -70,4 +70,4 @@ visited, while run objects and DOM rows remain bounded to one page.
 Deleted agents appear as Unknown and cannot be selected in the current-agent filter. Filters and
 page position are not saved in the URL or restored after leaving the surface. A missing trigger
 uses the conversation's existing unavailable-target fallback. There is no cross-workspace inbox,
-background notification, full-text run search, duration metric or new run action in this change.
+background notification, full-text run search or new run action in this change.

@@ -36,6 +36,20 @@ describe("harness output parsers", () => {
     expect(parseCodexReply(output)).toBe("final");
   });
 
+  it("accepts a UTF-8 BOM before the first Codex or OpenCode event", () => {
+    const codex = `\uFEFF${JSON.stringify({
+      type: "item.completed",
+      item: { type: "agent_message", text: "codex reply" },
+    })}`;
+    const opencode = `\uFEFF${JSON.stringify({
+      type: "text",
+      part: { type: "text", text: "opencode reply" },
+    })}`;
+
+    expect(parseCodexReply(codex)).toBe("codex reply");
+    expect(parseOpenCodeReply(opencode)).toBe("opencode reply");
+  });
+
   it("takes the last OpenCode text part", () => {
     const output = [
       JSON.stringify({ type: "text", part: { type: "text", text: "one" } }),
@@ -266,6 +280,7 @@ describe("Worker harness arguments", () => {
         item: { type: "agent_message", text: "Done." },
       }),
     ].join("\n");
+    const streamOutput = `\uFEFF${output}`;
     processMocks.findExecutable.mockResolvedValue("/fake/codex");
     processMocks.runCommand.mockImplementation(
       async (
@@ -273,9 +288,9 @@ describe("Worker harness arguments", () => {
         _args: string[],
         options: { onStdout?: (chunk: string) => void },
       ) => {
-        options.onStdout?.(output.slice(0, 37));
-        options.onStdout?.(output.slice(37));
-        return { stdout: output, stderr: "", exitCode: 0 };
+        options.onStdout?.(streamOutput.slice(0, 37));
+        options.onStdout?.(streamOutput.slice(37));
+        return { stdout: streamOutput, stderr: "", exitCode: 0 };
       },
     );
 
@@ -402,6 +417,7 @@ describe("parseProviderReply", () => {
     const { agent, invocation, store } = await customMasterFixture("openai-chat");
     const thinking = vi.fn();
     const text = vi.fn();
+    const usage = vi.fn();
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       sseResponse([
         { choices: [{ delta: { reasoning_content: "Considering the request. " } }] },
@@ -409,6 +425,15 @@ describe("parseProviderReply", () => {
         { choices: [{ delta: { reasoning: " Verifying details." } }] },
         { choices: [{ delta: { content: "Hello" } }] },
         { choices: [{ delta: { content: " from the stream." }, finish_reason: "stop" }] },
+        {
+          choices: [],
+          usage: {
+            prompt_tokens: 120,
+            completion_tokens: 30,
+            total_tokens: 150,
+            prompt_tokens_details: { cached_tokens: 20 },
+          },
+        },
       ]),
     );
 
@@ -420,6 +445,7 @@ describe("parseProviderReply", () => {
           thinking,
           text,
           tool: vi.fn(async () => undefined),
+          usage,
         },
       }),
     ).resolves.toBe("Hello from the stream.");
@@ -432,6 +458,12 @@ describe("parseProviderReply", () => {
       ["Preparing the answer.", "append"],
       [" Verifying details.", "append"],
     ]);
+    expect(usage).toHaveBeenCalledWith({
+      inputTokens: 120,
+      outputTokens: 30,
+      totalTokens: 150,
+      cachedInputTokens: 20,
+    });
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ stream: true });
   });
 
@@ -494,6 +526,7 @@ describe("parseProviderReply", () => {
     const { agent, invocation, store } = await customMasterFixture("openai-responses");
     const thinking = vi.fn();
     const text = vi.fn();
+    const usage = vi.fn();
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       sseResponse([
         { type: "response.reasoning_summary_text.delta", delta: "Reviewing " },
@@ -504,6 +537,7 @@ describe("parseProviderReply", () => {
         {
           type: "response.completed",
           response: {
+            usage: { input_tokens: 80, output_tokens: 12, total_tokens: 92 },
             output: [
               {
                 type: "message",
@@ -524,6 +558,7 @@ describe("parseProviderReply", () => {
           thinking,
           text,
           tool: vi.fn(async () => undefined),
+          usage,
         },
       }),
     ).resolves.toBe("Live response");
@@ -536,6 +571,7 @@ describe("parseProviderReply", () => {
       ["the context.", "append"],
       [" Verifying details.", "append"],
     ]);
+    expect(usage).toHaveBeenCalledWith({ inputTokens: 80, outputTokens: 12, totalTokens: 92 });
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
       reasoning: { summary: "auto" },
     });

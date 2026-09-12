@@ -2,6 +2,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type {
   Agent,
+  AgentRun,
   AgentReadiness,
   AgentView,
   HarnessPermissionKey,
@@ -37,6 +38,7 @@ export interface AgentActivityHooks {
   thinking(value: string, mode: "append" | "replace"): void;
   text(value: string, mode: "append" | "replace"): void;
   tool(update: RuntimeToolUpdate): Promise<void>;
+  usage?(usage: NonNullable<AgentRun["usage"]>): void;
 }
 
 export interface AgentInvocation {
@@ -359,6 +361,7 @@ export class LocalAgentRunner implements AgentRunner {
           model: customProviderModel(agent),
           messages,
           stream: true,
+          stream_options: { include_usage: true },
           ...(toolsEnabled
             ? {
                 tools: tools.definitions.map((tool) => ({
@@ -511,6 +514,8 @@ export class LocalAgentRunner implements AgentRunner {
         const payload = JSON.parse(text);
         const reply = parseProviderReply(payload);
         if (reply) activityHooks?.text(reply, "replace");
+        const usage = providerUsage(payload);
+        if (usage) activityHooks?.usage?.(usage);
         return payload;
       } catch {
         throw new Error(`Provider ${customProviderName(agent)} did not return valid JSON.`);
@@ -828,6 +833,8 @@ function streamProviderActivity(
   hooks?: AgentActivityHooks,
 ): void {
   if (!hooks || !isRecord(event)) return;
+  const usage = providerUsage(event);
+  if (usage) hooks.usage?.(usage);
   if (protocol === "openai-chat") {
     const choice = Array.isArray(event.choices) ? event.choices[0] : undefined;
     if (!isRecord(choice) || !isRecord(choice.delta)) return;
@@ -861,6 +868,43 @@ function streamProviderActivity(
     hooks.status("thinking", "Reasoning");
     hooks.thinking(event.delta, "append");
   }
+}
+
+function providerUsage(event: unknown): NonNullable<AgentRun["usage"]> | undefined {
+  if (!isRecord(event)) return undefined;
+  const usage = isRecord(event.usage)
+    ? event.usage
+    : isRecord(event.response) && isRecord(event.response.usage)
+      ? event.response.usage
+      : undefined;
+  if (!usage) return undefined;
+  const inputTokens = numberField(usage, "input_tokens") ?? numberField(usage, "prompt_tokens");
+  const outputTokens =
+    numberField(usage, "output_tokens") ?? numberField(usage, "completion_tokens");
+  const totalTokens =
+    numberField(usage, "total_tokens") ??
+    (inputTokens !== undefined && outputTokens !== undefined
+      ? inputTokens + outputTokens
+      : undefined);
+  if (inputTokens === undefined || outputTokens === undefined || totalTokens === undefined) {
+    return undefined;
+  }
+  const cached = isRecord(usage.prompt_tokens_details)
+    ? numberField(usage.prompt_tokens_details, "cached_tokens")
+    : isRecord(usage.input_tokens_details)
+      ? numberField(usage.input_tokens_details, "cached_tokens")
+      : undefined;
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    ...(cached !== undefined ? { cachedInputTokens: cached } : {}),
+  };
+}
+
+function numberField(record: Record<string, unknown>, key: string): number | undefined {
+  const value = record[key];
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
 function assembleChatStream(events: unknown[]): unknown {
@@ -972,7 +1016,9 @@ function jsonLineConsumer(onEvent: (event: Record<string, unknown>) => void): {
   const consume = (line: string) => {
     if (!line.trim()) return;
     try {
-      const event = JSON.parse(line);
+      // Some CLI environments prefix their first UTF-8 chunk with a BOM. Treat it as
+      // transport metadata so the first JSON event is parsed like subsequent lines.
+      const event = JSON.parse(line.replace(/^\uFEFF/, ""));
       if (isRecord(event)) onEvent(event);
     } catch {
       // CLI diagnostics can be interleaved with the JSONL stream.
@@ -1202,7 +1248,7 @@ export function parseCodexReply(output: string): string {
   for (const line of output.split("\n")) {
     if (!line.trim()) continue;
     try {
-      const event = JSON.parse(line) as {
+      const event = JSON.parse(line.replace(/^\uFEFF/, "")) as {
         type?: string;
         item?: { type?: string; text?: string };
       };
@@ -1221,7 +1267,10 @@ export function parseOpenCodeReply(output: string): string {
   for (const line of output.split("\n")) {
     if (!line.trim()) continue;
     try {
-      const event = JSON.parse(line) as { type?: string; part?: { type?: string; text?: string } };
+      const event = JSON.parse(line.replace(/^\uFEFF/, "")) as {
+        type?: string;
+        part?: { type?: string; text?: string };
+      };
       if (event.type === "text" && event.part?.type === "text" && event.part.text?.trim()) {
         reply = event.part.text.trim();
       }

@@ -59,6 +59,38 @@ afterEach(() => {
 });
 
 describe("run history server", () => {
+  it("reports elapsed duration for terminal runs and omits it while active", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected seeded workspace");
+    const agent = await createWorkerAgent(store);
+    const thread = await createThread(store);
+    const completed = makeRun(
+      "run-duration",
+      thread.id,
+      agent.id,
+      "2026-01-01T00:00:00.000Z",
+      "completed",
+    );
+    await store.updateRun({
+      ...completed,
+      updatedAt: "2026-01-01T00:01:05.250Z",
+      usage: { inputTokens: 1_000, outputTokens: 250, totalTokens: 1_250 },
+    });
+    await store.updateRun(
+      makeRun("run-active", thread.id, agent.id, "2026-01-02T00:00:00.000Z", "running"),
+    );
+
+    const page = await store.listRunHistory({ workspaceId: workspace.id });
+    expect(page.items.find((item) => item.run.id === "run-duration")?.run.durationMs).toBe(65_250);
+    expect(page.items.find((item) => item.run.id === "run-duration")?.run.usage).toEqual({
+      inputTokens: 1_000,
+      outputTokens: 250,
+      totalTokens: 1_250,
+    });
+    expect(page.items.find((item) => item.run.id === "run-active")?.run.durationMs).toBeUndefined();
+  });
+
   it("lists each run once with its latest status and deterministic newest-first order", async () => {
     const store = await openStore();
     const [workspace] = store.listWorkspaces();
