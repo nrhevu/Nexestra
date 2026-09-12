@@ -25,7 +25,7 @@ Hono API ── FileStore ── state.json / credentials.json
 ChatService ── AgentDispatcher ── LocalAgentRunner
                                   ├─ codex exec --json (discussion / delegated task / full)
                                   ├─ opencode run --format json (plan / build)
-                                  └─ MasterHarness ── OpenAI-compatible HTTP
+                                  └─ MasterHarness ── provider HTTP (OpenAI Chat/Responses or Anthropic Messages)
                                                    ├─ built-in tools + user questions
                                                    ├─ durable plan + Worker delegation
                                                    ├─ workspace/user custom tools
@@ -447,8 +447,8 @@ following:
 - ChatGPT: maps Ask to Codex read-only, Auto to workspace-write with automatic approval review,
   and Full access to Codex's explicit sandbox-and-approval bypass; device-login output remains in
   memory, and tokens never enter the app.
-- Custom: uses OpenAI Chat Completions or Responses with an API root, model, optional API key, and
-  the provider-neutral Master tool loop.
+- Custom: uses OpenAI Chat Completions, OpenAI Responses, or Anthropic Messages with an API root,
+  model, optional API key, and the provider-neutral Master tool loop.
 
 Codex receives safe raster images through `--image`; OpenCode receives each local artifact through
 `--file`. Custom providers receive safe raster images as data URLs in the selected OpenAI protocol
@@ -487,9 +487,9 @@ head or tail preview; the full redacted result is stored in the protected run di
 to the current invocation's exact read allowlist. Custom-provider requests retry transient network,
 408, 409, 429, and 5xx failures with bounded backoff and `Retry-After` support.
 
-Custom Chat Completions and Responses requests use their SSE streaming protocols. Reasoning and
-text deltas update the in-memory run projection and are replaced by one final agent message after
-completion. Responses requests ask for an automatic reasoning summary and parse both official
+Custom Chat Completions, Responses, and Anthropic Messages requests use their native SSE streaming
+protocols. Reasoning and text deltas update the in-memory run projection and are replaced by one
+final agent message after completion. Responses requests ask for an automatic reasoning summary and parse both official
 reasoning-summary and reasoning-text deltas; compatible Chat Completions providers may expose
 reasoning through `reasoning_content` or `reasoning`. Codex
 `exec --json` and OpenCode `run --format json --thinking` stdout is parsed incrementally, including
@@ -629,7 +629,8 @@ credentials.
 - OpenCode `plan` is an application policy, not an independent OS or container sandbox.
 - Workspaces can be renamed and reordered from Settings; deletion is not yet supported.
 - Device OAuth displays raw Codex CLI instructions; it does not yet use `codex app-server` JSON-RPC.
-- Custom providers support only two OpenAI-compatible protocols; Anthropic Messages is not supported.
+- Anthropic Messages currently uses the common text/tool-use path; provider-specific server tools,
+  prompt-caching controls and extended-thinking options are not exposed.
 - Remote MCP supports Streamable HTTP, environment-backed headers, and separate startup, catalog,
   and execution timeouts, but not interactive OAuth. MCP prompts, resources, and resource templates
   are not exposed to the model.

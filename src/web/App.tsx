@@ -6802,7 +6802,7 @@ function CustomProviderFields({
     name: string;
     baseUrl: string;
     model: string;
-    protocol: "openai-chat" | "openai-responses";
+    protocol: "openai-chat" | "openai-responses" | "anthropic-messages";
   };
   hasCredential: boolean;
   removeCredential: boolean;
@@ -6827,6 +6827,7 @@ function CustomProviderFields({
           >
             <option value="openai-chat">OpenAI Chat Completions</option>
             <option value="openai-responses">OpenAI Responses</option>
+            <option value="anthropic-messages">Anthropic Messages</option>
           </select>
         </Field>
       </div>

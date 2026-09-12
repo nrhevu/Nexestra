@@ -577,6 +577,119 @@ describe("parseProviderReply", () => {
     });
   });
 
+  it("supports Anthropic Messages streaming and usage normalization", async () => {
+    const { agent, invocation, store } = await customMasterFixture(
+      "anthropic-messages",
+      "full",
+      true,
+      "anthropic-secret-key",
+    );
+    const text = vi.fn();
+    const usage = vi.fn();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("https://gateway.example/v1/messages");
+      expect(init?.headers).toMatchObject({
+        "anthropic-version": "2023-06-01",
+        "x-api-key": "anthropic-secret-key",
+      });
+      expect(new Headers(init?.headers).get("authorization")).toBeNull();
+      const body = JSON.parse(String(init?.body));
+      expect(body).toMatchObject({
+        model: "model-a",
+        max_tokens: 8192,
+        stream: true,
+        messages: [{ role: "user" }],
+      });
+      expect(body.messages[0].content[0].text).toContain("Attached text file: answer.txt");
+      return sseResponse([
+        {
+          type: "message_start",
+          message: { usage: { input_tokens: 7 } },
+        },
+        {
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "text", text: "" },
+        },
+        { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hello" } },
+        { type: "message_delta", usage: { output_tokens: 3 } },
+      ]);
+    });
+    const runner = new LocalAgentRunner({ store, fetch: fetchMock as typeof fetch });
+    await expect(
+      runner.invoke(agent, {
+        ...invocation,
+        activityHooks: {
+          status: vi.fn(),
+          thinking: vi.fn(),
+          text,
+          tool: vi.fn(async () => undefined),
+          usage,
+        },
+      }),
+    ).resolves.toBe("Hello");
+    expect(text).toHaveBeenCalledWith("Hello", "append");
+    expect(usage).toHaveBeenCalledWith({ inputTokens: 7, outputTokens: 3, totalTokens: 10 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("translates Anthropic tool use and tool results without losing the shared loop", async () => {
+    const { agent, invocation, store } = await customMasterFixture("anthropic-messages");
+    const requestBodies: Record<string, unknown>[] = [];
+    const responses = [
+      sseResponse([
+        { type: "message_start", message: { usage: { input_tokens: 1 } } },
+        {
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "tool_use", id: "tool-1", name: "list", input: {} },
+        },
+        {
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "input_json_delta", partial_json: '{"path":"."}' },
+        },
+        { type: "message_delta", usage: { output_tokens: 1 } },
+      ]),
+      sseResponse([
+        { type: "message_start", message: { usage: { input_tokens: 1 } } },
+        { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+        { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Done." } },
+        { type: "message_delta", usage: { output_tokens: 1 } },
+      ]),
+    ];
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)));
+      const response = responses.shift();
+      if (!response) throw new Error("unexpected request");
+      return response;
+    });
+    const runner = new LocalAgentRunner({ store, fetch: fetchMock as typeof fetch });
+    await expect(runner.invoke(agent, invocation)).resolves.toBe("Done.");
+    expect(requestBodies).toHaveLength(2);
+    expect(requestBodies[0]?.tools).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "list", input_schema: expect.any(Object) }),
+      ]),
+    );
+    expect(requestBodies[1]?.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "assistant",
+          content: expect.arrayContaining([
+            expect.objectContaining({ type: "tool_use", id: "tool-1" }),
+          ]),
+        }),
+        expect.objectContaining({
+          role: "user",
+          content: expect.arrayContaining([
+            expect.objectContaining({ type: "tool_result", tool_use_id: "tool-1" }),
+          ]),
+        }),
+      ]),
+    );
+  });
+
   it("sends a shared transcript to a custom provider without exposing its key elsewhere", async () => {
     const root = await mkdtemp(join(tmpdir(), "nexestra-provider-"));
     const store = await FileStore.open({ root, workspacePath: root });
@@ -1056,9 +1169,10 @@ describe("parseProviderReply", () => {
 });
 
 async function customMasterFixture(
-  protocol: "openai-chat" | "openai-responses",
+  protocol: "openai-chat" | "openai-responses" | "anthropic-messages",
   accessMode: MasterAccessMode = "full",
   attachText = false,
+  apiKey = "",
 ) {
   const root = await mkdtemp(join(tmpdir(), "nexestra-provider-tools-"));
   const store = await FileStore.open({ root: join(root, ".nexestra"), workspacePath: root });
@@ -1075,6 +1189,7 @@ async function customMasterFixture(
       baseUrl: "https://gateway.example/v1",
       model: "model-a",
       protocol,
+      ...(apiKey ? { apiKey } : {}),
     },
   });
   if (agent.kind !== "master") throw new Error("expected master agent");

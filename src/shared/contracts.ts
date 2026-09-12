@@ -265,7 +265,7 @@ export const MasterAgentSchema = AgentBaseSchema.extend({
       name: z.string(),
       baseUrl: z.string().url(),
       model: z.string(),
-      protocol: z.enum(["openai-chat", "openai-responses"]),
+      protocol: z.enum(["openai-chat", "openai-responses", "anthropic-messages"]),
       hasCredential: z.boolean(),
     }),
   ]),
@@ -295,7 +295,7 @@ const CustomProviderInputSchema = z.object({
   name: z.string().trim().min(1).max(60),
   baseUrl: z.string().trim().url(),
   model: z.string().trim().min(1).max(160),
-  protocol: z.enum(["openai-chat", "openai-responses"]),
+  protocol: z.enum(["openai-chat", "openai-responses", "anthropic-messages"]),
   apiKey: z
     .string()
     .trim()

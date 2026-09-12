@@ -71,3 +71,4 @@
 | [0068](0068-review-case-export.md) | Accepted | Export a bounded packet of loaded, redacted review cases |
 | [0069](0069-run-history-telemetry-export.md) | Accepted | Export bounded loaded run-history telemetry with filters and summary |
 | [0070](0070-review-queue-agent-thread-filters.md) | Accepted | Filter needs-work reviews by workspace agent and thread |
+| [0071](0071-anthropic-messages-provider.md) | Accepted | Support Anthropic Messages as a custom Master provider |

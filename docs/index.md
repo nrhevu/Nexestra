@@ -74,3 +74,5 @@
     carry bounded filtered run rows, cost telemetry, and complete summary into offline analysis.
 39. [Review queue agent and thread filters research](research/2026-09-12-review-queue-agent-thread-filters.md):
     narrow needs-work triage by workspace-scoped agent or conversation while preserving cursor safety.
+40. [Anthropic Messages provider research](research/2026-09-12-anthropic-messages-provider.md):
+    adapt Anthropic's bounded Messages and streaming tool-use protocol into the provider-neutral Master loop.

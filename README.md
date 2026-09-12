@@ -4,7 +4,7 @@ Nexestra is a local-first workspace where people can chat and work with coding a
 Milestone M9 is a fresh rebuild focused on two primary workflows:
 
 - create **Worker agents** powered by Codex or OpenCode;
-- create **Master agents** using ChatGPT OAuth through Codex CLI or an OpenAI-compatible endpoint;
+- create **Master agents** using ChatGPT OAuth through Codex CLI or an OpenAI-compatible or Anthropic Messages endpoint;
 - chat in shared threads and invoke agents only with an `@handle`;
 - save shared documents and Git repositories, then reference them with a `#handle`;
 - attach files and images, and browse each thread's indexed files and links;
@@ -231,7 +231,7 @@ Markdown source remains unchanged in the shared transcript and agent context.
 
 While an agent is active, the thread receives a live event stream with its current phase, tool
 activity, runtime-emitted reasoning, and in-progress answer. Reasoning is collapsed behind a
-**Thinking** disclosure. Custom OpenAI-compatible providers stream response and reasoning deltas
+**Thinking** disclosure. Custom OpenAI-compatible and Anthropic Messages providers stream response and reasoning deltas
 through their native SSE protocols. Codex and OpenCode stream the JSONL lifecycle events their CLIs
 expose. When a run completes successfully, transient thinking and tool activity disappear so the
 thread shows only the final answer. Durable tool records remain in the canonical transcript for
@@ -329,6 +329,12 @@ harness with `list`, `glob`, `grep`, `read`, `edit`, `write`, `bash`, `apply_pat
 included. Questions
 pause in the thread until the user answers; approval-gated tools pause until the user allows or
 denies the call.
+
+Custom providers may use OpenAI Chat Completions, OpenAI Responses, or Anthropic Messages. The
+Anthropic adapter uses the `/messages` endpoint and `x-api-key` credential header, and supports
+the same bounded built-in, custom and MCP tool loop. Provider-specific server tools, prompt
+caching controls and extended-thinking options remain disabled until they have explicit permission
+and cost models.
 
 Each Master has one access mode instead of separate settings for every tool:
 

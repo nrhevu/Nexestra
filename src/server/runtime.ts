@@ -243,7 +243,12 @@ export class LocalAgentRunner implements AgentRunner {
     const url = providerEndpoint(agent.provider.baseUrl, agent.provider.protocol);
     const headers: Record<string, string> = { "content-type": "application/json" };
     const credential = this.options.store.getCredential(agent.id);
-    if (credential) headers.authorization = `Bearer ${credential}`;
+    if (agent.provider.protocol === "anthropic-messages") {
+      headers["anthropic-version"] = "2023-06-01";
+      if (credential) headers["x-api-key"] = credential;
+    } else if (credential) {
+      headers.authorization = `Bearer ${credential}`;
+    }
     const context: MasterToolContext = {
       agent,
       runId: invocation.runId ?? crypto.randomUUID(),
@@ -313,15 +318,25 @@ export class LocalAgentRunner implements AgentRunner {
               tools,
               delegationAvailable,
             )
-          : await this.runResponsesToolLoop(
-              agent,
-              url,
-              headers,
-              system,
-              invocation,
-              tools,
-              delegationAvailable,
-            );
+          : agent.provider.protocol === "openai-responses"
+            ? await this.runResponsesToolLoop(
+                agent,
+                url,
+                headers,
+                system,
+                invocation,
+                tools,
+                delegationAvailable,
+              )
+            : await this.runAnthropicToolLoop(
+                agent,
+                url,
+                headers,
+                system,
+                invocation,
+                tools,
+                delegationAvailable,
+              );
     } finally {
       await tools.close();
     }
@@ -465,6 +480,75 @@ export class LocalAgentRunner implements AgentRunner {
           output: outputs[index] ?? "Tool completed without output.",
         });
       }
+    }
+    throw new Error("Provider exceeded the tool step limit.");
+  }
+
+  private async runAnthropicToolLoop(
+    agent: MasterAgent,
+    url: string,
+    headers: Record<string, string>,
+    system: string,
+    invocation: AgentInvocation,
+    tools: MasterToolSession,
+    requireDelegation = true,
+  ): Promise<string> {
+    const messages: Record<string, unknown>[] = [
+      { role: "user", content: await anthropicUserContent(invocation) },
+    ];
+    const recentCalls: string[] = [];
+    for (let turn = 0; turn <= 12; turn += 1) {
+      const toolsEnabled = turn < 12;
+      invocation.activityHooks?.status(
+        "thinking",
+        turn === 0 ? "Thinking" : "Reviewing tool results",
+      );
+      const payload = await this.providerRequest(
+        agent,
+        url,
+        headers,
+        {
+          model: customProviderModel(agent),
+          max_tokens: 8_192,
+          system,
+          messages,
+          stream: true,
+          ...(toolsEnabled
+            ? {
+                tools: tools.definitions.map((tool) => ({
+                  name: tool.name,
+                  description: tool.description,
+                  input_schema: tool.parameters,
+                })),
+              }
+            : {}),
+        },
+        invocation.activityHooks,
+      );
+      const calls = parseAnthropicToolCalls(payload);
+      if (calls.length === 0) {
+        const pendingTaskIds = requireDelegation ? tools.pendingTaskIds() : [];
+        if (pendingTaskIds.length === 0) return parseProviderReply(payload);
+        if (!toolsEnabled) throw incompleteDelegationError(pendingTaskIds);
+        messages.push({ role: "assistant", content: anthropicAssistantContent(payload) });
+        messages.push({
+          role: "user",
+          content: [{ type: "text", text: incompleteDelegationPrompt(pendingTaskIds) }],
+        });
+        continue;
+      }
+      if (!toolsEnabled) throw new Error("Provider continued calling tools after the step limit.");
+      guardRepeatedCalls(calls, recentCalls);
+      messages.push({ role: "assistant", content: anthropicAssistantContent(payload) });
+      const outputs = await Promise.all(calls.map((call) => tools.execute(call)));
+      messages.push({
+        role: "user",
+        content: calls.map((call, index) => ({
+          type: "tool_result",
+          tool_use_id: call.id,
+          content: outputs[index] ?? "Tool completed without output.",
+        })),
+      });
     }
     throw new Error("Provider exceeded the tool step limit.");
   }
@@ -671,6 +755,23 @@ async function providerResponsesUserContent(
   ];
 }
 
+async function anthropicUserContent(
+  invocation: AgentInvocation,
+): Promise<Record<string, unknown>[]> {
+  const attachments = await providerAttachments(invocation);
+  const text = [providerUserPrompt(invocation), attachments.text].filter(Boolean).join("\n\n");
+  const content: Record<string, unknown>[] = [{ type: "text", text }];
+  for (const image of attachments.images) {
+    const match = image.dataUrl.match(/^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i);
+    if (!match) continue;
+    content.push({
+      type: "image",
+      source: { type: "base64", media_type: match[1], data: match[2] },
+    });
+  }
+  return content;
+}
+
 async function providerAttachments(invocation: AgentInvocation): Promise<{
   text: string;
   images: { dataUrl: string }[];
@@ -717,7 +818,9 @@ function isTextArtifact(mediaType?: string): boolean {
   );
 }
 
-function providerEndpoint(baseUrl: string, protocol: "openai-chat" | "openai-responses"): string {
+type CustomProviderProtocol = "openai-chat" | "openai-responses" | "anthropic-messages";
+
+function providerEndpoint(baseUrl: string, protocol: CustomProviderProtocol): string {
   const parsed = new URL(baseUrl);
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error("Custom providers only support HTTP or HTTPS URLs.");
@@ -728,7 +831,12 @@ function providerEndpoint(baseUrl: string, protocol: "openai-chat" | "openai-res
   if (parsed.protocol === "http:" && !isLoopbackHost(parsed.hostname)) {
     throw new Error("Remote custom providers must use HTTPS.");
   }
-  const suffix = protocol === "openai-chat" ? "chat/completions" : "responses";
+  const suffix =
+    protocol === "openai-chat"
+      ? "chat/completions"
+      : protocol === "openai-responses"
+        ? "responses"
+        : "messages";
   parsed.pathname = `${parsed.pathname.replace(/\/+$/, "")}/${suffix}`;
   return parsed.toString();
 }
@@ -772,7 +880,7 @@ async function readBoundedResponse(response: Response, maxBytes: number): Promis
 
 async function readProviderStream(
   response: Response,
-  protocol: "openai-chat" | "openai-responses",
+  protocol: CustomProviderProtocol,
   hooks?: AgentActivityHooks,
 ): Promise<unknown> {
   if (!response.body) throw new Error("Custom provider returned an empty stream.");
@@ -824,12 +932,22 @@ async function readProviderStream(
   } finally {
     reader.releaseLock();
   }
-  return protocol === "openai-chat" ? assembleChatStream(events) : assembleResponsesStream(events);
+  const payload =
+    protocol === "openai-chat"
+      ? assembleChatStream(events)
+      : protocol === "openai-responses"
+        ? assembleResponsesStream(events)
+        : assembleAnthropicStream(events);
+  if (protocol === "anthropic-messages") {
+    const usage = providerUsage(payload);
+    if (usage) hooks?.usage?.(usage);
+  }
+  return payload;
 }
 
 function streamProviderActivity(
   event: unknown,
-  protocol: "openai-chat" | "openai-responses",
+  protocol: CustomProviderProtocol,
   hooks?: AgentActivityHooks,
 ): void {
   if (!hooks || !isRecord(event)) return;
@@ -852,6 +970,14 @@ function streamProviderActivity(
     if (delta) {
       hooks.status("responding", "Writing a response");
       hooks.text(delta, "append");
+    }
+    return;
+  }
+  if (protocol === "anthropic-messages") {
+    const delta = isRecord(event.delta) ? event.delta : undefined;
+    if (delta?.type === "text_delta" && typeof delta.text === "string") {
+      hooks.status("responding", "Writing a response");
+      hooks.text(delta.text, "append");
     }
     return;
   }
@@ -998,6 +1124,73 @@ function assembleResponsesStream(events: unknown[]): unknown {
     });
   }
   return { output_text: outputText, output: [...output.values()] };
+}
+
+function assembleAnthropicStream(events: unknown[]): unknown {
+  const blocks = new Map<number, Record<string, unknown>>();
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let hasInput = false;
+  let hasOutput = false;
+  for (const event of events) {
+    if (!isRecord(event)) continue;
+    if (
+      event.type === "message_start" &&
+      isRecord(event.message) &&
+      isRecord(event.message.usage)
+    ) {
+      const value = numberField(event.message.usage, "input_tokens");
+      if (value !== undefined) {
+        inputTokens = value;
+        hasInput = true;
+      }
+    }
+    if (event.type === "message_delta" && isRecord(event.usage)) {
+      const value = numberField(event.usage, "output_tokens");
+      if (value !== undefined) {
+        outputTokens = value;
+        hasOutput = true;
+      }
+    }
+    const index = typeof event.index === "number" ? event.index : blocks.size;
+    if (event.type === "content_block_start" && isRecord(event.content_block)) {
+      blocks.set(index, { ...event.content_block });
+      continue;
+    }
+    if (event.type !== "content_block_delta" || !isRecord(event.delta)) continue;
+    const block = blocks.get(index) ?? {};
+    if (event.delta.type === "text_delta" && typeof event.delta.text === "string") {
+      block.text = `${typeof block.text === "string" ? block.text : ""}${event.delta.text}`;
+    }
+    if (event.delta.type === "input_json_delta" && typeof event.delta.partial_json === "string") {
+      block.inputJson = `${typeof block.inputJson === "string" ? block.inputJson : ""}${event.delta.partial_json}`;
+    }
+    blocks.set(index, block);
+  }
+  const content = [...blocks.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([, block]) => {
+      if (block.type !== "tool_use") return block;
+      let input: unknown = {};
+      if (typeof block.inputJson === "string") {
+        try {
+          input = JSON.parse(block.inputJson);
+        } catch {
+          input = {};
+        }
+      } else if (isRecord(block.input)) {
+        input = block.input;
+      }
+      return { ...block, input };
+    });
+  return {
+    type: "message",
+    role: "assistant",
+    content,
+    ...(hasInput && hasOutput
+      ? { usage: { input_tokens: inputTokens, output_tokens: outputTokens } }
+      : {}),
+  };
 }
 
 function chatContentText(content: unknown): string {
@@ -1283,6 +1476,14 @@ export function parseOpenCodeReply(output: string): string {
 
 export function parseProviderReply(payload: unknown): string {
   if (!isRecord(payload)) return "";
+  if (Array.isArray(payload.content)) {
+    return payload.content
+      .flatMap((part) =>
+        isRecord(part) && part.type === "text" && typeof part.text === "string" ? [part.text] : [],
+      )
+      .join("\n")
+      .trim();
+  }
   if (typeof payload.output_text === "string") return payload.output_text.trim();
   const choices = payload.choices;
   if (Array.isArray(choices)) {
@@ -1354,6 +1555,25 @@ function parseResponsesToolCalls(payload: unknown): HarnessToolRequest[] {
       },
     ];
   });
+}
+
+function parseAnthropicToolCalls(payload: unknown): HarnessToolRequest[] {
+  if (!isRecord(payload) || !Array.isArray(payload.content)) return [];
+  return payload.content.flatMap((value) => {
+    if (!isRecord(value) || value.type !== "tool_use") return [];
+    if (typeof value.id !== "string" || typeof value.name !== "string") return [];
+    return [
+      {
+        id: value.id,
+        name: value.name,
+        arguments: JSON.stringify(value.input ?? {}),
+      },
+    ];
+  });
+}
+
+function anthropicAssistantContent(payload: unknown): unknown[] {
+  return isRecord(payload) && Array.isArray(payload.content) ? payload.content : [];
 }
 
 function chatAssistantContent(payload: unknown): string | null {
