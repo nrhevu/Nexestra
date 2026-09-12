@@ -129,10 +129,15 @@ export async function loadMcpTools(
         const allowedPrompts = new Set(prompts.prompts.slice(0, 200).map((prompt) => prompt.name));
         if (allowedPrompts.size > 0) {
           const name = normalizeToolName(`${serverName}_get_mcp_prompt`);
+          const catalog = [...allowedPrompts].slice(0, 50).join("\n- ");
           tools.push({
             type: "function",
             name,
-            description: `Expand a cataloged MCP prompt from ${serverName}.`,
+            description:
+              `Expand a cataloged MCP prompt from ${serverName}. Available names:\n- ${catalog}`.slice(
+                0,
+                2_000,
+              ),
             parameters: {
               type: "object",
               properties: {
@@ -153,7 +158,9 @@ export async function loadMcpTools(
                 throw new Error("MCP prompt name is not in the catalog.");
               const args = isRecord(input.arguments)
                 ? Object.fromEntries(
-                    Object.entries(input.arguments).map(([key, value]) => [key, String(value)]),
+                    Object.entries(input.arguments)
+                      .slice(0, 50)
+                      .map(([key, value]) => [key.slice(0, 200), String(value).slice(0, 2_000)]),
                   )
                 : undefined;
               const result = await open.client.getPrompt(
@@ -273,6 +280,21 @@ function resolveInsideWorkspace(workspacePath: string, value: string): string {
 function mcpResultText(result: unknown): string {
   if (!isRecord(result)) return "";
   const parts: string[] = [];
+  if (Array.isArray(result.messages)) {
+    for (const message of result.messages) {
+      if (!isRecord(message)) continue;
+      const content = message.content;
+      if (isRecord(content) && content.type === "text" && typeof content.text === "string") {
+        parts.push(content.text);
+      } else if (Array.isArray(content)) {
+        for (const item of content) {
+          if (isRecord(item) && item.type === "text" && typeof item.text === "string") {
+            parts.push(item.text);
+          }
+        }
+      }
+    }
+  }
   if (Array.isArray(result.contents)) {
     for (const item of result.contents) {
       if (!isRecord(item)) continue;
