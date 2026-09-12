@@ -110,3 +110,5 @@
     catalog-gated resource reads to the harness.
 57. [MCP prompt expansion research](research/2026-09-12-mcp-prompt-expansion.md): expose bounded,
     catalog-gated prompt expansion to the harness.
+58. [MCP resource templates research](research/2026-09-12-mcp-resource-templates.md): read
+    cataloged parameterized MCP resources with bounded URI expansion.

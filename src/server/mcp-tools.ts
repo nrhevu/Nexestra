@@ -175,6 +175,53 @@ export async function loadMcpTools(
           });
         }
       }
+      if (typeof open.client.listResourceTemplates === "function") {
+        const templates = await open.client.listResourceTemplates(undefined, {
+          timeout: timeout.catalog,
+        });
+        const allowedTemplates = new Set(
+          templates.resourceTemplates.slice(0, 100).map((template) => template.uriTemplate),
+        );
+        if (allowedTemplates.size > 0) {
+          const name = normalizeToolName(`${serverName}_read_mcp_resource_template`);
+          tools.push({
+            type: "function",
+            name,
+            description: `Read a cataloged MCP resource template from ${serverName}.`,
+            parameters: {
+              type: "object",
+              properties: {
+                uriTemplate: { type: "string", maxLength: 2000 },
+                variables: { type: "object" },
+              },
+              required: ["uriTemplate"],
+            },
+            permission: "external",
+            parse: async (input) => {
+              if (!isRecord(input) || typeof input.uriTemplate !== "string")
+                throw new Error("MCP resource template is required.");
+              return input;
+            },
+            execute: async (input) => {
+              const template = input.uriTemplate as string;
+              if (!allowedTemplates.has(template))
+                throw new Error("MCP resource template is not in the catalog.");
+              const vars = isRecord(input.variables) ? input.variables : {};
+              const uri = template.replace(/\{([^}]+)\}/g, (_match, key: string) =>
+                encodeURIComponent(String(vars[key] ?? "")),
+              );
+              const result = await open.client.readResource(
+                { uri },
+                { timeout: timeout.execution },
+              );
+              const output = mcpResultText(result);
+              if (Buffer.byteLength(output, "utf8") > MAX_MCP_RESPONSE_BYTES)
+                throw new Error("MCP resource is too large.");
+              return output || "MCP resource is empty.";
+            },
+          });
+        }
+      }
     } catch {
       warnings.push(`MCP server ${serverName} is unavailable.`);
     }
