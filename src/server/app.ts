@@ -10,6 +10,7 @@ import {
   CreateKnowledgeFromMessageSchema,
   DelegateTaskSchema,
   MessageSearchRequestSchema,
+  PruneKnowledgeRevisionsSchema,
   ReviewQueueRequestSchema,
   ReviewStatusUpdateSchema,
   RunHistoryRequestSchema,
@@ -313,6 +314,15 @@ export function createApp(options: CreateAppOptions) {
   app.get("/api/knowledge/:id/revisions", async (context) => {
     return context.json(
       await options.store.listKnowledgeDocumentRevisions(context.req.param("id")),
+    );
+  });
+
+  app.post("/api/knowledge/:id/revisions/prune", async (context) => {
+    return context.json(
+      await options.store.pruneKnowledgeDocumentRevisions(
+        context.req.param("id"),
+        PruneKnowledgeRevisionsSchema.parse(await context.req.json()),
+      ),
     );
   });
 

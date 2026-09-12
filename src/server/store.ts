@@ -59,6 +59,7 @@ import {
   MessageSearchRequestSchema,
   type MessageSearchResponse,
   MessageSearchResponseSchema,
+  PruneKnowledgeRevisionsSchema,
   RenameThreadSchema,
   ReorderWorkspacesSchema,
   ReplaceKnowledgeDocumentSchema,
@@ -1098,6 +1099,33 @@ export class FileStore {
       currentRevisionId: item.currentRevisionId,
       revisions: structuredClone([...item.revisions].reverse()),
     };
+  }
+
+  async pruneKnowledgeDocumentRevisions(id: string, rawInput: unknown): Promise<KnowledgeItem> {
+    const input = PruneKnowledgeRevisionsSchema.parse(rawInput);
+    return this.withWrite(async () => {
+      const index = this.state.knowledge.findIndex((item) => item.id === id);
+      const current = this.state.knowledge[index];
+      if (current?.kind !== "document")
+        throw new StoreError("not_found", "Knowledge document not found.");
+      const ordered = [...current.revisions].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      const keep = new Set(ordered.slice(0, input.keepLatest).map((revision) => revision.id));
+      if (current.currentRevisionId) keep.add(current.currentRevisionId);
+      const removed = current.revisions.filter((revision) => !keep.has(revision.id));
+      if (removed.length === 0) return structuredClone(current);
+      const nextState = structuredClone(this.state);
+      const updated = KnowledgeDocumentSchema.parse({
+        ...current,
+        revisions: current.revisions.filter((revision) => keep.has(revision.id)),
+      });
+      nextState.knowledge[index] = updated;
+      await this.writeState(nextState);
+      for (const revision of removed) {
+        await unlink(this.managedPath(revision.storagePath)).catch(() => undefined);
+      }
+      this.state = nextState;
+      return structuredClone(updated);
+    });
   }
 
   async documentRevisionContent(

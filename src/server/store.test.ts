@@ -1119,6 +1119,26 @@ describe("FileStore", () => {
     expect(new TextDecoder().decode(oldBytes.bytes)).toBe("# Architecture v1");
   });
 
+  it("prunes old document revisions while retaining the current revision", async () => {
+    const store = await openStore();
+    const item = await store.createKnowledgeDocument(
+      { name: "Guide", handle: "guide", description: "" },
+      { name: "guide.md", mediaType: "text/markdown", bytes: new TextEncoder().encode("v1") },
+    );
+    let current = item;
+    for (const value of ["v2", "v3", "v4"]) {
+      current = (await store.replaceKnowledgeDocument(
+        item.id,
+        { expectedRevisionId: current.currentRevisionId },
+        { name: "guide.md", mediaType: "text/markdown", bytes: new TextEncoder().encode(value) },
+      )) as typeof current;
+    }
+    const pruned = await store.pruneKnowledgeDocumentRevisions(item.id, { keepLatest: 2 });
+    if (pruned.kind !== "document") throw new Error("expected document");
+    expect(pruned.revisions).toHaveLength(2);
+    expect(pruned.currentRevisionId).toBe(current.currentRevisionId);
+  });
+
   it("captures a legacy document when a new message pins it and keeps provenance after replacement", async () => {
     const store = await openStore();
     const item = await store.createKnowledgeDocument(

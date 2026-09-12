@@ -7036,6 +7036,7 @@ function KnowledgeDetailDialog({
   const [replaceError, setReplaceError] = useState<string>();
   const [restoringRevisionId, setRestoringRevisionId] = useState<string>();
   const [restoreError, setRestoreError] = useState<string>();
+  const [pruning, setPruning] = useState(false);
   const [branchBusy, setBranchBusy] = useState(false);
   const repositoryItem = item.kind === "repository" ? item : undefined;
   const effectiveBranch = repositoryItem?.selectedBranch ?? repositoryItem?.defaultBranch ?? null;
@@ -7098,6 +7099,21 @@ function KnowledgeDetailDialog({
       setRestoreError(messageFrom(caught));
     } finally {
       setRestoringRevisionId(undefined);
+    }
+  };
+  const pruneRevisions = async () => {
+    if (!documentItem) return;
+    setPruning(true);
+    try {
+      const updated = await api<KnowledgeItem>(
+        `/api/knowledge/${encodeURIComponent(item.id)}/revisions/prune`,
+        { method: "POST", body: JSON.stringify({ keepLatest: 10 }) },
+      );
+      onChanged(updated, generation, "Older document revisions pruned.");
+    } catch (caught) {
+      setRestoreError(messageFrom(caught));
+    } finally {
+      setPruning(false);
     }
   };
   return (
@@ -7177,7 +7193,7 @@ function KnowledgeDetailDialog({
                       </a>
                       <button
                         type="button"
-                        disabled={replacing || restoringRevisionId !== undefined}
+                        disabled={pruning || replacing || restoringRevisionId !== undefined}
                         aria-label={`Preview ${revision.fileName}`}
                         onClick={() => previewRef.current?.selectRevision(revision.id)}
                       >
@@ -7186,7 +7202,9 @@ function KnowledgeDetailDialog({
                       </button>
                       <button
                         type="button"
-                        disabled={current || replacing || restoringRevisionId !== undefined}
+                        disabled={
+                          current || pruning || replacing || restoringRevisionId !== undefined
+                        }
                         aria-label={
                           current ? `Current ${revision.fileName}` : `Restore ${revision.fileName}`
                         }
@@ -7209,6 +7227,16 @@ function KnowledgeDetailDialog({
                   );
                 })}
               </section>
+              {revisions && revisions.revisions.length > 10 && (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={pruning}
+                  onClick={() => void pruneRevisions()}
+                >
+                  {pruning ? "Pruning…" : "Keep latest 10 revisions"}
+                </button>
+              )}
               {restoreError && (
                 <p className="form-error">
                   <CircleAlert size={14} />
@@ -7219,7 +7247,7 @@ function KnowledgeDetailDialog({
                 ref={previewRef}
                 document={item}
                 revisions={revisions}
-                disabled={replacing || restoringRevisionId !== undefined}
+                disabled={pruning || replacing || restoringRevisionId !== undefined}
               />
               <div className="replace-file">
                 <strong>Replace file</strong>
@@ -7238,7 +7266,7 @@ function KnowledgeDetailDialog({
                 <button
                   type="button"
                   className="primary-button"
-                  disabled={replacing || restoringRevisionId !== undefined}
+                  disabled={pruning || replacing || restoringRevisionId !== undefined}
                   onClick={replaceDocument}
                 >
                   {replacing ? <LoaderCircle className="spin" size={14} /> : <Upload size={14} />}

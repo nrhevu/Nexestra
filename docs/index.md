@@ -96,3 +96,5 @@
     fixed one-hour, four-hour, and one-day deferral choices.
 50. [Attention state workspace export research](research/2026-09-12-attention-state-workspace-export.md):
     preserve selected workspace monitoring triage in portable ZIP state.
+51. [Knowledge revision pruning research](research/2026-09-12-knowledge-revision-pruning.md): remove
+    explicitly selected old immutable document revisions while retaining recent history.

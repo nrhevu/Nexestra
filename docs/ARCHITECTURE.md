@@ -645,8 +645,9 @@ credentials.
   refs are retained without automatic pruning. Branch deletion still uses Git's non-forced merged check against its
   upstream or the clone HEAD, so even an unchanged branch from a refreshed source can require the
   clone's integration branch to be advanced manually before Git allows deletion.
-- Document versions have no automatic retention limit or pruning. Permanent Knowledge deletion
-  removes its versions, so historical references to a deleted item cannot load those bytes. Old
+- Document versions have no automatic retention limit; an explicit keep-latest action can prune
+  older revisions while preserving the current revision. Permanent Knowledge deletion removes its
+  versions, so historical references to a deleted item cannot load those bytes. Old
   messages without a pinned revision use current contents. Changing a repository source still
   requires deleting and creating the item again.
 - A crash during cloning can leave a `source.retrying-*` staging directory. It is preserved for
