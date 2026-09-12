@@ -21,6 +21,7 @@ import { reviewAssignmentGit } from "./assignment-review.js";
 import { workspaceActivity } from "./attention.js";
 import { ChatGptAuthManager } from "./auth.js";
 import { AgentDispatcher, ChatService } from "./dispatcher.js";
+import { loadHarnessConfig } from "./harness-config.js";
 import { type AssignmentRepositoryManager, RepositoryManager } from "./repository-manager.js";
 import { type AgentRunner, agentView, LocalAgentRunner } from "./runtime.js";
 import {
@@ -78,6 +79,17 @@ export function createApp(options: CreateAppOptions) {
         : options.store.getWorkspace(requestedWorkspaceId);
     if (!workspace) throw new StoreError("not_found", "Workspace not found.");
     const runtime = await runner.runtimeStatus();
+    const harnessConfig = await loadHarnessConfig(options.store.workspacePath);
+    const customSurfaces = harnessConfig.surfaces.map((surface) => ({
+      ...surface,
+      title: options.store.redactSecrets(surface.title),
+      description: options.store.redactSecrets(surface.description),
+      cards: surface.cards.map((card) => ({
+        ...card,
+        title: options.store.redactSecrets(card.title),
+        description: options.store.redactSecrets(card.description),
+      })),
+    }));
     const activity = workspaceActivity(
       options.store,
       workspace.id,
@@ -92,6 +104,7 @@ export function createApp(options: CreateAppOptions) {
       threads: options.store.listThreads(workspace.id),
       tasks: options.store.listTasks(workspace.id),
       knowledge: options.store.listKnowledge(workspace.id),
+      customSurfaces,
       assignments: options.store.listAssignments(workspace.id),
       activeRuns: activity.activeRuns,
       attention: activity.attention,
