@@ -445,7 +445,7 @@ export function RunHistoryView({
   const hasNewer = currentWorkspace ? view.previousCursors.length > 0 : false;
   const pageNumber = currentWorkspace ? view.previousCursors.length + 1 : 1;
   const loading = currentWorkspace && view.phase === "loading";
-  const busy = loading || view.loadingMore;
+  const busy = loading || view.loadingMore || batchRetrying;
   const summary = currentWorkspace ? view.page?.summary : undefined;
 
   const exportLoadedRuns = () => {
@@ -785,7 +785,7 @@ export function RunHistoryView({
                           type="button"
                           className="run-history-retry"
                           aria-label={`Retry run ${item.run.id}`}
-                          disabled={busy || retryingRunId !== undefined}
+                          disabled={busy || retryingRunId !== undefined || batchRetrying}
                           onClick={() => void retryRun(item.run.id)}
                         >
                           {retryingRunId === item.run.id ? "Retrying…" : "Retry run"}
