@@ -246,6 +246,22 @@ export function createApp(options: CreateAppOptions) {
     return context.json(WorkspaceArchiveTargetInventorySchema.parse({ workspaceId, paths }));
   });
 
+  app.get("/api/workspaces/:id/delete/preflight", async (context) => {
+    if (Object.keys(context.req.query()).length > 0) {
+      throw new StoreError(
+        "invalid",
+        "Workspace deletion preflight does not accept query options.",
+      );
+    }
+    const workspaceId = context.req.param("id");
+    return context.json(
+      await options.store.workspaceDeletionPreflight(
+        workspaceId,
+        dispatcher.activeRuns(workspaceId),
+      ),
+    );
+  });
+
   app.post("/api/agents", async (context) => {
     const agent = await options.store.createAgent(await context.req.json());
     const runtime = await runner.runtimeStatus();

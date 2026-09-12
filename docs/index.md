@@ -132,3 +132,4 @@
 68. [Run history CSV export research](research/2026-09-12-run-history-csv-export.md): add a bounded, client-only spreadsheet export for loaded telemetry without transcript or error text.
 69. [Read-only restore preflight research](research/2026-09-12-read-only-restore-preflight.md): inventory verified archive contents while deferring mutation, conflict policy, and rollback.
 70. [Target-aware restore preflight research](research/2026-09-12-target-aware-restore-preflight.md): detect local path collisions without uploading archive bytes or mutating state.
+71. [Workspace deletion preflight research](research/2026-09-12-workspace-deletion-preflight.md): surface bounded dependencies and active-work blockers before destructive deletion.

@@ -64,6 +64,7 @@ import {
   useCallback,
   useDeferredValue,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -95,6 +96,7 @@ import type {
   Workspace,
   WorkspaceActivityData,
   WorkspaceActivitySummary,
+  WorkspaceDeletionPreflight,
 } from "../shared/contracts.js";
 import {
   compareAttentionItems,
@@ -102,6 +104,7 @@ import {
   handleFromName,
   runAttentionItem,
   THREAD_HISTORY_DEFAULT_LIMIT,
+  WorkspaceDeletionPreflightSchema,
 } from "../shared/contracts.js";
 import { AttentionView } from "./AttentionView.js";
 import { ApiError, api } from "./api.js";
@@ -238,6 +241,7 @@ export function App() {
   const [messageToCapture, setMessageToCapture] = useState<CaptureMessage>();
   const [agentToDelete, setAgentToDelete] = useState<AgentView>();
   const [agentToEdit, setAgentToEdit] = useState<AgentView>();
+  const [workspaceDeletePreflight, setWorkspaceDeletePreflight] = useState<Workspace>();
   const [threadToRename, setThreadToRename] = useState<Thread>();
   const [messageSearch, setMessageSearch] = useState<{
     query: string;
@@ -2543,6 +2547,7 @@ export function App() {
           onClose={closeSettings}
           onExport={openWorkspaceExport}
           onInspectArchive={openWorkspaceArchiveInspection}
+          onDeletePreflight={setWorkspaceDeletePreflight}
           onRename={async (workspaceId, name) => {
             await renameWorkspace(workspaceId, name);
             flash("Workspace renamed.");
@@ -2555,6 +2560,12 @@ export function App() {
             await reloadWorkspaces();
             flash("Workspace list reloaded.");
           }}
+        />
+      )}
+      {workspaceDeletePreflight && (
+        <WorkspaceDeletionPreflightDialog
+          workspace={workspaceDeletePreflight}
+          onClose={() => setWorkspaceDeletePreflight(undefined)}
         />
       )}
       {(modal === "export" || modal === "archive-inspection") &&
@@ -8157,6 +8168,94 @@ function shortCommit(commit?: string): string {
   return commit.length > 12 ? `${commit.slice(0, 12)}…` : commit;
 }
 
+const DELETION_PREFLIGHT_LABELS: Record<string, string> = {
+  workspacesRemaining: "Workspaces remaining",
+  agents: "Agents",
+  credentialBearingAgents: "Agents with saved credentials",
+  threads: "Threads",
+  tasks: "Tasks",
+  knowledgeDocuments: "Knowledge documents",
+  knowledgeRepositories: "Knowledge repositories",
+  assignments: "Assignments",
+  activeAssignments: "Active assignments",
+  artifactFiles: "Artifact files",
+  activeRuns: "Active runs",
+};
+
+function WorkspaceDeletionPreflightDialog({
+  workspace,
+  onClose,
+}: {
+  workspace: Workspace;
+  onClose: () => void;
+}) {
+  const [plan, setPlan] = useState<WorkspaceDeletionPreflight>();
+  const [error, setError] = useState<string>();
+  useEffect(() => {
+    const controller = new AbortController();
+    api<unknown>(`/api/workspaces/${encodeURIComponent(workspace.id)}/delete/preflight`, {
+      signal: controller.signal,
+    })
+      .then((raw) => {
+        const parsed = WorkspaceDeletionPreflightSchema.safeParse(raw);
+        if (!parsed.success) throw new Error("Deletion preflight response was invalid.");
+        setPlan(parsed.data);
+      })
+      .catch((caught) => {
+        if (!controller.signal.aborted) setError(messageFrom(caught));
+      });
+    return () => controller.abort();
+  }, [workspace.id]);
+
+  return (
+    <Modal title={`Delete ${workspace.name}?`} eyebrow="DELETION PREFLIGHT" onClose={onClose}>
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : plan === undefined ? (
+        <p role="status">Checking workspace dependencies…</p>
+      ) : (
+        <>
+          <p>
+            This read-only preflight checks whether deletion can be made safe. No workspace data was
+            changed.
+          </p>
+          <dl className="settings-list">
+            {Object.entries(plan.counts).map(([key, value]) => (
+              <div key={key}>
+                <span>{DELETION_PREFLIGHT_LABELS[key] ?? key}</span>
+                <strong>{value.toLocaleString()}</strong>
+              </div>
+            ))}
+          </dl>
+          {plan.blockers.length > 0 ? (
+            <div className="form-error" role="alert">
+              <strong>Deletion is blocked</strong>
+              <ul>
+                {plan.blockers.map((blocker) => (
+                  <li key={blocker}>{blocker.replaceAll("_", " ")}</li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <p className="settings-hint">No active work blocks deletion in this snapshot.</p>
+          )}
+          <p className="settings-hint">
+            A future delete action would require typing the exact workspace name:{" "}
+            <code>{plan.confirmationName}</code>
+          </p>
+        </>
+      )}
+      <div className="modal-actions">
+        <button type="button" className="primary-button" onClick={onClose}>
+          Close
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 function SettingsDialog({
   data,
   desktopNotificationsEnabled,
@@ -8167,6 +8266,7 @@ function SettingsDialog({
   onReload,
   onExport,
   onInspectArchive,
+  onDeletePreflight,
 }: {
   data: BootstrapData;
   desktopNotificationsEnabled: boolean;
@@ -8177,6 +8277,7 @@ function SettingsDialog({
   onReload: () => Promise<void>;
   onExport: () => void;
   onInspectArchive: () => void;
+  onDeletePreflight: (workspace: Workspace) => void;
 }) {
   const [copied, setCopied] = useState(false);
   const [draftName, setDraftName] = useState(data.workspace.name);
@@ -8308,6 +8409,15 @@ function SettingsDialog({
                 >
                   <ArrowDown size={13} />
                 </button>
+                <button
+                  type="button"
+                  className="danger-button"
+                  aria-label={`Deletion preflight for ${workspace.name}`}
+                  disabled={saving}
+                  onClick={() => onDeletePreflight(workspace)}
+                >
+                  <Trash2 size={13} />
+                </button>
               </span>
             </li>
           ))}
@@ -8397,6 +8507,7 @@ function Modal({
   children: ReactNode;
 }) {
   const modalRef = useRef<HTMLElement>(null);
+  const titleId = useId();
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   const closeDisabledRef = useRef(closeDisabled);
@@ -8448,13 +8559,13 @@ function Modal({
         role="dialog"
         aria-modal="true"
         aria-busy={closeDisabled || undefined}
-        aria-labelledby="modal-title"
+        aria-labelledby={titleId}
         tabIndex={-1}
       >
         <header>
           <div>
             <p className="eyebrow">{eyebrow}</p>
-            <h2 id="modal-title">{title}</h2>
+            <h2 id={titleId}>{title}</h2>
           </div>
           <button type="button" onClick={onClose} aria-label="Close" disabled={closeDisabled}>
             <X size={18} />

@@ -1063,6 +1063,50 @@ describe("Workspace settings", () => {
     ).toHaveLength(1);
   });
 
+  it("opens a read-only workspace deletion preflight with blockers and counts", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/bootstrap") return jsonResponse(bootstrapData);
+      if (path === `/api/workspaces/${workspace.id}/delete/preflight`) {
+        return jsonResponse({
+          workspace: { id: workspace.id, name: workspace.name },
+          canDelete: false,
+          confirmationName: workspace.name,
+          counts: {
+            workspacesRemaining: 1,
+            agents: 0,
+            credentialBearingAgents: 0,
+            threads: 1,
+            tasks: 0,
+            knowledgeDocuments: 0,
+            knowledgeRepositories: 0,
+            assignments: 0,
+            activeAssignments: 0,
+            artifactFiles: 0,
+            activeRuns: 0,
+          },
+          blockers: ["last_workspace"],
+        });
+      }
+      return jsonResponse({ error: { message: "Not found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByText("Nexestra");
+    await user.click(screen.getByRole("button", { name: "Open settings" }));
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Local workspace" })).getByRole("button", {
+        name: "Deletion preflight for Nexestra",
+      }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Delete Nexestra?" });
+    expect(within(dialog).getByText("Deletion is blocked")).toBeVisible();
+    expect(within(dialog).getByText("last workspace")).toBeVisible();
+    expect(within(dialog).getByText("Workspaces remaining")).toBeVisible();
+    expect(within(dialog).getByText("Nexestra")).toBeVisible();
+  });
+
   it("reorders workspaces with accessible move controls and keeps the active workspace active", async () => {
     const productWorkspace = {
       id: "workspace-product",

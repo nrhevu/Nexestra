@@ -956,6 +956,27 @@ export const WorkspaceExportManifestSchema = z.object({
 });
 export type WorkspaceExportManifest = z.infer<typeof WorkspaceExportManifestSchema>;
 
+export const WorkspaceDeletionPreflightSchema = z.object({
+  workspace: WorkspaceSchema.pick({ id: true, name: true }),
+  canDelete: z.boolean(),
+  confirmationName: z.string().min(1).max(60),
+  counts: z.object({
+    workspacesRemaining: z.number().int().positive().max(5_000),
+    agents: z.number().int().nonnegative().max(5_000),
+    credentialBearingAgents: z.number().int().nonnegative().max(5_000),
+    threads: z.number().int().nonnegative().max(5_000),
+    tasks: z.number().int().nonnegative().max(5_000),
+    knowledgeDocuments: z.number().int().nonnegative().max(5_000),
+    knowledgeRepositories: z.number().int().nonnegative().max(5_000),
+    assignments: z.number().int().nonnegative().max(5_000),
+    activeAssignments: z.number().int().nonnegative().max(5_000),
+    artifactFiles: z.number().int().nonnegative().max(50_000),
+    activeRuns: z.number().int().nonnegative().max(5_000),
+  }),
+  blockers: z.array(z.enum(["last_workspace", "active_runs", "active_assignments"])).max(3),
+});
+export type WorkspaceDeletionPreflight = z.infer<typeof WorkspaceDeletionPreflightSchema>;
+
 export const RunActivitySchema = z.object({
   runId: z.string(),
   threadId: z.string(),

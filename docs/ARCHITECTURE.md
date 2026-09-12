@@ -690,7 +690,9 @@ credentials.
 - Tasks created before the delegation-completion guard may remain unassigned; their process dialog
   reports that state, but does not retroactively start a Worker.
 - OpenCode `plan` is an application policy, not an independent OS or container sandbox.
-- Workspaces can be renamed and reordered from Settings; deletion is not yet supported.
+- Workspaces can be renamed and reordered from Settings. A read-only deletion preflight reports
+  bounded counts, saved-credential count and active-work blockers; deletion, tombstones and rollback
+  are not yet supported. See [ADR 0103](adr/0103-workspace-deletion-preflight.md).
 - Device OAuth displays raw Codex CLI instructions; it does not yet use `codex app-server` JSON-RPC.
 - Anthropic Messages currently uses the common text/tool-use path; provider-specific server tools,
   prompt-caching controls and extended-thinking options are not exposed.

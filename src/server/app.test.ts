@@ -341,6 +341,62 @@ describe("HTTP app", () => {
     expect(reopened.listWorkspaces().map((entry) => entry.id)).toEqual([product.id, workspace.id]);
   });
 
+  it("returns a bounded deletion preflight without mutating workspace state", async () => {
+    const [seeded] = store.listWorkspaces();
+    if (!seeded) throw new Error("expected seeded workspace");
+    const blocked = await app.request(`/api/workspaces/${seeded.id}/delete/preflight`);
+    expect(blocked.status).toBe(200);
+    await expect(blocked.json()).resolves.toMatchObject({
+      workspace: { id: seeded.id, name: seeded.name },
+      canDelete: false,
+      blockers: ["last_workspace"],
+      counts: { workspacesRemaining: 1, activeRuns: 0, activeAssignments: 0 },
+    });
+
+    const created = await store.createWorkspace({ name: "Disposable" });
+    await store.createAgent({
+      workspaceId: created.id,
+      kind: "master",
+      name: "Secret agent",
+      handle: "secret-agent",
+      description: "",
+      instructions: "",
+      accessMode: "ask",
+      provider: {
+        type: "custom",
+        name: "Local",
+        baseUrl: "http://127.0.0.1:11434/v1",
+        model: "model",
+        protocol: "openai-chat",
+        apiKey: "preflight-secret",
+      },
+    });
+    const ready = await app.request(`/api/workspaces/${created.id}/delete/preflight`);
+    expect(ready.status).toBe(200);
+    await expect(ready.json()).resolves.toMatchObject({
+      canDelete: true,
+      counts: { workspacesRemaining: 2, agents: 1, credentialBearingAgents: 1 },
+      blockers: [],
+    });
+
+    const activeRun: AgentRun = {
+      id: "active-run",
+      threadId: "missing-thread",
+      triggerMessageId: "message",
+      agentId: "agent",
+      attempt: 1,
+      status: "running",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    await expect(store.workspaceDeletionPreflight(created.id, [activeRun])).resolves.toMatchObject({
+      canDelete: false,
+      blockers: ["active_runs"],
+      counts: { activeRuns: 1 },
+    });
+    expect(store.listWorkspaces().map((entry) => entry.id)).toEqual([seeded.id, created.id]);
+  });
+
   it.each(["bootstrap", "activity"])(
     "rejects an explicitly unknown workspace for %s instead of returning another workspace",
     async (endpoint) => {

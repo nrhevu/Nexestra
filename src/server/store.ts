@@ -107,6 +107,8 @@ import {
   type WorkAssignment,
   WorkAssignmentSchema,
   type Workspace,
+  type WorkspaceDeletionPreflight,
+  WorkspaceDeletionPreflightSchema,
   WorkspaceSchema,
   type WorkspaceWhiteboard,
   WorkspaceWhiteboardSchema,
@@ -550,6 +552,59 @@ export class FileStore {
   getWorkspace(id: string): Workspace | undefined {
     const workspace = this.state.workspaces.find((entry) => entry.id === id);
     return workspace ? structuredClone(workspace) : undefined;
+  }
+
+  async workspaceDeletionPreflight(
+    workspaceId: string,
+    activeRuns: readonly AgentRun[] = [],
+  ): Promise<WorkspaceDeletionPreflight> {
+    const workspace = this.state.workspaces.find((entry) => entry.id === workspaceId);
+    if (!workspace) throw new StoreError("not_found", "Workspace not found.");
+    const agents = this.state.agents.filter((entry) => entry.workspaceId === workspaceId);
+    const threads = this.state.threads.filter((entry) => entry.workspaceId === workspaceId);
+    const tasks = this.state.tasks.filter((entry) => entry.workspaceId === workspaceId);
+    const knowledge = this.state.knowledge.filter((entry) => entry.workspaceId === workspaceId);
+    const assignments = this.state.assignments.filter((entry) => entry.workspaceId === workspaceId);
+    const activeAssignments = assignments.filter(
+      (entry) => entry.status === "queued" || entry.status === "running",
+    );
+    let artifactFiles = 0;
+    for (const thread of threads) {
+      if (!isStorageId(thread.id)) continue;
+      const directory = join(this.artifactDirectory, thread.id);
+      const entries = await readdir(directory, { withFileTypes: true }).catch((error: unknown) => {
+        if (isNodeError(error, "ENOENT")) return [];
+        throw new StoreError("conflict", "Workspace artifact inventory is unavailable.");
+      });
+      artifactFiles = Math.min(
+        50_000,
+        artifactFiles + entries.filter((entry) => entry.isFile()).length,
+      );
+    }
+    const blockers: WorkspaceDeletionPreflight["blockers"] = [];
+    if (this.state.workspaces.length <= 1) blockers.push("last_workspace");
+    if (activeRuns.length > 0) blockers.push("active_runs");
+    if (activeAssignments.length > 0) blockers.push("active_assignments");
+    return WorkspaceDeletionPreflightSchema.parse({
+      workspace: { id: workspace.id, name: workspace.name },
+      canDelete: blockers.length === 0,
+      confirmationName: workspace.name,
+      counts: {
+        workspacesRemaining: this.state.workspaces.length,
+        agents: agents.length,
+        credentialBearingAgents: agents.filter((agent) => Object.hasOwn(this.credentials, agent.id))
+          .length,
+        threads: threads.length,
+        tasks: tasks.length,
+        knowledgeDocuments: knowledge.filter((item) => item.kind === "document").length,
+        knowledgeRepositories: knowledge.filter((item) => item.kind === "repository").length,
+        assignments: assignments.length,
+        activeAssignments: activeAssignments.length,
+        artifactFiles,
+        activeRuns: activeRuns.length,
+      },
+      blockers,
+    });
   }
 
   listAgents(workspaceId?: string): Agent[] {

@@ -19,7 +19,9 @@ those counts refresh with normal bootstrap revalidation or an explicit refresh a
 While any badge is nonzero, the browser refreshes these counts every five seconds; idle workspaces
 are not polled.
 Settings can rename any workspace and reorder the rail. The order is saved in `state.json` and
-restored after a restart.
+restored after a restart. Each workspace also has a **Deletion preflight** action that reports
+bounded data counts, saved-credential count, active runs/assignments, and the exact name a future
+delete flow would require. It is read-only; deletion and rollback are not yet supported.
 
 Choose **Export selected workspace** in Settings or use `/export workspace`, then **Download ZIP**,
 to export workspace metadata, active and archived conversations, uploaded files and retained
