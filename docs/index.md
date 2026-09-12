@@ -44,3 +44,5 @@
     Worker-based CRC/SHA verification, supported ZIP profile and integrity limits.
 24. [Deferred archive dialog research](research/2026-09-09-deferred-workspace-archive-dialogs.md):
     measured initial bundle reduction, bounded loading, native failures and focus preservation.
+25. [Run quality attribution research](research/2026-09-12-run-quality-attribution.md): exact run
+    provenance for retry-safe helpful/needs-work comparisons and a reviewed Knowledge follow-up.

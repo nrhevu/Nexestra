@@ -106,6 +106,7 @@ import {
   setRunHistorySummary,
   type TranscriptFileIdentity,
   type TranscriptHistoryIndex,
+  type TranscriptMessageMetadata,
   transcriptFileIdentityOf,
   transcriptHistoryEntry,
 } from "./conversation-history.js";
@@ -346,6 +347,71 @@ function runEstimatedCostUsd(
       usage.outputTokens * pricing.outputUsdPerMillion) /
     1_000_000
   );
+}
+
+interface FeedbackCounts {
+  feedbackCount: number;
+  positiveFeedbackCount: number;
+  negativeFeedbackCount: number;
+}
+
+function emptyFeedbackCounts(): FeedbackCounts {
+  return { feedbackCount: 0, positiveFeedbackCount: 0, negativeFeedbackCount: 0 };
+}
+
+function addFeedbackCount(target: FeedbackCounts, value: MessageFeedback["value"]): void {
+  target.feedbackCount += 1;
+  if (value === "positive") target.positiveFeedbackCount += 1;
+  else target.negativeFeedbackCount += 1;
+}
+
+function feedbackCandidateKey(threadId: string, agentId: string, triggerMessageId: string): string {
+  return JSON.stringify([threadId, agentId, triggerMessageId]);
+}
+
+function feedbackRunKey(threadId: string, runId: string): string {
+  return JSON.stringify([threadId, runId]);
+}
+
+/**
+ * Resolve legacy feedback to a run when message/run provenance was not yet
+ * written. Ambiguous retries stay unattributed rather than inflating a
+ * comparison; generated messages use their explicit run id instead.
+ */
+function chooseFeedbackRun(
+  feedback: MessageFeedback,
+  metadata: TranscriptMessageMetadata,
+  allSummariesById: Map<string, RunHistorySummary>,
+  summariesByCandidate: Map<string, RunHistorySummary[]>,
+): RunHistorySummary | undefined {
+  if (metadata.authorKind !== "agent") return undefined;
+  const agentId = metadata.authorId;
+  if (
+    feedback.runId !== undefined &&
+    metadata.runId !== undefined &&
+    feedback.runId !== metadata.runId
+  ) {
+    return undefined;
+  }
+  const explicitRunId = feedback.runId ?? metadata.runId;
+  if (explicitRunId !== undefined) {
+    const explicit = allSummariesById.get(feedbackRunKey(feedback.threadId, explicitRunId));
+    if (
+      explicit &&
+      explicit.threadId === feedback.threadId &&
+      explicit.agentId === agentId &&
+      (metadata.triggerMessageId === undefined ||
+        explicit.triggerMessageId === metadata.triggerMessageId)
+    ) {
+      return explicit;
+    }
+    return undefined;
+  }
+  if (metadata.triggerMessageId === undefined) return undefined;
+  const candidates = summariesByCandidate.get(
+    feedbackCandidateKey(feedback.threadId, agentId, metadata.triggerMessageId),
+  );
+  return candidates?.length === 1 ? candidates[0] : undefined;
 }
 
 export class StoreError extends Error {
@@ -2032,6 +2098,7 @@ export class FileStore {
     agent: Agent,
     content: string,
     triggerMessageId: string,
+    runId?: string,
   ): Promise<Message> {
     return this.appendMessage(threadId, {
       id: crypto.randomUUID(),
@@ -2047,6 +2114,7 @@ export class FileStore {
       knowledgeReferences: [],
       artifactIds: [],
       triggerMessageId,
+      ...(runId ? { runId } : {}),
       createdAt: new Date().toISOString(),
     });
   }
@@ -2098,6 +2166,11 @@ export class FileStore {
       else if (event.type === "run.updated") runs.set(event.run.id, event.run);
       else if (event.type === "tool.updated") toolCalls.set(event.toolCall.id, event.toolCall);
     }
+    const agentMessages = new Map(
+      messages
+        .filter((message) => message.author.kind === "agent")
+        .map((message) => [message.id, message]),
+    );
     return {
       thread: structuredClone(thread),
       messages: messages.sort((left, right) => left.sequence - right.sequence),
@@ -2107,7 +2180,15 @@ export class FileStore {
         left.createdAt.localeCompare(right.createdAt),
       ),
       feedback: this.state.messageFeedback
-        .filter((entry) => entry.threadId === thread.id)
+        .filter((entry) => {
+          const message = agentMessages.get(entry.messageId);
+          return (
+            entry.threadId === thread.id &&
+            message !== undefined &&
+            (entry.agentId === undefined || entry.agentId === message.author.id) &&
+            (entry.runId === undefined || entry.runId === message.runId)
+          );
+        })
         .map((entry) => this.redactedMessageFeedback(entry)),
     };
   }
@@ -2146,7 +2227,12 @@ export class FileStore {
           "The message transcript is unavailable; reload and try again.",
         );
       }
-      if (messageEvent?.type !== "message.created") {
+      if (
+        messageEvent?.type !== "message.created" ||
+        messageEvent.message.id !== messageId ||
+        messageEvent.message.threadId !== threadId ||
+        messageEvent.sequence !== messageEntry.sequence
+      ) {
         throw new StoreError(
           "conflict",
           "The message transcript is unavailable; reload and try again.",
@@ -2154,6 +2240,21 @@ export class FileStore {
       }
       if (messageEvent.message.author.kind !== "agent") {
         throw new StoreError("invalid", "Only agent messages can be rated.");
+      }
+      const messageRunId = messageEvent.message.runId;
+      if (messageRunId !== undefined && input.value !== null) {
+        const linkedRun = index.runHistory.get(messageRunId);
+        if (
+          !linkedRun ||
+          linkedRun.threadId !== threadId ||
+          linkedRun.agentId !== messageEvent.message.author.id ||
+          linkedRun.triggerMessageId !== messageEvent.message.triggerMessageId
+        ) {
+          throw new StoreError(
+            "conflict",
+            "The message run provenance is unavailable; reload and try again.",
+          );
+        }
       }
       const nextState = structuredClone(this.state);
       const existingIndex = nextState.messageFeedback.findIndex(
@@ -2171,6 +2272,8 @@ export class FileStore {
         threadId,
         messageId,
         value: input.value,
+        agentId: messageEvent.message.author.id,
+        ...(messageRunId ? { runId: messageRunId } : {}),
         ...(input.note
           ? (() => {
               const note = this.redactSecrets(input.note);
@@ -2919,7 +3022,13 @@ export class FileStore {
         .filter(
           (entry) =>
             entry.threadId === thread.id &&
-            pageMessages.some((message) => message.id === entry.messageId),
+            pageMessages.some(
+              (message) =>
+                message.id === entry.messageId &&
+                message.author.kind === "agent" &&
+                (entry.agentId === undefined || entry.agentId === message.author.id) &&
+                (entry.runId === undefined || entry.runId === message.runId),
+            ),
         )
         .map((entry) => structuredClone(entry));
       if (
@@ -3000,6 +3109,8 @@ export class FileStore {
           : scopedThreads.filter((thread) => thread.id === input.threadId);
       let unavailableThreads = 0;
       const summaries: RunHistorySummary[] = [];
+      const allSummaries: RunHistorySummary[] = [];
+      const availableIndexes = new Map<string, TranscriptHistoryIndex>();
       const foreignAgentIds = new Set(
         this.state.agents
           .filter((agent) => agent.workspaceId !== workspace.id)
@@ -3024,7 +3135,9 @@ export class FileStore {
           unavailableThreads += 1;
           continue;
         }
+        availableIndexes.set(thread.id, index);
         for (const summary of index.runHistory.values()) {
+          allSummaries.push(summary);
           if (input.agentId !== undefined && summary.agentId !== input.agentId) continue;
           if (input.threadId !== undefined && summary.threadId !== input.threadId) continue;
           if (input.status !== undefined && summary.status !== input.status) continue;
@@ -3032,6 +3145,38 @@ export class FileStore {
         }
       }
       summaries.sort(compareRunHistorySummaries);
+      const allSummariesById = new Map(
+        allSummaries.map((entry) => [feedbackRunKey(entry.threadId, entry.id), entry]),
+      );
+      const summariesByCandidate = new Map<string, RunHistorySummary[]>();
+      for (const entry of allSummaries) {
+        const key = feedbackCandidateKey(entry.threadId, entry.agentId, entry.triggerMessageId);
+        const candidates = summariesByCandidate.get(key);
+        if (candidates) candidates.push(entry);
+        else summariesByCandidate.set(key, [entry]);
+      }
+      const feedbackByMessage = new Map<string, MessageFeedback>();
+      for (const feedback of this.state.messageFeedback) {
+        if (!availableIndexes.has(feedback.threadId)) continue;
+        const key = JSON.stringify([feedback.threadId, feedback.messageId]);
+        const current = feedbackByMessage.get(key);
+        if (!current || feedback.updatedAt.localeCompare(current.updatedAt) > 0) {
+          feedbackByMessage.set(key, feedback);
+        }
+      }
+      const feedbackByRun = new Map<string, FeedbackCounts>();
+      for (const feedback of feedbackByMessage.values()) {
+        const index = availableIndexes.get(feedback.threadId);
+        const metadata = index?.messageMetadataById.get(feedback.messageId);
+        if (metadata?.authorKind !== "agent") continue;
+        if (feedback.agentId !== undefined && feedback.agentId !== metadata.authorId) continue;
+        const run = chooseFeedbackRun(feedback, metadata, allSummariesById, summariesByCandidate);
+        if (!run) continue;
+        const counts =
+          feedbackByRun.get(feedbackRunKey(run.threadId, run.id)) ?? emptyFeedbackCounts();
+        addFeedbackCount(counts, feedback.value);
+        feedbackByRun.set(feedbackRunKey(run.threadId, run.id), counts);
+      }
       const agents = new Map(
         this.state.agents
           .filter((agent) => agent.workspaceId === workspace.id)
@@ -3049,6 +3194,12 @@ export class FileStore {
             metrics.usageRuns += 1;
             metrics.totalTokens += entry.usage.totalTokens;
           }
+          const feedback = feedbackByRun.get(feedbackRunKey(entry.threadId, entry.id));
+          if (feedback) {
+            metrics.feedbackCount += feedback.feedbackCount;
+            metrics.positiveFeedbackCount += feedback.positiveFeedbackCount;
+            metrics.negativeFeedbackCount += feedback.negativeFeedbackCount;
+          }
           const agentMetrics = metrics.byAgent.get(entry.agentId) ?? {
             agentId: entry.agentId,
             totalRuns: 0,
@@ -3059,6 +3210,9 @@ export class FileStore {
             outputTokens: 0,
             cachedInputTokens: 0,
             totalTokens: 0,
+            feedbackCount: 0,
+            positiveFeedbackCount: 0,
+            negativeFeedbackCount: 0,
           };
           agentMetrics.totalRuns += 1;
           if (durationMs !== undefined) {
@@ -3077,6 +3231,13 @@ export class FileStore {
                 (agentMetrics.estimatedCostUsd ?? 0) + estimatedCostUsd;
             }
           }
+          if (feedback) {
+            agentMetrics.feedbackCount = (agentMetrics.feedbackCount ?? 0) + feedback.feedbackCount;
+            agentMetrics.positiveFeedbackCount =
+              (agentMetrics.positiveFeedbackCount ?? 0) + feedback.positiveFeedbackCount;
+            agentMetrics.negativeFeedbackCount =
+              (agentMetrics.negativeFeedbackCount ?? 0) + feedback.negativeFeedbackCount;
+          }
           metrics.byAgent.set(entry.agentId, agentMetrics);
           return metrics;
         },
@@ -3086,16 +3247,34 @@ export class FileStore {
           totalDurationMs: 0,
           usageRuns: 0,
           totalTokens: 0,
+          feedbackCount: 0,
+          positiveFeedbackCount: 0,
+          negativeFeedbackCount: 0,
           byAgent: new Map<string, Omit<RunHistoryAgentMetrics, "agentName">>(),
         },
       );
       const summaryByAgent = [...summary.byAgent.values()]
-        .map((entry) => ({
-          ...entry,
-          agentName: agents.has(entry.agentId)
-            ? this.redactSecrets(agents.get(entry.agentId)?.name ?? "Unknown")
-            : "Unknown",
-        }))
+        .map((entry) => {
+          const {
+            feedbackCount,
+            positiveFeedbackCount,
+            negativeFeedbackCount,
+            ...withoutFeedback
+          } = entry;
+          return {
+            ...withoutFeedback,
+            ...(feedbackCount !== undefined && feedbackCount > 0
+              ? {
+                  feedbackCount,
+                  positiveFeedbackCount,
+                  negativeFeedbackCount,
+                }
+              : {}),
+            agentName: agents.has(entry.agentId)
+              ? this.redactSecrets(agents.get(entry.agentId)?.name ?? "Unknown")
+              : "Unknown",
+          };
+        })
         .sort(
           (left, right) =>
             right.totalRuns - left.totalRuns ||
@@ -3110,6 +3289,13 @@ export class FileStore {
         totalDurationMs: summary.totalDurationMs,
         usageRuns: summary.usageRuns,
         totalTokens: summary.totalTokens,
+        ...(summary.feedbackCount > 0
+          ? {
+              feedbackCount: summary.feedbackCount,
+              positiveFeedbackCount: summary.positiveFeedbackCount,
+              negativeFeedbackCount: summary.negativeFeedbackCount,
+            }
+          : {}),
         byAgent: summaryByAgent,
       };
       const remaining =
@@ -3204,6 +3390,17 @@ export class FileStore {
         const entry = transcriptHistoryEntry(event.sequence, raw, lineStart, lineEnd);
         if (!entry) return { status: "unknown" };
         addTranscriptHistoryEntry(index, entry);
+        if (event.type === "message.created") {
+          index.messageMetadataById.set(event.message.id, {
+            authorKind: event.message.author.kind,
+            authorId: event.message.author.id,
+            ...(event.message.triggerMessageId
+              ? { triggerMessageId: event.message.triggerMessageId }
+              : {}),
+            ...(event.message.runId ? { runId: event.message.runId } : {}),
+            createdAt: event.message.createdAt,
+          });
+        }
         if (event.type === "run.updated") {
           setRunHistorySummary(index, this.runHistorySummaryOf(event.run));
         }
@@ -3267,6 +3464,17 @@ export class FileStore {
       }
       const entry = transcriptHistoryEntry(event.sequence, raw, offset, offset + lineBytes);
       if (entry) addTranscriptHistoryEntry(index, entry);
+      if (event.type === "message.created") {
+        index.messageMetadataById.set(event.message.id, {
+          authorKind: event.message.author.kind,
+          authorId: event.message.author.id,
+          ...(event.message.triggerMessageId
+            ? { triggerMessageId: event.message.triggerMessageId }
+            : {}),
+          ...(event.message.runId ? { runId: event.message.runId } : {}),
+          createdAt: event.message.createdAt,
+        });
+      }
       if (event.type === "run.updated") {
         setRunHistorySummary(index, this.runHistorySummaryOf(event.run));
       }
@@ -3419,7 +3627,8 @@ export class FileStore {
           (message) =>
             message.author.kind === "agent" &&
             message.author.id === run.agentId &&
-            message.triggerMessageId === run.triggerMessageId,
+            (message.runId === run.id ||
+              (message.runId === undefined && message.triggerMessageId === run.triggerMessageId)),
         );
         await this.updateRun({
           ...run,
@@ -4082,6 +4291,23 @@ export class FileStore {
       rejectForeign("assignment thread", assignment.threadId, threadWorkspaces);
       rejectForeign("assignment worker", assignment.workerAgentId, agentWorkspaces);
       rejectForeign("assignment repository", assignment.repositoryId, knowledgeWorkspaces);
+    }
+    const feedbackPairs = new Set<string>();
+    for (const feedback of this.state.messageFeedback) {
+      if (threadWorkspaces.get(feedback.threadId) !== workspaceId) continue;
+      rejectForeign("message feedback agent", feedback.agentId ?? null, agentWorkspaces);
+      const index = this.historyIndexes.get(feedback.threadId);
+      const metadata = index?.messageMetadataById.get(feedback.messageId);
+      const pair = JSON.stringify([feedback.threadId, feedback.messageId]);
+      if (
+        metadata?.authorKind !== "agent" ||
+        feedbackPairs.has(pair) ||
+        (feedback.agentId !== undefined && feedback.agentId !== metadata.authorId) ||
+        (feedback.runId !== undefined && feedback.runId !== metadata.runId)
+      ) {
+        throw new StoreError("invalid", "Workspace export message feedback is invalid.");
+      }
+      feedbackPairs.add(pair);
     }
   }
   private requireThread(id: string): Thread {

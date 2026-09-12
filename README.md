@@ -59,7 +59,11 @@ queued and active runs omit this value until they finish.
 When a custom OpenAI-compatible provider reports usage, run history also shows its total input and
 output token count. Missing or partial provider usage is left blank; these counts are estimates from
 the provider and are not billing records. The surface also summarizes matching run count, terminal
-time, token total, and usage coverage above the paged rows.
+time, token total, usage coverage, and explicit helpful/needs-work ratings above the paged rows.
+Per-agent rows show the same rating counts. Replies created by the harness retain the exact run ID
+that produced them, so retries and delegated Worker/Master replies are compared against the right
+run; older replies without that provenance are included only when their trigger has one matching
+run. Ratings are user signals, not an automatic score or billing record.
 
 Thread rows also show **unread messages**, with a total on Threads. Reading the bottom of the
 latest Messages page in a focused window marks that loaded page read. Older pages, message links

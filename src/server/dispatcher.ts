@@ -619,7 +619,7 @@ export class AgentDispatcher {
         (await this.runner.invoke(agent, invocation)).trim(),
       );
       if (!response) throw new Error("The agent returned an empty response.");
-      await this.store.createAgentMessage(run.threadId, agent, response, trigger.id);
+      await this.store.createAgentMessage(run.threadId, agent, response, trigger.id, currentRun.id);
       await this.store.updateRun({
         ...currentRun,
         status: "completed",
@@ -907,7 +907,13 @@ export class AgentDispatcher {
           if (!response) throw new Error("The Worker returned an empty response.");
 
           // Post the Worker's result to the thread
-          await this.store.createAgentMessage(thread.id, worker, response, trigger.id);
+          await this.store.createAgentMessage(
+            thread.id,
+            worker,
+            response,
+            trigger.id,
+            workerRun.id,
+          );
 
           const result = response;
           controller.signal.throwIfAborted();
@@ -943,6 +949,7 @@ export class AgentDispatcher {
               origin.master,
               summaryMessage,
               trigger.id,
+              origin.masterRun.id,
             );
           }
           assignment = await this.store.updateAssignment(assignment.id, {

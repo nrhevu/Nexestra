@@ -180,7 +180,12 @@ These are current local estimates rather than provider invoices. See [ADR 0053](
 
 Agent messages expose optional helpful/needs-work feedback controls. One bounded rating per message
 is stored in workspace metadata, returned with history, and included in workspace exports; the
-canonical transcript remains unchanged. See [ADR 0054](adr/0054-message-quality-feedback.md).
+canonical transcript remains unchanged. Generated replies also carry the producing run ID. Run
+history attributes ratings to that exact run, so retries and multiple agents sharing one trigger do
+not inflate each other's counts. Legacy replies without provenance are counted only when their
+trigger maps to one unambiguous run. The surface shows helpful/needs-work totals as explicit user
+signals, without inventing an automatic quality score. See [ADR 0054](adr/0054-message-quality-feedback.md)
+and [ADR 0055](adr/0055-run-quality-attribution.md).
 
 Message content is stored and transported as unchanged Markdown. The browser renders it with
 GitHub Flavored Markdown and KaTeX inside the memoized transcript boundary. Raw HTML parsing is not
@@ -547,6 +552,10 @@ credentials.
   a restart. Filtered pages are live and can change as statuses update. Filters/page position reset
   after leaving the surface, and deleted agents are labeled Unknown. It has no background polling,
   run error/output search, cross-workspace aggregation or new run action controls.
+
+- Quality ratings are explicit single-user observations. They are attributed only when provenance
+  resolves to one run, but there is no reviewed correction queue yet for turning a needs-work reply
+  into curated Knowledge or an evaluation case; ratings do not change prompts or routing.
 
 - Workspace export has no import/restore workflow and is not a complete backup. Snapshot inventory
   scans transcripts under the write barrier before a second read for ZIP generation. Stored ZIP

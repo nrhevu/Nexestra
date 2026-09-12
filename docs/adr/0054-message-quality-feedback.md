@@ -24,5 +24,6 @@ existing app error surface.
 
 ## Limits
 
-Feedback is a single-user explicit signal. It is not an automatic evaluator, does not alter agent
-prompts or routing yet, and is not aggregated into a quality score or cost-adjusted ranking.
+Feedback is a single-user explicit signal. It is not an automatic evaluator and does not alter agent
+prompts or routing. Run history may aggregate the counts with exact provenance, but the product does
+not reduce them to a quality score or cost-adjusted ranking; see [ADR 0055](0055-run-quality-attribution.md).

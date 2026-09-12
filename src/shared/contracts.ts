@@ -395,6 +395,9 @@ export const MessageSchema = z.object({
   knowledgeReferences: z.array(KnowledgeReferenceSchema).max(40).default([]),
   artifactIds: z.array(z.string()).max(40).default([]),
   triggerMessageId: z.string().optional(),
+  // Generated replies may identify the exact durable run that produced them.
+  // Older transcripts and manually-created messages omit this provenance.
+  runId: z.string().optional(),
   createdAt: z.string(),
 });
 export type Message = z.infer<typeof MessageSchema>;
@@ -404,6 +407,10 @@ export const MessageFeedbackSchema = z.object({
   messageId: z.string(),
   value: z.enum(["positive", "negative"]),
   note: z.string().trim().max(500).optional(),
+  // These fields make quality metrics resilient to retries and shared triggers.
+  // They remain optional so existing state files continue to load unchanged.
+  agentId: z.string().optional(),
+  runId: z.string().optional(),
   updatedAt: z.string(),
 });
 export type MessageFeedback = z.infer<typeof MessageFeedbackSchema>;
@@ -596,6 +603,10 @@ export const RunHistoryAgentMetricsSchema = z.object({
   cachedInputTokens: z.number().int().nonnegative(),
   totalTokens: z.number().int().nonnegative(),
   estimatedCostUsd: z.number().finite().nonnegative().optional(),
+  // Explicit user signals attached to replies produced by these runs.
+  feedbackCount: z.number().int().nonnegative().optional(),
+  positiveFeedbackCount: z.number().int().nonnegative().optional(),
+  negativeFeedbackCount: z.number().int().nonnegative().optional(),
 });
 export type RunHistoryAgentMetrics = z.infer<typeof RunHistoryAgentMetricsSchema>;
 
@@ -606,6 +617,9 @@ export const RunHistoryMetricsSchema = z.object({
   usageRuns: z.number().int().nonnegative(),
   totalTokens: z.number().int().nonnegative(),
   byAgent: z.array(RunHistoryAgentMetricsSchema).max(200).default([]),
+  feedbackCount: z.number().int().nonnegative().optional(),
+  positiveFeedbackCount: z.number().int().nonnegative().optional(),
+  negativeFeedbackCount: z.number().int().nonnegative().optional(),
 });
 export type RunHistoryMetrics = z.infer<typeof RunHistoryMetricsSchema>;
 

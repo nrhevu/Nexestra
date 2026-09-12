@@ -1601,6 +1601,9 @@ export function App() {
         `/api/threads/${encodeURIComponent(message.threadId)}/messages/${encodeURIComponent(message.id)}/feedback`,
         { method: "PUT", body: JSON.stringify({ value }) },
       );
+      // Run history aggregates quality ratings across the whole workspace;
+      // refresh its projection as soon as a rating is durably accepted.
+      setRunHistoryRefreshRevision((revision) => revision + 1);
       const current = historyPageRef.current;
       if (!current || current.thread.id !== message.threadId) return;
       const nextFeedback =

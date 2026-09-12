@@ -381,6 +381,15 @@ describe("mention dispatch", () => {
     const data = await store.threadData(thread.id);
     expect(data.messages).toHaveLength(3);
     expect(data.runs.every((run) => run.status === "completed")).toBe(true);
+    const replies = data.messages.filter((message) => message.author.kind === "agent");
+    expect(replies).toHaveLength(2);
+    for (const reply of replies) {
+      const producingRun = data.runs.find((run) => run.id === reply.runId);
+      expect(producingRun).toMatchObject({
+        agentId: reply.author.id,
+        triggerMessageId: result.message.id,
+      });
+    }
   });
 
   it("publishes transient response activity and persists native tool events", async () => {
@@ -771,9 +780,17 @@ describe("mention dispatch", () => {
           author: expect.objectContaining({ kind: "agent", id: worker.id }),
           content: "Implemented and committed the assigned change.",
           triggerMessageId: sent.message.id,
+          runId: assignment.id,
         }),
       ]),
     );
+    const masterRun = threadData.runs.find((run) => run.agentId === master.id);
+    expect(masterRun).toBeDefined();
+    expect(
+      threadData.messages
+        .filter((message) => message.author.kind === "agent" && message.author.id === master.id)
+        .every((message) => message.runId === masterRun?.id),
+    ).toBe(true);
     await expect(dispatcher.taskProcess(plannedTask.id)).resolves.toMatchObject({
       assignment: { id: assignment.id, status: "completed" },
       run: { id: assignment.id, status: "completed" },

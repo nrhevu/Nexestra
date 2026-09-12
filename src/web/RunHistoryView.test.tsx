@@ -454,6 +454,9 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
             totalDurationMs: 4_000,
             usageRuns: 2,
             totalTokens: 2_500,
+            feedbackCount: 2,
+            positiveFeedbackCount: 1,
+            negativeFeedbackCount: 1,
             byAgent: [
               {
                 agentId: "agent-a",
@@ -467,6 +470,9 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
                 cachedInputTokens: 0,
                 totalTokens: 2_500,
                 estimatedCostUsd: 0.0125,
+                feedbackCount: 2,
+                positiveFeedbackCount: 1,
+                negativeFeedbackCount: 1,
               },
               {
                 agentId: "agent-b",
@@ -490,8 +496,12 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
 
     const breakdown = await screen.findByRole("region", { name: "Run history by agent" });
     expect(within(breakdown).getByText("Planner")).toBeVisible();
+    expect(screen.getByText("Helpful / needs work")).toBeVisible();
+    expect(screen.getByText("1/1")).toBeVisible();
     expect(
-      within(breakdown).getByText("2 runs · 2.5K tokens (2K in / 500 out) · $0.0125 · 3.0 s"),
+      within(breakdown).getByText(
+        "2 runs · 2.5K tokens (2K in / 500 out) · $0.0125 · 1 helpful / 1 needs work · 3.0 s",
+      ),
     ).toBeVisible();
     expect(within(breakdown).getByText("Reviewer")).toBeVisible();
     expect(within(breakdown).getByText("1 run · no usage · 1.0 s")).toBeVisible();

@@ -59,6 +59,184 @@ afterEach(() => {
 });
 
 describe("run history server", () => {
+  it("attributes message ratings to the exact producing run across agents and statuses", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected seeded workspace");
+    const agentA = await createWorkerAgent(store, "Planner", "planner");
+    const agentB = await createWorkerAgent(store, "Reviewer", "reviewer");
+    const thread = await createThread(store, "Quality");
+    const trigger = await store.createUserMessage(thread.id, "Compare these answers", []);
+    const runA = {
+      ...makeRun("quality-a", thread.id, agentA.id, "2026-01-01T00:00:00.000Z", "completed"),
+      triggerMessageId: trigger.id,
+    };
+    const runB = {
+      ...makeRun("quality-b", thread.id, agentB.id, "2026-01-02T00:00:00.000Z", "failed"),
+      triggerMessageId: trigger.id,
+    };
+    await store.updateRun(runA);
+    await store.updateRun(runB);
+    const replyA = await store.createAgentMessage(
+      thread.id,
+      agentA,
+      "A useful plan",
+      trigger.id,
+      runA.id,
+    );
+    const replyB = await store.createAgentMessage(
+      thread.id,
+      agentB,
+      "A rough review",
+      trigger.id,
+      runB.id,
+    );
+    expect(replyA.runId).toBe(runA.id);
+    expect(replyB.runId).toBe(runB.id);
+    await store.setMessageFeedback(thread.id, replyA.id, { value: "positive" });
+    await store.setMessageFeedback(thread.id, replyB.id, { value: "negative" });
+
+    const all = await store.listRunHistory({ workspaceId: workspace.id, limit: 50 });
+    expect(all.summary.feedbackCount).toBe(2);
+    expect(all.summary.positiveFeedbackCount).toBe(1);
+    expect(all.summary.negativeFeedbackCount).toBe(1);
+    expect(all.summary.byAgent).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          agentId: agentA.id,
+          feedbackCount: 1,
+          positiveFeedbackCount: 1,
+          negativeFeedbackCount: 0,
+        }),
+        expect.objectContaining({
+          agentId: agentB.id,
+          feedbackCount: 1,
+          positiveFeedbackCount: 0,
+          negativeFeedbackCount: 1,
+        }),
+      ]),
+    );
+    const completed = await store.listRunHistory({
+      workspaceId: workspace.id,
+      status: "completed",
+      limit: 50,
+    });
+    expect(completed.summary.feedbackCount).toBe(1);
+    expect(completed.summary.positiveFeedbackCount).toBe(1);
+    expect(completed.summary.negativeFeedbackCount).toBe(0);
+    const failed = await store.listRunHistory({
+      workspaceId: workspace.id,
+      status: "failed",
+      limit: 50,
+    });
+    expect(failed.summary.feedbackCount).toBe(1);
+    expect(failed.summary.positiveFeedbackCount).toBe(0);
+    expect(failed.summary.negativeFeedbackCount).toBe(1);
+  });
+
+  it("keeps retry ratings scoped to the run id carried by the reply", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected seeded workspace");
+    const agent = await createWorkerAgent(store);
+    const thread = await createThread(store, "Retry quality");
+    const trigger = await store.createUserMessage(thread.id, "Retry this", []);
+    const first = {
+      ...makeRun("quality-retry-1", thread.id, agent.id, "2026-01-01T00:00:00.000Z", "failed"),
+      triggerMessageId: trigger.id,
+    };
+    const second = {
+      ...makeRun("quality-retry-2", thread.id, agent.id, "2026-01-02T00:00:00.000Z", "completed"),
+      triggerMessageId: trigger.id,
+      attempt: 2,
+    };
+    await store.updateRun(first);
+    await store.updateRun(second);
+    const reply = await store.createAgentMessage(
+      thread.id,
+      agent,
+      "Recovered answer",
+      trigger.id,
+      second.id,
+    );
+    const feedback = await store.setMessageFeedback(thread.id, reply.id, { value: "positive" });
+    expect(feedback).toMatchObject({ agentId: agent.id, runId: second.id });
+    const reopened = await FileStore.open({ root: store.root, workspacePath: store.workspacePath });
+    const failed = await reopened.listRunHistory({
+      workspaceId: workspace.id,
+      status: "failed",
+      limit: 50,
+    });
+    expect(failed.summary.feedbackCount ?? 0).toBe(0);
+    const completed = await reopened.listRunHistory({
+      workspaceId: workspace.id,
+      status: "completed",
+      limit: 50,
+    });
+    expect(completed.summary.feedbackCount).toBe(1);
+  });
+
+  it("keeps same run ids in separate threads scoped independently", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected seeded workspace");
+    const agent = await createWorkerAgent(store);
+    const firstThread = await createThread(store, "First");
+    const secondThread = await createThread(store, "Second");
+    const firstTrigger = await store.createUserMessage(firstThread.id, "First", []);
+    const secondTrigger = await store.createUserMessage(secondThread.id, "Second", []);
+    const firstRun = {
+      ...makeRun("same-id", firstThread.id, agent.id, "2026-01-01T00:00:00.000Z"),
+      triggerMessageId: firstTrigger.id,
+    };
+    const secondRun = {
+      ...makeRun("same-id", secondThread.id, agent.id, "2026-01-02T00:00:00.000Z"),
+      triggerMessageId: secondTrigger.id,
+    };
+    await store.updateRun(firstRun);
+    await store.updateRun(secondRun);
+    const firstReply = await store.createAgentMessage(
+      firstThread.id,
+      agent,
+      "First answer",
+      firstTrigger.id,
+      firstRun.id,
+    );
+    const secondReply = await store.createAgentMessage(
+      secondThread.id,
+      agent,
+      "Second answer",
+      secondTrigger.id,
+      secondRun.id,
+    );
+    await store.setMessageFeedback(firstThread.id, firstReply.id, { value: "positive" });
+    await store.setMessageFeedback(secondThread.id, secondReply.id, { value: "negative" });
+    const page = await store.listRunHistory({ workspaceId: workspace.id, limit: 50 });
+    expect(page.summary.feedbackCount).toBe(2);
+    expect(page.summary.positiveFeedbackCount).toBe(1);
+    expect(page.summary.negativeFeedbackCount).toBe(1);
+  });
+
+  it("backfills legacy replies without runId when their trigger has one run", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected seeded workspace");
+    const agent = await createWorkerAgent(store);
+    const thread = await createThread(store, "Legacy quality");
+    const trigger = await store.createUserMessage(thread.id, "Legacy reply", []);
+    const run = {
+      ...makeRun("legacy-run", thread.id, agent.id, "2026-01-01T00:00:00.000Z"),
+      triggerMessageId: trigger.id,
+    };
+    await store.updateRun(run);
+    const reply = await store.createAgentMessage(thread.id, agent, "Legacy answer", trigger.id);
+    expect(reply.runId).toBeUndefined();
+    await store.setMessageFeedback(thread.id, reply.id, { value: "positive" });
+    const page = await store.listRunHistory({ workspaceId: workspace.id, limit: 50 });
+    expect(page.summary.feedbackCount).toBe(1);
+    expect(page.summary.positiveFeedbackCount).toBe(1);
+  });
+
   it("reports elapsed duration for terminal runs and omits it while active", async () => {
     const store = await openStore();
     const [workspace] = store.listWorkspaces();

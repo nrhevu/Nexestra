@@ -58,6 +58,18 @@ export interface TranscriptHistoryEntry {
   lineBytes: number;
 }
 
+/**
+ * Small message facts retained alongside byte offsets so bounded projections
+ * can reason about message provenance without rereading whole transcripts.
+ */
+export interface TranscriptMessageMetadata {
+  authorKind: "user" | "agent" | "system";
+  authorId: string;
+  triggerMessageId?: string;
+  runId?: string;
+  createdAt: string;
+}
+
 export interface TranscriptFileIdentity {
   device: bigint;
   ino: bigint;
@@ -72,6 +84,7 @@ export interface TranscriptHistoryIndex {
   artifacts: TranscriptHistoryEntry[];
   artifactByMessageId: Map<string, TranscriptHistoryEntry[]>;
   messageById: Map<string, TranscriptHistoryEntry>;
+  messageMetadataById: Map<string, TranscriptMessageMetadata>;
   runLatestByRunId: Map<string, TranscriptHistoryEntry>;
   runByTriggerMessageId: Map<string, TranscriptHistoryEntry[]>;
   runHistory: Map<string, RunHistorySummary>;
@@ -94,6 +107,7 @@ export function emptyTranscriptHistoryIndex(threadId: string): TranscriptHistory
     artifacts: [],
     artifactByMessageId: new Map(),
     messageById: new Map(),
+    messageMetadataById: new Map(),
     runLatestByRunId: new Map(),
     runByTriggerMessageId: new Map(),
     runHistory: new Map(),

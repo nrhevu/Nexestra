@@ -117,6 +117,12 @@ function formatAgentUsage(agent: RunHistoryMetrics["byAgent"][number]): string {
   return `${formatTokens(agent.totalTokens)} tokens (${formatTokens(agent.inputTokens)} in / ${formatTokens(agent.outputTokens)} out${cached})${cost}`;
 }
 
+function formatAgentFeedback(agent: RunHistoryMetrics["byAgent"][number]): string {
+  const total = agent.feedbackCount ?? 0;
+  if (total === 0) return "";
+  return ` · ${agent.positiveFeedbackCount ?? 0} helpful / ${agent.negativeFeedbackCount ?? 0} needs work`;
+}
+
 function errorText(error: unknown, fallback: string): string {
   return error instanceof Error && error.message !== "" ? error.message : fallback;
 }
@@ -504,6 +510,14 @@ export function RunHistoryView({
                 {summary.usageRuns}/{summary.totalRuns}
               </dd>
             </div>
+            <div>
+              <dt>Helpful / needs work</dt>
+              <dd>
+                {(summary.feedbackCount ?? 0) > 0
+                  ? `${summary.positiveFeedbackCount ?? 0}/${summary.negativeFeedbackCount ?? 0}`
+                  : "—"}
+              </dd>
+            </div>
           </dl>
           {summary.byAgent.length > 0 ? (
             <section className="run-history-agent-breakdown" aria-label="Run history by agent">
@@ -514,7 +528,8 @@ export function RunHistoryView({
                     <span className="run-history-breakdown-name">{agent.agentName}</span>
                     <span className="run-history-breakdown-meta">
                       {agent.totalRuns} {agent.totalRuns === 1 ? "run" : "runs"} ·{" "}
-                      {formatAgentUsage(agent)} · {formatDuration(agent.totalDurationMs)}
+                      {formatAgentUsage(agent)}
+                      {formatAgentFeedback(agent)} · {formatDuration(agent.totalDurationMs)}
                     </span>
                   </li>
                 ))}
