@@ -5,7 +5,9 @@ import {
   WORKSPACE_ARCHIVE_INSPECTION_PAGE_SIZE,
   type WorkspaceArchiveInspectionProgress,
   type WorkspaceArchiveInspectionReport,
+  WorkspaceArchiveTargetInventorySchema,
 } from "../shared/workspace-archive-inspection-contracts.js";
+import { api } from "./api.js";
 import { inspectArchiveInWorker } from "./workspace-archive-inspection-client.js";
 import "./WorkspaceArchiveInspectionDialog.css";
 
@@ -73,6 +75,8 @@ export function WorkspaceArchiveInspectionDialog({
   const [progress, setProgress] = useState<WorkspaceArchiveInspectionProgress | null>(null);
   const [report, setReport] = useState<WorkspaceArchiveInspectionReport | null>(null);
   const [showRestorePlan, setShowRestorePlan] = useState(false);
+  const [restorePlanLoading, setRestorePlanLoading] = useState(false);
+  const [restorePlanError, setRestorePlanError] = useState<string>();
   const [error, setError] = useState<WorkspaceArchiveInspectionError | null>(null);
   const [pageIndex, setPageIndex] = useState(0);
   const titleId = useId();
@@ -84,12 +88,16 @@ export function WorkspaceArchiveInspectionDialog({
   const requestIdRef = useRef(0);
   const busyRef = useRef(false);
   const controllerRef = useRef<AbortController | null>(null);
+  const restorePlanControllerRef = useRef<AbortController | null>(null);
 
   const discardPending = useCallback(() => {
     requestIdRef.current += 1;
     controllerRef.current?.abort();
+    restorePlanControllerRef.current?.abort();
+    restorePlanControllerRef.current = null;
     controllerRef.current = null;
     busyRef.current = false;
+    setRestorePlanLoading(false);
   }, []);
 
   useEffect(
@@ -162,6 +170,7 @@ export function WorkspaceArchiveInspectionDialog({
     setProgress(null);
     setReport(null);
     setShowRestorePlan(false);
+    setRestorePlanError(undefined);
     setPageIndex(0);
     if (next.size === 0) {
       setError({ message: EMPTY_FILE_MESSAGE });
@@ -215,6 +224,7 @@ export function WorkspaceArchiveInspectionDialog({
         throw new Error(FALLBACK_ERROR_MESSAGE);
       }
       setReport(result);
+      setRestorePlanError(undefined);
       setPageIndex(0);
       setPhase("success");
     } catch (caught) {
@@ -257,11 +267,55 @@ export function WorkspaceArchiveInspectionDialog({
     setProgress(null);
     setReport(null);
     setShowRestorePlan(false);
+    setRestorePlanError(undefined);
     setError(null);
     setPageIndex(0);
     setPhase("idle");
     openFilePicker();
   };
+
+  const planRestore = useCallback(async () => {
+    if (restorePlanLoading || report?.restorePlan === undefined || workspace === undefined) return;
+    restorePlanControllerRef.current?.abort();
+    const controller = new AbortController();
+    restorePlanControllerRef.current = controller;
+    setRestorePlanLoading(true);
+    setRestorePlanError(undefined);
+    try {
+      const raw = await api<unknown>(
+        `/api/workspaces/${encodeURIComponent(workspace.id)}/import/target`,
+        { signal: controller.signal },
+      );
+      const inventory = WorkspaceArchiveTargetInventorySchema.parse(raw);
+      const targetPaths = new Set(inventory.paths);
+      const conflicts = report.manifest.entries
+        .map((entry) => entry.path)
+        .filter((path) => targetPaths.has(path))
+        .slice(0, 100);
+      setReport((current) =>
+        current?.restorePlan === undefined
+          ? current
+          : {
+              ...current,
+              restorePlan: {
+                ...current.restorePlan,
+                pathConflicts: { checked: true, paths: conflicts },
+              },
+            },
+      );
+      setShowRestorePlan(true);
+    } catch (caught) {
+      if (!controller.signal.aborted) {
+        setRestorePlanError(caught instanceof Error ? caught.message : "Target inventory failed.");
+        setShowRestorePlan(true);
+      }
+    } finally {
+      if (restorePlanControllerRef.current === controller) {
+        restorePlanControllerRef.current = null;
+        setRestorePlanLoading(false);
+      }
+    }
+  }, [report, restorePlanLoading, workspace]);
 
   const busy = phase === "busy";
   const entries = report?.manifest.entries ?? [];
@@ -385,9 +439,12 @@ export function WorkspaceArchiveInspectionDialog({
                     <button
                       type="button"
                       className="secondary-button"
-                      onClick={() => setShowRestorePlan(true)}
+                      onClick={() => {
+                        void planRestore();
+                      }}
+                      disabled={restorePlanLoading}
                     >
-                      Plan restore
+                      {restorePlanLoading ? "Planning restore…" : "Plan restore"}
                     </button>
                   ) : (
                     <>
@@ -414,6 +471,11 @@ export function WorkspaceArchiveInspectionDialog({
                           ? `${formatCount(report.restorePlan.pathConflicts.paths.length)} path conflicts found.`
                           : "Path conflicts were not checked because this browser has not started a restore."}
                       </p>
+                      {restorePlanError !== undefined && (
+                        <p className="workspace-archive-restore-blocker" role="alert">
+                          {restorePlanError}
+                        </p>
+                      )}
                     </>
                   )}
                 </section>

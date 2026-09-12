@@ -17,9 +17,10 @@ manifest workspace identity, counts for state collections and archived topology,
 restore target is opened; unsupported paths are rejected by the existing archive parser rather than
 accepted into a plan. The user reveals this inventory through an explicit **Plan restore** action.
 
-The plan is informational and deterministic. It performs no server request, file write, state update,
-credential access, clone/worktree access, or merge. Mutation, conflict policy, rollback and actual
-restore remain separate future decisions.
+The initial plan is informational and deterministic. It performs no file write, state update,
+credential access, clone/worktree access, or merge. A later target-aware action may request a bounded
+local path inventory, but archive bytes remain in the browser. Mutation, conflict policy, rollback and
+actual restore remain separate future decisions.
 
 ## Consequences
 

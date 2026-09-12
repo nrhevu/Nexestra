@@ -4390,6 +4390,22 @@ export class FileStore {
     }
   }
 
+  /**
+   * Return the archive-relative paths currently owned by a workspace. This is
+   * a read-only inventory used by restore preflight; it never accepts archive
+   * content and never writes a target.
+   */
+  async workspaceArchiveTargetInventory(workspaceId: string): Promise<string[]> {
+    const prepared = await this.prepareWorkspaceExport(workspaceId, {
+      timeoutMs: WORKSPACE_EXPORT_TIMEOUT_MS,
+    });
+    try {
+      return ["state.json", ...prepared.files.map((file) => file.archivePath)];
+    } finally {
+      await prepared.release();
+    }
+  }
+
   private async captureWorkspaceExport(
     workspaceId: string,
     guard: { assertActive(): void },

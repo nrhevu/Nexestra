@@ -21,6 +21,7 @@ import {
   UpdateAttentionStateSchema,
   UpdateWorkspaceWhiteboardSchema,
 } from "../shared/contracts.js";
+import { WorkspaceArchiveTargetInventorySchema } from "../shared/workspace-archive-inspection-contracts.js";
 import { reviewAssignmentGit } from "./assignment-review.js";
 import { workspaceActivity } from "./attention.js";
 import { ChatGptAuthManager } from "./auth.js";
@@ -234,6 +235,15 @@ export function createApp(options: CreateAppOptions) {
       workspaceId: context.req.param("id"),
       signal: context.req.raw.signal,
     });
+  });
+
+  app.get("/api/workspaces/:id/import/target", async (context) => {
+    if (Object.keys(context.req.query()).length > 0) {
+      throw new StoreError("invalid", "Workspace restore planning does not accept query options.");
+    }
+    const workspaceId = context.req.param("id");
+    const paths = await options.store.workspaceArchiveTargetInventory(workspaceId);
+    return context.json(WorkspaceArchiveTargetInventorySchema.parse({ workspaceId, paths }));
   });
 
   app.post("/api/agents", async (context) => {

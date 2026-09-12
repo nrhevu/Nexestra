@@ -41,6 +41,12 @@ export const WorkspaceArchiveRestorePlanSchema = z.object({
 });
 export type WorkspaceArchiveRestorePlan = z.infer<typeof WorkspaceArchiveRestorePlanSchema>;
 
+export const WorkspaceArchiveTargetInventorySchema = z.object({
+  workspaceId: z.string().min(1).max(200),
+  paths: z.array(z.string().min(1).max(1_024)).max(5_000),
+});
+export type WorkspaceArchiveTargetInventory = z.infer<typeof WorkspaceArchiveTargetInventorySchema>;
+
 export const WorkspaceArchiveInspectionReportSchema = z.object({
   manifest: WorkspaceExportManifestSchema,
   archiveBytes: z.number().int().positive().max(WORKSPACE_EXPORT_MAX_ARCHIVE_BYTES),

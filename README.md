@@ -40,8 +40,9 @@ recompressed or encrypted archives are unsupported. A matching manifest does not
 completeness or the ability to restore the data. When opened from a workspace, the inspector also
 warns if the archive's manifest belongs to a different workspace; the workspace ID is authoritative
 and the display name is informational. After verification, **Plan restore** shows a bounded,
-read-only inventory and explicit blockers. It does not check a restore target or change local data;
-import, merge conflict handling and rollback remain unsupported. See
+read-only inventory and explicit blockers. It also compares manifest paths with the selected local
+workspace through a GET-only loopback inventory; archive bytes stay in the browser. Import, merge
+conflict handling and rollback remain unsupported. See
 [the inspection design](docs/adr/0047-local-workspace-archive-inspection.md).
 
 Both archive dialogs load when opened. Close or press Escape while loading; if loading fails or

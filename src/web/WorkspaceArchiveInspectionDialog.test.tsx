@@ -180,14 +180,20 @@ describe("WorkspaceArchiveInspectionDialog", () => {
       }),
     );
     const user = userEvent.setup();
-    renderDialog();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ workspaceId: "ws-archive", paths: ["state.json"] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    renderDialog({ workspace: { id: "ws-archive", name: "Archived Alpha" } });
     await chooseAndCheck(user);
     await user.click(await screen.findByRole("button", { name: "Plan restore" }));
     expect(screen.getByRole("heading", { name: "Restore preflight" })).toBeInTheDocument();
     expect(screen.getByText(/inventory only/i)).toBeInTheDocument();
     expect(screen.getByText(/Restore into Nexestra is not supported/i)).toBeInTheDocument();
     expect(screen.getByText("threads")).toBeInTheDocument();
-    expect(screen.getByText(/Path conflicts were not checked/)).toBeInTheDocument();
+    expect(screen.getByText("1 path conflicts found.")).toBeInTheDocument();
   });
 
   it("shows real progress and paginates a large verified entry list", async () => {

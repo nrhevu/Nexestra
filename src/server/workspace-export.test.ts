@@ -194,20 +194,9 @@ describe("workspace export", () => {
       content: "# Decisions\n\nToken: whiteboard-export-secret",
     });
 
-    const app = createApp({ store, runner: new FakeRunner() });
-    const response = await app.request(`/api/workspaces/${workspace.id}/export`);
-    expect(response.status).toBe(200);
-    const buffer = await response.arrayBuffer();
-    expect(Number(response.headers.get("content-length"))).toBe(buffer.byteLength);
-    expect(response.headers.get("content-type")).toBe("application/zip");
-    expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(response.headers.get("content-disposition")).toContain("nexestra-workspace-");
-    expect(response.headers.get("content-disposition")).toContain(".zip");
-
-    const zip = extractZip(buffer);
+    const artifactId = requireId(message.artifactIds, "artifact id");
     const statePath = "state.json";
     const transcriptPath = `threads/${thread.id}.jsonl`;
-    const artifactId = requireId(message.artifactIds, "artifact id");
     const uploadPath = `artifacts/${thread.id}/${artifactId}`;
     const whiteboardPath = "whiteboard.md";
     const revisionPath = join(
@@ -218,6 +207,31 @@ describe("workspace export", () => {
       "revisions",
       revisionId,
     );
+    const app = createApp({ store, runner: new FakeRunner() });
+    const targetInventory = await app.request(`/api/workspaces/${workspace.id}/import/target`);
+    expect(targetInventory.status).toBe(200);
+    expect(await targetInventory.json()).toEqual(
+      expect.objectContaining({
+        workspaceId: workspace.id,
+        paths: expect.arrayContaining([
+          statePath,
+          transcriptPath,
+          uploadPath,
+          whiteboardPath,
+          revisionPath,
+        ]),
+      }),
+    );
+    const response = await app.request(`/api/workspaces/${workspace.id}/export`);
+    expect(response.status).toBe(200);
+    const buffer = await response.arrayBuffer();
+    expect(Number(response.headers.get("content-length"))).toBe(buffer.byteLength);
+    expect(response.headers.get("content-type")).toBe("application/zip");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("content-disposition")).toContain("nexestra-workspace-");
+    expect(response.headers.get("content-disposition")).toContain(".zip");
+
+    const zip = extractZip(buffer);
     expect(zip[statePath]).toBeDefined();
     expect(zip[transcriptPath]).toBeDefined();
     expect(zipEntry(zip, uploadPath)).toEqual(uploadBytes);

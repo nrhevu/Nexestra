@@ -102,3 +102,4 @@
 | [0099](0099-workspace-archive-identity-check.md) | Accepted | Check exported workspace identity during local archive inspection |
 | [0100](0100-run-history-csv-export.md) | Accepted | Export bounded loaded run telemetry as escaped CSV |
 | [0101](0101-read-only-restore-preflight.md) | Accepted | Add a bounded, non-mutating restore preflight to archive inspection |
+| [0102](0102-target-aware-restore-preflight.md) | Accepted | Compare verified archive paths with a bounded local workspace target inventory |
