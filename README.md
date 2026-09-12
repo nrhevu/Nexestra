@@ -79,7 +79,9 @@ also reports the number of matching reviews across the current status filter,
 before pagination. Use **Mark reviewed** to close an item without changing its rating or source;
 the status filter can reopen or inspect resolved items. Promotion to Knowledge still requires the
 existing review dialog and explicit capture; each queue row also offers **Capture as Knowledge**
-to open that dialog directly.
+to open that dialog directly. **Export loaded reviews** downloads a bounded JSON review-case packet
+containing the visible redacted rows, prompt context, feedback note and stable message/run IDs; load
+older reviews first when you need them in the packet.
 
 Workspaces can add a domain-specific launch surface in `nexestra.config.json`:
 

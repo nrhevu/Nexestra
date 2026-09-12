@@ -68,3 +68,5 @@
     planning notes in the existing redacted workspace ZIP workflow.
 36. [Review prompt context research](research/2026-09-12-review-prompt-context.md): show the bounded,
     redacted user request beside each needs-work response.
+37. [Review case export research](research/2026-09-12-review-case-export.md): carry loaded, redacted
+    review rows with prompt and run provenance into offline evaluation tools.

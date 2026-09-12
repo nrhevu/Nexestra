@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReviewQueueItem, ReviewQueuePage } from "../shared/contracts.js";
 import { ReviewQueuePageSchema } from "../shared/contracts.js";
 import { api } from "./api.js";
+import { reviewQueueExportFilename, serializeReviewQueueExport } from "./review-queue-export.js";
 import "./ReviewQueueView.css";
 
 const PAGE_LIMIT = 25;
@@ -94,6 +95,19 @@ export function ReviewQueueView({
   const rows = page?.items ?? [];
   const nextCursor = page?.page.nextCursor ?? null;
 
+  const exportLoadedReviews = () => {
+    if (!page || rows.length === 0) return;
+    const blob = new Blob([serializeReviewQueueExport(page, status)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = reviewQueueExportFilename(workspaceId);
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
+
   return (
     <section className="review-queue-view" aria-label="Needs-work review queue">
       <header className="review-queue-header">
@@ -104,9 +118,18 @@ export function ReviewQueueView({
             Revisit responses marked for correction before turning them into Knowledge.
           </p>
         </div>
-        <button type="button" onClick={() => void load()} disabled={loading || loadingMore}>
-          Refresh
-        </button>
+        <div className="review-queue-header-actions">
+          <button type="button" onClick={() => void load()} disabled={loading || loadingMore}>
+            Refresh
+          </button>
+          <button
+            type="button"
+            onClick={exportLoadedReviews}
+            disabled={loading || loadingMore || rows.length === 0}
+          >
+            Export loaded reviews
+          </button>
+        </div>
       </header>
       <label className="review-queue-filter">
         <span>Review status</span>

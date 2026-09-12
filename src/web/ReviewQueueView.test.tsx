@@ -87,6 +87,11 @@ describe("ReviewQueueView", () => {
     const onOpenMessage = vi.fn();
     const onCaptureMessage = vi.fn();
     const onSetReviewStatus = vi.fn().mockResolvedValue(undefined);
+    const createObjectURL = vi.fn(() => "blob:review-export");
+    vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL: vi.fn() });
+    const anchorClick = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => undefined);
     render(
       <ReviewQueueView
         workspaceId={workspaceId}
@@ -103,6 +108,9 @@ describe("ReviewQueueView", () => {
     expect(onOpenMessage).toHaveBeenCalledExactlyOnceWith(thread.id, "message-reply");
     await userEvent.click(screen.getByRole("button", { name: "Capture as Knowledge" }));
     expect(onCaptureMessage).toHaveBeenCalledExactlyOnceWith(page().items[0]);
+    await userEvent.click(screen.getByRole("button", { name: "Export loaded reviews" }));
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(anchorClick).toHaveBeenCalledTimes(1);
     await userEvent.click(screen.getByRole("button", { name: "Mark reviewed" }));
     expect(onSetReviewStatus).toHaveBeenCalledExactlyOnceWith(
       thread.id,

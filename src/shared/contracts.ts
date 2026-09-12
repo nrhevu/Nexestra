@@ -527,6 +527,17 @@ export const ReviewQueuePageSchema = z.object({
 });
 export type ReviewQueuePage = z.infer<typeof ReviewQueuePageSchema>;
 
+export const REVIEW_QUEUE_EXPORT_MAX_CASES = 200;
+export const ReviewQueueExportSchema = z.object({
+  format: z.literal("nexestra.review-cases"),
+  version: z.literal(1),
+  workspaceId: z.string(),
+  status: z.enum(["open", "resolved", "all"]),
+  exportedAt: z.string(),
+  cases: z.array(ReviewQueueItemSchema).max(REVIEW_QUEUE_EXPORT_MAX_CASES),
+});
+export type ReviewQueueExport = z.infer<typeof ReviewQueueExportSchema>;
+
 export const MessageRequestIdSchema = z
   .string()
   .uuid()
