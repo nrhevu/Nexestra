@@ -1487,6 +1487,19 @@ describe("HTTP app", () => {
     });
     expect(missing.status).toBe(404);
   });
+  it("includes activity counts for every workspace", async () => {
+    const other = await store.createWorkspace({ name: "Other workspace" });
+    await store.createTask({ workspaceId: other.id, title: "Blocked", status: "blocked" });
+    const response = await app.request(`/api/bootstrap?workspaceId=${other.id}`);
+    const body = (await response.json()) as {
+      workspaceActivitySummaries: Array<{ workspaceId: string; attentionCount: number }>;
+    };
+    expect(body.workspaceActivitySummaries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ workspaceId: other.id, attentionCount: 1 }),
+      ]),
+    );
+  });
 });
 
 describe("HTTP message search", () => {
