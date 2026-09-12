@@ -14,6 +14,7 @@ import {
   ReviewQueueRequestSchema,
   ReviewStatusUpdateSchema,
   RunHistoryRequestSchema,
+  RunHistoryTelemetryRequestSchema,
   SelectRepositorySourceBranchSchema,
   ThreadHistoryRequestSchema,
   ToolAnswersSchema,
@@ -447,6 +448,11 @@ export function createApp(options: CreateAppOptions) {
   app.get("/api/runs", async (context) => {
     const input = RunHistoryRequestSchema.parse(context.req.query());
     return context.json(await options.store.listRunHistory(input));
+  });
+
+  app.get("/api/runs/summary", async (context) => {
+    const input = RunHistoryTelemetryRequestSchema.parse(context.req.query());
+    return context.json(await options.store.runHistoryTelemetrySummary(input.workspaceId));
   });
 
   app.get("/api/reviews", async (context) => {

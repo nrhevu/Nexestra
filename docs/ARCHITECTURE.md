@@ -194,6 +194,10 @@ output, so the monitoring list can guide recovery without widening the response'
 See [ADR 0059](adr/0059-safe-run-failure-kinds.md).
 The header can export the currently loaded page, active filters, coverage, cursors, and complete
 filtered summary as a bounded browser-generated `nexestra.run-history` JSON packet. See [ADR 0069](adr/0069-run-history-telemetry-export.md).
+`GET /api/runs/summary` provides the same aggregate telemetry as one count-only entry per workspace,
+or a single selected workspace when requested. It carries explicit transcript coverage and never
+returns rows, messages, tool calls, or raw errors; the existing paginated `/api/runs` contract is
+unchanged. See [ADR 0093](adr/0093-cross-workspace-run-telemetry.md).
 
 Agent messages expose optional helpful/needs-work feedback controls. One bounded rating per message
 is stored in workspace metadata, returned with history, and included in workspace exports; the

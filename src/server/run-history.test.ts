@@ -370,6 +370,65 @@ describe("run history server", () => {
     expect(page.summary.overBudgetRuns).toBeUndefined();
   });
 
+  it("aggregates bounded run telemetry by workspace without transcript content", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected seeded workspace");
+    const otherWorkspace = await store.createWorkspace({ name: "Other" });
+    const firstAgent = await createWorkerAgent(store, "First", "first");
+    await store.updateAgent(firstAgent.id, {
+      pricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 },
+    });
+    const firstThread = await createThread(store, "First thread");
+    await store.updateRun({
+      ...makeRun("telemetry-first", firstThread.id, firstAgent.id, "2026-01-04T00:00:00.000Z"),
+      usage: { inputTokens: 1_000, outputTokens: 500, totalTokens: 1_500 },
+    });
+    const secondAgent = await store.createAgent({
+      workspaceId: otherWorkspace.id,
+      kind: "worker",
+      name: "Second",
+      handle: "second",
+      description: "",
+      instructions: "",
+      harness: "opencode",
+      pricing: { inputUsdPerMillion: 4, outputUsdPerMillion: 5, maxRunCostUsd: 0.0005 },
+    });
+    const secondThread = await store.createThread({
+      workspaceId: otherWorkspace.id,
+      name: "Second thread",
+    });
+    await store.updateRun({
+      ...makeRun("telemetry-second", secondThread.id, secondAgent.id, "2026-01-05T00:00:00.000Z"),
+      usage: { inputTokens: 100, outputTokens: 100, totalTokens: 200 },
+    });
+
+    const selected = await store.runHistoryTelemetrySummary(workspace.id);
+    expect(selected).toHaveLength(1);
+    expect(selected[0]).toEqual(
+      expect.objectContaining({
+        workspaceId: workspace.id,
+        totalRuns: 1,
+        totalTokens: 1_500,
+        estimatedCostUsd: 0.002,
+        estimatedCostRuns: 1,
+      }),
+    );
+
+    const all = await store.runHistoryTelemetrySummary();
+    expect(all.map((entry) => entry.workspaceId)).toEqual([workspace.id, otherWorkspace.id]);
+    expect(all.find((entry) => entry.workspaceId === otherWorkspace.id)).toEqual(
+      expect.objectContaining({
+        totalRuns: 1,
+        totalTokens: 200,
+        estimatedCostUsd: 0.0009,
+        overBudgetRuns: 1,
+      }),
+    );
+    expect(all[0]).not.toHaveProperty("items");
+    expect(all[0]).not.toHaveProperty("transcript");
+  });
+
   it("reports cost per helpful reply only with complete cost coverage", async () => {
     const store = await openStore();
     const [workspace] = store.listWorkspaces();

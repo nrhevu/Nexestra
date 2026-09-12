@@ -74,6 +74,8 @@ import {
   type RunHistoryPage,
   RunHistoryPageSchema,
   RunHistoryRequestSchema,
+  type RunHistoryTelemetrySummary,
+  RunHistoryTelemetrySummarySchema,
   RunSchema,
   SetMessageFeedbackSchema,
   type Task,
@@ -3608,6 +3610,32 @@ export class FileStore {
         coverage: { complete: unavailableThreads === 0, unavailableThreads },
       });
     });
+  }
+
+  async runHistoryTelemetrySummary(workspaceId?: string): Promise<RunHistoryTelemetrySummary[]> {
+    const workspaces = workspaceId ? [this.requireWorkspace(workspaceId)] : this.listWorkspaces();
+    const pages = await Promise.all(
+      workspaces.map((workspace) => this.listRunHistory({ workspaceId: workspace.id, limit: 1 })),
+    );
+    return pages.map((page) =>
+      RunHistoryTelemetrySummarySchema.parse({
+        workspaceId: page.workspaceId,
+        totalRuns: page.summary.totalRuns,
+        terminalRuns: page.summary.terminalRuns,
+        usageRuns: page.summary.usageRuns,
+        totalTokens: page.summary.totalTokens,
+        ...(page.summary.estimatedCostUsd === undefined
+          ? {}
+          : { estimatedCostUsd: page.summary.estimatedCostUsd }),
+        ...(page.summary.estimatedCostRuns === undefined
+          ? {}
+          : { estimatedCostRuns: page.summary.estimatedCostRuns }),
+        ...(page.summary.overBudgetRuns === undefined
+          ? {}
+          : { overBudgetRuns: page.summary.overBudgetRuns }),
+        coverage: page.coverage,
+      }),
+    );
   }
 
   async listReviewQueue(rawInput: unknown): Promise<ReviewQueuePage> {

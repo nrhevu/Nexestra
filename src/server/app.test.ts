@@ -827,6 +827,57 @@ describe("HTTP app", () => {
     ]);
   });
 
+  it("returns workspace-scoped count-only run telemetry summaries", async () => {
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected seeded workspace");
+    const other = await store.createWorkspace({ name: "Other telemetry" });
+    const agent = await store.createAgent({
+      workspaceId: other.id,
+      kind: "worker",
+      name: "Other runner",
+      handle: "other-runner",
+      harness: "codex",
+      pricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 2 },
+    });
+    const thread = store.listThreads(other.id)[0];
+    if (!thread) throw new Error("expected other thread");
+    await store.updateRun({
+      id: "summary-run",
+      threadId: thread.id,
+      triggerMessageId: "summary-trigger",
+      agentId: agent.id,
+      attempt: 1,
+      status: "completed",
+      createdAt: "2026-01-06T00:00:00.000Z",
+      updatedAt: "2026-01-06T00:00:01.000Z",
+      usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+    });
+
+    const selected = await app.request(`/api/runs/summary?workspaceId=${workspace.id}`);
+    expect(selected.status).toBe(200);
+    await expect(selected.json()).resolves.toEqual([
+      expect.objectContaining({ workspaceId: workspace.id, totalRuns: 0 }),
+    ]);
+
+    const all = await app.request("/api/runs/summary");
+    expect(all.status).toBe(200);
+    const body = (await all.json()) as Array<Record<string, unknown>>;
+    expect(body).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          workspaceId: other.id,
+          totalRuns: 1,
+          totalTokens: 150,
+          estimatedCostUsd: 0.0002,
+        }),
+      ]),
+    );
+    expect(body.every((entry) => !("items" in entry) && !("transcript" in entry))).toBe(true);
+
+    const missing = await app.request("/api/runs/summary?workspaceId=missing");
+    expect(missing.status).toBe(404);
+  });
+
   it("returns the persisted Worker process for a Taskboard task", async () => {
     const [workspace] = store.listWorkspaces();
     const [thread] = store.listThreads();

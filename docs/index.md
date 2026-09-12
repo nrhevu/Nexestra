@@ -116,3 +116,5 @@
     observed run estimates that exceed an agent's optional per-run limit.
 60. [Custom surface review count research](research/2026-09-12-custom-surface-review-count.md):
     show selected-workspace open review counts without exposing queue content.
+61. [Cross-workspace run telemetry research](research/2026-09-12-cross-workspace-run-telemetry.md):
+    compare count-only cost and usage aggregates while preserving workspace isolation.

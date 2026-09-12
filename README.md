@@ -86,6 +86,10 @@ run. Ratings are user signals, not an automatic score or billing record.
 rows, active filters, pagination cursors, coverage, and the complete filtered summary. Load older
 pages first when they should be included; the packet contains no transcript text or raw provider
 errors.
+For cross-workspace comparisons, `GET /api/runs/summary` returns count-only aggregates with token,
+estimated-cost, over-budget, and transcript-coverage fields. Supplying `workspaceId` restricts the
+response to one workspace; omitting it returns one entry per workspace. The paged `/api/runs` view
+and its cursors are unchanged.
 Enable **Auto-refresh newest page** when supervising active work; it checks the current filtered
 first page every 15 seconds, pauses on older pages, and never retries or changes run state.
 

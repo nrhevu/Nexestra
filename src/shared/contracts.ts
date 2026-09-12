@@ -760,6 +760,11 @@ export const RunHistoryRequestSchema = z.object({
 });
 export type RunHistoryRequest = z.infer<typeof RunHistoryRequestSchema>;
 
+export const RunHistoryTelemetryRequestSchema = z.object({
+  workspaceId: z.string().trim().min(1).max(200).optional(),
+});
+export type RunHistoryTelemetryRequest = z.infer<typeof RunHistoryTelemetryRequestSchema>;
+
 export const RunHistoryItemSchema = z.object({
   run: RunSchema.omit({ error: true }).extend({ failureKind: RunFailureKindSchema.optional() }),
   agentName: z.string(),
@@ -818,6 +823,22 @@ export const RunHistoryMetricsSchema = z.object({
   negativeFeedbackCount: z.number().int().nonnegative().optional(),
 });
 export type RunHistoryMetrics = z.infer<typeof RunHistoryMetricsSchema>;
+
+export const RunHistoryTelemetrySummarySchema = z.object({
+  workspaceId: z.string(),
+  totalRuns: z.number().int().nonnegative(),
+  terminalRuns: z.number().int().nonnegative(),
+  usageRuns: z.number().int().nonnegative(),
+  totalTokens: z.number().int().nonnegative(),
+  estimatedCostUsd: z.number().finite().nonnegative().optional(),
+  estimatedCostRuns: z.number().int().nonnegative().optional(),
+  overBudgetRuns: z.number().int().nonnegative().optional(),
+  coverage: z.object({
+    complete: z.boolean(),
+    unavailableThreads: z.number().int().nonnegative(),
+  }),
+});
+export type RunHistoryTelemetrySummary = z.infer<typeof RunHistoryTelemetrySummarySchema>;
 
 export const RunHistoryPageSchema = z.object({
   workspaceId: z.string(),

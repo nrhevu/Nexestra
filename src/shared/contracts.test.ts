@@ -10,6 +10,7 @@ import {
   RunHistoryItemSchema,
   RunHistoryMetricsSchema,
   RunHistoryRequestSchema,
+  RunHistoryTelemetrySummarySchema,
   ThreadHistoryRequestSchema,
   UpdateAgentSchema,
 } from "./contracts.js";
@@ -267,5 +268,23 @@ describe("RunHistoryMetricsSchema", () => {
     expect(RunHistoryMetricsSchema.safeParse({ ...metrics, estimatedCostRuns: 1.5 }).success).toBe(
       false,
     );
+  });
+});
+
+describe("RunHistoryTelemetrySummarySchema", () => {
+  it("accepts aggregate cost telemetry with explicit coverage", () => {
+    expect(
+      RunHistoryTelemetrySummarySchema.safeParse({
+        workspaceId: "workspace-a",
+        totalRuns: 2,
+        terminalRuns: 1,
+        usageRuns: 1,
+        totalTokens: 100,
+        estimatedCostUsd: 0.01,
+        estimatedCostRuns: 1,
+        overBudgetRuns: 1,
+        coverage: { complete: false, unavailableThreads: 1 },
+      }).success,
+    ).toBe(true);
   });
 });
