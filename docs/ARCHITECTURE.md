@@ -665,7 +665,8 @@ credentials.
   prompt-caching controls and extended-thinking options are not exposed.
 - Remote MCP supports Streamable HTTP, environment-backed headers, and separate startup, catalog,
   and execution timeouts, but not interactive OAuth. MCP resources are exposed only through a
-  catalog-gated, 5 MiB-bounded read tool; prompts and resource templates remain unavailable.
+  catalog-gated, 5 MiB-bounded read tools for resources and prompts; resource templates remain
+  unavailable.
 - Custom tool modules are trusted local code loaded into the server process; TypeScript modules must
   use syntax supported directly by Node 24.
 - Custom-tool `metadata()` and nested `ask()` calls are compatibility no-ops after the tool-level

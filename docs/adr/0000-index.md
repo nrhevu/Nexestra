@@ -89,3 +89,4 @@
 | [0086](0086-live-workspace-activity-refresh.md) | Accepted | Refresh nonzero cross-workspace activity badges conditionally |
 | [0087](0087-custom-surface-run-count.md) | Accepted | Show active-run counts on custom Run history cards |
 | [0088](0088-mcp-resource-read.md) | Accepted | Read cataloged MCP resources with bounded output |
+| [0089](0089-mcp-prompt-expansion.md) | Accepted | Expand cataloged MCP prompts with bounded output |

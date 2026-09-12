@@ -124,6 +124,50 @@ export async function loadMcpTools(
           },
         });
       }
+      if (typeof open.client.listPrompts === "function") {
+        const prompts = await open.client.listPrompts(undefined, { timeout: timeout.catalog });
+        const allowedPrompts = new Set(prompts.prompts.slice(0, 200).map((prompt) => prompt.name));
+        if (allowedPrompts.size > 0) {
+          const name = normalizeToolName(`${serverName}_get_mcp_prompt`);
+          tools.push({
+            type: "function",
+            name,
+            description: `Expand a cataloged MCP prompt from ${serverName}.`,
+            parameters: {
+              type: "object",
+              properties: {
+                name: { type: "string", maxLength: 200 },
+                arguments: { type: "object" },
+              },
+              required: ["name"],
+            },
+            permission: "external",
+            parse: async (input) => {
+              if (!isRecord(input) || typeof input.name !== "string")
+                throw new Error("MCP prompt name is required.");
+              return input;
+            },
+            execute: async (input) => {
+              const promptName = input.name as string;
+              if (!allowedPrompts.has(promptName))
+                throw new Error("MCP prompt name is not in the catalog.");
+              const args = isRecord(input.arguments)
+                ? Object.fromEntries(
+                    Object.entries(input.arguments).map(([key, value]) => [key, String(value)]),
+                  )
+                : undefined;
+              const result = await open.client.getPrompt(
+                { name: promptName, arguments: args },
+                { timeout: timeout.execution },
+              );
+              const output = mcpResultText(result);
+              if (Buffer.byteLength(output, "utf8") > MAX_MCP_RESPONSE_BYTES)
+                throw new Error("MCP prompt is too large.");
+              return output || "MCP prompt is empty.";
+            },
+          });
+        }
+      }
     } catch {
       warnings.push(`MCP server ${serverName} is unavailable.`);
     }

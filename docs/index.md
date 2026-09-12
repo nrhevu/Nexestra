@@ -108,3 +108,5 @@
     selected-workspace active-run counts on declarative Run history cards.
 56. [MCP resource reads research](research/2026-09-12-mcp-resource-read.md): expose bounded,
     catalog-gated resource reads to the harness.
+57. [MCP prompt expansion research](research/2026-09-12-mcp-prompt-expansion.md): expose bounded,
+    catalog-gated prompt expansion to the harness.
