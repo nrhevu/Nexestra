@@ -104,3 +104,5 @@
     bounded active-run and attention counts across the workspace rail.
 54. [Live workspace activity refresh research](research/2026-09-12-live-workspace-activity-refresh.md):
     conditionally poll count-only activity summaries while work is active.
+55. [Custom surface run count research](research/2026-09-12-custom-surface-run-count.md): show
+    selected-workspace active-run counts on declarative Run history cards.

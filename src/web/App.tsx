@@ -2094,6 +2094,7 @@ export function App() {
                   taskboard: data.tasks.filter((task) => task.status !== "done").length,
                   knowledge: data.knowledge.length,
                   attention: data.attention.length,
+                  runs: data.activeRuns.length,
                   agents: data.agents.filter((agent) => !agent.archived).length,
                 }}
                 onAction={openCustomSurfaceAction}
