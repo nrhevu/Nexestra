@@ -783,7 +783,7 @@ export const WORKSPACE_EXPORT_TIMEOUT_MS = 30_000;
 
 export const WorkspaceExportEntrySchema = z.object({
   path: z.string().min(1).max(1_024),
-  kind: z.enum(["metadata", "transcript", "upload", "document", "notice"]),
+  kind: z.enum(["metadata", "transcript", "upload", "document", "whiteboard", "notice"]),
   bytes: z.number().int().nonnegative().max(WORKSPACE_EXPORT_MAX_SOURCE_BYTES),
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
 });

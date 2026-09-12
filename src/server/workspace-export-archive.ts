@@ -50,12 +50,13 @@ const CENTRAL_DIRECTORY_BYTES = 46;
 const END_OF_CENTRAL_DIRECTORY_BYTES = 22;
 const PER_ENTRY_OVERHEAD = LOCAL_HEADER_BYTES + DATA_DESCRIPTOR_BYTES + CENTRAL_DIRECTORY_BYTES;
 const CLEANUP_GRACE_MS = 100;
-const SOURCE_KINDS = new Set(["metadata", "transcript", "upload", "document"]);
+const SOURCE_KINDS = new Set(["metadata", "transcript", "upload", "document", "whiteboard"]);
 
 const NOTICE_TEXT = `Nexestra workspace export
 
 This archive is a point-in-time snapshot of the selected workspace.
 Known credential values are redacted from metadata and transcripts.
+Whiteboard notes are included with known credentials redacted.
 Original upload and document binaries are preserved byte-for-byte; exports that would include a literal known credential sequence in a binary are rejected rather than altered.
 Excluded: credentials, harness-auth, repository-files, browser-state, unreferenced-files.
 Restore into Nexestra is not supported; use this archive only as a manual backup or audit snapshot.

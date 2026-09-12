@@ -266,7 +266,7 @@ and HTML; unsupported files have a download fallback. Previewing does not create
 The **Whiteboard** surface is a small workspace-scoped Markdown scratchpad for plans and decisions.
 It is saved under managed local storage, redacts configured credentials before persistence and
 response, and accepts at most 64 KiB of UTF-8 text. It has no agent execution or arbitrary markup
-hooks.
+hooks. Saved notes are included in workspace ZIP exports as a redacted `whiteboard.md` entry.
 
 Use **Save message as Knowledge** beside any message to open a review dialog. Inspect the unchanged
 source, choose a name, `#handle`, and optional description, then confirm the capture. API clients

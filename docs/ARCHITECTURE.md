@@ -579,7 +579,8 @@ credentials.
 - Whiteboard is a built-in workspace surface backed by `workspaces/<workspaceId>/whiteboard.md`.
   GET and PUT responses are workspace-scoped and redact known credentials. Markdown is bounded to
   64 KiB of UTF-8, written atomically with mode `0600`, and treated as user notes only; it cannot
-  dispatch agents or execute configured content.
+  dispatch agents or execute configured content. Saved notes are included in workspace exports as
+  a separately typed, redacted `whiteboard` entry.
 
 - Workspace export has no import/restore workflow and is not a complete backup. Snapshot inventory
   scans transcripts under the write barrier before a second read for ZIP generation. Stored ZIP

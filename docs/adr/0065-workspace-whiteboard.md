@@ -24,5 +24,5 @@ explicit Save action. The surface has no agent dispatch, URL, HTML, or configure
 
 The whiteboard survives reloads and workspace switching while remaining small and auditable. Its
 Markdown is intentionally treated as notes: the current UI does not render it as rich HTML or
-include it automatically in agent prompts. Whiteboard content is not yet included in workspace ZIP
-exports, so exporting notes remains a documented follow-up.
+include it automatically in agent prompts. Workspace ZIP inclusion is defined separately by
+[ADR 0066](0066-whiteboard-workspace-export.md).

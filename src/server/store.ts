@@ -254,7 +254,7 @@ export interface WorkspaceExportState {
 
 export interface PreparedWorkspaceExportFile {
   archivePath: string;
-  kind: "transcript" | "upload" | "document";
+  kind: "transcript" | "upload" | "document" | "whiteboard";
   sourcePath: string;
   size: number;
   sha256?: string;
@@ -4210,6 +4210,14 @@ export class FileStore {
       );
       files.push(...captured);
     }
+    const whiteboard = await this.captureWorkspaceWhiteboard(
+      workspaceId,
+      canonicalRoot,
+      guard,
+      accountSourceBytes,
+      reserveFile,
+    );
+    if (whiteboard) files.push(whiteboard);
     guard.assertActive();
     return {
       workspace: {
@@ -4244,6 +4252,42 @@ export class FileStore {
         }
       },
     };
+  }
+
+  private async captureWorkspaceWhiteboard(
+    workspaceId: string,
+    canonicalRoot: string,
+    guard: { assertActive(): void },
+    accountSourceBytes: (size: number) => void,
+    reserveFile: () => void,
+  ): Promise<PreparedWorkspaceExportFile | undefined> {
+    if (!isStorageId(workspaceId)) {
+      throw new StoreError("invalid", "Workspace identifier is invalid for export.");
+    }
+    const sourcePath = this.managedPath(join("workspaces", workspaceId, "whiteboard.md"));
+    const details = await lstat(sourcePath, { bigint: true }).catch((error: unknown) => {
+      if (isNodeError(error, "ENOENT")) return undefined;
+      throw error;
+    });
+    if (!details) return undefined;
+    await assertWorkspaceExportSafePath(canonicalRoot, this.root, sourcePath);
+    if (!details.isFile()) {
+      throw new StoreError("invalid", "Workspace whiteboard export source is not a regular file.");
+    }
+    if (details.size > BigInt(WORKSPACE_WHITEBOARD_MAX_BYTES)) {
+      throw new StoreError("invalid", "Workspace whiteboard export source exceeds the size limit.");
+    }
+    guard.assertActive();
+    reserveFile();
+    const file = await this.captureWorkspaceExportFile(
+      sourcePath,
+      `whiteboard.md`,
+      "whiteboard",
+      canonicalRoot,
+      guard,
+    );
+    accountSourceBytes(file.size);
+    return file;
   }
 
   private async captureWorkspaceTranscript(

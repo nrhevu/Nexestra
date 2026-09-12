@@ -174,6 +174,25 @@ describe("workspace export", () => {
     );
     const revisionId = document.currentRevisionId;
     if (!revisionId) throw new Error("expected revision");
+    await store.createAgent({
+      kind: "master",
+      name: "Whiteboard secret",
+      handle: "whiteboard-secret",
+      description: "",
+      instructions: "",
+      accessMode: "ask",
+      provider: {
+        type: "custom",
+        name: "Local gateway",
+        baseUrl: "http://127.0.0.1:11434/v1/",
+        model: "model-a",
+        protocol: "openai-chat",
+        apiKey: "whiteboard-export-secret",
+      },
+    });
+    await store.updateWorkspaceWhiteboard(workspace.id, {
+      content: "# Decisions\n\nToken: whiteboard-export-secret",
+    });
 
     const app = createApp({ store, runner: new FakeRunner() });
     const response = await app.request(`/api/workspaces/${workspace.id}/export`);
@@ -190,6 +209,7 @@ describe("workspace export", () => {
     const transcriptPath = `threads/${thread.id}.jsonl`;
     const artifactId = requireId(message.artifactIds, "artifact id");
     const uploadPath = `artifacts/${thread.id}/${artifactId}`;
+    const whiteboardPath = "whiteboard.md";
     const revisionPath = join(
       "workspaces",
       workspace.id,
@@ -202,6 +222,7 @@ describe("workspace export", () => {
     expect(zip[transcriptPath]).toBeDefined();
     expect(zipEntry(zip, uploadPath)).toEqual(uploadBytes);
     expect(decode(zipEntry(zip, revisionPath))).toBe("# Plan");
+    expect(decode(zipEntry(zip, whiteboardPath))).toBe("# Decisions\n\nToken: [REDACTED]");
 
     const state = JSON.parse(decode(zipEntry(zip, statePath)));
     expect(state.version).toBe(7);
@@ -229,6 +250,7 @@ describe("workspace export", () => {
     expect(paths).toContain(transcriptPath);
     expect(paths).toContain(uploadPath);
     expect(paths).toContain(revisionPath);
+    expect(paths).toContain(whiteboardPath);
     expect(paths).toContain("NOTICE.txt");
   });
 

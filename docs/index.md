@@ -64,3 +64,5 @@
     connect needs-work review to explicit, provenance-preserving Knowledge capture.
 34. [Workspace whiteboard research](research/2026-09-12-workspace-whiteboard.md): keep a bounded,
     redacted Markdown planning surface per workspace.
+35. [Whiteboard export research](research/2026-09-12-whiteboard-workspace-export.md): preserve saved
+    planning notes in the existing redacted workspace ZIP workflow.

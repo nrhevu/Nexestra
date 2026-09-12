@@ -138,7 +138,9 @@ export async function* workspaceExportEntries(
         ? emptyEntryChunks()
         : file.kind === "transcript"
           ? transcriptEntryChunks(file, redact, assertActive)
-          : binaryEntryChunks(file, prepared.createCredentialScanner, assertActive);
+          : file.kind === "whiteboard"
+            ? whiteboardEntryChunks(file, redact, assertActive)
+            : binaryEntryChunks(file, prepared.createCredentialScanner, assertActive);
     yield { path: file.archivePath, kind: file.kind, chunks };
   }
   for (const file of prepared.files) {
@@ -148,6 +150,40 @@ export async function* workspaceExportEntries(
     } catch (error) {
       throw fromStoreError(error);
     }
+  }
+}
+
+async function* whiteboardEntryChunks(
+  file: PreparedWorkspaceExportFile,
+  redact: (value: string) => string,
+  assertActive: () => void,
+): AsyncGenerator<Uint8Array, void> {
+  assertActive();
+  const identity = file.identity;
+  if (!identity) throw exportInvalid("Workspace whiteboard export source identity is missing.");
+  let handle: Awaited<ReturnType<typeof open>>;
+  try {
+    handle = await open(file.sourcePath, "r");
+  } catch (error) {
+    throw fromStoreError(error);
+  }
+  try {
+    const initial = await handle.stat({ bigint: true });
+    if (!workspaceExportFileIdentityMatches(initial, identity)) {
+      throw exportConflict("Workspace export source changed during preparation.");
+    }
+    const bytes = await handle.readFile();
+    assertActive();
+    const final = await handle.stat({ bigint: true });
+    if (!workspaceExportFileIdentityMatches(final, identity)) {
+      throw exportConflict("Workspace export source changed during preparation.");
+    }
+    const encoded = new TextEncoder().encode(redact(bytes.toString("utf8")));
+    yield encoded;
+  } catch (error) {
+    throw fromStoreError(error);
+  } finally {
+    await handle.close().catch(() => undefined);
   }
 }
 
