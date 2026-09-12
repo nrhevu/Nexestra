@@ -326,6 +326,49 @@ describe("FileStore", () => {
     expect(await readFile(store.knowledgePath(item), "utf8")).toContain("Architecture");
   });
 
+  it("captures a message as redacted Knowledge with source provenance", async () => {
+    const store = await openStore();
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    await store.createAgent({
+      kind: "master",
+      name: "Gateway",
+      handle: "gateway",
+      description: "",
+      instructions: "",
+      provider: {
+        type: "custom",
+        name: "Gateway",
+        baseUrl: "https://gateway.example/v1",
+        model: "model-a",
+        protocol: "openai-chat",
+        apiKey: "super-secret-value",
+      },
+    });
+    const message = await store.createUserMessage(
+      thread.id,
+      "Decision: use the local-first path. api_key=super-secret-value",
+      [],
+    );
+
+    const item = await store.createKnowledgeDocumentFromMessage({
+      threadId: thread.id,
+      messageId: message.id,
+      name: "Decision record",
+      handle: "decision-record",
+      description: "Captured from the discussion.",
+    });
+
+    expect(item.provenance).toEqual({
+      source: "message",
+      threadId: thread.id,
+      messageId: message.id,
+    });
+    const content = await readFile(store.knowledgePath(item), "utf8");
+    expect(content).toContain("Decision: use the local-first path.");
+    expect(content).not.toContain("super-secret-value");
+  });
+
   it("updates knowledge metadata and permanently removes an unused document", async () => {
     const store = await openStore();
     const [workspace] = store.listWorkspaces();

@@ -70,6 +70,13 @@ export const KnowledgeDocumentSchema = KnowledgeBaseSchema.extend({
     )
     .default([]),
   currentRevisionId: z.string().optional(),
+  provenance: z
+    .object({
+      source: z.literal("message"),
+      threadId: z.string(),
+      messageId: z.string(),
+    })
+    .optional(),
 });
 
 export const KnowledgeRepositorySchema = KnowledgeBaseSchema.extend({
@@ -128,6 +135,16 @@ export const CreateKnowledgeDocumentSchema = z.object({
   handle: KnowledgeHandleSchema,
   description: z.string().trim().max(1_000).default(""),
 });
+
+export const CreateKnowledgeFromMessageSchema = z.object({
+  workspaceId: z.string().optional(),
+  threadId: z.string().trim().min(1).max(200),
+  messageId: z.string().trim().min(1).max(200),
+  name: z.string().trim().min(1).max(120),
+  handle: KnowledgeHandleSchema,
+  description: z.string().trim().max(1_000).default(""),
+});
+export type CreateKnowledgeFromMessageInput = z.input<typeof CreateKnowledgeFromMessageSchema>;
 
 export const ReplaceKnowledgeDocumentSchema = z.object({
   expectedRevisionId: z.string().trim().min(1),

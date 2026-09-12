@@ -25,6 +25,7 @@ import {
   ArtifactSchema,
   CreateAgentSchema,
   CreateKnowledgeDocumentSchema,
+  CreateKnowledgeFromMessageSchema,
   CreateKnowledgeRepositorySchema,
   CreateTaskSchema,
   CreateThreadSchema,
@@ -661,6 +662,7 @@ export class FileStore {
   async createKnowledgeDocument(
     rawInput: unknown,
     upload: UploadArtifactInput,
+    provenance?: { source: "message"; threadId: string; messageId: string },
   ): Promise<KnowledgeDocument> {
     const input = CreateKnowledgeDocumentSchema.parse(rawInput);
     validateUploads([upload]);
@@ -694,6 +696,7 @@ export class FileStore {
           },
         ],
         currentRevisionId: revisionId,
+        ...(provenance ? { provenance } : {}),
         createdAt: now,
         updatedAt: now,
       });
@@ -709,6 +712,36 @@ export class FileStore {
       }
       return structuredClone(item);
     });
+  }
+
+  async createKnowledgeDocumentFromMessage(rawInput: unknown): Promise<KnowledgeDocument> {
+    const input = CreateKnowledgeFromMessageSchema.parse(rawInput);
+    const thread = this.requireThread(input.threadId);
+    if (input.workspaceId !== undefined && input.workspaceId !== thread.workspaceId) {
+      throw new StoreError("not_found", "Thread not found in this workspace.");
+    }
+    const events = await this.readEvents(thread.id);
+    const message = events.find(
+      (event): event is Extract<TranscriptEvent, { type: "message.created" }> =>
+        event.type === "message.created" && event.message.id === input.messageId,
+    )?.message;
+    if (!message) throw new StoreError("not_found", "Message not found in this thread.");
+    const content = this.redactSecrets(message.content);
+    if (!content.trim()) throw new StoreError("invalid", "Cannot capture an empty message.");
+    return this.createKnowledgeDocument(
+      {
+        workspaceId: thread.workspaceId,
+        name: input.name,
+        handle: input.handle,
+        description: input.description,
+      },
+      {
+        name: `${input.name}.md`,
+        mediaType: "text/markdown",
+        bytes: Buffer.from(content, "utf8"),
+      },
+      { source: "message", threadId: thread.id, messageId: message.id },
+    );
   }
 
   async replaceKnowledgeDocument(

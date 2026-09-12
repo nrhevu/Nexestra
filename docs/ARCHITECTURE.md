@@ -202,6 +202,9 @@ version 3 by adding the first Master tool permissions; version 3 migrates to ver
 complete tool matrix. Version 4 migrates to version 5 by replacing that matrix with one `ask`,
 `auto`, or `full` access mode. Version 5 migrates to version 6 by adding empty knowledge and
 assignment collections. Version 6 migrates to version 7 by adding the task verification contract.
+Message capture creates a Knowledge document from the canonical message bytes with known-credential
+redaction and source thread/message IDs. It invokes no agent and preserves the original transcript.
+See [ADR 0051](adr/0051-message-knowledge-capture.md).
 State writes use a temporary file followed by an atomic rename. The
 separate `credentials.json` file has mode `0600` and stores only custom API keys by agent ID.
 

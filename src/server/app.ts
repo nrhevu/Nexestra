@@ -7,6 +7,7 @@ import { streamSSE } from "hono/streaming";
 import { ZodError } from "zod";
 import {
   type BootstrapData,
+  CreateKnowledgeFromMessageSchema,
   DelegateTaskSchema,
   MessageSearchRequestSchema,
   RunHistoryRequestSchema,
@@ -174,6 +175,11 @@ export function createApp(options: CreateAppOptions) {
       ),
       201,
     );
+  });
+
+  app.post("/api/knowledge/from-message", async (context) => {
+    const input = CreateKnowledgeFromMessageSchema.parse(await context.req.json());
+    return context.json(await options.store.createKnowledgeDocumentFromMessage(input), 201);
   });
 
   app.put("/api/knowledge/:id/document", async (context) => {
