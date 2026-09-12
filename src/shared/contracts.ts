@@ -755,6 +755,7 @@ export const RunHistoryRequestSchema = z.object({
   agentId: z.string().trim().min(1).max(200).optional(),
   threadId: z.string().trim().min(1).max(200).optional(),
   status: RunSchema.shape.status.optional(),
+  cost: z.enum(["all", "over_budget"]).optional(),
   cursor: z.string().min(1).max(2_048).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
@@ -872,6 +873,7 @@ export const RunHistoryExportSchema = z.object({
     agentId: z.string().nullable(),
     threadId: z.string().nullable(),
     status: RunSchema.shape.status.nullable(),
+    cost: z.enum(["all", "over_budget"]).optional(),
   }),
   page: z.object({
     number: z.number().int().positive(),

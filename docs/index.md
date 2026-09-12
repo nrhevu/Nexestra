@@ -118,3 +118,5 @@
     show selected-workspace open review counts without exposing queue content.
 61. [Cross-workspace run telemetry research](research/2026-09-12-cross-workspace-run-telemetry.md):
     compare count-only cost and usage aggregates while preserving workspace isolation.
+62. [Over-budget run filter research](research/2026-09-12-over-budget-run-filter.md): focus run
+    history on observed estimates above configured per-agent limits.

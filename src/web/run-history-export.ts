@@ -15,6 +15,7 @@ export interface RunHistoryExportInput {
     agentId: string | null;
     threadId: string | null;
     status: RunHistoryPage["items"][number]["run"]["status"] | null;
+    cost?: "all" | "over_budget";
   };
   page: {
     number: number;

@@ -3287,6 +3287,7 @@ export class FileStore {
 
   async listRunHistory(rawInput: unknown): Promise<RunHistoryPage> {
     const input = RunHistoryRequestSchema.parse(rawInput);
+    const costFilter = input.cost ?? "all";
     return this.withWrite(async () => {
       const workspace = this.requireWorkspace(input.workspaceId);
       if (input.threadId) {
@@ -3316,7 +3317,7 @@ export class FileStore {
           cursor.agentId !== input.agentId ||
           cursor.threadId !== input.threadId ||
           cursor.status !== input.status ||
-          cursor.status !== input.status ||
+          (cursor.cost ?? "all") !== costFilter ||
           cursor.limit !== input.limit
         ) {
           throw new StoreError("invalid", "Run history cursor does not match this request.");
@@ -3329,6 +3330,11 @@ export class FileStore {
         input.threadId === undefined
           ? scopedThreads
           : scopedThreads.filter((thread) => thread.id === input.threadId);
+      const agents = new Map(
+        this.state.agents
+          .filter((agent) => agent.workspaceId === workspace.id)
+          .map((agent) => [agent.id, agent]),
+      );
       let unavailableThreads = 0;
       const summaries: RunHistorySummary[] = [];
       const allSummaries: RunHistorySummary[] = [];
@@ -3363,6 +3369,13 @@ export class FileStore {
           if (input.agentId !== undefined && summary.agentId !== input.agentId) continue;
           if (input.threadId !== undefined && summary.threadId !== input.threadId) continue;
           if (input.status !== undefined && summary.status !== input.status) continue;
+          if (costFilter === "over_budget") {
+            const estimate = summary.usage
+              ? runEstimatedCostUsd(agents.get(summary.agentId), summary.usage)
+              : undefined;
+            const limit = agents.get(summary.agentId)?.pricing?.maxRunCostUsd;
+            if (estimate === undefined || limit === undefined || estimate <= limit) continue;
+          }
           summaries.push(summary);
         }
       }
@@ -3399,11 +3412,6 @@ export class FileStore {
         addFeedbackCount(counts, feedback.value);
         feedbackByRun.set(feedbackRunKey(run.threadId, run.id), counts);
       }
-      const agents = new Map(
-        this.state.agents
-          .filter((agent) => agent.workspaceId === workspace.id)
-          .map((agent) => [agent.id, agent]),
-      );
       const summary = summaries.reduce(
         (metrics, entry) => {
           const durationMs = runDurationMs(entry);

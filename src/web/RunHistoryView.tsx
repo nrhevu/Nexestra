@@ -69,6 +69,7 @@ interface RunHistoryFilters {
   agentId: string;
   threadId: string;
   status: RunStatus | "";
+  cost: "all" | "over_budget";
 }
 
 function initialViewState(workspaceId: string): RunHistoryViewState {
@@ -180,6 +181,7 @@ export function RunHistoryView({
     agentId: "",
     threadId: "",
     status: "",
+    cost: "all",
   });
   const [view, setView] = useState(() => initialViewState(workspaceId));
   const [retryingRunId, setRetryingRunId] = useState<string>();
@@ -265,6 +267,7 @@ export function RunHistoryView({
       if (filters.agentId !== "") params.set("agentId", filters.agentId);
       if (filters.threadId !== "") params.set("threadId", filters.threadId);
       if (filters.status !== "") params.set("status", filters.status);
+      if (filters.cost !== "all") params.set("cost", filters.cost);
       if (cursor !== undefined && cursor !== null) params.set("cursor", cursor);
       return params;
     },
@@ -421,7 +424,7 @@ export function RunHistoryView({
     inFlightRef.current = false;
     filtersKeyRef.current = null;
     revisionRef.current = undefined;
-    setFilters({ workspaceId, agentId: "", threadId: "", status: "" });
+    setFilters({ workspaceId, agentId: "", threadId: "", status: "", cost: "all" });
     setView(initialViewState(workspaceId));
   }, [filters.workspaceId, workspaceId]);
 
@@ -499,6 +502,7 @@ export function RunHistoryView({
             agentId: filters.agentId || null,
             threadId: filters.threadId || null,
             status: filters.status || null,
+            ...(filters.cost === "all" ? {} : { cost: filters.cost }),
           },
           page: {
             number: pageNumber,
@@ -610,6 +614,23 @@ export function RunHistoryView({
                 {RUN_STATUS_LABELS[value]}
               </option>
             ))}
+          </select>
+        </label>
+        <label className="run-history-filter">
+          <span>Cost filter</span>
+          <select
+            aria-label="Run cost"
+            value={filters.cost}
+            onChange={(event) =>
+              setFilters((current) => ({
+                ...current,
+                cost: event.target.value as RunHistoryFilters["cost"],
+              }))
+            }
+            disabled={!currentWorkspace}
+          >
+            <option value="all">All costs</option>
+            <option value="over_budget">Over budget only</option>
           </select>
         </label>
         <label className="run-history-filter">

@@ -195,6 +195,7 @@ describe("RunHistoryRequestSchema", () => {
 
   it("rejects unknown statuses and unbounded cursors", () => {
     expect(RunHistoryRequestSchema.safeParse({ ...base, status: "finished" }).success).toBe(false);
+    expect(RunHistoryRequestSchema.safeParse({ ...base, cost: "cheap" }).success).toBe(false);
     expect(RunHistoryRequestSchema.safeParse({ ...base, cursor: "" }).success).toBe(false);
     expect(RunHistoryRequestSchema.safeParse({ ...base, cursor: "a".repeat(2_049) }).success).toBe(
       false,

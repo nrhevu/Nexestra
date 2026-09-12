@@ -345,6 +345,14 @@ describe("run history server", () => {
     expect(activeItem?.run.durationMs).toBeUndefined();
     expect(activeItem?.costLimitUsd).toBeUndefined();
     expect(activeItem?.overBudget).toBeUndefined();
+
+    const overBudget = await store.listRunHistory({
+      workspaceId: workspace.id,
+      cost: "over_budget",
+      limit: 50,
+    });
+    expect(overBudget.items.map((item) => item.run.id)).toEqual(["run-duration"]);
+    expect(overBudget.summary.overBudgetRuns).toBe(1);
   });
 
   it("does not flag a run at the exact configured cost limit", async () => {
@@ -982,6 +990,18 @@ describe("run history cursor", () => {
     const cursor = encodeRunHistoryCursor(request, last);
     expect(decodeRunHistoryCursor(cursor)).toEqual({
       ...request,
+      version: 1,
+      createdAt: last.createdAt,
+      runId: last.id,
+      runThreadId: last.threadId,
+    });
+  });
+
+  it("binds the over-budget filter into cursors", () => {
+    const cursor = encodeRunHistoryCursor({ ...request, cost: "over_budget" }, last);
+    expect(decodeRunHistoryCursor(cursor)).toEqual({
+      ...request,
+      cost: "over_budget",
       version: 1,
       createdAt: last.createdAt,
       runId: last.id,

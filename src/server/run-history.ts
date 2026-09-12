@@ -12,6 +12,7 @@ export interface RunHistoryCursorPayload {
   agentId?: string;
   threadId?: string;
   status?: AgentRun["status"];
+  cost?: "all" | "over_budget";
   limit: number;
   createdAt: string;
   runId: string;
@@ -28,6 +29,7 @@ export function encodeRunHistoryCursor(
     ...(input.agentId ? { agentId: input.agentId } : {}),
     ...(input.threadId ? { threadId: input.threadId } : {}),
     ...(input.status ? { status: input.status } : {}),
+    ...(input.cost === "over_budget" ? { cost: input.cost } : {}),
     limit: input.limit,
     createdAt: last.createdAt,
     runId: last.id,
@@ -42,6 +44,7 @@ const RUN_HISTORY_CURSOR_KEYS = [
   "agentId",
   "threadId",
   "status",
+  "cost",
   "limit",
   "createdAt",
   "runId",
@@ -116,7 +119,8 @@ export function decodeRunHistoryCursor(
         payload.threadId.length < 1 ||
         payload.threadId.length > 200)) ||
     (payload.status !== undefined &&
-      (typeof payload.status !== "string" || !RUN_HISTORY_STATUSES.has(payload.status)))
+      (typeof payload.status !== "string" || !RUN_HISTORY_STATUSES.has(payload.status))) ||
+    (payload.cost !== undefined && payload.cost !== "over_budget" && payload.cost !== "all")
   ) {
     throw new Error("Invalid run history cursor.");
   }

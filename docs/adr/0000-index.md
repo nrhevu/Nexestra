@@ -94,3 +94,4 @@
 | [0091](0091-run-cost-budget-signal.md) | Accepted | Flag observed run estimates that exceed an agent's configured limit |
 | [0092](0092-custom-surface-review-count.md) | Accepted | Show selected-workspace open review counts on custom surfaces |
 | [0093](0093-cross-workspace-run-telemetry.md) | Accepted | Expose count-only run telemetry across isolated workspaces |
+| [0094](0094-over-budget-run-filter.md) | Accepted | Filter run history to observed over-budget runs with cursor binding |

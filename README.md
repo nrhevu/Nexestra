@@ -54,6 +54,8 @@ Items disappear when the underlying condition is resolved; this view does not st
 
 Open **Run history** under Surfaces, or use `/runs` or `/run history`, to find earlier agent runs
 across the current workspace. Filter by status, agent or conversation, including archived threads.
+The **Cost filter** can narrow the list to observed runs above their agent's configured per-run
+limit; runs without enough usage or pricing data remain unknown and are omitted from that view.
 **Older runs** and **Newer runs** replace the current 50-row page. **Open run** returns to the message
 that started it and keeps your drafts and selected files. Use **Refresh run history** or the global
 **Refresh** to update statuses and return to the newest page; leaving the surface resets its filters.

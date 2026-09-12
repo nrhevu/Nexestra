@@ -298,6 +298,18 @@ describe("RunHistoryView requests and filters", () => {
     const params = pageParams(lastFetchInput(fetchMock));
     expect(params.get("agentId")).toBe("agent-a");
   });
+
+  it("requests only over-budget runs when the cost filter is selected", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(async () => jsonResponse(makePage([makeItem(makeRun("run-1"))])));
+    vi.stubGlobal("fetch", fetchMock);
+    renderView();
+    await screen.findByLabelText("Run run-1");
+
+    await user.selectOptions(screen.getByLabelText("Run cost"), "over_budget");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(pageParams(lastFetchInput(fetchMock)).get("cost")).toBe("over_budget");
+  });
 });
 
 describe("RunHistoryView race and refresh behavior", () => {
