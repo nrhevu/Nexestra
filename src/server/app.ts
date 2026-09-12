@@ -10,6 +10,7 @@ import {
   CreateKnowledgeFromMessageSchema,
   DelegateTaskSchema,
   MessageSearchRequestSchema,
+  ReviewQueueRequestSchema,
   RunHistoryRequestSchema,
   SelectRepositorySourceBranchSchema,
   ThreadHistoryRequestSchema,
@@ -356,6 +357,11 @@ export function createApp(options: CreateAppOptions) {
   app.get("/api/runs", async (context) => {
     const input = RunHistoryRequestSchema.parse(context.req.query());
     return context.json(await options.store.listRunHistory(input));
+  });
+
+  app.get("/api/reviews", async (context) => {
+    const input = ReviewQueueRequestSchema.parse(context.req.query());
+    return context.json(await options.store.listReviewQueue(input));
   });
 
   app.get("/api/threads/:id/history", async (context) => {

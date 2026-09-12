@@ -11,6 +11,7 @@ import {
   Check,
   CheckCheck,
   CircleAlert,
+  ClipboardCheck,
   CodeXml,
   Columns3,
   Copy,
@@ -111,6 +112,7 @@ import {
 import { MessageLinkButton } from "./MessageLinkButton.js";
 import { MessageSearchDialog } from "./MessageSearchDialog.js";
 import { RepositoryBranchPicker } from "./RepositoryBranchPicker.js";
+import { ReviewQueueView } from "./ReviewQueueView.js";
 import { RunHistoryView } from "./RunHistoryView.js";
 import {
   fingerprintSubmission,
@@ -187,6 +189,7 @@ export function App() {
   const [route, setRoute] = useState<RouteState>(() => routeFromLocation());
   const [historyNavigationRevision, setHistoryNavigationRevision] = useState(0);
   const [runHistoryRefreshRevision, setRunHistoryRefreshRevision] = useState(0);
+  const [reviewQueueRefreshRevision, setReviewQueueRefreshRevision] = useState(0);
   const [conversations] = useState(() => new ConversationState());
   const [submissions] = useState(() => new SubmissionState());
   const [, setDraftRevision] = useState(0);
@@ -1590,6 +1593,7 @@ export function App() {
       // Run history aggregates quality ratings across the whole workspace;
       // refresh its projection as soon as a rating is durably accepted.
       setRunHistoryRefreshRevision((revision) => revision + 1);
+      setReviewQueueRefreshRevision((revision) => revision + 1);
       const current = historyPageRef.current;
       if (!current || current.thread.id !== message.threadId) return;
       const nextFeedback =
@@ -1986,6 +1990,19 @@ export function App() {
                   setError(messageFrom(caught));
                 }
               }}
+            />
+          ) : (
+            <div className="surface-view" role="status">
+              Opening workspace…
+            </div>
+          )
+        ) : route.surface === "reviews" ? (
+          data.workspace.id === workspaceIdRef.current ? (
+            <ReviewQueueView
+              key={data.workspace.id}
+              workspaceId={data.workspace.id}
+              refreshRevision={reviewQueueRefreshRevision}
+              onOpenMessage={openMessage}
             />
           ) : (
             <div className="surface-view" role="status">
@@ -2739,6 +2756,16 @@ function Sidebar(props: {
               >
                 <History size={17} />
                 <span className="row-label">Run history</span>
+              </button>
+              <button
+                className={
+                  props.route.surface === "reviews" ? "sidebar-row selected" : "sidebar-row"
+                }
+                type="button"
+                onClick={() => props.onSurface("reviews")}
+              >
+                <ClipboardCheck size={17} />
+                <span className="row-label">Needs-work review</span>
               </button>
               <button
                 className={
@@ -8229,7 +8256,8 @@ function routeFromLocation(): RouteState {
       parts[1] === "taskboard" ||
       parts[1] === "knowledge" ||
       parts[1] === "attention" ||
-      parts[1] === "runs"
+      parts[1] === "runs" ||
+      parts[1] === "reviews"
         ? parts[1]
         : "agents";
     return { view: "surfaces", surface };

@@ -61,6 +61,10 @@ import {
   ReorderWorkspacesSchema,
   ReplaceKnowledgeDocumentSchema,
   RestoreKnowledgeDocumentRevisionSchema,
+  type ReviewQueueItem,
+  type ReviewQueuePage,
+  ReviewQueuePageSchema,
+  ReviewQueueRequestSchema,
   type RunHistoryAgentMetrics,
   type RunHistoryItem,
   type RunHistoryPage,
@@ -111,7 +115,12 @@ import {
   transcriptFileIdentityOf,
   transcriptHistoryEntry,
 } from "./conversation-history.js";
-
+import {
+  compareReviewQueueItems,
+  decodeReviewQueueCursor,
+  encodeReviewQueueCursor,
+  reviewQueueItemAfterCursor,
+} from "./review-queue.js";
 import {
   compareRunHistorySummaries,
   decodeRunHistoryCursor,
@@ -3344,6 +3353,148 @@ export class FileStore {
         page: { nextCursor },
         summary: metrics,
         coverage: { complete: unavailableThreads === 0, unavailableThreads },
+      });
+    });
+  }
+
+  async listReviewQueue(rawInput: unknown): Promise<ReviewQueuePage> {
+    const input = ReviewQueueRequestSchema.parse(rawInput);
+    return this.withWrite(async () => {
+      const workspace = this.requireWorkspace(input.workspaceId);
+      const thread = input.threadId ? this.getThread(input.threadId) : undefined;
+      if (input.threadId && (!thread || thread.workspaceId !== workspace.id)) {
+        throw new StoreError("not_found", "Thread not found in this workspace.");
+      }
+      const agent = input.agentId ? this.getAgent(input.agentId) : undefined;
+      if (input.agentId && (!agent || agent.workspaceId !== workspace.id)) {
+        throw new StoreError("not_found", "Agent not found in this workspace.");
+      }
+      let cursor: ReturnType<typeof decodeReviewQueueCursor>;
+      if (input.cursor !== undefined) {
+        cursor = decodeReviewQueueCursor(input.cursor);
+        if (
+          !cursor ||
+          cursor.workspaceId !== input.workspaceId ||
+          cursor.agentId !== input.agentId ||
+          cursor.threadId !== input.threadId ||
+          cursor.limit !== input.limit
+        ) {
+          throw new StoreError("invalid", "Review queue cursor does not match this request.");
+        }
+      }
+
+      const threads = new Map(
+        this.state.threads
+          .filter(
+            (entry) => entry.workspaceId === workspace.id && (!thread || entry.id === thread.id),
+          )
+          .map((entry) => [entry.id, entry]),
+      );
+      const agents = new Map(
+        this.state.agents
+          .filter(
+            (entry) => entry.workspaceId === workspace.id && (!agent || entry.id === agent.id),
+          )
+          .map((entry) => [entry.id, entry]),
+      );
+      const latestFeedback = new Map<string, MessageFeedback>();
+      for (const feedback of this.state.messageFeedback) {
+        if (!threads.has(feedback.threadId)) continue;
+        const key = JSON.stringify([feedback.threadId, feedback.messageId]);
+        const previous = latestFeedback.get(key);
+        if (!previous || feedback.updatedAt.localeCompare(previous.updatedAt) > 0) {
+          latestFeedback.set(key, feedback);
+        }
+      }
+
+      const items: ReviewQueueItem[] = [];
+      const unavailableThreadIds = new Set<string>();
+      for (const feedback of latestFeedback.values()) {
+        if (feedback.value !== "negative") continue;
+        const targetThread = threads.get(feedback.threadId);
+        if (!targetThread) continue;
+        const index =
+          this.historyIndexes.get(targetThread.id) ??
+          (await this.primeTranscriptIndex(targetThread.id));
+        if (index.missing || index.unreliable || !index.identity) {
+          unavailableThreadIds.add(targetThread.id);
+          continue;
+        }
+        const entry = index.messageById.get(feedback.messageId);
+        const metadata = index.messageMetadataById.get(feedback.messageId);
+        if (!entry || !metadata || metadata.authorKind !== "agent") continue;
+        if (feedback.agentId !== undefined && feedback.agentId !== metadata.authorId) continue;
+        if (input.agentId && metadata.authorId !== input.agentId) continue;
+        const targetAgent = agents.get(metadata.authorId);
+        if (!targetAgent) continue;
+        const read = await readTranscriptPageLines(
+          this.transcriptPath(targetThread.id),
+          index.identity,
+          [entry],
+        );
+        const line = read.status === "ok" ? read.lines[0] : undefined;
+        if (!line) {
+          unavailableThreadIds.add(targetThread.id);
+          continue;
+        }
+        let event: TranscriptEvent | undefined;
+        try {
+          event = parseTranscriptEvent(stripTrailingNewline(line));
+        } catch {
+          unavailableThreadIds.add(targetThread.id);
+          continue;
+        }
+        if (
+          event?.type !== "message.created" ||
+          event.message.id !== feedback.messageId ||
+          event.message.threadId !== targetThread.id ||
+          event.message.author.kind !== "agent" ||
+          event.message.author.id !== metadata.authorId
+        ) {
+          unavailableThreadIds.add(targetThread.id);
+          continue;
+        }
+        const message = event.message;
+        const redactedContent = this.redactSecrets(message.content);
+        items.push({
+          id: `${targetThread.id}:${message.id}`,
+          feedback: this.redactedMessageFeedback(feedback),
+          message: {
+            id: message.id,
+            threadId: message.threadId,
+            content:
+              redactedContent.length > 800 ? `${redactedContent.slice(0, 799)}…` : redactedContent,
+            createdAt: message.createdAt,
+            ...(message.runId ? { runId: message.runId } : {}),
+          },
+          thread: {
+            id: targetThread.id,
+            name: this.redactSecrets(targetThread.name),
+            archived: targetThread.archived,
+          },
+          agent: {
+            id: targetAgent.id,
+            name: this.redactSecrets(targetAgent.name),
+            handle: this.redactHandleValue(targetAgent.handle),
+          },
+        });
+      }
+      items.sort(compareReviewQueueItems);
+      const remaining = cursor
+        ? items.filter((item) => reviewQueueItemAfterCursor(item, cursor))
+        : items;
+      const pageItems = remaining.slice(0, input.limit);
+      const last = pageItems[pageItems.length - 1];
+      const nextCursor =
+        last && remaining.length > input.limit ? encodeReviewQueueCursor(input, last) : null;
+      return ReviewQueuePageSchema.parse({
+        workspaceId: workspace.id,
+        items: pageItems,
+        page: { nextCursor },
+        coverage: {
+          complete: unavailableThreadIds.size === 0,
+          unavailableThreads: unavailableThreadIds.size,
+        },
       });
     });
   }

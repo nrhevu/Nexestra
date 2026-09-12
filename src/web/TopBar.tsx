@@ -4,7 +4,7 @@ import type { BootstrapData } from "../shared/contracts.js";
 import type { WorkspaceRefreshStatus } from "./workspaceRefresh.js";
 import "./TopBar.css";
 
-export type TopBarSurface = "taskboard" | "agents" | "knowledge" | "attention" | "runs";
+export type TopBarSurface = "taskboard" | "agents" | "knowledge" | "attention" | "runs" | "reviews";
 
 export interface TopBarProps {
   data: Pick<BootstrapData, "threads" | "agents" | "tasks" | "knowledge">;
@@ -94,6 +94,12 @@ export function TopBar(props: TopBarProps) {
           label: "Run history",
           description: "Review agent runs across this workspace",
           action: () => props.onSurface("runs"),
+        },
+        {
+          id: "command:reviews",
+          label: "Needs-work review",
+          description: "Revisit responses marked for correction",
+          action: () => props.onSurface("reviews"),
         },
         {
           id: "command:knowledge",

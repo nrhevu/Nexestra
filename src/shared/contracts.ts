@@ -421,6 +421,49 @@ export const SetMessageFeedbackSchema = z.object({
 });
 export type SetMessageFeedbackInput = z.input<typeof SetMessageFeedbackSchema>;
 
+export const ReviewQueueRequestSchema = z.object({
+  workspaceId: z.string().trim().min(1).max(200),
+  agentId: z.string().trim().min(1).max(200).optional(),
+  threadId: z.string().trim().min(1).max(200).optional(),
+  cursor: z.string().min(1).max(2_048).optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(25),
+});
+export type ReviewQueueRequest = z.infer<typeof ReviewQueueRequestSchema>;
+
+export const ReviewQueueItemSchema = z.object({
+  id: z.string(),
+  feedback: MessageFeedbackSchema,
+  message: z.object({
+    id: z.string(),
+    threadId: z.string(),
+    content: z.string().max(800),
+    createdAt: z.string(),
+    runId: z.string().optional(),
+  }),
+  thread: z.object({
+    id: z.string(),
+    name: z.string(),
+    archived: z.boolean(),
+  }),
+  agent: z.object({
+    id: z.string(),
+    name: z.string(),
+    handle: z.string(),
+  }),
+});
+export type ReviewQueueItem = z.infer<typeof ReviewQueueItemSchema>;
+
+export const ReviewQueuePageSchema = z.object({
+  workspaceId: z.string(),
+  items: z.array(ReviewQueueItemSchema).max(50),
+  page: z.object({ nextCursor: z.string().nullable() }),
+  coverage: z.object({
+    complete: z.boolean(),
+    unavailableThreads: z.number().int().nonnegative(),
+  }),
+});
+export type ReviewQueuePage = z.infer<typeof ReviewQueuePageSchema>;
+
 export const MessageRequestIdSchema = z
   .string()
   .uuid()

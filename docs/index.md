@@ -54,3 +54,5 @@
     needs-work ratings without turning them into automatic evaluation scores.
 29. [Safe run failure kinds research](research/2026-09-12-safe-run-failure-kinds.md): classify
     monitoring failures without copying raw provider or command errors into the history response.
+30. [Needs-work review queue research](research/2026-09-12-needs-work-review-queue.md): revisit
+    bounded, redacted negative ratings before deliberate Knowledge capture.

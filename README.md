@@ -70,6 +70,11 @@ that produced them, so retries and delegated Worker/Master replies are compared 
 run; older replies without that provenance are included only when their trigger has one matching
 run. Ratings are user signals, not an automatic score or billing record.
 
+Open **Needs-work review** under Surfaces, or use `/needs-work review`, to revisit the latest
+negative rating for each agent reply across the workspace. The queue shows a bounded, redacted
+excerpt and note, reports conversations that could not be scanned, and opens the exact source
+message. Promotion to Knowledge still requires the existing review dialog and explicit capture.
+
 Thread rows also show **unread messages**, with a total on Threads. Reading the bottom of the
 latest Messages page in a focused window marks that loaded page read. Older pages, message links
 and Files & links keep newer messages unread. Choose **Mark all conversations read** beside the

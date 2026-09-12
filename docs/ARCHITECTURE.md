@@ -5,7 +5,7 @@
 M9 is a single-user, local-first control center. The server binds to `127.0.0.1`, the SPA
 communicates over HTTP, and the server invokes configured coding harnesses or providers. The two
 primary navigation areas are Threads and Surfaces; the initial surfaces are Taskboard, Knowledge,
-and Agents.
+Agents, Run history, and Needs-work review.
 The far-left rail switches between workspaces, while the adjacent panel owns the Threads, Surfaces,
 and Settings navigation. **Needs attention** is available directly from workspace navigation and
 collects pending decisions and task failures across the selected workspace. Settings exposes
@@ -559,11 +559,11 @@ credentials.
   a bounded failure kind; exact error text remains in the canonical conversation view.
 
 - Quality ratings are explicit single-user observations. They are attributed only when provenance
-  resolves to one run, but there is no reviewed correction queue yet for turning a needs-work reply
-  into curated Knowledge or an evaluation case; ratings do not change prompts or routing. Message
-  capture now opens a review dialog before promoting the unchanged, provenance-linked source into
-  Knowledge; content correction remains an explicit edit after capture. Needs-work ratings can carry
-  an optional bounded note for later review.
+  resolves to one run, and the Needs-work review surface provides a bounded, redacted queue for
+  revisiting negative replies across the workspace. It links to the canonical message but does not
+  auto-resolve, rewrite prompts, or silently promote content. Message capture still opens a review
+  dialog before promoting the unchanged, provenance-linked source into Knowledge; content correction
+  remains an explicit edit after capture. Needs-work ratings can carry an optional bounded note.
 
 - Workspace export has no import/restore workflow and is not a complete backup. Snapshot inventory
   scans transcripts under the write barrier before a second read for ZIP generation. Stored ZIP
