@@ -2935,6 +2935,9 @@ export class FileStore {
             terminalRuns: 0,
             totalDurationMs: 0,
             usageRuns: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            cachedInputTokens: 0,
             totalTokens: 0,
           };
           agentMetrics.totalRuns += 1;
@@ -2944,6 +2947,9 @@ export class FileStore {
           }
           if (entry.usage) {
             agentMetrics.usageRuns += 1;
+            agentMetrics.inputTokens += entry.usage.inputTokens;
+            agentMetrics.outputTokens += entry.usage.outputTokens;
+            agentMetrics.cachedInputTokens += entry.usage.cachedInputTokens ?? 0;
             agentMetrics.totalTokens += entry.usage.totalTokens;
           }
           metrics.byAgent.set(entry.agentId, agentMetrics);

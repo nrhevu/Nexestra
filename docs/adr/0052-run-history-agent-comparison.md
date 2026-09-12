@@ -14,7 +14,7 @@ the surface could not support a useful harness comparison.
 
 Each filtered `/api/runs` response includes a bounded `summary.byAgent` list. Every entry reports the
 agent ID and redacted display name plus run count, terminal count, terminal duration, usage coverage,
-and total reported tokens. The aggregation uses the same complete set of cached summaries as the
+input tokens, output tokens, cached input tokens, and total reported tokens. The aggregation uses the same complete set of cached summaries as the
 workspace totals, so pagination changes the rows shown but not the comparison metrics. Entries are
 ordered by run count, then tokens, then display name, and capped at 200 entries; workspace totals
 still include every matching run.

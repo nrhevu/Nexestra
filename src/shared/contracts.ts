@@ -566,6 +566,9 @@ export const RunHistoryAgentMetricsSchema = z.object({
   terminalRuns: z.number().int().nonnegative(),
   totalDurationMs: z.number().int().nonnegative(),
   usageRuns: z.number().int().nonnegative(),
+  inputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  cachedInputTokens: z.number().int().nonnegative(),
   totalTokens: z.number().int().nonnegative(),
 });
 export type RunHistoryAgentMetrics = z.infer<typeof RunHistoryAgentMetricsSchema>;

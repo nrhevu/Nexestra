@@ -100,6 +100,13 @@ function formatTokens(totalTokens: number): string {
   );
 }
 
+function formatAgentUsage(agent: RunHistoryMetrics["byAgent"][number]): string {
+  if (agent.usageRuns === 0) return "no usage";
+  const cached =
+    agent.cachedInputTokens > 0 ? ` · ${formatTokens(agent.cachedInputTokens)} cached` : "";
+  return `${formatTokens(agent.totalTokens)} tokens (${formatTokens(agent.inputTokens)} in / ${formatTokens(agent.outputTokens)} out${cached})`;
+}
+
 function errorText(error: unknown, fallback: string): string {
   return error instanceof Error && error.message !== "" ? error.message : fallback;
 }
@@ -497,10 +504,7 @@ export function RunHistoryView({
                     <span className="run-history-breakdown-name">{agent.agentName}</span>
                     <span className="run-history-breakdown-meta">
                       {agent.totalRuns} {agent.totalRuns === 1 ? "run" : "runs"} ·{" "}
-                      {agent.usageRuns > 0
-                        ? `${formatTokens(agent.totalTokens)} tokens`
-                        : "no usage"}{" "}
-                      · {formatDuration(agent.totalDurationMs)}
+                      {formatAgentUsage(agent)} · {formatDuration(agent.totalDurationMs)}
                     </span>
                   </li>
                 ))}

@@ -462,6 +462,9 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
                 terminalRuns: 2,
                 totalDurationMs: 3_000,
                 usageRuns: 2,
+                inputTokens: 2_000,
+                outputTokens: 500,
+                cachedInputTokens: 0,
                 totalTokens: 2_500,
               },
               {
@@ -471,6 +474,9 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
                 terminalRuns: 1,
                 totalDurationMs: 1_000,
                 usageRuns: 0,
+                inputTokens: 0,
+                outputTokens: 0,
+                cachedInputTokens: 0,
                 totalTokens: 0,
               },
             ],
@@ -483,7 +489,9 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
 
     const breakdown = await screen.findByRole("region", { name: "Run history by agent" });
     expect(within(breakdown).getByText("Planner")).toBeVisible();
-    expect(within(breakdown).getByText("2 runs · 2.5K tokens · 3.0 s")).toBeVisible();
+    expect(
+      within(breakdown).getByText("2 runs · 2.5K tokens (2K in / 500 out) · 3.0 s"),
+    ).toBeVisible();
     expect(within(breakdown).getByText("Reviewer")).toBeVisible();
     expect(within(breakdown).getByText("1 run · no usage · 1.0 s")).toBeVisible();
   });
