@@ -602,7 +602,8 @@ credentials.
   a bounded failure kind; exact error text remains in the canonical conversation view. Delegated
   Worker rows optionally include a redacted Taskboard title derived from their assignment ID; legacy
   and ordinary runs omit that context. The browser can export the loaded page as JSON or escaped CSV;
-  both are page-scoped and the CSV contains telemetry only. It has no raw run-output search.
+  both are page-scoped and the CSV contains telemetry only. See [ADR 0100](adr/0100-run-history-csv-export.md).
+  It has no raw run-output search.
 
 - Quality ratings are explicit single-user observations. They are attributed only when provenance
   resolves to one run, and the Needs-work review surface provides a bounded, redacted queue for
@@ -650,7 +651,8 @@ credentials.
   The selected workspace's bounded attention snooze and dismissal metadata is included in the
   exported state; foreign attention state remains excluded.
   Local archive inspection can compare the manifest workspace ID with the active workspace and warn
-  on a mismatch, but identity matching does not add authenticity or restore support.
+  on a mismatch, but identity matching does not add authenticity or restore support. See [ADR
+  0099](adr/0099-workspace-archive-identity-check.md).
 
 - Conversation unread state belongs to one browser profile and origin. It counts all canonical
   messages and uses a read-through count, not a per-message receipt or proof of attention. Existing
