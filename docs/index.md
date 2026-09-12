@@ -112,3 +112,5 @@
     catalog-gated prompt expansion to the harness.
 58. [MCP resource templates research](research/2026-09-12-mcp-resource-templates.md): read
     cataloged parameterized MCP resources with bounded URI expansion.
+59. [Run cost budget signal research](research/2026-09-12-run-cost-budget-signal.md): flag
+    observed run estimates that exceed an agent's optional per-run limit.

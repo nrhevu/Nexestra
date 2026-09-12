@@ -3416,6 +3416,10 @@ export class FileStore {
             if (estimatedCostUsd !== undefined) {
               metrics.estimatedCostUsd = (metrics.estimatedCostUsd ?? 0) + estimatedCostUsd;
               metrics.estimatedCostRuns = (metrics.estimatedCostRuns ?? 0) + 1;
+              const maxRunCostUsd = agents.get(entry.agentId)?.pricing?.maxRunCostUsd;
+              if (maxRunCostUsd !== undefined && estimatedCostUsd > maxRunCostUsd) {
+                metrics.overBudgetRuns += 1;
+              }
             }
           }
           const feedback = feedbackByRun.get(feedbackRunKey(entry.threadId, entry.id));
@@ -3473,6 +3477,7 @@ export class FileStore {
           totalTokens: 0,
           estimatedCostUsd: undefined as number | undefined,
           estimatedCostRuns: 0,
+          overBudgetRuns: 0,
           feedbackCount: 0,
           positiveFeedbackCount: 0,
           negativeFeedbackCount: 0,
@@ -3528,6 +3533,7 @@ export class FileStore {
               estimatedCostPerHelpfulUsd: summary.estimatedCostUsd / summary.positiveFeedbackCount,
             }
           : {}),
+        ...(summary.overBudgetRuns > 0 ? { overBudgetRuns: summary.overBudgetRuns } : {}),
         ...(summary.feedbackCount > 0
           ? {
               feedbackCount: summary.feedbackCount,
@@ -3559,6 +3565,7 @@ export class FileStore {
         const estimatedCostUsd = summary.usage
           ? runEstimatedCostUsd(agent, summary.usage)
           : undefined;
+        const costLimitUsd = agent?.pricing?.maxRunCostUsd;
         const task = taskByAssignmentId.get(summary.id);
         return {
           run: {
@@ -3580,6 +3587,12 @@ export class FileStore {
           threadArchived: thread?.archived ?? false,
           ...(task ? { taskTitle: this.redactSecrets(task.title) } : {}),
           ...(estimatedCostUsd === undefined ? {} : { estimatedCostUsd }),
+          ...(estimatedCostUsd !== undefined && costLimitUsd !== undefined ? { costLimitUsd } : {}),
+          ...(costLimitUsd !== undefined &&
+          estimatedCostUsd !== undefined &&
+          estimatedCostUsd > costLimitUsd
+            ? { overBudget: true }
+            : {}),
         };
       });
       const lastSummary = pageSummaries[pageSummaries.length - 1];

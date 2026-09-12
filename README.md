@@ -74,6 +74,9 @@ the provider and are not billing records. The surface also summarizes matching r
 time, token total, usage coverage, and explicit helpful/needs-work ratings above the paged rows.
 When every matching run has usage and pricing coverage and at least one helpful rating, it also
 shows an estimated cost per helpful reply; incomplete coverage leaves that comparison blank.
+Agent pricing profiles can also include an optional maximum estimated cost per run. History marks
+an observed estimate above that limit and counts matching over-budget runs; this is a local review
+signal, not provider billing enforcement.
 Per-agent rows show the same rating counts. Marking a response **needs work** opens an optional note
 field so later review has context; helpful remains one click. Replies created by the harness retain the exact run ID
 that produced them, so retries and delegated Worker/Master replies are compared against the right

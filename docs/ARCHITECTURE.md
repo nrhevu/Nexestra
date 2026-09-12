@@ -185,6 +185,10 @@ and [ADR 0073](adr/0073-per-run-cost-visibility.md).
 The same filtered summary now includes the optional total estimated cost and the number of runs
 that contributed to it, so partial pricing coverage is visible in the UI and export. See
 [ADR 0074](adr/0074-run-history-cost-summary.md).
+An agent may also define a maximum estimated cost per run. When usage and pricing are available,
+history derives a row-level limit comparison and a filtered over-budget count. This is an observed
+local signal for review; it does not enforce provider spend or interrupt dispatch. See
+[ADR 0091](adr/0091-run-cost-budget-signal.md).
 Failed and interrupted summaries also carry a safe failure kind, never raw provider or command
 output, so the monitoring list can guide recovery without widening the response's secret boundary.
 See [ADR 0059](adr/0059-safe-run-failure-kinds.md).

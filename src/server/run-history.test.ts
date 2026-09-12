@@ -273,7 +273,12 @@ describe("run history server", () => {
     const agent = await createWorkerAgent(store);
     const thread = await createThread(store);
     await store.updateAgent(agent.id, {
-      pricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 2, cachedInputUsdPerMillion: 0.5 },
+      pricing: {
+        inputUsdPerMillion: 1,
+        outputUsdPerMillion: 2,
+        cachedInputUsdPerMillion: 0.5,
+        maxRunCostUsd: 0.001,
+      },
     });
     const completed = makeRun(
       "run-duration",
@@ -307,6 +312,9 @@ describe("run history server", () => {
     expect(page.items.find((item) => item.run.id === "run-duration")?.estimatedCostUsd).toBe(
       0.0013,
     );
+    expect(page.items.find((item) => item.run.id === "run-duration")).toEqual(
+      expect.objectContaining({ costLimitUsd: 0.001, overBudget: true }),
+    );
     expect(page.summary).toEqual({
       totalRuns: 2,
       terminalRuns: 1,
@@ -315,6 +323,7 @@ describe("run history server", () => {
       totalTokens: 1_250,
       estimatedCostUsd: 0.0013,
       estimatedCostRuns: 1,
+      overBudgetRuns: 1,
       byAgent: [
         {
           agentId: agent.id,
@@ -332,7 +341,33 @@ describe("run history server", () => {
       ],
     });
     expect(page.summary.estimatedCostPerHelpfulUsd).toBeUndefined();
-    expect(page.items.find((item) => item.run.id === "run-active")?.run.durationMs).toBeUndefined();
+    const activeItem = page.items.find((item) => item.run.id === "run-active");
+    expect(activeItem?.run.durationMs).toBeUndefined();
+    expect(activeItem?.costLimitUsd).toBeUndefined();
+    expect(activeItem?.overBudget).toBeUndefined();
+  });
+
+  it("does not flag a run at the exact configured cost limit", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected seeded workspace");
+    const agent = await createWorkerAgent(store);
+    await store.updateAgent(agent.id, {
+      pricing: { inputUsdPerMillion: 1, outputUsdPerMillion: 2, maxRunCostUsd: 0.0015 },
+    });
+    const thread = await createThread(store, "Budget");
+    await store.updateRun({
+      ...makeRun("run-at-limit", thread.id, agent.id, "2026-01-03T00:00:00.000Z", "completed"),
+      usage: { inputTokens: 1_000, outputTokens: 250, totalTokens: 1_250 },
+    });
+
+    const page = await store.listRunHistory({ workspaceId: workspace.id });
+    const item = page.items.find((entry) => entry.run.id === "run-at-limit");
+    expect(item).toEqual(
+      expect.objectContaining({ estimatedCostUsd: 0.0015, costLimitUsd: 0.0015 }),
+    );
+    expect(item?.overBudget).toBeUndefined();
+    expect(page.summary.overBudgetRuns).toBeUndefined();
   });
 
   it("reports cost per helpful reply only with complete cost coverage", async () => {

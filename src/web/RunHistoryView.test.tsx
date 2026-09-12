@@ -506,6 +506,7 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
             estimatedCostUsd: 0.0125,
             estimatedCostRuns: 3,
             estimatedCostPerHelpfulUsd: 0.0125,
+            overBudgetRuns: 1,
             feedbackCount: 2,
             positiveFeedbackCount: 1,
             negativeFeedbackCount: 1,
@@ -554,6 +555,8 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
     expect(within(summary).getAllByText("$0.0125")).toHaveLength(2);
     expect(within(summary).getByText("Cost coverage")).toBeVisible();
     expect(within(summary).getByText("Cost per helpful")).toBeVisible();
+    expect(within(summary).getByText("Over budget")).toBeVisible();
+    expect(within(summary).getByText("1")).toBeVisible();
     expect(within(summary).getByText("3/3")).toBeVisible();
     expect(within(summary).getByText("2/3")).toBeVisible();
     expect(within(summary).getByText("1/1")).toBeVisible();
@@ -564,6 +567,23 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
     ).toBeVisible();
     expect(within(breakdown).getByText("Reviewer")).toBeVisible();
     expect(within(breakdown).getByText("1 run · no usage · 1.0 s")).toBeVisible();
+  });
+
+  it("marks a run whose observed estimate exceeds the configured limit", async () => {
+    const item = makeItem(makeRun("run-over-budget"), {
+      estimatedCostUsd: 0.0125,
+      costLimitUsd: 0.01,
+      overBudget: true,
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(makePage([item]))),
+    );
+    renderView();
+
+    const card = await screen.findByLabelText("Run run-over-budget");
+    expect(within(card).getByText("Cost $0.0125")).toBeVisible();
+    expect(within(card).getByText("Over budget")).toBeVisible();
   });
 
   it("exports the loaded page with its active filters and summary", async () => {

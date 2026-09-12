@@ -6843,6 +6843,7 @@ function readPricingInput(fields: FormData): AgentPricing | null {
     inputUsdPerMillion: read("inputUsdPerMillion"),
     outputUsdPerMillion: read("outputUsdPerMillion"),
     cachedInputUsdPerMillion: read("cachedInputUsdPerMillion"),
+    maxRunCostUsd: read("maxRunCostUsd"),
   };
   return Object.values(pricing).some((value) => value !== undefined) ? pricing : null;
 }
@@ -6853,7 +6854,7 @@ function AgentPricingFields({ agent }: { agent?: AgentView }) {
     <Field
       label="Cost rates"
       optional
-      hint="Optional USD per million tokens. Estimates appear only when input and output rates are set."
+      hint="Optional USD per million tokens. Estimates appear only when input and output rates are set. A max run cost marks observed over-budget runs in history."
     >
       <div className="form-grid">
         <input
@@ -6885,6 +6886,16 @@ function AgentPricingFields({ agent }: { agent?: AgentView }) {
           aria-label="Cached input USD per million tokens"
           placeholder="Cached input $ / 1M"
           defaultValue={pricing?.cachedInputUsdPerMillion ?? ""}
+        />
+        <input
+          name="maxRunCostUsd"
+          type="number"
+          min="0"
+          step="0.000001"
+          inputMode="decimal"
+          aria-label="Maximum estimated cost per run"
+          placeholder="Max cost / run"
+          defaultValue={pricing?.maxRunCostUsd ?? ""}
         />
       </div>
     </Field>

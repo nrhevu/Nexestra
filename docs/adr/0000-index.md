@@ -91,3 +91,4 @@
 | [0088](0088-mcp-resource-read.md) | Accepted | Read cataloged MCP resources with bounded output |
 | [0089](0089-mcp-prompt-expansion.md) | Accepted | Expand cataloged MCP prompts with bounded output |
 | [0090](0090-mcp-resource-templates.md) | Accepted | Read cataloged MCP resource templates safely |
+| [0091](0091-run-cost-budget-signal.md) | Accepted | Flag observed run estimates that exceed an agent's configured limit |

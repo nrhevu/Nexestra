@@ -242,6 +242,7 @@ export const AgentPricingSchema = z.object({
   inputUsdPerMillion: z.number().finite().nonnegative().max(1_000_000).optional(),
   outputUsdPerMillion: z.number().finite().nonnegative().max(1_000_000).optional(),
   cachedInputUsdPerMillion: z.number().finite().nonnegative().max(1_000_000).optional(),
+  maxRunCostUsd: z.number().finite().nonnegative().max(1_000_000).optional(),
 });
 export type AgentPricing = z.infer<typeof AgentPricingSchema>;
 
@@ -770,6 +771,9 @@ export const RunHistoryItemSchema = z.object({
   // Derived from the agent's local pricing profile and provider-reported usage.
   // It is omitted when either input is unavailable and is never persisted to transcripts.
   estimatedCostUsd: z.number().finite().nonnegative().optional(),
+  // Optional post-run budget comparison derived from the agent pricing profile.
+  costLimitUsd: z.number().finite().nonnegative().optional(),
+  overBudget: z.boolean().optional(),
 });
 export type RunHistoryItem = z.infer<typeof RunHistoryItemSchema>;
 
@@ -806,6 +810,8 @@ export const RunHistoryMetricsSchema = z.object({
   estimatedCostRuns: z.number().int().nonnegative().optional(),
   // Only present when every matching run has an estimate and at least one reply was marked helpful.
   estimatedCostPerHelpfulUsd: z.number().finite().nonnegative().optional(),
+  // Number of matching runs whose observed estimate exceeded the configured limit.
+  overBudgetRuns: z.number().int().nonnegative().optional(),
   byAgent: z.array(RunHistoryAgentMetricsSchema).max(200).default([]),
   feedbackCount: z.number().int().nonnegative().optional(),
   positiveFeedbackCount: z.number().int().nonnegative().optional(),

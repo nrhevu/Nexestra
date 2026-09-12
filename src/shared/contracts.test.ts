@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  AgentPricingSchema,
   CreateAgentSchema,
   classifyRunFailure,
   extractKnowledgeHandles,
@@ -12,6 +13,16 @@ import {
   ThreadHistoryRequestSchema,
   UpdateAgentSchema,
 } from "./contracts.js";
+
+describe("AgentPricingSchema", () => {
+  it("accepts an optional per-run limit and rejects unsafe values", () => {
+    expect(AgentPricingSchema.safeParse({ maxRunCostUsd: 0.01 }).success).toBe(true);
+    expect(AgentPricingSchema.safeParse({ maxRunCostUsd: -0.01 }).success).toBe(false);
+    expect(AgentPricingSchema.safeParse({ maxRunCostUsd: Number.POSITIVE_INFINITY }).success).toBe(
+      false,
+    );
+  });
+});
 
 describe("extractMentionHandles", () => {
   it("deduplicates handles case-insensitively and ignores email addresses", () => {
@@ -210,7 +221,15 @@ describe("RunHistoryItemSchema", () => {
     threadArchived: false,
   };
 
-  it("accepts an optional nonnegative per-run cost and rejects unsafe values", () => {
+  it("accepts optional cost budget fields and rejects unsafe values", () => {
+    expect(
+      RunHistoryItemSchema.safeParse({
+        ...item,
+        estimatedCostUsd: 0.0013,
+        costLimitUsd: 0.001,
+        overBudget: true,
+      }).success,
+    ).toBe(true);
     expect(RunHistoryItemSchema.safeParse({ ...item, estimatedCostUsd: 0.0013 }).success).toBe(
       true,
     );
@@ -241,6 +260,7 @@ describe("RunHistoryMetricsSchema", () => {
         estimatedCostRuns: 1,
       }).success,
     ).toBe(true);
+    expect(RunHistoryMetricsSchema.safeParse({ ...metrics, overBudgetRuns: 1 }).success).toBe(true);
     expect(RunHistoryMetricsSchema.safeParse({ ...metrics, estimatedCostUsd: -0.01 }).success).toBe(
       false,
     );

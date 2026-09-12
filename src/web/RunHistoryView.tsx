@@ -653,6 +653,10 @@ export function RunHistoryView({
                   : "—"}
               </dd>
             </div>
+            <div>
+              <dt>Over budget</dt>
+              <dd>{summary.overBudgetRuns ?? 0}</dd>
+            </div>
           </dl>
           {summary.byAgent.length > 0 ? (
             <section className="run-history-agent-breakdown" aria-label="Run history by agent">
@@ -763,6 +767,14 @@ export function RunHistoryView({
                             title="Estimated from this agent's local pricing profile"
                           >
                             Cost {formatUsd(item.estimatedCostUsd)}
+                          </span>
+                        ) : null}
+                        {item.overBudget ? (
+                          <span
+                            className="run-history-cost run-history-cost--over-budget"
+                            title="Observed estimated cost exceeded this agent's configured per-run limit"
+                          >
+                            Over budget
                           </span>
                         ) : null}
                         <time className="run-history-date" dateTime={item.run.createdAt}>

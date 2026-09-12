@@ -358,6 +358,11 @@
   min-width: 0;
 }
 
+.run-history-cost--over-budget {
+  color: var(--accent);
+  font-weight: 600;
+}
+
 .run-history-date {
   overflow-wrap: anywhere;
 }
