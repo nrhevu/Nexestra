@@ -23,6 +23,7 @@ import {
   History,
   Image as ImageIcon,
   Italic,
+  LayoutDashboard,
   Link as LinkIcon,
   List,
   ListOrdered,
@@ -104,6 +105,7 @@ import { AttentionView } from "./AttentionView.js";
 import { ApiError, api } from "./api.js";
 import { ConversationFilterControls } from "./ConversationFilterControls.js";
 import { ConversationReadControls } from "./ConversationReadControls.js";
+import { CustomSurfaceView } from "./CustomSurfaceView.js";
 import { ConversationState, readBrowserValue, writeBrowserValue } from "./conversationState.js";
 import {
   KnowledgeDocumentPreview,
@@ -155,6 +157,7 @@ interface RouteState {
   view: PrimaryView;
   surface: Surface;
   threadId?: string;
+  customSurfaceId?: string;
   messageTarget?: { id: string; source?: "unread" };
 }
 
@@ -1348,6 +1351,13 @@ export function App() {
   };
   const openSurface = (surface: Surface) =>
     navigate(`/surfaces/${surface}`, { view: "surfaces", surface });
+  const openCustomSurface = (surfaceId: string) =>
+    navigate(`/surfaces/custom/${encodeURIComponent(surfaceId)}`, {
+      view: "surfaces",
+      surface: "custom",
+      customSurfaceId: surfaceId,
+    });
+  const openCustomSurfaceAction = (action: Exclude<Surface, "custom">) => openSurface(action);
 
   const selectWorkspace = async (workspaceId: string) => {
     if (workspaceId === workspaceIdRef.current) return;
@@ -1767,6 +1777,7 @@ export function App() {
         onMarkRead={markCurrentConversationRead}
         onThread={openThread}
         onSurface={openSurface}
+        onCustomSurface={(surfaceId) => openCustomSurface(surfaceId)}
         onSettings={openSettings}
         onExportWorkspace={openWorkspaceExport}
         onInspectWorkspaceArchive={openWorkspaceArchiveInspection}
@@ -1807,6 +1818,7 @@ export function App() {
         showReadStorageNote={readPersistenceNote}
         onThread={openThread}
         onSurface={openSurface}
+        onCustomSurface={openCustomSurface}
         onThreads={() => {
           const threadId = conversations.resolveThread(
             data.workspace.id,
@@ -2018,6 +2030,19 @@ export function App() {
               Opening workspace…
             </div>
           )
+        ) : route.surface === "custom" ? (
+          (() => {
+            const customSurface = data.customSurfaces?.find(
+              (surface) => surface.id === route.customSurfaceId,
+            );
+            return customSurface ? (
+              <CustomSurfaceView surface={customSurface} onAction={openCustomSurfaceAction} />
+            ) : (
+              <div className="surface-view" role="status">
+                This custom surface is unavailable.
+              </div>
+            );
+          })()
         ) : route.surface === "attention" ? (
           <AttentionView
             items={data.attention}
@@ -2521,6 +2546,7 @@ function Sidebar(props: {
   showReadStorageNote: boolean;
   onThread: (id: string) => void;
   onSurface: (surface: Surface) => void;
+  onCustomSurface: (surfaceId: string) => void;
   onThreads: () => void;
   onSettings: () => void;
   onCreate: () => void;
@@ -2809,6 +2835,32 @@ function Sidebar(props: {
                 <span className="row-label">Agent management</span>
                 <span className="count">{visibleAgents.length}</span>
               </button>
+              {props.data.customSurfaces && props.data.customSurfaces.length > 0 ? (
+                <>
+                  <div className="sidebar-rule" />
+                  <div className="section-label">
+                    <span>Custom surfaces</span>
+                    <span className="count">{props.data.customSurfaces.length}</span>
+                  </div>
+                  {props.data.customSurfaces.map((surface) => (
+                    <button
+                      className={
+                        props.route.surface === "custom" &&
+                        props.route.customSurfaceId === surface.id
+                          ? "sidebar-row selected"
+                          : "sidebar-row"
+                      }
+                      type="button"
+                      key={surface.id}
+                      onClick={() => props.onCustomSurface(surface.id)}
+                      title={surface.description}
+                    >
+                      <LayoutDashboard size={17} />
+                      <span className="row-label">{surface.title}</span>
+                    </button>
+                  ))}
+                </>
+              ) : null}
             </div>
           </>
         )}
@@ -8266,10 +8318,15 @@ function routeFromLocation(): RouteState {
       parts[1] === "knowledge" ||
       parts[1] === "attention" ||
       parts[1] === "runs" ||
-      parts[1] === "reviews"
+      parts[1] === "reviews" ||
+      parts[1] === "custom"
         ? parts[1]
         : "agents";
-    return { view: "surfaces", surface };
+    return {
+      view: "surfaces",
+      surface,
+      ...(surface === "custom" && parts[2] ? { customSurfaceId: parts[2] } : {}),
+    };
   }
   const messageId = new URLSearchParams(window.location.search).get("message");
   return {

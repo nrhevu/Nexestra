@@ -173,6 +173,35 @@ describe("HTTP app", () => {
     });
   });
 
+  it("returns validated declarative custom surfaces in bootstrap data", async () => {
+    await writeFile(
+      join(store.workspacePath, "nexestra.config.json"),
+      JSON.stringify({
+        surfaces: [
+          {
+            id: "inference",
+            title: "Inference lab",
+            description: "Compare profiles.",
+            cards: [{ id: "runs", title: "Runs", action: "runs" }],
+          },
+        ],
+      }),
+    );
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected seeded workspace");
+    const response = await app.request(`/api/bootstrap?workspaceId=${workspace.id}`);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      customSurfaces: Array<{ title: string; cards: Array<{ action: string }> }>;
+    };
+    expect(body.customSurfaces).toEqual([
+      expect.objectContaining({
+        title: "Inference lab",
+        cards: [expect.objectContaining({ action: "runs" })],
+      }),
+    ]);
+  });
+
   it("renames and reorders workspaces and rejects stale or duplicate order payloads", async () => {
     const [workspace] = store.listWorkspaces();
     if (!workspace) throw new Error("expected seeded workspace");

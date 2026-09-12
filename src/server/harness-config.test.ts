@@ -31,6 +31,61 @@ describe("harness configuration", () => {
     expect(mergePermissions("deny", "allow")).toBe("deny");
   });
 
+  it("loads declarative custom surfaces without executable or external actions", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "nexestra-surface-config-"));
+    await writeFile(
+      join(workspace, "nexestra.config.json"),
+      JSON.stringify({
+        surfaces: [
+          {
+            id: "inference",
+            title: "Inference lab",
+            description: "Compare profiles.",
+            cards: [{ id: "agents", title: "Profiles", action: "agents" }],
+          },
+        ],
+      }),
+    );
+    const config = await loadHarnessConfig(workspace);
+    expect(config.surfaces).toEqual([
+      expect.objectContaining({
+        id: "inference",
+        cards: [expect.objectContaining({ id: "agents", action: "agents" })],
+      }),
+    ]);
+    await writeFile(
+      join(workspace, "nexestra.config.json"),
+      JSON.stringify({
+        surfaces: [
+          {
+            id: "unsafe",
+            title: "Unsafe",
+            cards: [{ id: "x", title: "External", action: "https://example.com" }],
+          },
+        ],
+      }),
+    );
+    await expect(loadHarnessConfig(workspace)).rejects.toThrow("Invalid nexestra.config.json");
+    await writeFile(
+      join(workspace, "nexestra.config.json"),
+      JSON.stringify({
+        surfaces: [
+          {
+            id: "duplicate",
+            title: "One",
+            cards: [{ id: "same", title: "One", action: "agents" }],
+          },
+          {
+            id: "duplicate",
+            title: "Two",
+            cards: [{ id: "same", title: "Two", action: "runs" }],
+          },
+        ],
+      }),
+    );
+    await expect(loadHarnessConfig(workspace)).rejects.toThrow("Invalid nexestra.config.json");
+  });
+
   it("uses the last matching permission rule like OpenCode", () => {
     expect(configuredPermission({ read: "allow", "*": "deny" }, "read")).toBe("deny");
     expect(configuredPermission({ "*": "deny", read: "allow" }, "read")).toBe("allow");

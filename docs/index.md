@@ -58,3 +58,5 @@
     bounded, redacted negative ratings before deliberate Knowledge capture.
 31. [Review resolution research](research/2026-09-12-review-resolution.md): record reversible,
     explicit review completion while preserving ratings and source content.
+32. [Declarative custom surfaces research](research/2026-09-12-declarative-custom-surfaces.md):
+    adapt workspace navigation through bounded, allowlisted cards instead of executable UI code.

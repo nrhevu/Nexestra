@@ -4,10 +4,17 @@ import type { BootstrapData } from "../shared/contracts.js";
 import type { WorkspaceRefreshStatus } from "./workspaceRefresh.js";
 import "./TopBar.css";
 
-export type TopBarSurface = "taskboard" | "agents" | "knowledge" | "attention" | "runs" | "reviews";
+export type TopBarSurface =
+  | "taskboard"
+  | "agents"
+  | "knowledge"
+  | "attention"
+  | "runs"
+  | "reviews"
+  | "custom";
 
 export interface TopBarProps {
-  data: Pick<BootstrapData, "threads" | "agents" | "tasks" | "knowledge">;
+  data: Pick<BootstrapData, "threads" | "agents" | "tasks" | "knowledge" | "customSurfaces">;
   theme: "dark" | "light";
   refreshStatus: WorkspaceRefreshStatus;
   refreshError?: string;
@@ -19,6 +26,7 @@ export interface TopBarProps {
   onThemeToggle: () => void;
   onThread: (id: string) => void;
   onSurface: (surface: TopBarSurface) => void;
+  onCustomSurface: (surfaceId: string) => void;
   onTask: (id: string) => void;
   onKnowledge: (id: string) => void;
   onSearchMessages: (query: string) => void;
@@ -101,6 +109,12 @@ export function TopBar(props: TopBarProps) {
           description: "Revisit responses marked for correction",
           action: () => props.onSurface("reviews"),
         },
+        ...(props.data.customSurfaces ?? []).map((surface) => ({
+          id: `command:custom-surface:${surface.id}`,
+          label: surface.title,
+          description: surface.description || "Open a custom workspace surface",
+          action: () => props.onCustomSurface(surface.id),
+        })),
         {
           id: "command:knowledge",
           label: "Go to Knowledge",

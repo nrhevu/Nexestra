@@ -76,6 +76,7 @@ function makeProps(overrides: Partial<TopBarProps> = {}): TopBarProps {
     onThemeToggle: vi.fn(),
     onThread: vi.fn(),
     onSurface: vi.fn(),
+    onCustomSurface: vi.fn(),
     onTask: vi.fn(),
     onKnowledge: vi.fn(),
     onSearchMessages: vi.fn(),

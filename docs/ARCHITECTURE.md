@@ -5,7 +5,7 @@
 M9 is a single-user, local-first control center. The server binds to `127.0.0.1`, the SPA
 communicates over HTTP, and the server invokes configured coding harnesses or providers. The two
 primary navigation areas are Threads and Surfaces; the initial surfaces are Taskboard, Knowledge,
-Agents, Run history, and Needs-work review.
+Agents, Run history, Needs-work review, and optional declarative custom surfaces.
 The far-left rail switches between workspaces, while the adjacent panel owns the Threads, Surfaces,
 and Settings navigation. **Needs attention** is available directly from workspace navigation and
 collects pending decisions and task failures across the selected workspace. Settings exposes
@@ -565,6 +565,11 @@ credentials.
   dialog before promoting the unchanged, provenance-linked source into Knowledge; content correction
   remains an explicit edit after capture. Needs-work ratings can carry an optional bounded note and
   an explicit open/resolved review status; resolving changes metadata only.
+
+- Optional `surfaces` entries in `nexestra.config.json` compose domain-specific navigation cards.
+  Their actions are an allowlisted set of trusted surfaces and their labels are bounded/redacted
+  before bootstrap. The browser evaluates no configured code, markup, URL, or command. Data-backed
+  widgets and custom forms are intentionally future work.
 
 - Workspace export has no import/restore workflow and is not a complete backup. Snapshot inventory
   scans transcripts under the write barrier before a second read for ZIP generation. Stored ZIP

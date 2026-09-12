@@ -1,7 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { z } from "zod";
-import { type ToolPermission, ToolPermissionSchema } from "../shared/contracts.js";
+import {
+  CustomSurfaceSchema,
+  type ToolPermission,
+  ToolPermissionSchema,
+} from "../shared/contracts.js";
 
 const EnvironmentSchema = z.record(z.string(), z.string().max(8_000)).default({});
 const McpTimeoutValueSchema = z
@@ -39,6 +43,13 @@ const RemoteMcpServerSchema = z.object({
 });
 
 export const HarnessConfigSchema = z.object({
+  surfaces: z
+    .array(CustomSurfaceSchema)
+    .max(12)
+    .default([])
+    .refine((surfaces) => new Set(surfaces.map((surface) => surface.id)).size === surfaces.length, {
+      message: "Custom surface IDs must be unique.",
+    }),
   permission: z.record(z.string().max(100), ToolPermissionSchema).default({}),
   ignore: z.array(z.string().trim().min(1).max(500)).max(200).default([]),
   customTools: z

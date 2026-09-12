@@ -77,6 +77,28 @@ message. Use **Mark reviewed** to close an item without changing its rating or s
 filter can reopen or inspect resolved items. Promotion to Knowledge still requires the existing
 review dialog and explicit capture.
 
+Workspaces can add a domain-specific launch surface in `nexestra.config.json`:
+
+```json
+{
+  "surfaces": [
+    {
+      "id": "inference",
+      "title": "Inference lab",
+      "description": "Compare profiles, runs, and review signals.",
+      "cards": [
+        { "id": "profiles", "title": "Model profiles", "action": "agents" },
+        { "id": "runs", "title": "Run comparison", "action": "runs" },
+        { "id": "reviews", "title": "Needs-work queue", "action": "reviews" }
+      ]
+    }
+  ]
+}
+```
+
+Cards are text-only and can route only to trusted Nexestra surfaces; configuration cannot execute
+browser code or open arbitrary URLs. Data-backed widgets and custom forms remain future extensions.
+
 Thread rows also show **unread messages**, with a total on Threads. Reading the bottom of the
 latest Messages page in a focused window marks that loaded page read. Older pages, message links
 and Files & links keep newer messages unread. Choose **Mark all conversations read** beside the

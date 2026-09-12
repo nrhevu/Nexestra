@@ -15,6 +15,37 @@ export const WorkspaceSchema = z.object({
 });
 export type Workspace = z.infer<typeof WorkspaceSchema>;
 
+export const CustomSurfaceActionSchema = z.enum([
+  "taskboard",
+  "knowledge",
+  "attention",
+  "runs",
+  "reviews",
+  "agents",
+]);
+export type CustomSurfaceAction = z.infer<typeof CustomSurfaceActionSchema>;
+
+export const CustomSurfaceCardSchema = z.object({
+  id: z.string().regex(/^[a-zA-Z0-9_-]{1,50}$/),
+  title: z.string().trim().min(1).max(80),
+  description: z.string().trim().max(240).default(""),
+  action: CustomSurfaceActionSchema,
+});
+
+export const CustomSurfaceSchema = z.object({
+  id: z.string().regex(/^[a-zA-Z0-9_-]{1,50}$/),
+  title: z.string().trim().min(1).max(80),
+  description: z.string().trim().max(240).default(""),
+  cards: z
+    .array(CustomSurfaceCardSchema)
+    .min(1)
+    .max(12)
+    .refine((cards) => new Set(cards.map((card) => card.id)).size === cards.length, {
+      message: "Custom surface card IDs must be unique.",
+    }),
+});
+export type CustomSurface = z.infer<typeof CustomSurfaceSchema>;
+
 export const CreateWorkspaceSchema = z.object({
   name: z.string().trim().min(1).max(60),
 });
@@ -1036,6 +1067,7 @@ export interface BootstrapData {
   threads: Thread[];
   tasks: Task[];
   knowledge: KnowledgeItem[];
+  customSurfaces?: CustomSurface[];
   assignments: WorkAssignment[];
   activeRuns: AgentRun[];
   attention: AttentionItem[];
