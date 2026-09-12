@@ -571,7 +571,9 @@ credentials.
   after leaving the surface, and deleted agents are labeled Unknown. It has no background polling,
   raw run-output search, cross-workspace aggregation or batch run actions. Failed and interrupted
   rows can be retried individually through the existing guarded retry command. History exposes only
-  a bounded failure kind; exact error text remains in the canonical conversation view.
+  a bounded failure kind; exact error text remains in the canonical conversation view. Delegated
+  Worker rows optionally include a redacted Taskboard title derived from their assignment ID; legacy
+  and ordinary runs omit that context.
 
 - Quality ratings are explicit single-user observations. They are attributed only when provenance
   resolves to one run, and the Needs-work review surface provides a bounded, redacted queue for
