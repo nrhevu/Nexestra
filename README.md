@@ -113,8 +113,10 @@ response to one workspace; omitting it returns one entry per workspace. The page
 and its cursors are unchanged. Run history renders this comparison when multiple workspaces are
 available and keeps the local paged view usable if the comparison read fails.
 Per-agent history entries also show bounded harness and model labels (`Codex`, `OpenCode`, or
-`Custom`) when the current profile provides them, while provider URLs and credentials remain out of
-telemetry. See [ADR 0095](docs/adr/0095-agent-profile-labels-in-history.md).
+`Custom`). New runs retain the labels captured when they were queued, so editing a profile does not
+rewrite older comparisons; legacy runs fall back to the current profile. Provider URLs and
+credentials remain out of telemetry. See [ADR 0095](docs/adr/0095-agent-profile-labels-in-history.md)
+and [ADR 0111](docs/adr/0111-historical-agent-profile-attribution.md).
 Enable **Auto-refresh newest page** when supervising active work; it checks the current filtered
 first page every 15 seconds, pauses on older pages, and never retries or changes run state.
 

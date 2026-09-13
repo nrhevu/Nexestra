@@ -420,6 +420,58 @@ describe("run history server", () => {
     expect(serialized).not.toContain("secret-key-value");
   });
 
+  it("keeps historical profile labels stable while legacy runs use the current profile", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected seeded workspace");
+    const agent = await store.updateAgent(
+      (await createWorkerAgent(store, "Profiled", "profiled")).id,
+      { model: "open-model", harness: "opencode" },
+    );
+    const thread = await createThread(store, "Profile snapshots");
+    const historical = {
+      ...makeRun("historical-profile", thread.id, agent.id, "2026-01-01T00:00:00.000Z"),
+      harnessSnapshot: "opencode" as const,
+      modelSnapshot: "open-model",
+    };
+    await store.updateRun(historical);
+    await store.updateRun(
+      makeRun("legacy-profile", thread.id, agent.id, "2026-01-02T00:00:00.000Z"),
+    );
+    await store.updateAgent(agent.id, { model: "new-model", harness: "codex" });
+
+    const page = await store.listRunHistory({ workspaceId: workspace.id, limit: 50 });
+    const historicalItem = page.items.find((item) => item.run.id === historical.id);
+    const legacyItem = page.items.find((item) => item.run.id === "legacy-profile");
+    expect(historicalItem).toEqual(
+      expect.objectContaining({
+        agentHarness: "opencode",
+        agentModel: "open-model",
+        run: expect.objectContaining({
+          harnessSnapshot: "opencode",
+          modelSnapshot: "open-model",
+        }),
+      }),
+    );
+    expect(legacyItem).toEqual(
+      expect.objectContaining({ agentHarness: "codex", agentModel: "new-model" }),
+    );
+    expect(page.summary.byAgent).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          agentId: agent.id,
+          agentHarness: "opencode",
+          agentModel: "open-model",
+        }),
+        expect.objectContaining({
+          agentId: agent.id,
+          agentHarness: "codex",
+          agentModel: "new-model",
+        }),
+      ]),
+    );
+  });
+
   it("does not flag a run at the exact configured cost limit", async () => {
     const store = await openStore();
     const [workspace] = store.listWorkspaces();

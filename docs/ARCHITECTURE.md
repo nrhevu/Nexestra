@@ -201,11 +201,13 @@ unchanged. Run history renders it as a comparison table for multi-workspace user
 local page usable when that optional read fails. See [ADR 0093](adr/0093-cross-workspace-run-telemetry.md).
 Run history also supports a cursor-bound `cost=over_budget` filter, which selects only rows with a
 known estimate above the configured agent limit; unknown cost remains excluded. See [ADR 0094](adr/0094-over-budget-run-filter.md).
-Rows and per-agent summaries may include bounded `agentHarness` and `agentModel` labels derived from
-the current workspace profile. Models are redacted before response serialization; provider URLs,
-names, credentials, and transcripts remain outside telemetry. Deleted agents omit these optional
-labels, and profile changes can relabel older rows because the projection is read-time. See [ADR
-0095](adr/0095-agent-profile-labels-in-history.md).
+Rows and per-agent summaries may include bounded `agentHarness` and `agentModel` labels. New runs
+carry credential-free harness and model snapshots captured at queue time, so profile edits do not
+relabel those rows; legacy runs fall back to the current workspace profile. Models are redacted
+before response serialization; provider URLs, names, credentials, and transcripts remain outside
+telemetry. Deleted agents omit these optional labels, and one agent can occupy multiple comparison
+rows after a profile change. See [ADR 0095](adr/0095-agent-profile-labels-in-history.md) and [ADR
+0111](adr/0111-historical-agent-profile-attribution.md).
 
 Attention snooze and dismiss operations append bounded metadata to `state.json`. The store retains
 up to 200 entries per workspace and exposes them through an explicit-refresh history endpoint; the

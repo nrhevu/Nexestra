@@ -386,10 +386,19 @@ function runEstimatedCostUsd(
   );
 }
 
-function runAgentProfile(agent: Agent | undefined): {
+function runAgentProfile(
+  agent: Agent | undefined,
+  run?: AgentRun,
+): {
   agentHarness?: RunHistoryAgentHarness;
   agentModel?: string;
 } {
+  if (run?.harnessSnapshot !== undefined) {
+    return {
+      agentHarness: run.harnessSnapshot,
+      ...(run.modelSnapshot === undefined ? {} : { agentModel: run.modelSnapshot }),
+    };
+  }
   if (!agent) return {};
   const agentHarness: RunHistoryAgentHarness = agent.kind === "worker" ? agent.harness : "custom";
   const agentModel = agent.kind === "worker" ? agent.model : agent.provider.model;
@@ -3624,9 +3633,11 @@ export class FileStore {
             metrics.positiveFeedbackCount += feedback.positiveFeedbackCount;
             metrics.negativeFeedbackCount += feedback.negativeFeedbackCount;
           }
-          const agentMetrics = metrics.byAgent.get(entry.agentId) ?? {
+          const profile = runAgentProfile(agents.get(entry.agentId), entry);
+          const profileKey = `${entry.agentId}\u0000${profile.agentHarness ?? ""}\u0000${profile.agentModel ?? ""}`;
+          const agentMetrics = metrics.byAgent.get(profileKey) ?? {
             agentId: entry.agentId,
-            ...runAgentProfile(agents.get(entry.agentId)),
+            ...profile,
             totalRuns: 0,
             terminalRuns: 0,
             totalDurationMs: 0,
@@ -3663,7 +3674,7 @@ export class FileStore {
             agentMetrics.negativeFeedbackCount =
               (agentMetrics.negativeFeedbackCount ?? 0) + feedback.negativeFeedbackCount;
           }
-          metrics.byAgent.set(entry.agentId, agentMetrics);
+          metrics.byAgent.set(profileKey, agentMetrics);
           return metrics;
         },
         {
@@ -3775,6 +3786,12 @@ export class FileStore {
             agentId: summary.agentId,
             attempt: summary.attempt,
             status: summary.status,
+            ...(summary.harnessSnapshot === undefined
+              ? {}
+              : { harnessSnapshot: summary.harnessSnapshot }),
+            ...(summary.modelSnapshot === undefined
+              ? {}
+              : { modelSnapshot: summary.modelSnapshot }),
             ...(summary.failureKind ? { failureKind: summary.failureKind } : {}),
             ...(durationMs === undefined ? {} : { durationMs }),
             ...(summary.usage ? { usage: structuredClone(summary.usage) } : {}),
@@ -3785,7 +3802,7 @@ export class FileStore {
           agentHandle: agent ? this.redactHandleValue(agent.handle) : undefined,
           ...(agent
             ? (() => {
-                const profile = runAgentProfile(agent);
+                const profile = runAgentProfile(agent, summary);
                 return {
                   ...(profile.agentHarness === undefined
                     ? {}
@@ -4190,6 +4207,10 @@ export class FileStore {
       threadId: run.threadId,
       triggerMessageId: run.triggerMessageId,
       agentId: run.agentId,
+      ...(run.harnessSnapshot === undefined ? {} : { harnessSnapshot: run.harnessSnapshot }),
+      ...(run.modelSnapshot === undefined
+        ? {}
+        : { modelSnapshot: this.redactSecrets(run.modelSnapshot).slice(0, 200) }),
       attempt: run.attempt,
       status: run.status,
       ...(run.error ? { failureKind: classifyRunFailure(run.error) } : {}),
@@ -4234,6 +4255,9 @@ export class FileStore {
 
   private redactedRun(run: AgentRun): AgentRun {
     const copy = structuredClone(run);
+    if (copy.modelSnapshot !== undefined) {
+      copy.modelSnapshot = this.redactSecrets(copy.modelSnapshot).slice(0, 200);
+    }
     if (copy.error !== undefined) copy.error = this.redactSecrets(copy.error).slice(0, 2_000);
     return copy;
   }

@@ -306,6 +306,65 @@ describe("mention dispatch", () => {
     expect((await store.threadData(thread.id)).messages).toHaveLength(1);
   });
 
+  it("captures the immutable execution profile on queued runs", async () => {
+    const { chat, dispatcher, store, thread } = await setup();
+    const agent = await store.createAgent({
+      kind: "worker",
+      name: "Codex",
+      handle: "codex",
+      description: "",
+      instructions: "",
+      harness: "codex",
+      model: "gpt-5.6-terra",
+    });
+
+    await chat.send(thread.id, { content: `@${agent.handle} record this profile` });
+    await dispatcher.waitForIdle();
+
+    const [run] = (await store.threadData(thread.id)).runs;
+    expect(run).toMatchObject({
+      agentId: agent.id,
+      harnessSnapshot: "codex",
+      modelSnapshot: "gpt-5.6-terra",
+    });
+  });
+
+  it("redacts credential-like profile snapshots from active run projections", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-dispatch-profile-redaction-"));
+    const store = await FileStore.open({ root, workspacePath: root });
+    const runner = new GatedRunner();
+    const dispatcher = new AgentDispatcher(store, runner);
+    const chat = new ChatService(store, dispatcher);
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const secret = "sk-profile-snapshot-secret";
+    const agent = await store.createAgent({
+      kind: "master",
+      name: "Gateway",
+      handle: "gateway",
+      description: "",
+      instructions: "",
+      accessMode: "ask",
+      provider: {
+        type: "custom",
+        name: "Gateway",
+        baseUrl: "https://provider.example.test/v1",
+        model: secret,
+        protocol: "openai-chat",
+        apiKey: secret,
+      },
+    });
+
+    const sending = chat.send(thread.id, { content: `@${agent.handle} hold this run` });
+    await runner.nextInvocationStarted();
+    expect(dispatcher.activeRuns()[0]?.modelSnapshot).toBe("[REDACTED]");
+    runner.release();
+    await Promise.all([sending, dispatcher.waitForIdle()]);
+    const [run] = (await store.threadData(thread.id)).runs;
+    expect(run?.modelSnapshot).toBe("[REDACTED]");
+    expect(await store.transcriptSnapshot(thread.id)).not.toContain(secret);
+  });
+
   it("redacts stored credentials from Worker replies before persisting them", async () => {
     const secret = "sk-test-transcript-secret";
     const root = await mkdtemp(join(tmpdir(), "nexestra-dispatch-redaction-"));

@@ -28,6 +28,8 @@ export interface RunHistorySummary {
   threadId: string;
   triggerMessageId: string;
   agentId: string;
+  harnessSnapshot?: "codex" | "opencode" | "custom";
+  modelSnapshot?: string;
   attempt: number;
   status: RunHistoryStatus;
   failureKind?: RunFailureKind;

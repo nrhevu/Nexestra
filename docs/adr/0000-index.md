@@ -111,3 +111,4 @@
 | [0108](0108-run-history-telemetry-row-copy.md) | Accepted | Copy one bounded Run history telemetry row as JSON |
 | [0109](0109-blocked-task-custom-surface-card.md) | Accepted | Add an allowlisted blocked-task signal to custom surfaces |
 | [0110](0110-restore-preflight-conflict-categories.md) | Accepted | Categorize read-only archive restore collisions by path hash |
+| [0111](0111-historical-agent-profile-attribution.md) | Accepted | Preserve bounded harness and model labels from run creation |

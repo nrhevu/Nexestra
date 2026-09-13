@@ -762,6 +762,10 @@ export const RunSchema = z.object({
     "failed",
     "interrupted",
   ]),
+  // Immutable execution profile labels captured when the run is queued. Legacy runs omit these
+  // fields and history falls back to the current agent profile.
+  harnessSnapshot: z.enum(["codex", "opencode", "custom"]).optional(),
+  modelSnapshot: z.string().trim().max(200).optional(),
   error: z.string().optional(),
   // Elapsed wall-clock time for terminal runs. Older transcripts omit this
   // derived field, so consumers must treat it as optional.

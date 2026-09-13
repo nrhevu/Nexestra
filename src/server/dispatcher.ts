@@ -29,6 +29,21 @@ import {
   type UploadArtifactInput,
 } from "./store.js";
 
+function runProfileSnapshot(
+  agent: Agent,
+  redactSecrets: (value: string) => string,
+): Pick<AgentRun, "harnessSnapshot" | "modelSnapshot"> {
+  const harnessSnapshot = agent.kind === "worker" ? agent.harness : "custom";
+  const modelSnapshot = agent.kind === "worker" ? agent.model : agent.provider.model;
+  const redactedModel = modelSnapshot ? redactSecrets(modelSnapshot.trim()) : undefined;
+  return {
+    harnessSnapshot,
+    ...(redactedModel && redactedModel !== ""
+      ? { modelSnapshot: redactedModel.slice(0, 200) }
+      : {}),
+  };
+}
+
 export class AgentDispatcher {
   private readonly queues = new Map<string, Promise<void>>();
   private readonly busy = new Set<string>();
@@ -73,7 +88,16 @@ export class AgentDispatcher {
         if (workspaceId === undefined) return true;
         return this.store.getThread(run.threadId)?.workspaceId === workspaceId;
       })
-      .map((run) => structuredClone(run));
+      .map((run) => {
+        const copy = structuredClone(run);
+        if (copy.modelSnapshot !== undefined) {
+          copy.modelSnapshot = this.store.redactSecrets(copy.modelSnapshot).slice(0, 200);
+        }
+        if (copy.error !== undefined) {
+          copy.error = this.store.redactSecrets(copy.error).slice(0, 2_000);
+        }
+        return copy;
+      });
   }
 
   async taskProcess(taskId: string): Promise<TaskProcessData> {
@@ -306,6 +330,7 @@ export class AgentDispatcher {
           agentId: agent.id,
           attempt,
           status: "queued",
+          ...runProfileSnapshot(agent, (value) => this.store.redactSecrets(value)),
           createdAt: now,
           updatedAt: now,
         };
@@ -837,6 +862,7 @@ export class AgentDispatcher {
       agentId: worker.id,
       attempt: 1,
       status: "queued",
+      ...runProfileSnapshot(worker, (value) => this.store.redactSecrets(value)),
       createdAt: now,
       updatedAt: now,
     };
@@ -1099,6 +1125,7 @@ export class AgentDispatcher {
     if (!run) {
       const masterRun = thread.runs.find((entry) => entry.id === assignment.masterRunId);
       if (masterRun) {
+        const workerAgent = this.store.getAgent(assignment.workerAgentId);
         await this.store.updateRun({
           id: assignment.id,
           threadId: assignment.threadId,
@@ -1106,6 +1133,9 @@ export class AgentDispatcher {
           agentId: assignment.workerAgentId,
           attempt: 1,
           status: "interrupted",
+          ...(workerAgent
+            ? { ...runProfileSnapshot(workerAgent, (value) => this.store.redactSecrets(value)) }
+            : {}),
           error: message,
           createdAt: assignment.createdAt,
           updatedAt: new Date().toISOString(),

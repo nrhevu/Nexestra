@@ -25,6 +25,8 @@ const item: RunHistoryItem = {
     agentId: "agent-1",
     attempt: 1,
     status: "completed",
+    harnessSnapshot: "codex",
+    modelSnapshot: "gpt-5.6-terra",
     durationMs: 1_200,
     usage: { inputTokens: 200, outputTokens: 100, totalTokens: 300 },
     createdAt: "2026-09-12T00:00:00.000Z",
@@ -71,6 +73,11 @@ describe("run history export", () => {
       summary,
       items: [item],
     });
+    expect(
+      (payload.items as { run: { harnessSnapshot?: string; modelSnapshot?: string } }[])[0]?.run,
+    ).toEqual(
+      expect.objectContaining({ harnessSnapshot: "codex", modelSnapshot: "gpt-5.6-terra" }),
+    );
   });
 
   it("caps the packet and sanitizes the filename", () => {
