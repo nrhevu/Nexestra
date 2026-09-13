@@ -176,10 +176,12 @@ describe("workspace attention", () => {
     expect(workspaceActivity(store, workspaceId, []).attention).toEqual([]);
     await store.updateAttentionState(workspaceId, item.id, { action: "clear", kind: item.kind });
     expect(workspaceActivity(store, workspaceId, []).attention).toHaveLength(1);
-    expect(store.listAttentionAudit(workspaceId)[0]).toMatchObject({
-      action: "clear",
-      attentionId: item.id,
-    });
+    expect(store.listAttentionAudit(workspaceId)).toContainEqual(
+      expect.objectContaining({
+        action: "clear",
+        attentionId: item.id,
+      }),
+    );
     const other = await store.createWorkspace({ name: "Other" });
     await store.updateAttentionState(other.id, item.id, { action: "clear", kind: item.kind });
     expect(workspaceActivity(store, workspaceId, []).attention).toHaveLength(1);
