@@ -395,3 +395,46 @@ describe("summarizeTaskPlans", () => {
     }
   });
 });
+
+describe("Taskboard prerequisites", () => {
+  it("shows bounded prerequisite status and opens the selected prerequisite", async () => {
+    const prerequisite = { ...task("in_progress", "prerequisite"), title: "Prepare API" };
+    const done = { ...task("done", "done"), title: "Confirm schema" };
+    const foreign = {
+      ...task("todo", "foreign"),
+      workspaceId: "other-workspace",
+      title: "Do not leak this task",
+    };
+    const dependent = {
+      ...task("todo", "dependent"),
+      title: "Ship integration",
+      dependsOnTaskIds: [prerequisite.id, done.id, "missing", foreign.id],
+    };
+    const onInspect = vi.fn();
+    render(
+      <Taskboard
+        data={
+          {
+            tasks: [dependent, prerequisite, done],
+            assignments: [],
+            agents: [],
+          } as unknown as BootstrapData
+        }
+        onClearReadyFilter={vi.fn()}
+        onCreate={vi.fn()}
+        onMove={vi.fn()}
+        onThread={vi.fn()}
+        onInspect={onInspect}
+      />,
+    );
+
+    expect(screen.getByText("Prepare API · In progress")).toBeVisible();
+    expect(screen.getByText("Confirm schema · Done")).toBeVisible();
+    expect(screen.getByText("Unavailable prerequisite")).toBeVisible();
+    expect(screen.queryByText("Do not leak this task")).not.toBeInTheDocument();
+    expect(screen.getByText("+1 more")).toBeVisible();
+
+    await userEvent.click(screen.getByRole("button", { name: "Open prerequisite Prepare API" }));
+    expect(onInspect).toHaveBeenCalledExactlyOnceWith(prerequisite);
+  });
+});

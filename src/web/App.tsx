@@ -5785,6 +5785,23 @@ export function isReadyTask(task: Task, assignments: WorkAssignment[]): boolean 
   );
 }
 
+const taskStatusLabels: Record<Task["status"], string> = {
+  todo: "To do",
+  in_progress: "In progress",
+  blocked: "Blocked",
+  done: "Done",
+};
+
+export function resolveTaskPrerequisites(task: Task, tasks: Task[]): Array<Task | { id: string }> {
+  if (!task.dependsOnTaskIds || task.dependsOnTaskIds.length === 0) return [];
+  const tasksById = new Map(
+    tasks
+      .filter((candidate) => candidate.workspaceId === task.workspaceId)
+      .map((candidate) => [candidate.id, candidate]),
+  );
+  return task.dependsOnTaskIds.slice(0, 3).map((id) => tasksById.get(id) ?? { id });
+}
+
 export interface TaskPlanSummary {
   id: string;
   title: string;
@@ -5870,6 +5887,7 @@ export function Taskboard(props: {
     ? props.data.tasks.filter((task) => isReadyTask(task, props.data.assignments))
     : props.data.tasks;
   const planSummaries = summarizeTaskPlans(props.data.tasks, props.data.assignments);
+  const tasksById = new Map(props.data.tasks.map((task) => [task.id, task]));
   const exportPlanSummaries = () => {
     if (planSummaries.length === 0) return;
     const blob = new Blob(
@@ -5987,6 +6005,7 @@ export function Taskboard(props: {
                   task={task}
                   agent={task.assigneeId ? agents.get(task.assigneeId) : undefined}
                   assignment={assignments.get(task.id)}
+                  tasksById={tasksById}
                   onMove={props.onMove}
                   onThread={props.onThread}
                   onInspect={props.onInspect}
@@ -6004,6 +6023,7 @@ function TaskCard({
   task,
   agent,
   assignment,
+  tasksById,
   onMove,
   onThread,
   onInspect,
@@ -6011,6 +6031,7 @@ function TaskCard({
   task: Task;
   agent?: AgentView;
   assignment?: BootstrapData["assignments"][number];
+  tasksById: Map<string, Task>;
   onMove: (task: Task, status: Task["status"]) => Promise<unknown>;
   onThread: (id: string) => void;
   onInspect: (task: Task) => void;
@@ -6029,9 +6050,6 @@ function TaskCard({
         <span className="task-id">NX-{task.id.slice(0, 4).toUpperCase()}</span>
         <h3>{task.title}</h3>
         {task.planTitle && <span className="task-plan-label">Plan: {task.planTitle}</span>}
-        {task.dependsOnTaskIds && task.dependsOnTaskIds.length > 0 && (
-          <span className="task-plan-label">Depends on {task.dependsOnTaskIds.length} task(s)</span>
-        )}
         {task.description && <p>{task.description}</p>}
         {task.verificationCommand && (
           <span className="task-verification">
@@ -6050,6 +6068,39 @@ function TaskCard({
           </span>
         )}
       </button>
+      {task.dependsOnTaskIds && task.dependsOnTaskIds.length > 0 && (
+        <div className="task-prerequisites">
+          <span className="task-plan-label">Prerequisites ({task.dependsOnTaskIds.length})</span>
+          <div className="task-prerequisite-list">
+            {task.dependsOnTaskIds.slice(0, 3).map((dependencyId) => {
+              const prerequisite = tasksById.get(dependencyId);
+              if (!prerequisite || prerequisite.workspaceId !== task.workspaceId) {
+                return (
+                  <span className="task-prerequisite-missing" key={dependencyId}>
+                    Unavailable prerequisite
+                  </span>
+                );
+              }
+              return (
+                <button
+                  type="button"
+                  key={prerequisite.id}
+                  className="task-prerequisite"
+                  aria-label={`Open prerequisite ${prerequisite.title}`}
+                  onClick={() => onInspect(prerequisite)}
+                >
+                  {prerequisite.title} · {taskStatusLabels[prerequisite.status]}
+                </button>
+              );
+            })}
+            {task.dependsOnTaskIds.length > 3 && (
+              <span className="task-prerequisite-more">
+                +{task.dependsOnTaskIds.length - 3} more
+              </span>
+            )}
+          </div>
+        </div>
+      )}
       <footer>
         <div>
           {agent ? (

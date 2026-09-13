@@ -701,8 +701,10 @@ credentials.
 - Master plan steps optionally carry one-based `dependsOn` references. The dispatcher resolves them
   to generated `dependsOnTaskIds`, while the store enforces same-plan, same-workspace, acyclic
   edges. Explicit delegation rejects tasks with unfinished prerequisites; Taskboard reports those
-  tasks as dependency-blocked. Prerequisite tasks cannot be deleted while referenced. Plans without
-  dependencies remain independent. See [ADR 0128](adr/0128-plan-step-dependencies.md).
+  tasks as dependency-blocked. Cards expose up to three bounded same-workspace prerequisite title
+  and status links to the existing process dialog; missing or extra IDs are summarized without
+  mutation. Prerequisite tasks cannot be deleted while referenced. Plans without dependencies remain
+  independent. See [ADR 0128](adr/0128-plan-step-dependencies.md) and [ADR 0135](adr/0135-taskboard-prerequisite-links.md).
 
 - Each Taskboard plan card can create a reviewed Knowledge handoff. The browser serializes a capped
   Markdown snapshot of plan/task metadata, dependencies, and Worker labels, omitting prompts,

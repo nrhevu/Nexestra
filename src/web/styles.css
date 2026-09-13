@@ -2924,6 +2924,42 @@ kbd {
   font-size: 10px;
   letter-spacing: 0.02em;
 }
+.task-prerequisites {
+  margin: -8px 0 12px;
+}
+.task-prerequisites .task-plan-label {
+  margin: 0 0 6px;
+}
+.task-prerequisite-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.task-prerequisite,
+.task-prerequisite-missing,
+.task-prerequisite-more {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 7px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.2;
+}
+.task-prerequisite {
+  background: transparent;
+  cursor: pointer;
+}
+.task-prerequisite:hover,
+.task-prerequisite:focus-visible {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.task-prerequisite-missing {
+  color: var(--quiet);
+}
+.task-prerequisite-more {
+  color: var(--quiet);
+}
 .task-card-open > p {
   margin: -7px 0 13px;
   color: var(--muted);

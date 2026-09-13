@@ -410,7 +410,9 @@ metadata and Worker profile labels only; descriptions, transcripts, credentials,
 are excluded. The export is client-only and marks oversized loaded snapshots as truncated.
 Plan steps may also declare one-based prerequisites. The harness persists those task dependencies,
 rejects cycles and cross-plan references, and keeps a dependent task in a visible dependency-blocked
-state until every prerequisite is Done.
+state until every prerequisite is Done. Dependency-blocked cards list up to three same-workspace
+prerequisite titles and statuses; clicking one opens its process inspection dialog, while missing or
+additional IDs stay bounded and safe.
 Each plan card also offers **Save plan as Knowledge**. Nexestra prepares a capped Markdown snapshot
 of plan/task metadata, dependencies, and Worker labels, then opens the existing Knowledge document
 dialog so you can review the name, `#handle`, and description before upload. Prompts, transcripts,
