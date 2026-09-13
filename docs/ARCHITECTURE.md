@@ -671,6 +671,10 @@ credentials.
   and [ADR 0122](adr/0122-custom-surface-agent-entry.md). The `new_agent` action opens the existing
   workspace-scoped AgentDialog; arbitrary configured forms remain future work.
 
+- The Master `plan` tool generates one bounded plan ID for each invocation and persists that ID and
+  title on every created Task. Taskboard renders the title, while assignment and verification state
+  remain independent; the metadata is carried by normal state export/import.
+
 - Taskboard's completed Worker process response may include a bounded `sourceMessage` projection for
   the latest assignment: the canonical agent reply with the assignment run ID. This powers a direct
   reviewed Knowledge capture action while the server rereads the transcript by thread/message ID;

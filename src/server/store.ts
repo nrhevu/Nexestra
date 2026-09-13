@@ -3014,6 +3014,8 @@ export class FileStore {
         status: input.status,
         assigneeId: input.assigneeId,
         threadId: input.threadId,
+        ...(input.planId ? { planId: input.planId } : {}),
+        ...(input.planTitle ? { planTitle: input.planTitle } : {}),
         verificationCommand: input.verificationCommand,
         createdAt: now,
         updatedAt: now,

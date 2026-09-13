@@ -51,7 +51,11 @@ describe("isReadyTask", () => {
   });
 
   it("routes a custom-surface action to the ready Taskboard filter", async () => {
-    const ready = task("todo", "ready");
+    const ready = {
+      ...task("todo", "ready"),
+      planId: "00000000-0000-4000-8000-000000000001",
+      planTitle: "Implementation plan",
+    };
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -113,6 +117,7 @@ describe("isReadyTask", () => {
       "/surfaces/taskboard?filter=ready",
     );
     expect(screen.getByText("Task ready")).toBeVisible();
+    expect(screen.getByText("Plan: Implementation plan")).toBeVisible();
     expect(screen.getByRole("button", { name: "Clear ready filter" })).toBeVisible();
   });
 

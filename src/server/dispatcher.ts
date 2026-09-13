@@ -659,6 +659,7 @@ export class AgentDispatcher {
             }
           },
           createPlan: async (title, steps) => {
+            const planId = crypto.randomUUID();
             const tasks = [];
             for (const step of steps) {
               tasks.push(
@@ -669,6 +670,8 @@ export class AgentDispatcher {
                   status: "todo",
                   assigneeId: null,
                   threadId: thread.id,
+                  planId,
+                  planTitle: title,
                 }),
               );
             }

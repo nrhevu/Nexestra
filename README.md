@@ -393,6 +393,8 @@ is still an explicit follow-up.
 
 Workers run in read-only discussion mode. For an implementation request, a custom-provider Master
 must call `plan` to create durable Taskboard tasks and then call `delegate` for each task it assigns.
+Tasks created by that tool retain a generated plan ID and bounded plan title, which Taskboard displays
+so planned work remains distinguishable from manually created tasks after refresh or export.
 If the provider tries to return a final answer while planned tasks are still undelegated, the
 harness sends it back to the tool loop instead of leaving silent, unassigned work on the board.
 Delegation creates `nexestra/<assignment-id>` from the selected `#repository` and checks it out into

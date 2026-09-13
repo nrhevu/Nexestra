@@ -5685,6 +5685,7 @@ function TaskCard({
       >
         <span className="task-id">NX-{task.id.slice(0, 4).toUpperCase()}</span>
         <h3>{task.title}</h3>
+        {task.planTitle && <span className="task-plan-label">Plan: {task.planTitle}</span>}
         {task.description && <p>{task.description}</p>}
         {task.verificationCommand && (
           <span className="task-verification">

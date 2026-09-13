@@ -13,6 +13,7 @@ import {
   RunHistoryMetricsSchema,
   RunHistoryRequestSchema,
   RunHistoryTelemetrySummarySchema,
+  TaskSchema,
   ThreadHistoryRequestSchema,
   UpdateAgentSchema,
 } from "./contracts.js";
@@ -72,6 +73,26 @@ describe("CustomSurfaceSchema", () => {
         cards: [{ ...base.cards[0], action: "provider_cost" }],
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("TaskSchema", () => {
+  it("accepts bounded plan provenance metadata", () => {
+    const result = TaskSchema.safeParse({
+      id: "task-1",
+      workspaceId: "workspace-1",
+      title: "Implement feature",
+      description: "",
+      status: "todo",
+      assigneeId: null,
+      threadId: null,
+      planId: "00000000-0000-4000-8000-000000000001",
+      planTitle: "Implementation plan",
+      verificationCommand: "",
+      createdAt: "2026-09-13T00:00:00.000Z",
+      updatedAt: "2026-09-13T00:00:00.000Z",
+    });
+    expect(result.success).toBe(true);
   });
 });
 

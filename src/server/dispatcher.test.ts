@@ -171,6 +171,9 @@ class DelegatingMasterRunner implements AgentRunner {
       { title: "Implement feature", description: "Make the requested repository change." },
     ]);
     if (!task) throw new Error("expected planned task");
+    if (!task.planId || task.planTitle !== "Implementation plan") {
+      throw new Error("expected durable plan provenance");
+    }
     const delegated = await invocation.toolHooks.delegate({
       taskId: task.id,
       workerHandle: "builder",

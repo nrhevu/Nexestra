@@ -2793,6 +2793,13 @@ kbd {
   font-size: 13px;
   line-height: 1.4;
 }
+.task-plan-label {
+  display: inline-block;
+  margin: -8px 0 12px;
+  color: var(--accent);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
 .task-card-open > p {
   margin: -7px 0 13px;
   color: var(--muted);

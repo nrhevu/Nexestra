@@ -1133,6 +1133,8 @@ export const TaskSchema = z.object({
   status: z.enum(["todo", "in_progress", "blocked", "done"]),
   assigneeId: z.string().nullable(),
   threadId: z.string().nullable(),
+  planId: z.string().uuid().optional(),
+  planTitle: z.string().trim().max(160).optional(),
   verificationCommand: z.string().trim().max(2_000).default(""),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -1223,6 +1225,8 @@ export const CreateTaskSchema = z.object({
   status: z.enum(["todo", "in_progress", "blocked", "done"]).default("todo"),
   assigneeId: z.string().nullable().default(null),
   threadId: z.string().nullable().default(null),
+  planId: z.string().uuid().optional(),
+  planTitle: z.string().trim().max(160).optional(),
   verificationCommand: z.string().trim().max(2_000).default(""),
 });
 
