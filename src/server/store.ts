@@ -3107,6 +3107,9 @@ export class FileStore {
           "Wait for the active Worker assignment to finish before deleting this task.",
         );
       }
+      if (nextState.tasks.some((task) => task.dependsOnTaskIds?.includes(id))) {
+        throw new StoreError("conflict", "A task that is still a prerequisite cannot be deleted.");
+      }
       nextState.tasks.splice(index, 1);
       await this.writeState(nextState);
       this.state = nextState;

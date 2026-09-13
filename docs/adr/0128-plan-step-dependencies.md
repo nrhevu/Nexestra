@@ -21,6 +21,9 @@ the resulting graph remains acyclic. `delegateFromTask` rejects a task while any
 `done`; after prerequisites finish, the same explicit delegation path succeeds. Plans without
 dependencies preserve existing behavior.
 
+Tasks that are still referenced as prerequisites cannot be deleted until those edges are removed,
+so a dependent task cannot be left with a dangling blocker.
+
 Taskboard marks todo plan tasks waiting on unfinished prerequisites as dependency-blocked, and shows
 a small dependency label on affected cards. This is a scheduling guard, not automatic dispatch or
 approval.

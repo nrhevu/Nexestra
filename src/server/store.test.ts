@@ -1753,6 +1753,9 @@ describe("FileStore", () => {
     ).rejects.toMatchObject({
       code: "invalid",
     });
+    await expect(store.deleteTask(first.id)).rejects.toMatchObject({ code: "conflict" });
+    await store.updateTask(second.id, { dependsOnTaskIds: [] });
+    await expect(store.deleteTask(first.id)).resolves.toBeUndefined();
     await expect(
       store.updateTask(second.id, { dependsOnTaskIds: [foreign.id] }),
     ).rejects.toMatchObject({

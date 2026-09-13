@@ -697,7 +697,8 @@ credentials.
 - Master plan steps optionally carry one-based `dependsOn` references. The dispatcher resolves them
   to generated `dependsOnTaskIds`, while the store enforces same-plan, same-workspace, acyclic
   edges. Explicit delegation rejects tasks with unfinished prerequisites; Taskboard reports those
-  tasks as dependency-blocked. Plans without dependencies remain independent. See [ADR 0128](adr/0128-plan-step-dependencies.md).
+  tasks as dependency-blocked. Prerequisite tasks cannot be deleted while referenced. Plans without
+  dependencies remain independent. See [ADR 0128](adr/0128-plan-step-dependencies.md).
 
 - Taskboard's completed Worker process response may include a bounded `sourceMessage` projection for
   the latest assignment: the canonical agent reply with the assignment run ID. This powers a direct
