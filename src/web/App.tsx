@@ -128,6 +128,7 @@ import {
   showDesktopAttentionNotification,
   writeDesktopNotificationPreferences,
 } from "./notification-preferences.js";
+import { planSummaryExportFilename, serializePlanSummaryExport } from "./plan-summary-export.js";
 import { RepositoryBranchPicker } from "./RepositoryBranchPicker.js";
 import { ReviewQueueView } from "./ReviewQueueView.js";
 import { RunHistoryView } from "./RunHistoryView.js";
@@ -5688,6 +5689,26 @@ export function Taskboard(props: {
     ? props.data.tasks.filter((task) => isReadyTask(task, props.data.assignments))
     : props.data.tasks;
   const planSummaries = summarizeTaskPlans(props.data.tasks, props.data.assignments);
+  const exportPlanSummaries = () => {
+    if (planSummaries.length === 0) return;
+    const blob = new Blob(
+      [
+        serializePlanSummaryExport({
+          workspaceId: props.data.workspace.id,
+          plans: planSummaries,
+          agents: props.data.agents,
+          assignments: props.data.assignments,
+        }),
+      ],
+      { type: "application/json" },
+    );
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = planSummaryExportFilename(props.data.workspace.id);
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
   return (
     <div className="surface-view">
       <header className="workspace-header">
@@ -5704,6 +5725,11 @@ export function Taskboard(props: {
           {props.readyOnly && (
             <button className="secondary-button" type="button" onClick={props.onClearReadyFilter}>
               Clear ready filter
+            </button>
+          )}
+          {planSummaries.length > 0 && (
+            <button className="secondary-button" type="button" onClick={exportPlanSummaries}>
+              Export plan summaries
             </button>
           )}
           <button className="primary-button" type="button" onClick={() => props.onCreate("todo")}>

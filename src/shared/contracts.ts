@@ -1170,6 +1170,49 @@ export const WorkAssignmentSchema = z.object({
 });
 export type WorkAssignment = z.infer<typeof WorkAssignmentSchema>;
 
+export const PLAN_SUMMARY_EXPORT_MAX_PLANS = 200;
+export const PLAN_SUMMARY_EXPORT_MAX_TASKS = 200;
+
+const PlanSummaryExportAssigneeSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  handle: HandleSchema,
+  harness: z.enum(["codex", "opencode"]),
+  model: z.string().optional(),
+});
+
+const PlanSummaryExportTaskSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  status: TaskSchema.shape.status,
+  assignee: PlanSummaryExportAssigneeSchema.nullable(),
+  assignmentStatus: WorkAssignmentSchema.shape.status.nullable(),
+});
+
+const PlanSummaryExportPlanSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  total: z.number().int().nonnegative(),
+  ready: z.number().int().nonnegative(),
+  delegated: z.number().int().nonnegative(),
+  queued: z.number().int().nonnegative(),
+  running: z.number().int().nonnegative(),
+  blocked: z.number().int().nonnegative(),
+  done: z.number().int().nonnegative(),
+  tasks: z.array(PlanSummaryExportTaskSchema).max(PLAN_SUMMARY_EXPORT_MAX_TASKS),
+});
+
+export const PlanSummaryExportSchema = z.object({
+  format: z.literal("nexestra.plan-summary"),
+  version: z.literal(1),
+  workspaceId: z.string(),
+  exportedAt: z.string().datetime(),
+  plans: z.array(PlanSummaryExportPlanSchema).max(PLAN_SUMMARY_EXPORT_MAX_PLANS),
+  includedTaskCount: z.number().int().nonnegative().max(PLAN_SUMMARY_EXPORT_MAX_TASKS),
+  truncated: z.boolean(),
+});
+export type PlanSummaryExport = z.infer<typeof PlanSummaryExportSchema>;
+
 export type AssignmentGitReviewState =
   | "pending"
   | "available"

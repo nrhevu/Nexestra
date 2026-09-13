@@ -688,6 +688,12 @@ credentials.
   running, blocked, and done counts using the latest assignment update; task buttons open the
   existing process dialog. The summary performs no mutation or dispatch. See [ADR 0125](adr/0125-taskboard-plan-summary.md).
 
+- Taskboard can export its loaded plan projection as a client-only, versioned `nexestra.plan-summary`
+  packet. The packet is capped at 200 plans and 200 task entries, includes progress counts, task
+  identity and bounded Worker profile labels, and excludes descriptions, transcripts, prompts,
+  credentials, repository IDs, branches, and worktree paths. Oversized snapshots retain plan counts
+  and set `truncated`; the export does not mutate state. See [ADR 0127](adr/0127-plan-summary-export.md).
+
 - Taskboard's completed Worker process response may include a bounded `sourceMessage` projection for
   the latest assignment: the canonical agent reply with the assignment run ID. This powers a direct
   reviewed Knowledge capture action while the server rereads the transcript by thread/message ID;

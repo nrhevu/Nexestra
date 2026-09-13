@@ -402,6 +402,9 @@ Tasks created by that tool retain a generated plan ID and bounded plan title, wh
 so planned work remains distinguishable from manually created tasks after refresh or export.
 Taskboard also groups those tasks into a read-only plan progress summary with bounded ready, delegated,
 queued, running, blocked, and done counts; each task opens the existing process inspection dialog.
+The summary can be exported as a capped `nexestra.plan-summary` JSON handoff containing plan/task
+metadata and Worker profile labels only; descriptions, transcripts, credentials, and repository paths
+are excluded. The export is client-only and marks oversized loaded snapshots as truncated.
 If the provider tries to return a final answer while planned tasks are still undelegated, the
 harness sends it back to the tool loop instead of leaving silent, unassigned work on the board.
 Delegation creates `nexestra/<assignment-id>` from the selected `#repository` and checks it out into

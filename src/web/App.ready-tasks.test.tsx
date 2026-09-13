@@ -224,4 +224,57 @@ describe("summarizeTaskPlans", () => {
     await userEvent.click(screen.getByRole("button", { name: "Open planned task Task planned" }));
     expect(onInspect).toHaveBeenCalledWith(planned);
   });
+
+  it("exports plan summaries through a client-side download", async () => {
+    const planned = {
+      ...task("todo", "planned"),
+      planId: "plan-1",
+      planTitle: "Launch plan",
+    };
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+    const createObjectURL = vi.fn((_blob: Blob) => "blob:plan-summary");
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => undefined);
+    try {
+      render(
+        <Taskboard
+          data={
+            {
+              workspace: { id: "workspace-1" },
+              tasks: [planned],
+              assignments: [],
+              agents: [],
+            } as unknown as BootstrapData
+          }
+          onClearReadyFilter={vi.fn()}
+          onCreate={vi.fn()}
+          onMove={vi.fn()}
+          onThread={vi.fn()}
+          onInspect={vi.fn()}
+        />,
+      );
+
+      await userEvent.click(screen.getByRole("button", { name: "Export plan summaries" }));
+      expect(createObjectURL).toHaveBeenCalledOnce();
+      const exported = createObjectURL.mock.calls[0]?.[0];
+      expect(exported).toBeInstanceOf(Blob);
+      if (!(exported instanceof Blob)) throw new Error("expected plan summary Blob");
+      expect(await exported.text()).toContain("nexestra.plan-summary");
+      expect(click).toHaveBeenCalledOnce();
+    } finally {
+      Object.defineProperty(URL, "createObjectURL", {
+        configurable: true,
+        value: originalCreateObjectURL,
+      });
+      Object.defineProperty(URL, "revokeObjectURL", {
+        configurable: true,
+        value: originalRevokeObjectURL,
+      });
+    }
+  });
 });
