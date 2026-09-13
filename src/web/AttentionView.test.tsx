@@ -203,4 +203,40 @@ describe("Needs attention", () => {
     );
     vi.unstubAllGlobals();
   });
+
+  it("offers restore for prior attention actions", async () => {
+    const onClear = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          ({
+            ok: true,
+            status: 200,
+            json: async () => [
+              {
+                workspaceId: "workspace-a",
+                attentionId: "task:one",
+                kind: "task_blocked",
+                action: "dismiss",
+                createdAt: "2026-09-12T00:00:00.000Z",
+              },
+            ],
+          }) as Response,
+      ),
+    );
+    render(
+      <AttentionView
+        workspaceId="workspace-a"
+        items={[]}
+        onThread={vi.fn()}
+        onTask={vi.fn()}
+        onClear={onClear}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Refresh history" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Restore" }));
+    expect(onClear).toHaveBeenCalledExactlyOnceWith("task:one", "task_blocked");
+    vi.unstubAllGlobals();
+  });
 });

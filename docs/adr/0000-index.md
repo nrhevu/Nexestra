@@ -117,3 +117,4 @@
 | [0114](0114-archived-workspace-recovery-manifest-surface.md) | Accepted | Inspect archived workspace recovery manifests without mutation |
 | [0115](0115-server-authoritative-restore-preflight.md) | Accepted | Verify archive identity and conflicts on the server before restore |
 | [0116](0116-create-only-archive-import.md) | Accepted | Import a verified archive as a new archived workspace with rollback |
+| [0117](0117-reversible-attention-clear.md) | Accepted | Restore a snoozed or dismissed Attention item through a scoped clear action |

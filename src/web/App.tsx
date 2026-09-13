@@ -2294,6 +2294,20 @@ export function App() {
                 }
               })();
             }}
+            onClear={(id, kind) => {
+              void (async () => {
+                try {
+                  await api(
+                    `/api/attention/${encodeURIComponent(id)}/state?workspaceId=${encodeURIComponent(data.workspace.id)}`,
+                    { method: "POST", body: JSON.stringify({ action: "clear", kind }) },
+                  );
+                  await refresh(true);
+                  flash("Attention item restored.");
+                } catch (caught) {
+                  setError(messageFrom(caught));
+                }
+              })();
+            }}
           />
         ) : route.surface === "agents" ? (
           <AgentsView

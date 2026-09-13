@@ -83,7 +83,7 @@ export const AttentionKindSchema = z.enum([
 ]);
 export type AttentionKind = z.infer<typeof AttentionKindSchema>;
 
-export const AttentionAuditActionSchema = z.enum(["snooze", "dismiss"]);
+export const AttentionAuditActionSchema = z.enum(["snooze", "dismiss", "clear"]);
 export const AttentionAuditEntrySchema = z.object({
   workspaceId: z.string().min(1).max(200),
   attentionId: z.string().min(1).max(200),

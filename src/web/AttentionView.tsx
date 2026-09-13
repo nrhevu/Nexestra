@@ -21,6 +21,7 @@ export function AttentionView({
   onRun,
   onSnooze,
   onDismiss,
+  onClear,
 }: {
   workspaceId?: string;
   items: AttentionItem[];
@@ -29,6 +30,7 @@ export function AttentionView({
   onRun?: (threadId: string, runId: string) => void;
   onSnooze?: (id: string, durationMinutes?: number) => void;
   onDismiss?: (id: string) => void;
+  onClear?: (id: string, kind: AttentionAuditEntry["kind"]) => void;
 }) {
   const [audit, setAudit] = useState<AttentionAuditEntry[]>([]);
   const [auditError, setAuditError] = useState("");
@@ -170,8 +172,22 @@ export function AttentionView({
                   key={`${entry.createdAt}:${entry.attentionId}:${entry.action}:${entry.snoozedUntil ?? ""}`}
                 >
                   <span>
-                    {entry.action === "snooze" ? "Snoozed" : "Dismissed"} · {entry.kind}
+                    {entry.action === "snooze"
+                      ? "Snoozed"
+                      : entry.action === "dismiss"
+                        ? "Dismissed"
+                        : "Restored"}{" "}
+                    · {entry.kind}
                   </span>
+                  {onClear && entry.action !== "clear" ? (
+                    <button
+                      type="button"
+                      className="ghost-button"
+                      onClick={() => onClear(entry.attentionId, entry.kind)}
+                    >
+                      Restore
+                    </button>
+                  ) : null}
                   <time dateTime={entry.createdAt}>
                     {new Date(entry.createdAt).toLocaleString()}
                   </time>

@@ -782,11 +782,34 @@ export class FileStore {
     workspaceId: string | undefined,
     attentionId: string,
     rawInput: unknown,
-  ): Promise<AttentionState> {
+  ): Promise<AttentionState | null> {
     const input = UpdateAttentionStateSchema.parse(rawInput);
     const workspace = this.requireWorkspace(workspaceId);
     return this.withWrite(async () => {
       const now = new Date();
+      if (input.action === "clear") {
+        const nextState = structuredClone(this.state);
+        nextState.attentionStates = nextState.attentionStates.filter(
+          (entry) => !(entry.workspaceId === workspace.id && entry.attentionId === attentionId),
+        );
+        const auditEntry = AttentionAuditEntrySchema.parse({
+          workspaceId: workspace.id,
+          attentionId,
+          kind: input.kind ?? "unknown",
+          action: input.action,
+          createdAt: now.toISOString(),
+        });
+        const foreignAudit = nextState.attentionAudit.filter(
+          (entry) => entry.workspaceId !== workspace.id,
+        );
+        const workspaceAudit = nextState.attentionAudit
+          .filter((entry) => entry.workspaceId === workspace.id)
+          .slice(-(ATTENTION_AUDIT_MAX_ENTRIES - 1));
+        nextState.attentionAudit = [...foreignAudit, ...workspaceAudit, auditEntry];
+        await this.writeState(nextState);
+        this.state = nextState;
+        return null;
+      }
       const next: AttentionState =
         input.action === "dismiss"
           ? AttentionStateSchema.parse({

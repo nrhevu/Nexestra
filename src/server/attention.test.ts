@@ -164,6 +164,28 @@ describe("workspace attention", () => {
     expect(workspaceActivity(store, workspaceId, []).attention).toHaveLength(1);
   });
 
+  it("clears one workspace attention state and records a reversible audit action", async () => {
+    await store.createTask({ title: "Restore me", status: "blocked" });
+    const item = workspaceActivity(store, workspaceId, []).attention[0];
+    if (!item) throw new Error("expected attention item");
+    await store.updateAttentionState(workspaceId, item.id, {
+      action: "snooze",
+      kind: item.kind,
+      durationMinutes: 60,
+    });
+    expect(workspaceActivity(store, workspaceId, []).attention).toEqual([]);
+    await store.updateAttentionState(workspaceId, item.id, { action: "clear", kind: item.kind });
+    expect(workspaceActivity(store, workspaceId, []).attention).toHaveLength(1);
+    expect(store.listAttentionAudit(workspaceId)[0]).toMatchObject({
+      action: "clear",
+      attentionId: item.id,
+    });
+    const other = await store.createWorkspace({ name: "Other" });
+    await store.updateAttentionState(other.id, item.id, { action: "clear", kind: item.kind });
+    expect(workspaceActivity(store, workspaceId, []).attention).toHaveLength(1);
+    expect(store.listAttentionAudit(other.id)[0]?.workspaceId).toBe(other.id);
+  });
+
   it("retains a bounded, workspace-isolated audit trail across restarts", async () => {
     const root = store.root;
     const other = await store.createWorkspace({ name: "Other" });

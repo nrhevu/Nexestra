@@ -608,7 +608,8 @@ credentials.
   turns and links to their thread. Users can persist a bounded one-hour, four-hour, or one-day
   snooze or dismissal for a derived item in `state.json`; snoozes expire server-side and dismissals
   reappear when the item's `updatedAt` advances. The action history is bounded metadata only and
-  has no restore control.
+  includes a Restore action that clears one matching workspace state and appends a bounded `clear`
+  audit event. See [ADR 0117](adr/0117-reversible-attention-clear.md).
   Changes from another client are
   discovered on return, a visible online event or explicit refresh; idle clients do not continuously
   exchange updates.

@@ -135,9 +135,10 @@ Enable **Auto-refresh newest page** when supervising active work; it checks the 
 first page every 15 seconds, pauses on older pages, and never retries or changes run state.
 
 Attention actions are also available as a bounded audit trail. Open **Needs attention** and choose
-**Refresh history** to load the newest 200 snooze or dismiss actions for the selected workspace;
-the log contains only action metadata and timestamps, not task or transcript content. See [ADR
-0096](docs/adr/0096-attention-audit-history.md).
+**Refresh history** to load the newest 200 snooze, dismiss, or restore actions for the selected
+workspace; choose **Restore** on a prior row to clear its matching state. The log contains only
+action metadata and timestamps, not task or transcript content. See [ADR 0096](docs/adr/0096-attention-audit-history.md)
+and [ADR 0117](docs/adr/0117-reversible-attention-clear.md).
 Settings also offers optional desktop notifications for increased Attention counts. Permission is
 requested only after you enable the toggle; browser storage or denied permission does not affect the
 app, and notification text contains only the workspace name and count. See [ADR
