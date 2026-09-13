@@ -128,7 +128,12 @@ import {
   showDesktopAttentionNotification,
   writeDesktopNotificationPreferences,
 } from "./notification-preferences.js";
-import { planSummaryExportFilename, serializePlanSummaryExport } from "./plan-summary-export.js";
+import {
+  planSummaryExportFilename,
+  planSummaryMarkdownFilename,
+  serializePlanSummaryExport,
+  serializePlanSummaryMarkdown,
+} from "./plan-summary-export.js";
 import { RepositoryBranchPicker } from "./RepositoryBranchPicker.js";
 import { ReviewQueueView } from "./ReviewQueueView.js";
 import { RunHistoryView } from "./RunHistoryView.js";
@@ -199,6 +204,13 @@ type CaptureMessage = Pick<Message, "id" | "threadId" | "content" | "createdAt">
   author: Pick<Message["author"], "name">;
 };
 
+interface KnowledgeInitialUpload {
+  file: File;
+  name: string;
+  handle: string;
+  description: string;
+}
+
 type BulkCaptureEntry = {
   reviewId: string;
   message: CaptureMessage;
@@ -249,6 +261,7 @@ export function App() {
   const knowledgeInspectRef = useRef<KnowledgeItem | undefined>(undefined);
   const [knowledgeToEdit, setKnowledgeToEdit] = useState<KnowledgeItem>();
   const [knowledgeToDelete, setKnowledgeToDelete] = useState<KnowledgeItem>();
+  const [knowledgeInitialUpload, setKnowledgeInitialUpload] = useState<KnowledgeInitialUpload>();
   const [messageToCapture, setMessageToCapture] = useState<CaptureMessage>();
   const [bulkCaptureQueue, setBulkCaptureQueue] = useState<BulkCaptureEntry[]>([]);
   const [bulkCaptureCurrent, setBulkCaptureCurrent] = useState<BulkCaptureEntry>();
@@ -2417,6 +2430,25 @@ export function App() {
             }
             onThread={openThread}
             onInspect={setTaskToInspect}
+            onSavePlan={(plan) => {
+              const markdown = serializePlanSummaryMarkdown({
+                workspaceId: data.workspace.id,
+                plans: [plan],
+                agents: data.agents,
+                assignments: data.assignments,
+              });
+              const file = new File([markdown], planSummaryMarkdownFilename(plan), {
+                type: "text/markdown",
+              });
+              const name = `${plan.title} handoff`;
+              setKnowledgeInitialUpload({
+                file,
+                name,
+                handle: handleFromName(`plan-${plan.title}`),
+                description: `Reviewed handoff for plan ${plan.id}.`,
+              });
+              setModal("knowledge");
+            }}
           />
         )}
       </section>
@@ -2564,10 +2596,16 @@ export function App() {
       )}
       {modal === "knowledge" && (
         <KnowledgeDialog
+          key={knowledgeInitialUpload?.file.name ?? "manual-knowledge"}
           data={data}
-          onClose={() => setModal(null)}
+          initialUpload={knowledgeInitialUpload}
+          onClose={() => {
+            setKnowledgeInitialUpload(undefined);
+            setModal(null);
+          }}
           onCreated={async () => {
             await refresh();
+            setKnowledgeInitialUpload(undefined);
             setModal(null);
             flash("Knowledge added to the workspace.");
           }}
@@ -5680,6 +5718,7 @@ export function Taskboard(props: {
   onMove: (task: Task, status: Task["status"]) => Promise<unknown>;
   onThread: (id: string) => void;
   onInspect: (task: Task) => void;
+  onSavePlan?: (plan: TaskPlanSummary) => void;
 }) {
   const columns: { status: Task["status"]; title: string }[] = [
     { status: "todo", title: "To do" },
@@ -5775,6 +5814,15 @@ export function Taskboard(props: {
                     </button>
                   ))}
                 </div>
+                {props.onSavePlan && (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => props.onSavePlan?.(plan)}
+                  >
+                    Save plan as Knowledge
+                  </button>
+                )}
               </article>
             ))}
           </div>
@@ -8232,18 +8280,20 @@ function CaptureKnowledgeDialog({
 
 function KnowledgeDialog({
   data,
+  initialUpload,
   onClose,
   onCreated,
 }: {
   data: BootstrapData;
+  initialUpload?: KnowledgeInitialUpload;
   onClose: () => void;
   onCreated: () => Promise<void>;
 }) {
   const [kind, setKind] = useState<KnowledgeItem["kind"]>("document");
-  const [name, setName] = useState("");
-  const [handle, setHandle] = useState("");
+  const [name, setName] = useState(initialUpload?.name ?? "");
+  const [handle, setHandle] = useState(initialUpload?.handle ?? "");
   const [handleEdited, setHandleEdited] = useState(false);
-  const [documentFile, setDocumentFile] = useState<File>();
+  const [documentFile, setDocumentFile] = useState<File | undefined>(initialUpload?.file);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string>();
   return (
@@ -8329,13 +8379,22 @@ function KnowledgeDialog({
           </div>
         </Field>
         <Field label="Description" optional>
-          <textarea name="description" rows={3} placeholder="What this knowledge contains…" />
+          <textarea
+            name="description"
+            rows={3}
+            defaultValue={initialUpload?.description}
+            placeholder="What this knowledge contains…"
+          />
         </Field>
         {kind === "document" ? (
           <Field label="Document" hint="The file is copied into the managed workspace.">
+            {initialUpload && (
+              <p className="modal-help">Prepared plan handoff: {initialUpload.file.name}</p>
+            )}
             <input
               name="file"
               type="file"
+              accept=".md,text/markdown,text/plain"
               onChange={(event) => setDocumentFile(event.target.files?.[0])}
             />
           </Field>

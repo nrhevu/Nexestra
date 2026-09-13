@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import type { AgentView, Task, WorkAssignment } from "../shared/contracts.js";
 import { PlanSummaryExportSchema } from "../shared/contracts.js";
 import type { TaskPlanSummary } from "./App.js";
-import { planSummaryExportFilename, serializePlanSummaryExport } from "./plan-summary-export.js";
+import {
+  planSummaryExportFilename,
+  planSummaryMarkdownFilename,
+  serializePlanSummaryExport,
+  serializePlanSummaryMarkdown,
+} from "./plan-summary-export.js";
 
 function plannedTask(id: string, assigneeId: string | null = null): Task {
   return {
@@ -154,5 +159,47 @@ describe("plan summary export", () => {
     expect(planSummaryExportFilename("workspace/unsafe", new Date("2026-09-13"))).toBe(
       "nexestra-plan-summary-workspace-unsafe-2026-09-13.json",
     );
+  });
+
+  it("creates a bounded Knowledge handoff with metadata-only task lines", () => {
+    const task = {
+      ...plannedTask("task-1", "agent-1"),
+      title: "Review\nrelease",
+      dependsOnTaskIds: ["task-0"],
+    };
+    const markdown = serializePlanSummaryMarkdown({
+      workspaceId: "workspace-1",
+      plans: [summary([task])],
+      agents: [worker],
+      assignments: [assignment],
+    });
+    expect(markdown).toContain("## Launch plan");
+    expect(markdown).toContain(
+      "Review release — status: in_progress; assignee: @builder; assignment: running; depends on: `task-0`",
+    );
+    expect(markdown).not.toContain("private acceptance details");
+    expect(markdown).not.toContain("pnpm test");
+    expect(markdown).not.toContain("repository-secret");
+    expect(markdown).not.toContain("/private/worktree");
+  });
+
+  it("caps Knowledge handoffs and uses a safe filename", () => {
+    const plans = Array.from({ length: 201 }, (_, index) => ({
+      ...summary([plannedTask(`task-${index}`)]),
+      id: `plan-${index}`,
+      title: `Plan ${index}`,
+    }));
+    const markdown = serializePlanSummaryMarkdown({
+      workspaceId: "workspace-1",
+      plans,
+      agents: [],
+      assignments: [],
+    });
+    expect(markdown).toContain("Additional plans or tasks were omitted");
+    expect(markdown.match(/^## /gm)).toHaveLength(200);
+    const firstPlan = plans[0];
+    expect(firstPlan).toBeDefined();
+    if (!firstPlan) throw new Error("expected first plan");
+    expect(planSummaryMarkdownFilename(firstPlan)).toBe("nexestra-Plan-0-handoff.md");
   });
 });

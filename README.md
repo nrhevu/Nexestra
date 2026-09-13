@@ -408,6 +408,11 @@ are excluded. The export is client-only and marks oversized loaded snapshots as 
 Plan steps may also declare one-based prerequisites. The harness persists those task dependencies,
 rejects cycles and cross-plan references, and keeps a dependent task in a visible dependency-blocked
 state until every prerequisite is Done.
+Each plan card also offers **Save plan as Knowledge**. Nexestra prepares a capped Markdown snapshot
+of plan/task metadata, dependencies, and Worker labels, then opens the existing Knowledge document
+dialog so you can review the name, `#handle`, and description before upload. Prompts, transcripts,
+credentials, repository IDs, branches, and worktree paths are excluded; manually created tasks are
+not included.
 If the provider tries to return a final answer while planned tasks are still undelegated, the
 harness sends it back to the tool loop instead of leaving silent, unassigned work on the board.
 Delegation creates `nexestra/<assignment-id>` from the selected `#repository` and checks it out into

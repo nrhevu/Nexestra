@@ -120,3 +120,76 @@ export function planSummaryExportFilename(workspaceId: string, date = new Date()
   const safeWorkspaceId = workspaceId.replace(/[^a-zA-Z0-9_-]+/g, "-").slice(0, 60) || "workspace";
   return `nexestra-plan-summary-${safeWorkspaceId}-${date.toISOString().slice(0, 10)}.json`;
 }
+
+function oneLine(value: string): string {
+  return value
+    .replace(/[\r\n]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Builds a bounded, reviewable handoff for Knowledge. It intentionally contains
+ * only plan/task metadata; prompts, transcripts, credentials and filesystem
+ * paths never enter this document.
+ */
+export function serializePlanSummaryMarkdown(input: PlanSummaryExportInput): string {
+  const latestAssignments = new Map<string, WorkAssignment>();
+  for (const assignment of input.assignments) {
+    if (assignment.workspaceId !== input.workspaceId) continue;
+    const previous = latestAssignments.get(assignment.taskId);
+    if (!previous || assignment.updatedAt > previous.updatedAt) {
+      latestAssignments.set(assignment.taskId, assignment);
+    }
+  }
+  const agents = new Map(input.agents.map((agent) => [agent.id, agent]));
+  const scopedPlans = input.plans.flatMap((plan) => {
+    const tasks = plan.tasks.filter((task) => task.workspaceId === input.workspaceId);
+    return tasks.length > 0 ? [{ plan, tasks }] : [];
+  });
+  let remainingTasks = PLAN_SUMMARY_EXPORT_MAX_TASKS;
+  const lines = [
+    "# Nexestra plan handoff",
+    "",
+    "This reviewed summary contains plan and task metadata only.",
+    "",
+  ];
+  for (const { plan, tasks: scopedTasks } of scopedPlans.slice(0, PLAN_SUMMARY_EXPORT_MAX_PLANS)) {
+    if (remainingTasks <= 0) break;
+    const tasks = scopedTasks.slice(0, remainingTasks);
+    remainingTasks -= tasks.length;
+    lines.push(`## ${oneLine(plan.title)}`);
+    lines.push(`- Plan ID: \`${plan.id}\``);
+    lines.push(
+      `- Progress: ${plan.done} done, ${plan.running} running, ${plan.queued} queued, ${plan.ready} ready, ${plan.dependencyBlocked} dependency-blocked, ${plan.blocked} blocked`,
+    );
+    lines.push("", "### Tasks");
+    tasks.forEach((task, index) => {
+      const assignment = latestAssignments.get(task.id);
+      const assignee = task.assigneeId ? agents.get(task.assigneeId) : undefined;
+      const labels = [`status: ${task.status}`];
+      if (assignee?.kind === "worker") labels.push(`assignee: @${assignee.handle}`);
+      if (assignment) labels.push(`assignment: ${assignment.status}`);
+      if (task.dependsOnTaskIds?.length) {
+        labels.push(`depends on: ${task.dependsOnTaskIds.map((id) => `\`${id}\``).join(", ")}`);
+      }
+      lines.push(`${index + 1}. ${oneLine(task.title)} — ${labels.join("; ")}`);
+    });
+    lines.push("");
+  }
+  const truncated =
+    scopedPlans.length > PLAN_SUMMARY_EXPORT_MAX_PLANS ||
+    scopedPlans.reduce((total, entry) => total + entry.tasks.length, 0) >
+      PLAN_SUMMARY_EXPORT_MAX_TASKS;
+  if (truncated)
+    lines.push("_Additional plans or tasks were omitted to keep this handoff bounded._", "");
+  return `${lines.join("\n").trim()}\n`;
+}
+
+export function planSummaryMarkdownFilename(plan: TaskPlanSummary): string {
+  const safeTitle =
+    oneLine(plan.title)
+      .replace(/[^a-zA-Z0-9_-]+/g, "-")
+      .slice(0, 60) || "plan";
+  return `nexestra-${safeTitle}-handoff.md`;
+}

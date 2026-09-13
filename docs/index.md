@@ -159,3 +159,4 @@
 95. [Dependent tool-call ordering research](research/2026-09-13-dependent-tool-call-ordering.md): keep independent tool calls parallel while waiting for plan state before delegation.
 96. [Plan summary export research](research/2026-09-13-plan-summary-export.md): hand off bounded plan metadata without transcripts, credentials, or repository paths.
 97. [Plan step dependency research](research/2026-09-13-plan-step-dependencies.md): preserve bounded prerequisite edges and block delegation until prerequisites are done.
+98. [Plan to Knowledge handoff research](research/2026-09-13-plan-knowledge-handoff.md): save a reviewed, bounded plan metadata snapshot through the existing Knowledge document flow.

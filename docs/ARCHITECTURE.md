@@ -700,6 +700,12 @@ credentials.
   tasks as dependency-blocked. Prerequisite tasks cannot be deleted while referenced. Plans without
   dependencies remain independent. See [ADR 0128](adr/0128-plan-step-dependencies.md).
 
+- Each Taskboard plan card can create a reviewed Knowledge handoff. The browser serializes a capped
+  Markdown snapshot of plan/task metadata, dependencies, and Worker labels, omitting prompts,
+  transcripts, credentials, repository IDs, branches, and worktree paths. It preloads the existing
+  Knowledge document dialog; upload and workspace refresh occur only after explicit confirmation.
+  See [ADR 0129](adr/0129-plan-knowledge-handoff.md).
+
 - Taskboard's completed Worker process response may include a bounded `sourceMessage` projection for
   the latest assignment: the canonical agent reply with the assignment run ID. This powers a direct
   reviewed Knowledge capture action while the server rereads the transcript by thread/message ID;

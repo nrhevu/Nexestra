@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BootstrapData, Task, WorkAssignment } from "../shared/contracts.js";
@@ -223,6 +223,104 @@ describe("summarizeTaskPlans", () => {
     expect(screen.getByRole("region", { name: "Plan progress" })).toHaveTextContent("Launch plan");
     await userEvent.click(screen.getByRole("button", { name: "Open planned task Task planned" }));
     expect(onInspect).toHaveBeenCalledWith(planned);
+  });
+
+  it("offers an explicit Knowledge handoff without invoking an API", async () => {
+    const planned = {
+      ...task("todo", "planned"),
+      planId: "plan-1",
+      planTitle: "Launch plan",
+    };
+    const onSavePlan = vi.fn();
+    render(
+      <Taskboard
+        data={{ tasks: [planned], assignments: [], agents: [] } as unknown as BootstrapData}
+        onClearReadyFilter={vi.fn()}
+        onCreate={vi.fn()}
+        onMove={vi.fn()}
+        onThread={vi.fn()}
+        onInspect={vi.fn()}
+        onSavePlan={onSavePlan}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Save plan as Knowledge" }));
+    expect(onSavePlan).toHaveBeenCalledOnce();
+    expect(onSavePlan).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "plan-1", title: "Launch plan" }),
+    );
+  });
+
+  it("preloads the reviewed Knowledge dialog and uploads only after confirmation", async () => {
+    const planned = {
+      ...task("todo", "planned"),
+      planId: "plan-1",
+      planTitle: "Launch plan",
+    };
+    const workspace = {
+      id: "workspace-1",
+      name: "Workspace",
+      slug: "workspace",
+      createdAt: "2026-09-13T00:00:00.000Z",
+      updatedAt: "2026-09-13T00:00:00.000Z",
+    };
+    const bootstrap = {
+      workspaces: [workspace],
+      workspace,
+      agents: [],
+      threads: [],
+      tasks: [planned],
+      knowledge: [],
+      assignments: [],
+      activeRuns: [],
+      attention: [],
+      customSurfaces: [],
+      runtime: {
+        chatgpt: { installed: true, connected: true, message: "Connected." },
+        harnesses: {
+          codex: { installed: true, version: "codex 1.0" },
+          opencode: { installed: true, version: "opencode 1.0" },
+        },
+      },
+      workspacePath: "/workspace",
+      dataPath: "/workspace/.nexestra",
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.startsWith("/api/bootstrap")) return Response.json(bootstrap);
+      if (path === "/api/knowledge/documents" && init?.method === "POST")
+        return Response.json({}, { status: 201 });
+      return Response.json({ error: { message: "Not found" } }, { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.replaceState({}, "", "/surfaces/taskboard");
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Taskboard" });
+    await user.click(screen.getByRole("button", { name: "Save plan as Knowledge" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add knowledge" });
+    expect(within(dialog).getByPlaceholderText("Architecture guide")).toHaveValue(
+      "Launch plan handoff",
+    );
+    expect(within(dialog).getByText(/Prepared plan handoff/)).toBeVisible();
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) => String(input) === "/api/knowledge/documents" && init?.method === "POST",
+      ),
+    ).toBe(false);
+
+    await user.click(within(dialog).getByRole("button", { name: "Upload document" }));
+    await waitFor(() => {
+      const request = fetchMock.mock.calls.find(
+        ([input, init]) => String(input) === "/api/knowledge/documents" && init?.method === "POST",
+      );
+      expect(request).toBeDefined();
+      const body = request?.[1]?.body;
+      expect(body).toBeInstanceOf(FormData);
+      expect((body as FormData).get("handle")).toBe("plan-launch-plan");
+      expect((body as FormData).get("file")).toBeInstanceOf(File);
+    });
   });
 
   it("separates dependency-blocked work from ready plan tasks", () => {
