@@ -121,3 +121,4 @@
 | [0118](0118-durable-queued-run-rehydration.md) | Accepted | Rehydrate queued runs from the canonical transcript after restart |
 | [0119](0119-custom-surface-task-entry.md) | Accepted | Allow custom surfaces to open the built-in task creation form |
 | [0120](0120-custom-surface-knowledge-entry.md) | Accepted | Allow custom surfaces to open the built-in Knowledge form |
+| [0121](0121-ready-task-custom-surface-filter.md) | Accepted | Open a workspace-scoped queue of todo tasks without active assignments |

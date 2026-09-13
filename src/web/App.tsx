@@ -176,6 +176,7 @@ interface RouteState {
   customSurfaceId?: string;
   messageTarget?: { id: string; source?: "unread" };
   runCostFilter?: "over_budget";
+  taskFilter?: "ready";
 }
 
 type HistoryWindowKind = "latest" | "around" | "before" | "after" | "at";
@@ -481,7 +482,8 @@ export function App() {
     if (
       nextRoute.view !== routeRef.current.view ||
       nextRoute.threadId !== routeRef.current.threadId ||
-      nextRoute.runCostFilter !== routeRef.current.runCostFilter
+      nextRoute.runCostFilter !== routeRef.current.runCostFilter ||
+      nextRoute.taskFilter !== routeRef.current.taskFilter
     ) {
       historyRequestRef.current += 1;
     }
@@ -917,6 +919,7 @@ export function App() {
         nextRoute.view !== routeRef.current.view ||
         nextRoute.threadId !== routeRef.current.threadId ||
         nextRoute.runCostFilter !== routeRef.current.runCostFilter ||
+        nextRoute.taskFilter !== routeRef.current.taskFilter ||
         !intentMatchesRoute
       ) {
         // Back to an identical bare URL still supersedes an ordinal lookup. Retain an
@@ -1478,6 +1481,14 @@ export function App() {
     }
     if (action === "blocked_tasks") {
       openSurface("taskboard");
+      return;
+    }
+    if (action === "ready_tasks") {
+      navigate("/surfaces/taskboard?filter=ready", {
+        view: "surfaces",
+        surface: "taskboard",
+        taskFilter: "ready",
+      });
       return;
     }
     if (action === "over_budget") {
@@ -2230,6 +2241,8 @@ export function App() {
                 counts={{
                   taskboard: data.tasks.filter((task) => task.status !== "done").length,
                   blocked_tasks: data.tasks.filter((task) => task.status === "blocked").length,
+                  ready_tasks: data.tasks.filter((task) => isReadyTask(task, data.assignments))
+                    .length,
                   knowledge: data.knowledge.length,
                   attention: data.attention.length,
                   runs: data.activeRuns.length,
@@ -2354,6 +2367,8 @@ export function App() {
         ) : (
           <Taskboard
             data={data}
+            readyOnly={route.taskFilter === "ready"}
+            onClearReadyFilter={() => openSurface("taskboard")}
             onCreate={(status = "todo") => {
               setTaskStatus(status);
               setModal("task");
@@ -5542,8 +5557,21 @@ function AgentCard({
   );
 }
 
-function Taskboard(props: {
+export function isReadyTask(task: Task, assignments: WorkAssignment[]): boolean {
+  return (
+    task.status === "todo" &&
+    !assignments.some(
+      (assignment) =>
+        assignment.taskId === task.id &&
+        (assignment.status === "queued" || assignment.status === "running"),
+    )
+  );
+}
+
+export function Taskboard(props: {
   data: BootstrapData;
+  readyOnly?: boolean;
+  onClearReadyFilter: () => void;
   onCreate: (status?: Task["status"]) => void;
   onMove: (task: Task, status: Task["status"]) => Promise<unknown>;
   onThread: (id: string) => void;
@@ -5560,22 +5588,36 @@ function Taskboard(props: {
   for (const assignment of props.data.assignments) {
     if (!assignments.has(assignment.taskId)) assignments.set(assignment.taskId, assignment);
   }
+  const visibleTasks = props.readyOnly
+    ? props.data.tasks.filter((task) => isReadyTask(task, props.data.assignments))
+    : props.data.tasks;
   return (
     <div className="surface-view">
       <header className="workspace-header">
         <div>
           <p className="eyebrow">SURFACE</p>
           <h1>Taskboard</h1>
-          <p className="subtitle">Organize work here; only an @mention in chat invokes an agent.</p>
+          <p className="subtitle">
+            {props.readyOnly
+              ? "Ready tasks are todo items without a queued or running Worker assignment."
+              : "Organize work here; only an @mention in chat invokes an agent."}
+          </p>
         </div>
-        <button className="primary-button" type="button" onClick={() => props.onCreate("todo")}>
-          <Plus size={17} />
-          Create task
-        </button>
+        <div className="header-actions">
+          {props.readyOnly && (
+            <button className="secondary-button" type="button" onClick={props.onClearReadyFilter}>
+              Clear ready filter
+            </button>
+          )}
+          <button className="primary-button" type="button" onClick={() => props.onCreate("todo")}>
+            <Plus size={17} />
+            Create task
+          </button>
+        </div>
       </header>
       <div className="board">
         {columns.map((column, index) => {
-          const tasks = props.data.tasks.filter((task) => task.status === column.status);
+          const tasks = visibleTasks.filter((task) => task.status === column.status);
           return (
             <section className="board-column" key={column.status}>
               <header>
@@ -9125,6 +9167,7 @@ function messageFrom(error: unknown): string {
 
 function routeFromLocation(): RouteState {
   const parts = window.location.pathname.split("/").filter(Boolean);
+  const search = new URLSearchParams(window.location.search);
   if (parts[0] === "surfaces") {
     const surface =
       parts[1] === "taskboard" ||
@@ -9140,13 +9183,15 @@ function routeFromLocation(): RouteState {
       view: "surfaces",
       surface,
       ...(surface === "custom" && parts[2] ? { customSurfaceId: parts[2] } : {}),
-      ...(surface === "runs" &&
-      new URLSearchParams(window.location.search).get("cost") === "over_budget"
+      ...(surface === "runs" && search.get("cost") === "over_budget"
         ? { runCostFilter: "over_budget" as const }
+        : {}),
+      ...(surface === "taskboard" && search.get("filter") === "ready"
+        ? { taskFilter: "ready" as const }
         : {}),
     };
   }
-  const messageId = new URLSearchParams(window.location.search).get("message");
+  const messageId = search.get("message");
   return {
     view: "threads",
     surface: "agents",

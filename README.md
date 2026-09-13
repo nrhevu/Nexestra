@@ -151,6 +151,9 @@ count absent rather than presenting a misleading zero. See [ADR
 0098](docs/adr/0098-over-budget-custom-surface-card.md).
 They can also include `blocked_tasks`, which counts only selected-workspace tasks currently blocked
 and opens Taskboard for the full context. See [ADR 0109](docs/adr/0109-blocked-task-custom-surface-card.md).
+The `ready_tasks` action counts `todo` tasks without a queued or running Worker assignment and opens
+Taskboard with a clearable ready-only filter. It does not assign or dispatch work. See [ADR
+0121](docs/adr/0121-ready-task-custom-surface-filter.md).
 
 Open **Needs-work review** under Surfaces, or use `/needs-work review`, to revisit the latest
 negative rating for each agent reply across the workspace. The queue shows a bounded, redacted
@@ -206,8 +209,8 @@ Workspaces can add a domain-specific launch surface in `nexestra.config.json`:
 ```
 
 Cards are text-only and can route only to trusted Nexestra surfaces; configuration cannot execute
-browser code or open arbitrary URLs. Taskboard, Knowledge, Attention, Needs-work review, and Agents
-cards show selected-workspace counts. `new_task` and `new_knowledge` cards open the built-in
+browser code or open arbitrary URLs. Taskboard, ready tasks, Knowledge, Attention, Needs-work review,
+and Agents cards show selected-workspace counts. `new_task` and `new_knowledge` cards open the built-in
 Taskboard and Knowledge forms; arbitrary custom forms and data-backed widgets remain future
 extensions. See [ADR 0119](docs/adr/0119-custom-surface-task-entry.md) and [ADR 0120](docs/adr/0120-custom-surface-knowledge-entry.md).
 

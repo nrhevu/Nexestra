@@ -661,11 +661,14 @@ credentials.
   before bootstrap. Cards for Taskboard, Knowledge, Attention, Needs-work review, and Agents show live counts from
   the selected workspace; the `over_budget` card shows a complete-coverage budget count and opens
   the matching Run history filter. The `blocked_tasks` card counts selected-workspace tasks with
-  status `blocked` and opens Taskboard. Run history and Needs-work review remain direct links. The
+  status `blocked` and opens Taskboard. The `ready_tasks` card counts `todo` tasks without queued or
+  running assignments and opens Taskboard with a clearable URL-backed filter; it does not mutate or
+  dispatch tasks. Run history and Needs-work review remain direct links. The
   browser evaluates no configured code, markup, URL, or command. The `new_task` and `new_knowledge`
   actions open built-in Taskboard and Knowledge forms; arbitrary configured forms remain future
   work. See [ADR 0119](adr/0119-custom-surface-task-entry.md) and [ADR
-  0120](adr/0120-custom-surface-knowledge-entry.md).
+  0120](adr/0120-custom-surface-knowledge-entry.md) and [ADR
+  0121](adr/0121-ready-task-custom-surface-filter.md).
 
 - Taskboard's completed Worker process response may include a bounded `sourceMessage` projection for
   the latest assignment: the canonical agent reply with the assignment run ID. This powers a direct

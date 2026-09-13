@@ -57,6 +57,12 @@ describe("CustomSurfaceSchema", () => {
     expect(
       CustomSurfaceSchema.safeParse({
         ...base,
+        cards: [{ ...base.cards[0], action: "ready_tasks" }],
+      }).success,
+    ).toBe(true);
+    expect(
+      CustomSurfaceSchema.safeParse({
+        ...base,
         cards: [{ ...base.cards[0], action: "provider_cost" }],
       }).success,
     ).toBe(false);

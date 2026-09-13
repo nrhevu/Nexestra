@@ -19,6 +19,7 @@ export type Workspace = z.infer<typeof WorkspaceSchema>;
 export const CustomSurfaceActionSchema = z.enum([
   "new_task",
   "new_knowledge",
+  "ready_tasks",
   "taskboard",
   "blocked_tasks",
   "knowledge",

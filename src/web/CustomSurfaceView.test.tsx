@@ -24,6 +24,7 @@ const surface: CustomSurface = {
     { id: "budget", title: "Budget watch", description: "", action: "over_budget" },
     { id: "reviews", title: "Needs-work", description: "", action: "reviews" },
     { id: "blocked", title: "Blocked tasks", description: "", action: "blocked_tasks" },
+    { id: "ready", title: "Ready tasks", description: "", action: "ready_tasks" },
     { id: "new", title: "New task", description: "", action: "new_task" },
     { id: "new-knowledge", title: "New Knowledge", description: "", action: "new_knowledge" },
   ],
@@ -35,7 +36,14 @@ describe("CustomSurfaceView", () => {
     render(
       <CustomSurfaceView
         surface={surface}
-        counts={{ agents: 3, runs: 2, reviews: 4, over_budget: 1, blocked_tasks: 2 }}
+        counts={{
+          agents: 3,
+          runs: 2,
+          reviews: 4,
+          over_budget: 1,
+          blocked_tasks: 2,
+          ready_tasks: 1,
+        }}
         onAction={onAction}
       />,
     );
@@ -44,13 +52,15 @@ describe("CustomSurfaceView", () => {
     expect(screen.getByText("3 matching items")).toBeVisible();
     expect(screen.getAllByText("2 matching items")).toHaveLength(2);
     expect(screen.getByText("4 matching items")).toBeVisible();
-    expect(screen.getByText("1 matching items")).toBeVisible();
+    expect(screen.getAllByText("1 matching items")).toHaveLength(2);
     await userEvent.click(screen.getByRole("button", { name: "Open Agents" }));
     expect(onAction).toHaveBeenCalledExactlyOnceWith("agents");
     await userEvent.click(screen.getByRole("button", { name: "Open over-budget runs" }));
     expect(onAction).toHaveBeenLastCalledWith("over_budget");
     await userEvent.click(screen.getByRole("button", { name: "Open blocked tasks" }));
     expect(onAction).toHaveBeenLastCalledWith("blocked_tasks");
+    await userEvent.click(screen.getByRole("button", { name: "Open ready tasks" }));
+    expect(onAction).toHaveBeenLastCalledWith("ready_tasks");
     await userEvent.click(screen.getByRole("button", { name: "Create task" }));
     expect(onAction).toHaveBeenLastCalledWith("new_task");
     await userEvent.click(screen.getByRole("button", { name: "Create Knowledge" }));
