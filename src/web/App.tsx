@@ -1472,6 +1472,10 @@ export function App() {
       setModal("task");
       return;
     }
+    if (action === "new_knowledge") {
+      setModal("knowledge");
+      return;
+    }
     if (action === "blocked_tasks") {
       openSurface("taskboard");
       return;

@@ -662,9 +662,10 @@ credentials.
   the selected workspace; the `over_budget` card shows a complete-coverage budget count and opens
   the matching Run history filter. The `blocked_tasks` card counts selected-workspace tasks with
   status `blocked` and opens Taskboard. Run history and Needs-work review remain direct links. The
-  browser evaluates no configured code, markup, URL, or command. The `new_task` action opens the
-  built-in Taskboard form; arbitrary configured forms remain future work. See [ADR
-  0119](adr/0119-custom-surface-task-entry.md).
+  browser evaluates no configured code, markup, URL, or command. The `new_task` and `new_knowledge`
+  actions open built-in Taskboard and Knowledge forms; arbitrary configured forms remain future
+  work. See [ADR 0119](adr/0119-custom-surface-task-entry.md) and [ADR
+  0120](adr/0120-custom-surface-knowledge-entry.md).
 
 - Taskboard's completed Worker process response may include a bounded `sourceMessage` projection for
   the latest assignment: the canonical agent reply with the assignment run ID. This powers a direct

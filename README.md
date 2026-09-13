@@ -207,8 +207,9 @@ Workspaces can add a domain-specific launch surface in `nexestra.config.json`:
 
 Cards are text-only and can route only to trusted Nexestra surfaces; configuration cannot execute
 browser code or open arbitrary URLs. Taskboard, Knowledge, Attention, Needs-work review, and Agents
-cards show selected-workspace counts. A `new_task` card opens the built-in Taskboard creation form;
-arbitrary custom forms and data-backed widgets remain future extensions. See [ADR 0119](docs/adr/0119-custom-surface-task-entry.md).
+cards show selected-workspace counts. `new_task` and `new_knowledge` cards open the built-in
+Taskboard and Knowledge forms; arbitrary custom forms and data-backed widgets remain future
+extensions. See [ADR 0119](docs/adr/0119-custom-surface-task-entry.md) and [ADR 0120](docs/adr/0120-custom-surface-knowledge-entry.md).
 
 Thread rows also show **unread messages**, with a total on Threads. Reading the bottom of the
 latest Messages page in a focused window marks that loaded page read. Older pages, message links

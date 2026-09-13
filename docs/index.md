@@ -149,3 +149,5 @@
 85. [Reversible Attention clear research](research/2026-09-13-reversible-attention-clear.md): restore one workspace-scoped snooze or dismissal through bounded audit metadata.
 86. [Durable queued-run rehydration research](research/2026-09-13-durable-queued-run-rehydration.md): resume persisted queued runs after restart through the serial dispatcher queue.
 87. [Custom surface task entry research](research/2026-09-13-custom-surface-task-entry.md): add a safe declarative shortcut from domain surfaces to Taskboard creation.
+88. [Upstream harness roadmap signals](research/2026-09-13-upstream-harness-roadmap.md): compare DeepSeek Harness plan state and Codeg's forms, sub-agent cards, and rollback direction.
+89. [Custom surface Knowledge entry research](research/2026-09-13-custom-surface-knowledge-entry.md): add a safe declarative shortcut to the selected workspace Knowledge form.
