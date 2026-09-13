@@ -560,3 +560,7 @@ pnpm check
 Default tests do not call paid providers and do not require a Codex or OpenCode account.
 
 See the [architecture](docs/ARCHITECTURE.md) and [current limitations](docs/ARCHITECTURE.md#known-gaps).
+
+Workspace exports can be imported from Settings or the API as a new archived workspace. Import
+verifies the manifest and hashes, rejects identity and path collisions, and rolls back staged files
+if state persistence fails. Merge and overwrite restore are not supported.

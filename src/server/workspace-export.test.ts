@@ -234,6 +234,31 @@ describe("workspace export", () => {
     expect(response.headers.get("content-disposition")).toContain("nexestra-workspace-");
     expect(response.headers.get("content-disposition")).toContain(".zip");
 
+    const importedRoot = await mkdtemp(join(tmpdir(), "nexestra-import-"));
+    const importedStore = await FileStore.open({ root: importedRoot, workspacePath: importedRoot });
+    const importApp = createApp({ store: importedStore, runner: new FakeRunner() });
+    const importedResponse = await importApp.request("/api/workspaces/import", {
+      method: "POST",
+      headers: { "content-type": "application/zip" },
+      body: buffer,
+    });
+    expect(importedResponse.status).toBe(201);
+    const importedJson = (await importedResponse.json()) as {
+      workspace: { id: string; archived?: boolean };
+    };
+    expect(importedJson.workspace).toMatchObject({ id: workspace.id, archived: true });
+    expect(importedStore.listArchivedWorkspaces().map((entry) => entry.id)).toContain(workspace.id);
+    expect(await readFile(importedStore.transcriptPath(thread.id), "utf8")).toContain(
+      "Hello with upload",
+    );
+    await expect(
+      importApp.request("/api/workspaces/import", {
+        method: "POST",
+        headers: { "content-type": "application/zip" },
+        body: buffer,
+      }),
+    ).resolves.toMatchObject({ status: 409 });
+
     const zip = extractZip(buffer);
     const preflight = await app.request(`/api/workspaces/${workspace.id}/import/preflight`, {
       method: "POST",
@@ -283,7 +308,7 @@ describe("workspace export", () => {
 
     const manifest = JSON.parse(decode(zipEntry(zip, "manifest.json")));
     expect(manifest.format).toBe("nexestra.workspace-export");
-    expect(manifest.importSupported).toBe(false);
+    expect(manifest.importSupported).toBe(true);
     expect(manifest.workspace).toEqual({ id: workspace.id, name: workspace.name });
     expect(manifest.excluded).toEqual([
       "credentials",

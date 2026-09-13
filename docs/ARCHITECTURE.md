@@ -730,6 +730,10 @@ credentials.
   trash moves, purge, and rollback journals are not yet supported. See [ADR
   0103](adr/0103-workspace-deletion-preflight.md), [ADR 0104](adr/0104-workspace-recovery-manifest.md),
   and [ADR 0106](adr/0106-reversible-workspace-archive.md).
+- Verified workspace exports can be imported as new archived workspaces. The server rejects
+  workspace/entity ID and path collisions, stages files before atomically persisting state, and
+  removes moved files on failure. Merge, remap, and overwrite restore are not implemented. See
+  [ADR 0116](adr/0116-create-only-archive-import.md).
 - Device OAuth displays raw Codex CLI instructions; it does not yet use `codex app-server` JSON-RPC.
 - Anthropic Messages currently uses the common text/tool-use path; provider-specific server tools,
   prompt-caching controls and extended-thinking options are not exposed.

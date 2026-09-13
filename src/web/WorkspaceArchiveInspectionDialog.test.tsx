@@ -44,7 +44,7 @@ function manifest(entries: WorkspaceExportEntry[]): WorkspaceExportManifest {
     workspace: { id: "ws-archive", name: "Archived Alpha" },
     stateVersion: 7,
     redaction: "known-credentials",
-    importSupported: false,
+    importSupported: true,
     excluded: [
       "credentials",
       "harness-auth",
@@ -162,7 +162,7 @@ describe("WorkspaceArchiveInspectionDialog", () => {
     const inspection = report([entry("state.json", { kind: "metadata" })], {
       restorePlan: {
         workspace: { id: "ws-archive", name: "Archived Alpha" },
-        importSupported: false,
+        importSupported: true,
         counts: {
           threads: 2,
           agents: 3,

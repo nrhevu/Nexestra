@@ -275,7 +275,7 @@ function makeManifest(
     workspace,
     stateVersion: 7,
     redaction: "known-credentials",
-    importSupported: false,
+    importSupported: true,
     excluded: [
       "credentials",
       "harness-auth",
@@ -518,7 +518,7 @@ describe("workspace archive inspection engine", () => {
     );
     expect(report.manifest.entries.length).toBe(centralEntryCount(built.bytes) - 1);
     expect(report.restorePlan).toMatchObject({
-      importSupported: false,
+      importSupported: true,
       counts: {
         threads: 2,
         knowledge: 1,

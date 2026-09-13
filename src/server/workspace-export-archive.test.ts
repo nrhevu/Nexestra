@@ -193,13 +193,13 @@ describe("buildWorkspaceExportArchive", () => {
         "Known credential values are redacted from metadata and transcripts.",
       );
       expect(notice).toContain("preserved byte-for-byte");
-      expect(notice).toContain("Restore into Nexestra is not supported");
+      expect(notice).toContain("imported as a new archived workspace");
       expect(archive.manifest).toMatchObject({
         format: "nexestra.workspace-export",
         version: 1,
         stateVersion: 7,
         redaction: "known-credentials",
-        importSupported: false,
+        importSupported: true,
         excluded: [
           "credentials",
           "harness-auth",

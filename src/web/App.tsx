@@ -1338,6 +1338,16 @@ export function App() {
     setModal("archive-inspection");
   };
 
+  const importWorkspaceArchive = async (file: File) => {
+    await api<{ workspace: Workspace }>("/api/workspaces/import", {
+      method: "POST",
+      headers: { "content-type": "application/zip" },
+      body: file,
+    });
+    await refresh(true);
+    flash("Workspace archive imported and kept archived.");
+  };
+
   const currentConversation = (): Thread | undefined => {
     const current = dataRef.current;
     const routeNow = routeRef.current;
@@ -2641,6 +2651,7 @@ export function App() {
           onClose={closeSettings}
           onExport={openWorkspaceExport}
           onInspectArchive={openWorkspaceArchiveInspection}
+          onImportArchive={importWorkspaceArchive}
           onInspectArchivedWorkspace={async (workspaceId) => {
             const parsed = WorkspaceRecoveryManifestSchema.parse(
               await api<unknown>(
@@ -8493,6 +8504,7 @@ function SettingsDialog({
   onReload,
   onExport,
   onInspectArchive,
+  onImportArchive,
   onInspectArchivedWorkspace,
   onDeletePreflight,
   onArchive,
@@ -8507,6 +8519,7 @@ function SettingsDialog({
   onReload: () => Promise<void>;
   onExport: () => void;
   onInspectArchive: () => void;
+  onImportArchive: (file: File) => Promise<void>;
   onInspectArchivedWorkspace: (workspaceId: string) => Promise<WorkspaceRecoveryManifest>;
   onDeletePreflight: (workspace: Workspace) => void;
   onArchive: (workspace: Workspace) => void;
@@ -8522,6 +8535,8 @@ function SettingsDialog({
   const [archiveError, setArchiveError] = useState<string>();
   const [recoveryManifest, setRecoveryManifest] = useState<WorkspaceRecoveryManifest>();
   const [recoveryManifestLoading, setRecoveryManifestLoading] = useState<string>();
+  const [importing, setImporting] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     setDraftName(data.workspace.name);
   }, [data.workspace.name]);
@@ -8815,6 +8830,34 @@ function SettingsDialog({
           <button type="button" className="secondary-button" onClick={onInspectArchive}>
             Inspect workspace ZIP
           </button>
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={importing}
+            onClick={() => importInputRef.current?.click()}
+          >
+            {importing ? "Importing…" : "Import as archived workspace"}
+          </button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".zip,application/zip"
+            hidden
+            onChange={async (event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (!file) return;
+              setImporting(true);
+              setArchiveError(undefined);
+              try {
+                await onImportArchive(file);
+              } catch (caught) {
+                setArchiveError(messageFrom(caught));
+              } finally {
+                setImporting(false);
+              }
+            }}
+          />
         </div>
       </div>
       <div className="modal-actions">

@@ -271,7 +271,9 @@ function restorePlan(
   manifest: WorkspaceExportManifest,
   stateBytes: Uint8Array | undefined,
 ): WorkspaceArchiveRestorePlan {
-  const blockers = ["Restore into Nexestra is not supported for this archive format."];
+  const blockers: string[] = [];
+  if (!manifest.importSupported)
+    blockers.push("Restore into Nexestra is not supported for this archive format.");
   let state: Record<string, unknown> | undefined;
   if (stateBytes === undefined) {
     blockers.push("The archive does not contain readable state metadata.");

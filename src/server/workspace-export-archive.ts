@@ -59,7 +59,7 @@ Known credential values are redacted from metadata and transcripts.
 Whiteboard notes are included with known credentials redacted.
 Original upload and document binaries are preserved byte-for-byte; exports that would include a literal known credential sequence in a binary are rejected rather than altered.
 Excluded: credentials, harness-auth, repository-files, browser-state, unreferenced-files.
-Restore into Nexestra is not supported; use this archive only as a manual backup or audit snapshot.
+Archives can be imported as a new archived workspace; merge and overwrite restore are not supported.
 `;
 
 const INVALID_ENTRY = "Workspace export source entry is invalid.";
@@ -361,7 +361,7 @@ export async function buildWorkspaceExportArchive(input: {
             workspace: input.workspace,
             stateVersion: 7,
             redaction: "known-credentials",
-            importSupported: false,
+            importSupported: true,
             excluded: [
               "credentials",
               "harness-auth",

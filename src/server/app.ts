@@ -21,6 +21,7 @@ import {
   UpdateAttentionStateSchema,
   UpdateWorkspaceWhiteboardSchema,
   WORKSPACE_EXPORT_MAX_ARCHIVE_BYTES,
+  WorkspaceImportResultSchema,
 } from "../shared/contracts.js";
 import { inspectWorkspaceArchive } from "../shared/workspace-archive-inspection.js";
 import {
@@ -317,7 +318,7 @@ export function createApp(options: CreateAppOptions) {
     const restorePlan = WorkspaceArchiveServerRestorePreflightSchema.shape.restorePlan.parse({
       ...(report.restorePlan ?? {
         workspace: report.manifest.workspace,
-        importSupported: false,
+        importSupported: true,
         counts: {
           threads: 0,
           agents: 0,
@@ -347,6 +348,22 @@ export function createApp(options: CreateAppOptions) {
         restorePlan,
       }),
     );
+  });
+
+  app.post("/api/workspaces/import", async (context) => {
+    if (Object.keys(context.req.query()).length > 0) {
+      throw new StoreError("invalid", "Workspace archive import does not accept query options.");
+    }
+    const declaredLength = Number(context.req.header("content-length") ?? "");
+    if (Number.isFinite(declaredLength) && declaredLength > WORKSPACE_EXPORT_MAX_ARCHIVE_BYTES) {
+      throw new StoreError("invalid", "Workspace archive exceeds the supported size limit.");
+    }
+    const body = await context.req.arrayBuffer();
+    if (body.byteLength === 0 || body.byteLength > WORKSPACE_EXPORT_MAX_ARCHIVE_BYTES) {
+      throw new StoreError("invalid", "Workspace archive exceeds the supported size limit.");
+    }
+    const workspace = await options.store.importWorkspaceArchive(new Uint8Array(body));
+    return context.json(WorkspaceImportResultSchema.parse({ workspace }), 201);
   });
 
   app.get("/api/workspaces/:id/delete/preflight", async (context) => {

@@ -957,7 +957,7 @@ export const WorkspaceExportManifestSchema = z.object({
   workspace: WorkspaceSchema.pick({ id: true, name: true }),
   stateVersion: z.literal(7),
   redaction: z.literal("known-credentials"),
-  importSupported: z.literal(false),
+  importSupported: z.boolean(),
   excluded: z.array(
     z.enum([
       "credentials",
@@ -970,6 +970,9 @@ export const WorkspaceExportManifestSchema = z.object({
   entries: z.array(WorkspaceExportEntrySchema).min(1).max(WORKSPACE_EXPORT_MAX_ENTRIES),
 });
 export type WorkspaceExportManifest = z.infer<typeof WorkspaceExportManifestSchema>;
+
+export const WorkspaceImportResultSchema = z.object({ workspace: WorkspaceSchema });
+export type WorkspaceImportResult = z.infer<typeof WorkspaceImportResultSchema>;
 
 export const WorkspaceDeletionPreflightSchema = z.object({
   workspace: WorkspaceSchema.pick({ id: true, name: true }),

@@ -1506,7 +1506,7 @@ describe("Workspace archive inspection navigation", () => {
           workspace: { id: "archived-workspace", name: "Stale archive report" },
           createdAt: now,
           redaction: "known-credentials",
-          importSupported: false,
+          importSupported: true,
           excluded: [
             "credentials",
             "harness-auth",

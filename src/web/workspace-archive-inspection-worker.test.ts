@@ -48,7 +48,7 @@ function report(): WorkspaceArchiveInspectionReport {
       workspace: { id: "workspace-a", name: "Workspace A" },
       stateVersion: 7,
       redaction: "known-credentials",
-      importSupported: false,
+      importSupported: true,
       excluded: ["credentials"],
       entries: [
         {

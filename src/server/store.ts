@@ -16,6 +16,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { unzipSync } from "fflate";
 import { z } from "zod";
 import {
   type Agent,
@@ -101,6 +102,7 @@ import {
   UpdateTaskSchema,
   UpdateWorkspaceSchema,
   UpdateWorkspaceWhiteboardSchema,
+  WORKSPACE_EXPORT_MAX_ARCHIVE_BYTES,
   WORKSPACE_EXPORT_MAX_ENTRIES,
   WORKSPACE_EXPORT_MAX_SOURCE_BYTES,
   WORKSPACE_EXPORT_TIMEOUT_MS,
@@ -118,6 +120,7 @@ import {
   type WorkspaceWhiteboard,
   WorkspaceWhiteboardSchema,
 } from "../shared/contracts.js";
+import { inspectWorkspaceArchive } from "../shared/workspace-archive-inspection.js";
 
 import {
   addTranscriptHistoryEntry,
@@ -948,6 +951,158 @@ export class FileStore {
       await this.writeState(next);
       this.state = next;
       return structuredClone(workspace);
+    });
+  }
+
+  async importWorkspaceArchive(bytes: Uint8Array): Promise<Workspace> {
+    if (bytes.byteLength === 0 || bytes.byteLength > WORKSPACE_EXPORT_MAX_ARCHIVE_BYTES) {
+      throw new StoreError("invalid", "Workspace archive exceeds the supported size limit.");
+    }
+    return this.withWrite(async () => {
+      let report: Awaited<ReturnType<typeof inspectWorkspaceArchive>>;
+      try {
+        report = await inspectWorkspaceArchive(new Blob([bytes as unknown as BlobPart]));
+      } catch {
+        throw new StoreError("invalid", "Workspace archive could not be verified.");
+      }
+      if (!report.manifest.importSupported) {
+        throw new StoreError("invalid", "Workspace archive import is not supported.");
+      }
+      const sourceId = report.manifest.workspace.id;
+      if (this.state.workspaces.some((workspace) => workspace.id === sourceId)) {
+        throw new StoreError("conflict", "A workspace with this archive identity already exists.");
+      }
+      let entries: Record<string, Uint8Array>;
+      try {
+        entries = unzipSync(bytes);
+      } catch {
+        throw new StoreError("invalid", "Workspace archive could not be extracted.");
+      }
+      const stateBytes = entries["state.json"];
+      if (!stateBytes)
+        throw new StoreError("invalid", "Workspace archive state metadata is missing.");
+      let imported: PersistedState;
+      try {
+        const raw = JSON.parse(new TextDecoder().decode(stateBytes));
+        imported = StateSchema.parse(redactRecoveryValue(raw, (text) => this.redactSecrets(text)));
+      } catch {
+        throw new StoreError("invalid", "Workspace archive state metadata is invalid.");
+      }
+      if (imported.workspaces.length !== 1 || imported.workspaces[0]?.id !== sourceId) {
+        throw new StoreError("invalid", "Workspace archive state does not match its manifest.");
+      }
+      const idSets = [
+        new Set(this.state.agents.map((entry) => entry.id)),
+        new Set(this.state.threads.map((entry) => entry.id)),
+        new Set(this.state.tasks.map((entry) => entry.id)),
+        new Set(this.state.knowledge.map((entry) => entry.id)),
+      ];
+      for (const [index, values] of [
+        imported.agents,
+        imported.threads,
+        imported.tasks,
+        imported.knowledge,
+      ].entries()) {
+        if (values.some((value) => idSets[index]?.has(value.id))) {
+          throw new StoreError(
+            "conflict",
+            "Workspace archive contains an entity identity already in use.",
+          );
+        }
+      }
+      const importedWorkspace = WorkspaceSchema.parse({
+        ...imported.workspaces[0],
+        archived: true,
+      });
+      const mapped = new Map<string, Uint8Array>();
+      for (const entry of report.manifest.entries) {
+        if (
+          entry.path === "state.json" ||
+          entry.path === "manifest.json" ||
+          entry.path === "NOTICE.txt"
+        )
+          continue;
+        const payload = entries[entry.path];
+        if (!payload) throw new StoreError("invalid", "Workspace archive entry is missing.");
+        const safePayload =
+          entry.kind === "transcript" || entry.kind === "whiteboard"
+            ? new TextEncoder().encode(this.redactSecrets(new TextDecoder().decode(payload)))
+            : payload;
+        let destination: string;
+        if (entry.path.startsWith("threads/"))
+          destination = join(this.threadDirectory, basename(entry.path));
+        else if (entry.path.startsWith("artifacts/"))
+          destination = join(this.artifactDirectory, entry.path.slice("artifacts/".length));
+        else if (entry.path === "whiteboard.md")
+          destination = join(this.managedWorkspaceDirectory, sourceId, entry.path);
+        else if (entry.path.startsWith(`workspaces/${sourceId}/`))
+          destination = join(this.root, entry.path);
+        else throw new StoreError("invalid", "Workspace archive entry path is not importable.");
+        if (mapped.has(destination) || (await pathExists(destination))) {
+          throw new StoreError("conflict", "Workspace archive would overwrite an existing file.");
+        }
+        mapped.set(destination, safePayload);
+      }
+      const staging = join(this.root, `.workspace-import-${sourceId}-${crypto.randomUUID()}`);
+      const moved: string[] = [];
+      try {
+        await mkdir(staging, { recursive: true, mode: 0o700 });
+        for (const [destination, payload] of mapped) {
+          const staged = join(staging, String(moved.length));
+          await mkdir(dirname(staged), { recursive: true, mode: 0o700 });
+          await writeFile(staged, payload, { mode: 0o600, flag: "wx" });
+          await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
+          await rename(staged, destination);
+          moved.push(destination);
+        }
+        const next = {
+          ...this.state,
+          workspaces: [...this.state.workspaces, importedWorkspace],
+          agents: [
+            ...this.state.agents,
+            ...imported.agents.map((entry) => ({ ...entry, workspaceId: sourceId })),
+          ],
+          threads: [
+            ...this.state.threads,
+            ...imported.threads.map((entry) => ({
+              ...entry,
+              workspaceId: sourceId,
+              archived: entry.archived ?? false,
+            })),
+          ],
+          tasks: [
+            ...this.state.tasks,
+            ...imported.tasks.map((entry) => ({ ...entry, workspaceId: sourceId })),
+          ],
+          knowledge: [
+            ...this.state.knowledge,
+            ...imported.knowledge.map((entry) => ({ ...entry, workspaceId: sourceId })),
+          ],
+          assignments: [
+            ...this.state.assignments,
+            ...imported.assignments.map((entry) => ({ ...entry, workspaceId: sourceId })),
+          ],
+          attentionStates: [
+            ...this.state.attentionStates,
+            ...imported.attentionStates.map((entry) => ({ ...entry, workspaceId: sourceId })),
+          ],
+          attentionAudit: [
+            ...this.state.attentionAudit,
+            ...imported.attentionAudit.map((entry) => ({ ...entry, workspaceId: sourceId })),
+          ],
+          messageFeedback: [...this.state.messageFeedback, ...imported.messageFeedback],
+        };
+        await this.writeState(next);
+        this.state = next;
+        return structuredClone(importedWorkspace);
+      } catch (error) {
+        await Promise.all(moved.map((file) => unlink(file).catch(() => undefined)));
+        throw error instanceof StoreError
+          ? error
+          : new StoreError("conflict", "Workspace archive import rolled back.");
+      } finally {
+        await rm(staging, { recursive: true, force: true }).catch(() => undefined);
+      }
     });
   }
 
@@ -6128,6 +6283,16 @@ function stripTrailingNewline(line: string): string {
 
 function isStorageId(value: string): boolean {
   return /^[a-zA-Z0-9_-]{1,200}$/.test(value);
+}
+
+async function pathExists(file: string): Promise<boolean> {
+  try {
+    await lstat(file);
+    return true;
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return false;
+    throw error;
+  }
 }
 
 function parseTranscriptEvent(line: string): TranscriptEvent | undefined {
