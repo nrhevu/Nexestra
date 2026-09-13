@@ -143,3 +143,4 @@
 79. [Historical agent profile attribution research](research/2026-09-13-historical-agent-profile-attribution.md): keep bounded harness and model labels stable after profile edits.
 80. [Safe MCP resource-template expansion research](research/2026-09-13-safe-mcp-resource-template-expansion.md): require exact bounded variables and encode values before cataloged reads.
 81. [Run-history harness and model filters research](research/2026-09-13-run-history-harness-model-filters.md): isolate Codex, OpenCode, and custom execution labels before pagination.
+82. [Archived workspace recovery-manifest surface research](research/2026-09-13-archived-workspace-recovery-manifest-surface.md): inspect bounded archived file metadata before restore.

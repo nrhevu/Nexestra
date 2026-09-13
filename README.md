@@ -125,6 +125,9 @@ Run history also offers harness and model filters bound into its cursors, so Cod
 custom-provider comparisons stay isolated across pages. Legacy rows use the current profile labels;
 snapshot rows remain filterable after profile edits or agent deletion. Exported filters preserve the
 selection. See [ADR 0113](docs/adr/0113-run-history-harness-model-filters.md).
+Settings also lets you view a bounded, credential-free recovery manifest for an archived workspace
+before restoring it. The read-only view shows paths, sizes, and hashes; it does not activate or write
+the workspace. See [ADR 0114](docs/adr/0114-archived-workspace-recovery-manifest-surface.md).
 Enable **Auto-refresh newest page** when supervising active work; it checks the current filtered
 first page every 15 seconds, pauses on older pages, and never retries or changes run state.
 

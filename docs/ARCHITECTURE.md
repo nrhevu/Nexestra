@@ -219,6 +219,10 @@ rows after a profile change. See [ADR 0095](adr/0095-agent-profile-labels-in-his
   edits or deletion. Cursor payloads bind both filters and exports retain them. See [ADR
   0113](adr/0113-run-history-harness-model-filters.md).
 
+- Archived workspaces remain hidden from normal navigation but Settings can request their bounded,
+  credential-free recovery manifest. The UI shows only the first 20 path/size entries and leaves
+  restore as a separate mutation. See [ADR 0114](adr/0114-archived-workspace-recovery-manifest-surface.md).
+
 Attention snooze and dismiss operations append bounded metadata to `state.json`. The store retains
 up to 200 entries per workspace and exposes them through an explicit-refresh history endpoint; the
 surface returns only action, kind, and timestamp metadata. This audit does not change the derived

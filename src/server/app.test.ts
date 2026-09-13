@@ -428,6 +428,13 @@ describe("HTTP app", () => {
     expect(archived.status).toBe(200);
     await expect(archived.json()).resolves.toMatchObject({ id: first.id, archived: true });
     expect(store.listActiveWorkspaces().map((entry) => entry.id)).toEqual([second.id]);
+    const manifestResponse = await app.request(`/api/workspaces/${first.id}/recovery-manifest`);
+    expect(manifestResponse.status).toBe(200);
+    await expect(manifestResponse.json()).resolves.toMatchObject({
+      version: 1,
+      workspace: { id: first.id, name: first.name },
+      entries: expect.arrayContaining([expect.objectContaining({ path: "state.json" })]),
+    });
     await expect(app.request(`/api/bootstrap?workspaceId=${first.id}`)).resolves.toMatchObject({
       status: 404,
     });

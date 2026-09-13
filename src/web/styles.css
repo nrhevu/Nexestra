@@ -4045,6 +4045,42 @@ kbd {
   color: var(--quiet);
   cursor: default;
 }
+.settings-recovery-manifest {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--panel-raised);
+}
+.settings-recovery-manifest-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+.settings-recovery-manifest ul {
+  max-height: 180px;
+  margin: 8px 0 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+.settings-recovery-manifest li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0;
+  border-top: 1px solid var(--border-soft);
+  color: var(--quiet);
+  font-size: 10px;
+}
+.settings-recovery-manifest li code {
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .settings-rename {
   margin-top: 14px;
 }

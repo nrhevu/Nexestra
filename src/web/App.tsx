@@ -98,6 +98,7 @@ import type {
   WorkspaceActivityData,
   WorkspaceActivitySummary,
   WorkspaceDeletionPreflight,
+  WorkspaceRecoveryManifest,
 } from "../shared/contracts.js";
 import {
   compareAttentionItems,
@@ -106,6 +107,7 @@ import {
   runAttentionItem,
   THREAD_HISTORY_DEFAULT_LIMIT,
   WorkspaceDeletionPreflightSchema,
+  WorkspaceRecoveryManifestSchema,
 } from "../shared/contracts.js";
 import { AttentionView } from "./AttentionView.js";
 import { ApiError, api } from "./api.js";
@@ -2639,6 +2641,14 @@ export function App() {
           onClose={closeSettings}
           onExport={openWorkspaceExport}
           onInspectArchive={openWorkspaceArchiveInspection}
+          onInspectArchivedWorkspace={async (workspaceId) => {
+            const parsed = WorkspaceRecoveryManifestSchema.parse(
+              await api<unknown>(
+                `/api/workspaces/${encodeURIComponent(workspaceId)}/recovery-manifest`,
+              ),
+            );
+            return parsed;
+          }}
           onDeletePreflight={setWorkspaceDeletePreflight}
           onArchive={(workspace) => setWorkspaceArchiveTarget(workspace)}
           onRestore={async (workspaceId) => {
@@ -8483,6 +8493,7 @@ function SettingsDialog({
   onReload,
   onExport,
   onInspectArchive,
+  onInspectArchivedWorkspace,
   onDeletePreflight,
   onArchive,
   onRestore,
@@ -8496,6 +8507,7 @@ function SettingsDialog({
   onReload: () => Promise<void>;
   onExport: () => void;
   onInspectArchive: () => void;
+  onInspectArchivedWorkspace: (workspaceId: string) => Promise<WorkspaceRecoveryManifest>;
   onDeletePreflight: (workspace: Workspace) => void;
   onArchive: (workspace: Workspace) => void;
   onRestore: (workspaceId: string) => Promise<void>;
@@ -8508,6 +8520,8 @@ function SettingsDialog({
   const [archivedWorkspaces, setArchivedWorkspaces] = useState<Workspace[]>([]);
   const [restoringWorkspaceId, setRestoringWorkspaceId] = useState<string>();
   const [archiveError, setArchiveError] = useState<string>();
+  const [recoveryManifest, setRecoveryManifest] = useState<WorkspaceRecoveryManifest>();
+  const [recoveryManifestLoading, setRecoveryManifestLoading] = useState<string>();
   useEffect(() => {
     setDraftName(data.workspace.name);
   }, [data.workspace.name]);
@@ -8691,9 +8705,56 @@ function SettingsDialog({
                   >
                     {restoringWorkspaceId === workspace.id ? "Restoring…" : "Restore"}
                   </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={recoveryManifestLoading !== undefined}
+                    onClick={async () => {
+                      setRecoveryManifestLoading(workspace.id);
+                      setArchiveError(undefined);
+                      try {
+                        setRecoveryManifest(await onInspectArchivedWorkspace(workspace.id));
+                      } catch (caught) {
+                        setArchiveError(messageFrom(caught));
+                      } finally {
+                        setRecoveryManifestLoading(undefined);
+                      }
+                    }}
+                  >
+                    {recoveryManifestLoading === workspace.id ? "Reading…" : "View manifest"}
+                  </button>
                 </li>
               ))}
             </ul>
+          )}
+          {recoveryManifest && (
+            <div className="settings-recovery-manifest" role="status">
+              <div className="settings-recovery-manifest-header">
+                <strong>Recovery manifest · {recoveryManifest.workspace.name}</strong>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setRecoveryManifest(undefined)}
+                >
+                  Close
+                </button>
+              </div>
+              <p className="settings-hint">
+                {recoveryManifest.entries.length} files ·{" "}
+                {recoveryManifest.totalBytes.toLocaleString()} bytes · read-only hashes
+              </p>
+              <ul aria-label="Recovery manifest entries">
+                {recoveryManifest.entries.slice(0, 20).map((entry) => (
+                  <li key={entry.path}>
+                    <code>{entry.path}</code>
+                    <span>{entry.bytes.toLocaleString()} bytes</span>
+                  </li>
+                ))}
+              </ul>
+              {recoveryManifest.entries.length > 20 && (
+                <p className="settings-hint">Showing the first 20 entries.</p>
+              )}
+            </div>
           )}
         </div>
         <form

@@ -245,6 +245,10 @@ export function createApp(options: CreateAppOptions) {
     context.json(options.store.listArchivedWorkspaces()),
   );
 
+  app.get("/api/workspaces/:id/recovery-manifest", async (context) => {
+    return context.json(await options.store.workspaceRecoveryManifest(context.req.param("id")));
+  });
+
   app.put("/api/workspaces/order", async (context) => {
     return context.json(await options.store.reorderWorkspaces(await context.req.json()));
   });

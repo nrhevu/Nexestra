@@ -114,3 +114,4 @@
 | [0111](0111-historical-agent-profile-attribution.md) | Accepted | Preserve bounded harness and model labels from run creation |
 | [0112](0112-safe-mcp-resource-template-expansion.md) | Accepted | Expand cataloged MCP resource templates with bounded exact variables |
 | [0113](0113-run-history-harness-model-filters.md) | Accepted | Filter run history by immutable harness and model labels |
+| [0114](0114-archived-workspace-recovery-manifest-surface.md) | Accepted | Inspect archived workspace recovery manifests without mutation |
