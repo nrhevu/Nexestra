@@ -975,7 +975,17 @@ describe("HTTP app", () => {
     const [run] = app.dispatcher.activeRuns();
     if (!run) throw new Error("expected active run");
 
-    const stopped = await app.request(`/api/runs/${run.id}/stop`, { method: "POST" });
+    const foreign = await store.createWorkspace({ name: "Foreign stop target" });
+    const wrongWorkspace = await app.request(
+      `/api/runs/${run.id}/stop?workspaceId=${encodeURIComponent(foreign.id)}`,
+      { method: "POST" },
+    );
+    expect(wrongWorkspace.status).toBe(409);
+
+    const stopped = await app.request(
+      `/api/runs/${run.id}/stop?workspaceId=${encodeURIComponent(thread.workspaceId)}`,
+      { method: "POST" },
+    );
     expect(stopped.status).toBe(200);
     await expect(stopped.json()).resolves.toMatchObject({ id: run.id, status: "interrupted" });
     releaseRunner();

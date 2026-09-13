@@ -441,13 +441,16 @@ export class AgentDispatcher {
     }
   }
 
-  async stopRun(runId: string): Promise<AgentRun> {
+  async stopRun(runId: string, workspaceId?: string): Promise<AgentRun> {
     const assignment = this.store.listAssignments().find((entry) => entry.id === runId);
     if (assignment && (assignment.status === "queued" || assignment.status === "running")) {
       throw new StoreError("conflict", "Worker assignments must be stopped from Taskboard.");
     }
     const run = this.liveRuns.get(runId);
     if (!run) throw new StoreError("not_found", "Active run not found.");
+    if (workspaceId && this.store.getThread(run.threadId)?.workspaceId !== workspaceId) {
+      throw new StoreError("conflict", "Run does not belong to this workspace.");
+    }
     if (!["queued", "running", "waiting_approval", "waiting_input"].includes(run.status)) {
       throw new StoreError("conflict", "This run is no longer active.");
     }

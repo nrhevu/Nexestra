@@ -1220,6 +1220,11 @@ describe("mention dispatch", () => {
     await runner.nextInvocationStarted();
     const [run] = dispatcher.activeRuns();
     if (!run) throw new Error("expected active run");
+    await expect(
+      dispatcher.stopRun(run.id, "workspace-that-does-not-own-run"),
+    ).rejects.toMatchObject({
+      code: "conflict",
+    });
     await expect(dispatcher.stopRun(run.id)).resolves.toMatchObject({
       id: run.id,
       status: "interrupted",

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AttentionItem } from "../shared/contracts.js";
@@ -117,6 +117,26 @@ describe("Needs attention", () => {
       screen.getByRole("button", { name: "Open thread: Approval run-fallback" }),
     );
     expect(onThread).toHaveBeenCalledExactlyOnceWith("thread-notes");
+  });
+
+  it("offers a busy-aware stop action for pending Master runs only", async () => {
+    let resolveStop!: () => void;
+    const onStopRun = vi.fn(() => new Promise<void>((resolve) => (resolveStop = resolve)));
+    render(
+      <AttentionView
+        items={[approval("run:stop", "run-stop", "thread-stop")]}
+        onThread={vi.fn()}
+        onTask={vi.fn()}
+        onStopRun={onStopRun}
+      />,
+    );
+    const stop = screen.getByRole("button", { name: "Stop run" });
+    await userEvent.click(stop);
+    expect(onStopRun).toHaveBeenCalledExactlyOnceWith("thread-stop", "run-stop");
+    expect(screen.getByRole("button", { name: "Stopping…" })).toBeDisabled();
+    resolveStop();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Stop run" })).toBeEnabled());
+    expect(screen.queryByRole("button", { name: "Stop run" })).toBeEnabled();
   });
 
   it("keeps task precedence over run navigation when a task row also carries a run id", async () => {

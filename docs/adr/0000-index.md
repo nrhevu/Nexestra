@@ -130,3 +130,4 @@
 | [0127](0127-plan-summary-export.md) | Accepted | Export a bounded credential-free plan handoff packet from Taskboard |
 | [0128](0128-plan-step-dependencies.md) | Accepted | Preserve bounded prerequisite edges and prevent early delegation |
 | [0129](0129-plan-knowledge-handoff.md) | Accepted | Save a reviewed bounded plan snapshot into Knowledge |
+| [0130](0130-stop-attention-run.md) | Accepted | Stop pending Master runs directly from Needs attention |

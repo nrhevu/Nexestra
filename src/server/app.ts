@@ -765,7 +765,9 @@ export function createApp(options: CreateAppOptions) {
   });
 
   app.post("/api/runs/:id/stop", async (context) => {
-    return context.json(await dispatcher.stopRun(context.req.param("id")));
+    return context.json(
+      await dispatcher.stopRun(context.req.param("id"), context.req.query("workspaceId")),
+    );
   });
 
   app.post("/api/tool-calls/:id/approve", (context) => {

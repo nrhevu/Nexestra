@@ -706,6 +706,10 @@ credentials.
   Knowledge document dialog; upload and workspace refresh occur only after explicit confirmation.
   See [ADR 0129](adr/0129-plan-knowledge-handoff.md).
 
+- Needs attention exposes a busy-aware stop action only for approval/input Master runs. The browser
+  sends the selected workspace ID to the stop endpoint, which checks the run's thread workspace
+  before interruption; Worker assignment rows remain Taskboard-only. See [ADR 0130](adr/0130-stop-attention-run.md).
+
 - Taskboard's completed Worker process response may include a bounded `sourceMessage` projection for
   the latest assignment: the canonical agent reply with the assignment run ID. This powers a direct
   reviewed Knowledge capture action while the server rereads the transcript by thread/message ID;

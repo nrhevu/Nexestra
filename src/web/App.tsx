@@ -2317,6 +2317,18 @@ export function App() {
               if (run) openMessage(threadId, run.triggerMessageId);
               else openThread(threadId);
             }}
+            onStopRun={async (_threadId, runId) => {
+              try {
+                await api(
+                  `/api/runs/${encodeURIComponent(runId)}/stop?workspaceId=${encodeURIComponent(data.workspace.id)}`,
+                  { method: "POST", body: "{}" },
+                );
+                await refresh(true);
+                flash("Agent run stopped.");
+              } catch (caught) {
+                setError(messageFrom(caught));
+              }
+            }}
             onTask={(id) => void inspectTask(id)}
             onSnooze={(id, durationMinutes = 60) => {
               void (async () => {

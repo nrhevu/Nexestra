@@ -19,6 +19,7 @@ export function AttentionView({
   onThread,
   onTask,
   onRun,
+  onStopRun,
   onSnooze,
   onDismiss,
   onClear,
@@ -28,6 +29,7 @@ export function AttentionView({
   onThread: (id: string) => void;
   onTask: (id: string) => void;
   onRun?: (threadId: string, runId: string) => void;
+  onStopRun?: (threadId: string, runId: string) => Promise<void>;
   onSnooze?: (id: string, durationMinutes?: number) => void;
   onDismiss?: (id: string) => void;
   onClear?: (id: string, kind: AttentionAuditEntry["kind"]) => void;
@@ -35,6 +37,7 @@ export function AttentionView({
   const [audit, setAudit] = useState<AttentionAuditEntry[]>([]);
   const [auditError, setAuditError] = useState("");
   const [auditLoading, setAuditLoading] = useState(false);
+  const [stoppingRunId, setStoppingRunId] = useState<string>();
 
   async function loadAudit() {
     if (!workspaceId) return;
@@ -110,6 +113,26 @@ export function AttentionView({
                   Open thread <ArrowRight size={15} />
                 </button>
               ) : null}
+              {onStopRun &&
+                item.runId &&
+                item.threadId &&
+                (item.kind === "approval" || item.kind === "input") && (
+                  <button
+                    className="danger-button"
+                    type="button"
+                    disabled={stoppingRunId === item.runId}
+                    onClick={() => {
+                      const runId = item.runId as string;
+                      const threadId = item.threadId as string;
+                      setStoppingRunId(runId);
+                      void onStopRun(threadId, runId)
+                        .catch(() => undefined)
+                        .finally(() => setStoppingRunId(undefined));
+                    }}
+                  >
+                    {stoppingRunId === item.runId ? "Stopping…" : "Stop run"}
+                  </button>
+                )}
               <div className="attention-actions">
                 {onSnooze && (
                   <fieldset className="attention-snooze-actions" aria-label="Snooze duration">

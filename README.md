@@ -413,6 +413,9 @@ of plan/task metadata, dependencies, and Worker labels, then opens the existing 
 dialog so you can review the name, `#handle`, and description before upload. Prompts, transcripts,
 credentials, repository IDs, branches, and worktree paths are excluded; manually created tasks are
 not included.
+Needs attention also provides **Stop run** on approval or input rows. The action is scoped to the
+selected workspace, refreshes the monitor after stopping, and does not expose Worker assignment
+stops outside Taskboard.
 If the provider tries to return a final answer while planned tasks are still undelegated, the
 harness sends it back to the tool loop instead of leaving silent, unassigned work on the board.
 Delegation creates `nexestra/<assignment-id>` from the selected `#repository` and checks it out into
