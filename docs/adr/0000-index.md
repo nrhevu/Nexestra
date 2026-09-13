@@ -124,3 +124,4 @@
 | [0121](0121-ready-task-custom-surface-filter.md) | Accepted | Open a workspace-scoped queue of todo tasks without active assignments |
 | [0122](0122-custom-surface-agent-entry.md) | Accepted | Allow custom surfaces to open the workspace-scoped Agent form |
 | [0123](0123-durable-plan-provenance.md) | Accepted | Preserve bounded plan identity on tasks created by the Master plan tool |
+| [0124](0124-durable-thread-plan-mode.md) | Accepted | Persist and replay a soft plan-mode toggle per thread |

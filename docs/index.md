@@ -154,3 +154,4 @@
 90. [Ready-task dispatch triage research](research/2026-09-13-ready-task-dispatch-triage.md): open a workspace-scoped Taskboard filter for todo work without active assignments.
 91. [Custom surface agent entry research](research/2026-09-13-custom-surface-agent-entry.md): add a safe declarative shortcut to the workspace-scoped Agent form.
 92. [Durable plan provenance research](research/2026-09-13-durable-plan-provenance.md): preserve bounded plan identity on Master-created Taskboard tasks.
+93. [Durable thread plan mode research](research/2026-09-13-durable-thread-plan-mode.md): persist a replayable soft planning toggle without changing execution permissions.

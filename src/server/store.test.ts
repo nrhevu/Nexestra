@@ -145,6 +145,30 @@ describe("FileStore", () => {
     });
   });
 
+  it("persists plan mode as a replayable thread event", async () => {
+    const store = await openStore();
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+
+    await expect(store.updateThreadPlanMode(thread.id, { active: true })).resolves.toMatchObject({
+      id: thread.id,
+      planMode: true,
+    });
+    const transcript = await readFile(store.transcriptPath(thread.id), "utf8");
+    expect(transcript).toContain('"type":"plan.mode"');
+
+    const reloaded = await FileStore.open({ root: store.root, workspacePath: store.workspacePath });
+    expect(reloaded.getThread(thread.id)).toMatchObject({ planMode: true });
+    await expect(reloaded.threadData(thread.id)).resolves.toMatchObject({
+      thread: { planMode: true },
+    });
+    await expect(
+      reloaded.updateThreadPlanMode(thread.id, { active: false }),
+    ).resolves.toMatchObject({
+      planMode: false,
+    });
+  });
+
   it("refuses to archive a thread with active runs or Worker assignments", async () => {
     const store = await openStore();
     const [workspace] = store.listWorkspaces();

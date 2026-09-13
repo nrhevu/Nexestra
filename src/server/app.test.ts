@@ -1192,6 +1192,27 @@ describe("HTTP app", () => {
     expect(store.transcriptPath(thread.id)).toBe(join(store.threadDirectory, `${thread.id}.jsonl`));
   });
 
+  it("toggles thread plan mode through the durable API", async () => {
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const response = await app.request(`/api/threads/${thread.id}/plan-mode`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ active: true }),
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ id: thread.id, planMode: true });
+    await expect(store.threadData(thread.id)).resolves.toMatchObject({
+      thread: { planMode: true },
+    });
+    const invalid = await app.request(`/api/threads/${thread.id}/plan-mode`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ active: "yes" }),
+    });
+    expect(invalid.status).toBe(400);
+  });
+
   it("rejects mutating browser requests from a non-loopback origin", async () => {
     const response = await app.request("/api/threads", {
       method: "POST",

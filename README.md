@@ -384,6 +384,11 @@ It is saved under managed local storage, redacts configured credentials before p
 response, and accepts at most 64 KiB of UTF-8 text. It has no agent execution or arbitrary markup
 hooks. Saved notes are included in workspace ZIP exports as a redacted `whiteboard.md` entry.
 
+Threads also have a **Plan mode** toggle. Its state is stored as a bounded `plan.mode` event in the
+canonical thread transcript and survives reloads. When enabled, Master prompts receive planning
+guidance; permissions, sandboxing, delegation and Worker execution remain unchanged. See [ADR
+0124](docs/adr/0124-durable-thread-plan-mode.md).
+
 Use **Save message as Knowledge** beside any message to open a review dialog. Inspect the unchanged
 source, choose a name, `#handle`, and optional description, then confirm the capture. API clients
 can call `POST /api/knowledge/from-message` with `threadId`, `messageId`, `name`, `handle`, and

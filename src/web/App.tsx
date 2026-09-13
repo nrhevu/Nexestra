@@ -1642,6 +1642,29 @@ export function App() {
       if (generation === workspaceGenerationRef.current) setError(messageFrom(caught));
     }
   };
+  const updateThreadPlanMode = async (threadId: string, active: boolean) => {
+    const generation = workspaceGenerationRef.current;
+    try {
+      await api(`/api/threads/${encodeURIComponent(threadId)}/plan-mode`, {
+        method: "PATCH",
+        body: JSON.stringify({ active }),
+      });
+      if (generation !== workspaceGenerationRef.current) return;
+      await refresh(true);
+      if (generation !== workspaceGenerationRef.current) return;
+      if (routeRef.current.threadId === threadId) {
+        await loadHistoryPage(
+          threadId,
+          currentHistoryIntent() ?? { threadId, kind: "latest" },
+          true,
+        );
+      }
+      if (generation !== workspaceGenerationRef.current) return;
+      flash(active ? "Plan mode enabled." : "Plan mode disabled.");
+    } catch (caught) {
+      if (generation === workspaceGenerationRef.current) setError(messageFrom(caught));
+    }
+  };
   const reorderWorkspaces = useCallback(
     async (workspaceIds: string[]) => {
       const workspaces = await api<Workspace[]>("/api/workspaces/order", {
@@ -2106,6 +2129,9 @@ export function App() {
               onRequestRename={setThreadToRename}
               onArchive={archiveThread}
               onRestore={restoreThread}
+              onPlanModeChange={(active) =>
+                route.threadId ? updateThreadPlanMode(route.threadId, active) : Promise.resolve()
+              }
               onRetry={(runId) =>
                 mutate(
                   () => api(`/api/runs/${runId}/retry`, { method: "POST", body: "{}" }),
@@ -3349,6 +3375,7 @@ function ThreadView(props: {
   onRequestRename: (thread: Thread) => void;
   onArchive: (threadId: string) => Promise<void>;
   onRestore: (threadId: string) => Promise<void>;
+  onPlanModeChange: (active: boolean) => Promise<void>;
 }) {
   const { draft, onDraftChange: setDraft } = props;
   const [sending, setSending] = useState(false);
@@ -3644,6 +3671,17 @@ function ThreadView(props: {
             <h1># {thread.name}</h1>
           </div>
           <div className="header-actions">
+            <button
+              type="button"
+              className={thread.planMode === true ? "active" : ""}
+              aria-pressed={thread.planMode === true}
+              disabled={archived}
+              onClick={() => void props.onPlanModeChange(thread.planMode !== true)}
+              title={archived ? "Archived threads cannot change plan mode" : "Toggle plan mode"}
+            >
+              <ClipboardCheck size={14} />
+              <span>{thread.planMode === true ? "Plan mode on" : "Plan mode"}</span>
+            </button>
             <button
               type="button"
               onClick={() => props.onRequestRename(thread)}

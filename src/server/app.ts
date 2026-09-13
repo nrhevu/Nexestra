@@ -593,6 +593,12 @@ export function createApp(options: CreateAppOptions) {
     );
   });
 
+  app.patch("/api/threads/:id/plan-mode", async (context) => {
+    return context.json(
+      await options.store.updateThreadPlanMode(context.req.param("id"), await context.req.json()),
+    );
+  });
+
   app.post("/api/threads/:id/archive", async (context) => {
     return context.json(await dispatcher.archiveThread(context.req.param("id")));
   });

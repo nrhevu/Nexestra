@@ -733,8 +733,9 @@ describe("parseProviderReply", () => {
     );
     await store.createUserMessage(thread.id, "a newer message must not change the target", []);
 
+    const planThread = { ...thread, planMode: true };
     const reply = await runner.invoke(created, {
-      thread,
+      thread: planThread,
       trigger,
       transcriptPath: store.transcriptPath(thread.id),
       transcriptSnapshot: await store.transcriptSnapshot(thread.id),
@@ -749,6 +750,7 @@ describe("parseProviderReply", () => {
     expect(String(init.body)).toContain("@maya make a plan");
     expect(String(init.body)).toContain(`Required message to answer (id: ${trigger.id})`);
     expect(String(init.body)).toContain("even if the transcript contains newer messages");
+    expect(String(init.body)).toContain("Plan mode is active for this thread");
     expect(String(init.body)).toContain("data:image/png;base64,");
 
     const oversizedRunner = new LocalAgentRunner({
@@ -761,7 +763,7 @@ describe("parseProviderReply", () => {
     });
     await expect(
       oversizedRunner.invoke(created, {
-        thread,
+        thread: planThread,
         trigger,
         transcriptPath: store.transcriptPath(thread.id),
         transcriptSnapshot: await store.transcriptSnapshot(thread.id),

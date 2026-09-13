@@ -420,6 +420,8 @@ export const ThreadSchema = z.object({
   updatedAt: z.string(),
   messageCount: z.number().int().nonnegative(),
   lastMessageAt: z.string().nullable(),
+  // Session-level planning guidance. Optional keeps legacy state readable.
+  planMode: z.boolean().optional(),
   // Default keeps legacy state files and fixtures readable without a version bump.
   archived: z.boolean().default(false),
 });
@@ -432,6 +434,10 @@ export const CreateThreadSchema = z.object({
 
 export const RenameThreadSchema = z.object({
   name: z.string().trim().min(1).max(80),
+});
+
+export const UpdateThreadPlanModeSchema = z.object({
+  active: z.boolean(),
 });
 
 export const MentionSchema = z.object({

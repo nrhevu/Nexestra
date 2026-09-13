@@ -426,6 +426,11 @@ the repository handle. When both a Worker and ready repository are available, a 
 Master cannot return its final answer while that set still contains undelegated tasks; the runtime
 adds a corrective turn and keeps the tool loop active.
 
+Threads also expose a soft plan-mode toggle. Changes append a `plan.mode` event to the canonical
+thread transcript and update thread metadata for bootstrap; replay folds the latest event. Active
+plan mode adds planning guidance to Master prompts without changing permissions, sandboxing, or
+delegation policy. See [ADR 0124](adr/0124-durable-thread-plan-mode.md).
+
 Each repository is cloned once under the owning workspace. Every assignment creates a unique
 `nexestra/<assignment-id>` branch and a Git worktree under the same managed workspace tree. The
 ready repository detail view can explicitly select or refresh a source branch into a new private

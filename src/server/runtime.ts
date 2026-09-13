@@ -674,6 +674,9 @@ function localHarnessPrompt(agent: Agent, invocation: AgentInvocation): string {
       : "Read the transcript for relevant context.",
     artifactContext,
     knowledgeContext,
+    agent.kind === "master" && invocation.thread.planMode === true
+      ? "Plan mode is active for this thread. Clarify assumptions, gather evidence, and present a concrete plan before making changes or delegating work."
+      : "",
     agent.kind === "worker"
       ? taskWorker
         ? "This is an implementation assignment. Work only in the assigned worktree, verify the result, and commit the completed change on the current branch. Do not merge or push."
@@ -727,6 +730,9 @@ function providerUserPrompt(invocation: AgentInvocation): string {
     "Answer the message above even if the transcript contains newer messages.",
     formatInvocationArtifacts(invocation),
     formatInvocationKnowledge(invocation),
+    invocation.thread.planMode === true
+      ? "Plan mode is active for this thread. Clarify assumptions, gather evidence, and present a concrete plan before making changes or delegating work."
+      : "",
     `Shared transcript for #${invocation.thread.slug}:`,
     invocation.transcriptSnapshot,
   ].join("\n\n");

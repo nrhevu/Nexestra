@@ -100,6 +100,7 @@ import {
   UpdateAttentionStateSchema,
   UpdateKnowledgeSchema,
   UpdateTaskSchema,
+  UpdateThreadPlanModeSchema,
   UpdateWorkspaceSchema,
   UpdateWorkspaceWhiteboardSchema,
   WORKSPACE_EXPORT_MAX_ARCHIVE_BYTES,
@@ -235,7 +236,8 @@ type TranscriptEvent =
     }
   | { type: "artifact.created"; sequence: number; artifact: Artifact }
   | { type: "run.updated"; sequence: number; run: AgentRun }
-  | { type: "tool.updated"; sequence: number; toolCall: ToolCall };
+  | { type: "tool.updated"; sequence: number; toolCall: ToolCall }
+  | { type: "plan.mode"; sequence: number; active: boolean };
 
 export const MAX_UPLOAD_FILES = 10;
 export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
@@ -2181,6 +2183,35 @@ export class FileStore {
     });
   }
 
+  async updateThreadPlanMode(id: string, rawInput: unknown): Promise<Thread> {
+    const input = UpdateThreadPlanModeSchema.parse(rawInput);
+    return this.withWrite(async () => {
+      const current = this.requireThread(id);
+      if (current.planMode === input.active) return structuredClone(current);
+      const sequence = await this.nextSequence(id);
+      const event = {
+        type: "plan.mode",
+        sequence,
+        active: input.active,
+      } satisfies TranscriptEvent;
+      const appended = await appendSynced(this.transcriptPath(id), event);
+      await this.extendTranscriptIndex(id, appended.baseOffset, [event]);
+      this.sequenceByThread.set(id, sequence);
+      const updated = ThreadSchema.parse({
+        ...current,
+        planMode: input.active,
+        updatedAt: new Date().toISOString(),
+      });
+      const next = {
+        ...this.state,
+        threads: this.state.threads.map((thread) => (thread.id === id ? updated : thread)),
+      };
+      await this.writeState(next);
+      this.state = next;
+      return structuredClone(updated);
+    });
+  }
+
   async archiveThread(id: string): Promise<Thread> {
     return this.withWrite(async () => {
       const current = this.requireThread(id);
@@ -2679,6 +2710,7 @@ export class FileStore {
   async threadData(threadId: string): Promise<ThreadData> {
     const thread = this.requireThread(threadId);
     const events = await this.readEvents(threadId);
+    let planMode = thread.planMode ?? false;
     const messages: Message[] = [];
     const artifacts: Artifact[] = [];
     const runs = new Map<string, AgentRun>();
@@ -2688,6 +2720,7 @@ export class FileStore {
       else if (event.type === "artifact.created") artifacts.push(event.artifact);
       else if (event.type === "run.updated") runs.set(event.run.id, event.run);
       else if (event.type === "tool.updated") toolCalls.set(event.toolCall.id, event.toolCall);
+      else if (event.type === "plan.mode") planMode = event.active;
     }
     const agentMessages = new Map(
       messages
@@ -2695,7 +2728,7 @@ export class FileStore {
         .map((message) => [message.id, message]),
     );
     return {
-      thread: structuredClone(thread),
+      thread: { ...structuredClone(thread), planMode },
       messages: messages.sort((left, right) => left.sequence - right.sequence),
       artifacts: artifacts.sort((left, right) => left.sequence - right.sequence),
       runs: [...runs.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
@@ -5421,6 +5454,8 @@ function validateWorkspaceExportEvent(
     remember(run.id, owners.runs);
     threadReference(run.triggerMessageId, owners.messages);
     workspaceReference(run.agentId, owners.agents);
+  } else if (event.type === "plan.mode") {
+    // Plan-mode events carry only bounded session state and no cross-entity IDs.
   } else {
     const tool = event.toolCall;
     if (tool.threadId !== thread.id) throw invalid();
@@ -6352,6 +6387,9 @@ function parseTranscriptEvent(line: string): TranscriptEvent | undefined {
       sequence,
       toolCall: ToolCallSchema.parse(parsed.toolCall),
     };
+  }
+  if (parsed.type === "plan.mode") {
+    return { type: "plan.mode", sequence, active: z.boolean().parse(parsed.active) };
   }
   return undefined;
 }
