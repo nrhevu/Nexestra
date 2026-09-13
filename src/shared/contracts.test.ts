@@ -88,11 +88,15 @@ describe("TaskSchema", () => {
       threadId: null,
       planId: "00000000-0000-4000-8000-000000000001",
       planTitle: "Implementation plan",
+      planApproval: "pending",
       verificationCommand: "",
       createdAt: "2026-09-13T00:00:00.000Z",
       updatedAt: "2026-09-13T00:00:00.000Z",
     });
     expect(result.success).toBe(true);
+    expect(
+      TaskSchema.safeParse({ ...result.data, planApproval: "silently-approved" }).success,
+    ).toBe(false);
   });
 });
 

@@ -389,8 +389,11 @@ hooks. Saved notes are included in workspace ZIP exports as a redacted `whiteboa
 
 Threads also have a **Plan mode** toggle. Its state is stored as a bounded `plan.mode` event in the
 canonical thread transcript and survives reloads. When enabled, Master prompts receive planning
-guidance; permissions, sandboxing, delegation and Worker execution remain unchanged. See [ADR
-0124](docs/adr/0124-durable-thread-plan-mode.md).
+guidance. Plans created by a custom-provider Master stay pending in Taskboard until you approve or
+reject them; pending and rejected tasks cannot be delegated. Approval is workspace-scoped and
+durable, while plans created with Plan mode off keep the autonomous dispatch flow. See [ADR
+0124](docs/adr/0124-durable-thread-plan-mode.md) and [ADR
+0136](docs/adr/0136-plan-mode-approval-gate.md).
 
 Use **Save message as Knowledge** beside any message to open a review dialog. Inspect the unchanged
 source, choose a name, `#handle`, and optional description, then confirm the capture. API clients
@@ -403,8 +406,10 @@ Workers run in read-only discussion mode. For an implementation request, a custo
 must call `plan` to create durable Taskboard tasks and then call `delegate` for each task it assigns.
 Tasks created by that tool retain a generated plan ID and bounded plan title, which Taskboard displays
 so planned work remains distinguishable from manually created tasks after refresh or export.
-Taskboard also groups those tasks into a read-only plan progress summary with bounded ready, delegated,
-queued, running, blocked, and done counts; each task opens the existing process inspection dialog.
+Taskboard also groups those tasks into a plan progress summary with approval state and bounded ready,
+approval-blocked, delegated, queued, running, blocked, and done counts; each task opens the existing
+process inspection dialog. Pending plans expose explicit Approve and Reject actions. After approval,
+tasks use the existing manual Worker and repository picker.
 The summary can be exported as a capped `nexestra.plan-summary` JSON handoff containing plan/task
 metadata and Worker profile labels only; descriptions, transcripts, credentials, and repository paths
 are excluded. The export is client-only and marks oversized loaded snapshots as truncated.

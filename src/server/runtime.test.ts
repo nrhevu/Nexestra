@@ -1020,6 +1020,80 @@ describe("parseProviderReply", () => {
     },
   );
 
+  it("returns an approval-required outcome instead of looping on a pending plan", async () => {
+    const { agent, invocation, root, store } = await customMasterFixture("openai-chat", "full");
+    const taskId = "f5a80f87-456d-4c35-9081-356cbe665512";
+    const createdAt = "2026-09-03T00:00:00.000Z";
+    const responses = [
+      {
+        choices: [
+          {
+            message: {
+              content: null,
+              tool_calls: [
+                {
+                  id: "call-plan",
+                  type: "function",
+                  function: {
+                    name: "plan",
+                    arguments: JSON.stringify({
+                      title: "Approval plan",
+                      steps: [{ title: "Build feature", description: "Implement it." }],
+                    }),
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+      { choices: [{ message: { content: "Please review the plan." } }] },
+    ];
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify(responses.shift())),
+    );
+    const repository = await store.createKnowledgeRepository({
+      name: "Product repository",
+      handle: "product-repo",
+      source: "https://github.com/example/product.git",
+    });
+    const readyRepository = await store.updateKnowledgeRepository(repository.id, {
+      status: "ready",
+      defaultBranch: "main",
+    });
+
+    await expect(
+      new LocalAgentRunner({ store, fetch: fetchMock as typeof fetch }).invoke(agent, {
+        ...invocation,
+        knowledge: [{ item: readyRepository, localPath: root }],
+        toolHooks: {
+          update: async () => undefined,
+          requestApproval: async () => true,
+          createPlan: async (_title, steps) =>
+            steps.map((step) => ({
+              id: taskId,
+              workspaceId: invocation.thread.workspaceId,
+              title: step.title,
+              description: step.description,
+              status: "todo" as const,
+              assigneeId: null,
+              threadId: invocation.thread.id,
+              planId: "00000000-0000-4000-8000-000000000002",
+              planTitle: "Approval plan",
+              planApproval: "pending" as const,
+              verificationCommand: "",
+              createdAt,
+              updatedAt: createdAt,
+            })),
+        },
+      }),
+    ).resolves.toBe(
+      "Please review the plan.\n\nPlan approval is required before delegation. Review the plan in Taskboard (1 task).",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("executes a same-turn plan before its dependent delegate call", async () => {
     const { agent, invocation, store } = await customMasterFixture("openai-chat", "full");
     const taskId = "f5a80f87-456d-4c35-9081-356cbe665510";

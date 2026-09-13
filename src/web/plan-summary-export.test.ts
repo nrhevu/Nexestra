@@ -30,8 +30,10 @@ function summary(tasks: Task[]): TaskPlanSummary {
   return {
     id: "plan-1",
     title: "Launch plan",
+    approval: "approved",
     total: tasks.length,
     ready: 0,
+    approvalBlocked: 0,
     dependencyBlocked: 0,
     delegated: tasks.length,
     queued: 0,
@@ -109,6 +111,7 @@ describe("plan summary export", () => {
       },
       assignmentStatus: "running",
     });
+    expect(parsed.plans[0]).toMatchObject({ approval: "approved", approvalBlocked: 0 });
     expect(output).not.toContain("private acceptance details");
     expect(output).not.toContain("repository-secret");
     expect(output).not.toContain("/private/worktree");
@@ -174,6 +177,7 @@ describe("plan summary export", () => {
       assignments: [assignment],
     });
     expect(markdown).toContain("## Launch plan");
+    expect(markdown).toContain("- Approval: approved");
     expect(markdown).toContain(
       "Review release — status: in_progress; assignee: @builder; assignment: running; depends on: `task-0`",
     );

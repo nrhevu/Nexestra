@@ -258,7 +258,7 @@ describe("Message navigation", () => {
     await user.click(await within(dialog).findByRole("button", { name: /Ship on Friday/ }));
 
     let selected = await screen.findByRole("region", { name: "Selected message" });
-    expect(selected).toHaveFocus();
+    await waitFor(() => expect(selected).toHaveFocus());
     expect(window.location.pathname).toBe(`/threads/${thread.id}`);
     expect(window.location.search).toBe("?message=message-1");
     expect(screen.queryByRole("combobox", { name: "Message" })).not.toBeInTheDocument();
@@ -272,7 +272,7 @@ describe("Message navigation", () => {
     await user.click(await within(nextDialog).findByRole("button", { name: /Ship on Friday/ }));
 
     selected = await screen.findByRole("region", { name: "Selected message" });
-    expect(selected).toHaveFocus();
+    await waitFor(() => expect(selected).toHaveFocus());
     expect(within(selected).getByText("Ship on Friday")).toBeVisible();
     expect(screen.getByRole("button", { name: "Messages" })).toHaveClass("active");
   });
@@ -286,7 +286,7 @@ describe("Message navigation", () => {
 
       const selected = await screen.findByRole("region", { name: "Selected message" });
       expect(within(selected).getByText("Ship on Friday")).toBeVisible();
-      expect(selected).toHaveFocus();
+      await waitFor(() => expect(selected).toHaveFocus());
       expect(scrollIntoView).toHaveBeenCalledExactlyOnceWith({ block: "center" });
       expect(window.location.search).toBe("?message=message-1");
       if (archived) {

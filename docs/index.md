@@ -166,3 +166,4 @@
 102. [Knowledge retrieval filters research](research/2026-09-13-knowledge-retrieval-filters.md): search and filter selected-workspace Knowledge metadata without scanning bytes.
 103. [Cross-workspace activity age research](research/2026-09-13-cross-workspace-activity-age.md): expose oldest active and attention timestamps for Monitor triage.
 104. [Taskboard prerequisite links research](research/2026-09-13-taskboard-prerequisite-links.md): identify and inspect bounded same-workspace plan prerequisites.
+105. [Plan-mode approval gate research](research/2026-09-13-plan-mode-approval-gate.md): add a durable review checkpoint between planning and dispatch.

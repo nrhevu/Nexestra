@@ -2834,6 +2834,32 @@ kbd {
   margin: 0 0 7px;
   font-size: 13px;
 }
+.task-plan-approval {
+  margin: 6px 0;
+  font-size: 11px;
+  text-transform: capitalize;
+}
+.task-plan-approval-pending {
+  color: var(--accent);
+}
+.task-plan-approval-approved {
+  color: var(--green);
+}
+.task-plan-approval-rejected {
+  color: #b58b90;
+}
+.task-plan-approval-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.task-plan-approval-actions .primary-button,
+.task-plan-approval-actions .danger-link {
+  min-height: 30px;
+  padding: 5px 9px;
+  font-size: 11px;
+}
 .task-plan-summary-card p {
   margin: 0 0 10px;
   color: var(--muted);

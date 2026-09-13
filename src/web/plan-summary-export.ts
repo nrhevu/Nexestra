@@ -62,6 +62,7 @@ export function serializePlanSummaryExport(
       return {
         id: plan.id,
         title: plan.title,
+        approval: plan.approval,
         ...counts,
         tasks,
       };
@@ -86,11 +87,20 @@ function summarizeScopedPlanTasks(
   assignments: Map<string, WorkAssignment>,
 ): Pick<
   TaskPlanSummary,
-  "total" | "ready" | "dependencyBlocked" | "delegated" | "queued" | "running" | "blocked" | "done"
+  | "total"
+  | "ready"
+  | "approvalBlocked"
+  | "dependencyBlocked"
+  | "delegated"
+  | "queued"
+  | "running"
+  | "blocked"
+  | "done"
 > {
   const counts = {
     total: 0,
     ready: 0,
+    approvalBlocked: 0,
     dependencyBlocked: 0,
     delegated: 0,
     queued: 0,
@@ -107,6 +117,8 @@ function summarizeScopedPlanTasks(
     else if (assignment?.status === "queued") counts.queued += 1;
     else if (assignment?.status === "running") counts.running += 1;
     else if (assignment) counts.delegated += 1;
+    else if (task.planApproval === "pending" || task.planApproval === "rejected")
+      counts.approvalBlocked += 1;
     else if (
       task.dependsOnTaskIds?.some((dependencyId) => tasksById.get(dependencyId)?.status !== "done")
     )
@@ -161,7 +173,8 @@ export function serializePlanSummaryMarkdown(input: PlanSummaryExportInput): str
     lines.push(`## ${oneLine(plan.title)}`);
     lines.push(`- Plan ID: \`${plan.id}\``);
     lines.push(
-      `- Progress: ${plan.done} done, ${plan.running} running, ${plan.queued} queued, ${plan.ready} ready, ${plan.dependencyBlocked} dependency-blocked, ${plan.blocked} blocked`,
+      `- Approval: ${plan.approval}`,
+      `- Progress: ${plan.done} done, ${plan.running} running, ${plan.queued} queued, ${plan.ready} ready, ${plan.approvalBlocked} approval-blocked, ${plan.dependencyBlocked} dependency-blocked, ${plan.blocked} blocked`,
     );
     lines.push("", "### Tasks");
     tasks.forEach((task, index) => {

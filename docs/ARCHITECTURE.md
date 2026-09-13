@@ -430,10 +430,15 @@ the repository handle. When both a Worker and ready repository are available, a 
 Master cannot return its final answer while that set still contains undelegated tasks; the runtime
 adds a corrective turn and keeps the tool loop active.
 
-Threads also expose a soft plan-mode toggle. Changes append a `plan.mode` event to the canonical
+Threads expose a durable plan-mode toggle. Changes append a `plan.mode` event to the canonical
 thread transcript and update thread metadata for bootstrap; replay folds the latest event. Active
-plan mode adds planning guidance to Master prompts without changing permissions, sandboxing, or
-delegation policy. See [ADR 0124](adr/0124-durable-thread-plan-mode.md).
+plan mode adds planning guidance and makes custom-provider Master plans persist as pending approval.
+The provider loop returns an approval-required outcome instead of forcing same-turn delegation.
+Taskboard updates all selected-workspace plan tasks through one atomic approval operation; pending or
+rejected tasks fail every delegation entry point and are excluded from ready-task counts. Approval
+changes are refused while any plan assignment is queued or running. Plans created with plan mode off,
+legacy plans, and manual tasks retain autonomous dispatch semantics. See [ADR
+0124](adr/0124-durable-thread-plan-mode.md) and [ADR 0136](adr/0136-plan-mode-approval-gate.md).
 
 Each repository is cloned once under the owning workspace. Every assignment creates a unique
 `nexestra/<assignment-id>` branch and a Git worktree under the same managed workspace tree. The

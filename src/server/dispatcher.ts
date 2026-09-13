@@ -694,8 +694,12 @@ export class AgentDispatcher {
                   : (createdTasks[index] as Task),
               );
             }
+            const persistedTasks =
+              thread.planMode === true
+                ? await this.store.updatePlanApproval(thread.workspaceId, planId, "pending")
+                : tasks;
             this.notifyThread(run.threadId, true);
-            return tasks;
+            return persistedTasks;
           },
           delegate: (input) =>
             this.delegateWork(currentRun, agent, trigger, transcriptSnapshot, input),
@@ -859,6 +863,12 @@ export class AgentDispatcher {
     }
     if (task.status === "done") {
       throw new StoreError("conflict", "A completed task cannot be delegated again.");
+    }
+    if (task.planId && task.planApproval === "pending") {
+      throw new StoreError("conflict", "Approve this plan before delegating its tasks.");
+    }
+    if (task.planId && task.planApproval === "rejected") {
+      throw new StoreError("conflict", "This plan was rejected and cannot be delegated.");
     }
     const unmetDependencies = (task.dependsOnTaskIds ?? []).filter(
       (dependencyId) => this.store.getTask(dependencyId)?.status !== "done",

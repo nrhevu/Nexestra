@@ -3090,6 +3090,42 @@ export class FileStore {
     });
   }
 
+  async updatePlanApproval(
+    workspaceId: string,
+    planId: string,
+    approval: "pending" | "approved" | "rejected",
+  ): Promise<Task[]> {
+    return this.withWrite(async () => {
+      this.requireWorkspace(workspaceId);
+      const nextState = structuredClone(this.state);
+      const planTasks = nextState.tasks.filter(
+        (task) => task.workspaceId === workspaceId && task.planId === planId,
+      );
+      if (planTasks.length === 0) throw new StoreError("not_found", "Plan not found.");
+      const planTaskIds = new Set(planTasks.map((task) => task.id));
+      if (
+        nextState.assignments.some(
+          (assignment) =>
+            planTaskIds.has(assignment.taskId) &&
+            (assignment.status === "queued" || assignment.status === "running"),
+        )
+      ) {
+        throw new StoreError(
+          "conflict",
+          "Wait for active plan assignments to finish before changing approval.",
+        );
+      }
+      const updatedAt = new Date().toISOString();
+      for (const task of planTasks) {
+        task.planApproval = approval;
+        task.updatedAt = updatedAt;
+      }
+      await this.writeState(nextState);
+      this.state = nextState;
+      return structuredClone(planTasks);
+    });
+  }
+
   async deleteTask(id: string): Promise<void> {
     return this.withWrite(async () => {
       const nextState = structuredClone(this.state);

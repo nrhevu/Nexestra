@@ -84,6 +84,35 @@ function abortable(invocation: AgentInvocation): Promise<string> {
 }
 
 describe("manual Worker delegation", () => {
+  it("requires approval for Master-created plans and keeps rejection closed", async () => {
+    const invoke = vi.fn(async () => "Finished.");
+    const fixture = await setup(invoke);
+    const { dispatcher, store, worker, repository } = fixture;
+    const planId = "00000000-0000-4000-8000-000000000202";
+    const planned = await store.createTask({
+      title: "Approved implementation",
+      threadId: fixture.thread.id,
+      planId,
+      planTitle: "Reviewed plan",
+    });
+
+    await store.updatePlanApproval(fixture.thread.workspaceId, planId, "pending");
+    await expect(
+      dispatcher.delegateFromTask(planned.id, worker.handle, repository.handle),
+    ).rejects.toThrow("Approve this plan");
+    await store.updatePlanApproval(fixture.thread.workspaceId, planId, "rejected");
+    await expect(
+      dispatcher.delegateFromTask(planned.id, worker.handle, repository.handle),
+    ).rejects.toThrow("rejected");
+    expect(invoke).not.toHaveBeenCalled();
+
+    await store.updatePlanApproval(fixture.thread.workspaceId, planId, "approved");
+    await dispatcher.delegateFromTask(planned.id, worker.handle, repository.handle);
+    await dispatcher.waitForIdle();
+    expect(invoke).toHaveBeenCalledOnce();
+    expect(store.getTask(planned.id)?.status).toBe("done");
+  });
+
   it("holds a dependent task until its prerequisite is done", async () => {
     const invocations: AgentInvocation[] = [];
     const fixture = await setup(async (_agent, invocation) => {

@@ -942,6 +942,7 @@ describe("mention dispatch", () => {
       },
     });
     expect(master.kind).toBe("master");
+    await store.updateThreadPlanMode(thread.id, { active: true });
 
     await chat.send(thread.id, { content: "@lead plan the ordered work" });
     await dispatcher.waitForIdle();
@@ -952,6 +953,7 @@ describe("mention dispatch", () => {
     const dependent = tasks.find((task) => task.title === "Build");
     expect(dependent?.dependsOnTaskIds).toEqual([prerequisite?.id]);
     expect(prerequisite?.planId).toBe(dependent?.planId);
+    expect(tasks.every((task) => task.planApproval === "pending")).toBe(true);
   });
 
   it("delegates work without requiring #repository in the user message", async () => {

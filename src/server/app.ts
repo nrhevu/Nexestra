@@ -19,6 +19,7 @@ import {
   ThreadHistoryRequestSchema,
   ToolAnswersSchema,
   UpdateAttentionStateSchema,
+  UpdatePlanApprovalSchema,
   UpdateWorkspaceWhiteboardSchema,
   WORKSPACE_EXPORT_MAX_ARCHIVE_BYTES,
   WorkspaceImportResultSchema,
@@ -809,6 +810,21 @@ export function createApp(options: CreateAppOptions) {
 
   app.post("/api/tasks", async (context) => {
     return context.json(await options.store.createTask(await context.req.json()), 201);
+  });
+
+  app.patch("/api/plans/:planId/approval", async (context) => {
+    const { workspaceId, approval } = UpdatePlanApprovalSchema.parse(await context.req.json());
+    const tasks = await options.store.updatePlanApproval(
+      workspaceId,
+      context.req.param("planId"),
+      approval,
+    );
+    return context.json({
+      workspaceId,
+      planId: context.req.param("planId"),
+      approval,
+      taskIds: tasks.map((task) => task.id),
+    });
   });
 
   app.get("/api/tasks/:id", (context) => {

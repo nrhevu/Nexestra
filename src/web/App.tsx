@@ -2508,6 +2508,32 @@ export function App() {
               });
               setModal("knowledge");
             }}
+            onApprovePlan={(plan) =>
+              mutate(
+                () =>
+                  api(`/api/plans/${encodeURIComponent(plan.id)}/approval`, {
+                    method: "PATCH",
+                    body: JSON.stringify({
+                      workspaceId: data.workspace.id,
+                      approval: "approved",
+                    }),
+                  }),
+                `Approved ${plan.title}.`,
+              )
+            }
+            onRejectPlan={(plan) =>
+              mutate(
+                () =>
+                  api(`/api/plans/${encodeURIComponent(plan.id)}/approval`, {
+                    method: "PATCH",
+                    body: JSON.stringify({
+                      workspaceId: data.workspace.id,
+                      approval: "rejected",
+                    }),
+                  }),
+                `Rejected ${plan.title}.`,
+              )
+            }
           />
         )}
       </section>
@@ -5777,6 +5803,8 @@ function AgentCard({
 export function isReadyTask(task: Task, assignments: WorkAssignment[]): boolean {
   return (
     task.status === "todo" &&
+    task.planApproval !== "pending" &&
+    task.planApproval !== "rejected" &&
     !assignments.some(
       (assignment) =>
         assignment.taskId === task.id &&
@@ -5805,8 +5833,10 @@ export function resolveTaskPrerequisites(task: Task, tasks: Task[]): Array<Task 
 export interface TaskPlanSummary {
   id: string;
   title: string;
+  approval: "pending" | "approved" | "rejected";
   total: number;
   ready: number;
+  approvalBlocked: number;
   dependencyBlocked: number;
   delegated: number;
   queued: number;
@@ -5834,8 +5864,10 @@ export function summarizeTaskPlans(
     const summary = summaries.get(task.planId) ?? {
       id: task.planId,
       title: task.planTitle,
+      approval: task.planApproval ?? "approved",
       total: 0,
       ready: 0,
+      approvalBlocked: 0,
       dependencyBlocked: 0,
       delegated: 0,
       queued: 0,
@@ -5844,6 +5876,10 @@ export function summarizeTaskPlans(
       done: 0,
       tasks: [],
     };
+    if (task.planApproval === "rejected") summary.approval = "rejected";
+    else if (task.planApproval === "pending" && summary.approval !== "rejected") {
+      summary.approval = "pending";
+    }
     summary.total += 1;
     summary.tasks.push(task);
     const assignment = latestAssignments.get(task.id);
@@ -5852,6 +5888,8 @@ export function summarizeTaskPlans(
     else if (assignment?.status === "queued") summary.queued += 1;
     else if (assignment?.status === "running") summary.running += 1;
     else if (assignment) summary.delegated += 1;
+    else if (task.planApproval === "pending" || task.planApproval === "rejected")
+      summary.approvalBlocked += 1;
     else if (
       task.dependsOnTaskIds?.some((dependencyId) => tasksById.get(dependencyId)?.status !== "done")
     )
@@ -5871,6 +5909,8 @@ export function Taskboard(props: {
   onThread: (id: string) => void;
   onInspect: (task: Task) => void;
   onSavePlan?: (plan: TaskPlanSummary) => void;
+  onApprovePlan?: (plan: TaskPlanSummary) => void;
+  onRejectPlan?: (plan: TaskPlanSummary) => void;
 }) {
   const columns: { status: Task["status"]; title: string }[] = [
     { status: "todo", title: "To do" },
@@ -5950,10 +5990,14 @@ export function Taskboard(props: {
             {planSummaries.map((plan) => (
               <article className="task-plan-summary-card" key={plan.id}>
                 <h3>{plan.title}</h3>
+                <p className={`task-plan-approval task-plan-approval-${plan.approval}`}>
+                  Approval: {plan.approval}
+                </p>
                 <p>
-                  {plan.total} tasks · {plan.ready} ready · {plan.dependencyBlocked}{" "}
-                  dependency-blocked · {plan.delegated} delegated · {plan.queued} queued ·{" "}
-                  {plan.running} running · {plan.blocked} blocked · {plan.done} done
+                  {plan.total} tasks · {plan.ready} ready · {plan.approvalBlocked} approval-blocked
+                  · {plan.dependencyBlocked} dependency-blocked · {plan.delegated} delegated ·{" "}
+                  {plan.queued} queued · {plan.running} running · {plan.blocked} blocked ·{" "}
+                  {plan.done} done
                 </p>
                 <div className="task-plan-summary-tasks">
                   {plan.tasks.map((task) => (
@@ -5975,6 +6019,26 @@ export function Taskboard(props: {
                   >
                     Save plan as Knowledge
                   </button>
+                )}
+                {plan.approval !== "approved" && props.onApprovePlan && (
+                  <div className="task-plan-approval-actions">
+                    <button
+                      type="button"
+                      className="primary-button"
+                      onClick={() => props.onApprovePlan?.(plan)}
+                    >
+                      Approve plan
+                    </button>
+                    {plan.approval === "pending" && props.onRejectPlan && (
+                      <button
+                        type="button"
+                        className="danger-link"
+                        onClick={() => props.onRejectPlan?.(plan)}
+                      >
+                        Reject plan
+                      </button>
+                    )}
+                  </div>
                 )}
               </article>
             ))}
@@ -6302,6 +6366,8 @@ function TaskProcessDialog({
   const availableRepositories = data.knowledge.filter(
     (item) => item.kind === "repository" && item.status === "ready",
   );
+  const planDispatchBlocked =
+    process?.task.planApproval === "pending" || process?.task.planApproval === "rejected";
   useEffect(() => {
     if (assignment || delegateWorkerId || delegateRepositoryId) return;
     setDelegateWorkerId(availableWorkers[0]?.id);
@@ -6319,7 +6385,8 @@ function TaskProcessDialog({
     worker.enabled &&
     !worker.archived &&
     repository.kind === "repository" &&
-    repository.status === "ready";
+    repository.status === "ready" &&
+    !planDispatchBlocked;
 
   return (
     <Modal
@@ -6422,8 +6489,11 @@ function TaskProcessDialog({
                 <div>
                   <strong>This task has not been delegated</strong>
                   <p>
-                    Choose an enabled Worker and a ready repository. Nexestra will create a new
-                    isolated branch and worktree for this task.
+                    {process.task.planApproval === "pending"
+                      ? "Approve this plan from the Taskboard plan summary before choosing a Worker."
+                      : process.task.planApproval === "rejected"
+                        ? "This plan was rejected. Approve it from the Taskboard plan summary to reopen dispatch."
+                        : "Choose an enabled Worker and a ready repository. Nexestra will create a new isolated branch and worktree for this task."}
                   </p>
                 </div>
               </div>
@@ -6462,6 +6532,7 @@ function TaskProcessDialog({
                       name="worker"
                       aria-label="Worker"
                       value={delegateWorkerId ?? ""}
+                      disabled={planDispatchBlocked}
                       onChange={(event) => setDelegateWorkerId(event.target.value)}
                     >
                       {availableWorkers.map((agent) => (
@@ -6476,6 +6547,7 @@ function TaskProcessDialog({
                       name="repository"
                       aria-label="Repository"
                       value={delegateRepositoryId ?? ""}
+                      disabled={planDispatchBlocked}
                       onChange={(event) => setDelegateRepositoryId(event.target.value)}
                     >
                       {availableRepositories.map((item) => (
@@ -6491,6 +6563,7 @@ function TaskProcessDialog({
                   type="submit"
                   disabled={
                     delegating ||
+                    planDispatchBlocked ||
                     !process.task.threadId ||
                     availableWorkers.length === 0 ||
                     availableRepositories.length === 0
@@ -6504,6 +6577,12 @@ function TaskProcessDialog({
                 <p className="form-error">
                   <CircleAlert size={14} />
                   Link this task to a thread before delegating it.
+                </p>
+              )}
+              {planDispatchBlocked && (
+                <p className="form-error">
+                  <CircleAlert size={14} />
+                  Plan approval is {process.task.planApproval}.
                 </p>
               )}
               {delegateError && (

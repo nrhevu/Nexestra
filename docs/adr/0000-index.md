@@ -136,3 +136,4 @@
 | [0133](0133-knowledge-retrieval-filters.md) | Accepted | Filter selected-workspace Knowledge by bounded metadata |
 | [0134](0134-cross-workspace-activity-age.md) | Accepted | Show oldest active and attention age in Monitor |
 | [0135](0135-taskboard-prerequisite-links.md) | Accepted | Link bounded same-workspace prerequisites from Taskboard cards |
+| [0136](0136-plan-mode-approval-gate.md) | Accepted | Gate plan-mode dispatch on durable Taskboard approval |

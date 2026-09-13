@@ -70,12 +70,14 @@ export interface MasterToolSession {
   definitions: ProviderToolDefinition[];
   warnings: string[];
   pendingTaskIds(): string[];
+  pendingApprovalTaskIds(): string[];
   execute(request: HarnessToolRequest): Promise<string>;
   close(): Promise<void>;
 }
 
 interface PlanState {
   plannedTaskIds: Set<string>;
+  pendingApprovalTaskIds: Set<string>;
   delegatingTaskIds: Set<string>;
 }
 
@@ -93,6 +95,7 @@ export async function createMasterToolSession(
     : { tools: [], warnings: [], close: async () => undefined };
   const planState: PlanState = {
     plannedTaskIds: new Set(),
+    pendingApprovalTaskIds: new Set(),
     delegatingTaskIds: new Set(),
   };
   const definitions = new Map<string, ToolDefinition>();
@@ -108,6 +111,7 @@ export async function createMasterToolSession(
     })),
     warnings: [...custom.warnings, ...mcp.warnings],
     pendingTaskIds: () => [...planState.plannedTaskIds],
+    pendingApprovalTaskIds: () => [...planState.pendingApprovalTaskIds],
     execute: (request) => executeDefinition(request, context, config, definitions),
     close: mcp.close,
   };
@@ -131,7 +135,7 @@ function builtInTools(
   planState: PlanState,
 ): ToolDefinition[] {
   let todos: Record<string, unknown>[] = [];
-  const { plannedTaskIds, delegatingTaskIds } = planState;
+  const { plannedTaskIds, pendingApprovalTaskIds, delegatingTaskIds } = planState;
   return [
     zodTool(
       "list",
@@ -419,10 +423,14 @@ function builtInTools(
           throw new Error("Planning is unavailable in this runtime.");
         }
         const tasks = await context.hooks.createPlan(input.title, input.steps);
-        for (const task of tasks) plannedTaskIds.add(task.id);
+        for (const task of tasks) {
+          plannedTaskIds.add(task.id);
+          if (task.planApproval === "pending") pendingApprovalTaskIds.add(task.id);
+        }
         return JSON.stringify(
           {
             title: input.title,
+            approval: pendingApprovalTaskIds.size > 0 ? "pending" : "approved",
             tasks: tasks.map((task) => ({
               id: task.id,
               title: task.title,
@@ -459,6 +467,11 @@ function builtInTools(
         if (delegatingTaskIds.has(input.taskId)) {
           throw new Error("This planned task is already being delegated.");
         }
+        if (pendingApprovalTaskIds.has(input.taskId)) {
+          throw new Error(
+            "Plan approval is required. Ask the user to approve the plan in Taskboard before manual delegation.",
+          );
+        }
         if (!context.hooks?.delegate) {
           throw new Error("Worker delegation is unavailable in this runtime.");
         }
@@ -470,6 +483,7 @@ function builtInTools(
             repositoryHandle: input.repository.toLowerCase(),
           });
           plannedTaskIds.delete(input.taskId);
+          pendingApprovalTaskIds.delete(input.taskId);
           return JSON.stringify(
             {
               assignmentId: assignment.id,

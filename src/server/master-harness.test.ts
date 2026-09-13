@@ -307,6 +307,54 @@ describe("Master harness tools", () => {
     ]);
   });
 
+  it("stops planned delegation while durable approval is pending", async () => {
+    const context = await toolContext("full");
+    const taskId = "f5a80f87-456d-4c35-9081-356cbe665511";
+    const delegate = vi.fn();
+    context.hooks = {
+      update: async () => undefined,
+      requestApproval: async () => true,
+      createPlan: async (title, steps) => [
+        {
+          id: taskId,
+          workspaceId: "workspace",
+          title: steps[0]?.title ?? "Build feature",
+          description: title,
+          status: "todo",
+          assigneeId: null,
+          threadId: "thread",
+          planId: "00000000-0000-4000-8000-000000000001",
+          planTitle: title,
+          planApproval: "pending",
+          verificationCommand: "",
+          createdAt: "2026-09-03T00:00:00.000Z",
+          updatedAt: "2026-09-03T00:00:00.000Z",
+        },
+      ],
+      delegate,
+    };
+    const session = await createMasterToolSession(context);
+    try {
+      await expect(
+        callSession(session, "plan", {
+          title: "Approval plan",
+          steps: [{ title: "Build feature", description: "Meet the criteria." }],
+        }),
+      ).resolves.toContain('"approval": "pending"');
+      expect(session.pendingApprovalTaskIds()).toEqual([taskId]);
+      await expect(
+        callSession(session, "delegate", {
+          taskId,
+          worker: "builder",
+          repository: "product-repo",
+        }),
+      ).resolves.toContain("Plan approval is required");
+      expect(delegate).not.toHaveBeenCalled();
+    } finally {
+      await session.close();
+    }
+  });
+
   it("rejects plan dependency references that are out of range or cyclic", async () => {
     const context = await toolContext("full");
     const createPlan = vi.fn(async () => []);

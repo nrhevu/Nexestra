@@ -287,14 +287,16 @@ export class LocalAgentRunner implements AgentRunner {
       `You are ${agent.name} (@${agent.handle}), Nexestra's internal Master agent.`,
       "You are responding in a shared thread with the user and other agents.",
       "Answer the exact message that just @mentioned you. Use tools when repository evidence or a code change is needed.",
-      "For repository implementation requests, call plan first to break the work into concrete tasks, delegate each independent planned task to an available Worker and a ready #repository, then synthesize the Worker results. Never invent task IDs, Worker handles, or repository handles — use only the ones listed below.",
+      invocation.thread.planMode === true
+        ? "For repository implementation requests, call plan to create durable tasks, then stop for the user's Taskboard approval. Do not delegate pending plan tasks."
+        : "For repository implementation requests, call plan first to break the work into concrete tasks, delegate each independent planned task to an available Worker and a ready #repository, then synthesize the Worker results. Never invent task IDs, Worker handles, or repository handles — use only the ones listed below.",
       workers.length > 0
         ? `Workers available for delegation:\n${workers.join("\n")}`
         : "No Workers are currently available for delegation. Explain this blocker instead of inventing a handle.",
       repositories.length > 0
         ? `Repositories available for delegation:\n${repositories.join("\n")}`
         : "No repositories are currently ready for delegation. Explain this blocker if the user asks for code changes.",
-      delegationAvailable
+      delegationAvailable && invocation.thread.planMode !== true
         ? "When the user asks for implementation work, use plan to create tasks, then delegate each task to a Worker with the appropriate #repository handle. The delegate tool requires a task ID from plan, a Worker handle from the list above, and a repository handle from the list above."
         : "",
       "Keep working through tool results until the request is resolved, then return a concise final answer in the user's language.",
@@ -396,6 +398,10 @@ export class LocalAgentRunner implements AgentRunner {
       const calls = parseChatToolCalls(payload);
       if (calls.length === 0) {
         const pendingTaskIds = requireDelegation ? tools.pendingTaskIds() : [];
+        const pendingApprovalTaskIds = tools.pendingApprovalTaskIds();
+        if (pendingApprovalTaskIds.length > 0) {
+          return planApprovalRequiredReply(parseProviderReply(payload), pendingApprovalTaskIds);
+        }
         if (pendingTaskIds.length === 0) return parseProviderReply(payload);
         if (!toolsEnabled) throw incompleteDelegationError(pendingTaskIds);
         messages.push({ role: "assistant", content: chatAssistantContent(payload) });
@@ -462,6 +468,10 @@ export class LocalAgentRunner implements AgentRunner {
       const calls = parseResponsesToolCalls(payload);
       if (calls.length === 0) {
         const pendingTaskIds = requireDelegation ? tools.pendingTaskIds() : [];
+        const pendingApprovalTaskIds = tools.pendingApprovalTaskIds();
+        if (pendingApprovalTaskIds.length > 0) {
+          return planApprovalRequiredReply(parseProviderReply(payload), pendingApprovalTaskIds);
+        }
         if (pendingTaskIds.length === 0) return parseProviderReply(payload);
         if (!toolsEnabled) throw incompleteDelegationError(pendingTaskIds);
         if (isRecord(payload) && Array.isArray(payload.output)) input.push(...payload.output);
@@ -531,6 +541,10 @@ export class LocalAgentRunner implements AgentRunner {
       const calls = parseAnthropicToolCalls(payload);
       if (calls.length === 0) {
         const pendingTaskIds = requireDelegation ? tools.pendingTaskIds() : [];
+        const pendingApprovalTaskIds = tools.pendingApprovalTaskIds();
+        if (pendingApprovalTaskIds.length > 0) {
+          return planApprovalRequiredReply(parseProviderReply(payload), pendingApprovalTaskIds);
+        }
         if (pendingTaskIds.length === 0) return parseProviderReply(payload);
         if (!toolsEnabled) throw incompleteDelegationError(pendingTaskIds);
         messages.push({ role: "assistant", content: anthropicAssistantContent(payload) });
@@ -675,7 +689,7 @@ function localHarnessPrompt(agent: Agent, invocation: AgentInvocation): string {
     artifactContext,
     knowledgeContext,
     agent.kind === "master" && invocation.thread.planMode === true
-      ? "Plan mode is active for this thread. Clarify assumptions, gather evidence, and present a concrete plan before making changes or delegating work."
+      ? "Plan mode is active for this thread. Clarify assumptions, gather evidence, and create a concrete plan. Plan tasks require Taskboard approval before delegation."
       : "",
     agent.kind === "worker"
       ? taskWorker
@@ -731,7 +745,7 @@ function providerUserPrompt(invocation: AgentInvocation): string {
     formatInvocationArtifacts(invocation),
     formatInvocationKnowledge(invocation),
     invocation.thread.planMode === true
-      ? "Plan mode is active for this thread. Clarify assumptions, gather evidence, and present a concrete plan before making changes or delegating work."
+      ? "Plan mode is active for this thread. Clarify assumptions, gather evidence, and create a concrete plan. Plan tasks require Taskboard approval before delegation."
       : "",
     `Shared transcript for #${invocation.thread.slug}:`,
     invocation.transcriptSnapshot,
@@ -1643,6 +1657,15 @@ function incompleteDelegationPrompt(taskIds: string[]): string {
     `Call delegate for every remaining task before returning a final answer: ${taskIds.join(", ")}.`,
     "Use only Worker and #repository handles supplied in the conversation. Do not merely describe the delegation.",
   ].join(" ");
+}
+
+function planApprovalRequiredReply(reply: string, taskIds: string[]): string {
+  return [
+    reply,
+    `Plan approval is required before delegation. Review the plan in Taskboard (${taskIds.length} task${taskIds.length === 1 ? "" : "s"}).`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function incompleteDelegationError(taskIds: string[]): Error {

@@ -10,3 +10,7 @@ message.
 When active, Master prompts receive soft guidance to clarify assumptions, gather evidence, and present
 a concrete plan before changing state or delegating. Plan mode does not alter permissions, sandboxing,
 queue behavior, or Worker execution; those controls remain independent.
+
+ADR 0136 extends this decision: custom-provider plans created while the mode is active now require a
+durable Taskboard approval before delegation. Permissions, sandboxing, and Worker execution remain
+independent.

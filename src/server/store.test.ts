@@ -1772,6 +1772,82 @@ describe("FileStore", () => {
     ).rejects.toMatchObject({ code: "invalid" });
   });
 
+  it("persists plan approval across every task in one workspace", async () => {
+    const store = await openStore();
+    const [workspace] = store.listWorkspaces();
+    const [thread] = store.listThreads();
+    if (!workspace || !thread) throw new Error("expected seeded workspace");
+    const other = await store.createWorkspace({ name: "Other plan workspace" });
+    const planId = "00000000-0000-4000-8000-000000000103";
+    const first = await store.createTask({
+      workspaceId: workspace.id,
+      title: "First approval task",
+      threadId: thread.id,
+      planId,
+      planTitle: "Approval plan",
+    });
+    const second = await store.createTask({
+      workspaceId: workspace.id,
+      title: "Second approval task",
+      threadId: thread.id,
+      planId,
+      planTitle: "Approval plan",
+    });
+    const foreign = await store.createTask({
+      workspaceId: other.id,
+      title: "Foreign approval task",
+      planId,
+      planTitle: "Foreign plan",
+    });
+
+    await expect(store.updatePlanApproval(workspace.id, planId, "pending")).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: first.id, planApproval: "pending" }),
+        expect.objectContaining({ id: second.id, planApproval: "pending" }),
+      ]),
+    );
+    expect(store.getTask(foreign.id)?.planApproval).toBeUndefined();
+    await expect(
+      store.updatePlanApproval(workspace.id, crypto.randomUUID(), "approved"),
+    ).rejects.toMatchObject({ code: "not_found" });
+
+    const worker = await store.createAgent({
+      kind: "worker",
+      name: "Approval worker",
+      handle: "approval-worker",
+      harness: "codex",
+    });
+    const repository = await store.createKnowledgeRepository({
+      name: "Approval repository",
+      handle: "approval-repository",
+      source: "https://github.com/example/approval.git",
+    });
+    const now = new Date().toISOString();
+    const assignment = await store.createAssignment({
+      id: "approval-assignment",
+      workspaceId: workspace.id,
+      taskId: first.id,
+      threadId: thread.id,
+      masterRunId: "master-run",
+      workerAgentId: worker.id,
+      repositoryId: repository.id,
+      status: "running",
+      branch: "nexestra/approval-assignment",
+      worktreePath: "workspaces/workspace/worktrees/approval-assignment",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await expect(store.updatePlanApproval(workspace.id, planId, "approved")).rejects.toMatchObject({
+      code: "conflict",
+    });
+    await store.updateAssignment(assignment.id, { status: "completed" });
+    await store.updatePlanApproval(workspace.id, planId, "approved");
+
+    const reopened = await FileStore.open({ root: store.root, workspacePath: store.workspacePath });
+    expect(reopened.getTask(first.id)?.planApproval).toBe("approved");
+    expect(reopened.getTask(second.id)?.planApproval).toBe("approved");
+  });
+
   it("updates and deletes a task while protecting active Worker assignments", async () => {
     const store = await openStore();
     const [workspace] = store.listWorkspaces();

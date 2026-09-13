@@ -899,6 +899,41 @@ describe("HTTP app", () => {
     expect((await app.request(`/api/tasks/${task.id}`)).status).toBe(404);
   });
 
+  it("updates plan approval only in the requested workspace", async () => {
+    const [workspace] = store.listWorkspaces();
+    if (!workspace) throw new Error("expected seeded workspace");
+    const foreign = await store.createWorkspace({ name: "Foreign approval" });
+    const planId = "00000000-0000-4000-8000-000000000301";
+    const task = await store.createTask({
+      workspaceId: workspace.id,
+      title: "Review plan",
+      planId,
+      planTitle: "Approval plan",
+    });
+    await store.updatePlanApproval(workspace.id, planId, "pending");
+
+    const wrongWorkspace = await app.request(`/api/plans/${planId}/approval`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspaceId: foreign.id, approval: "approved" }),
+    });
+    expect(wrongWorkspace.status).toBe(404);
+
+    const approved = await app.request(`/api/plans/${planId}/approval`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspaceId: workspace.id, approval: "approved" }),
+    });
+    expect(approved.status).toBe(200);
+    await expect(approved.json()).resolves.toEqual({
+      workspaceId: workspace.id,
+      planId,
+      approval: "approved",
+      taskIds: [task.id],
+    });
+    expect(store.getTask(task.id)?.planApproval).toBe("approved");
+  });
+
   it("reports live activity without scanning persisted thread history", async () => {
     let releaseRunner: () => void = () => undefined;
     runner.gate = new Promise<void>((resolve) => {

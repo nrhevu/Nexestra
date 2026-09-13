@@ -1141,6 +1141,7 @@ export const TaskSchema = z.object({
   threadId: z.string().nullable(),
   planId: z.string().uuid().optional(),
   planTitle: z.string().trim().max(160).optional(),
+  planApproval: z.enum(["pending", "approved", "rejected"]).optional(),
   dependsOnTaskIds: z
     .array(z.string().uuid())
     .max(20)
@@ -1151,6 +1152,12 @@ export const TaskSchema = z.object({
   updatedAt: z.string(),
 });
 export type Task = z.infer<typeof TaskSchema>;
+
+export const UpdatePlanApprovalSchema = z.object({
+  workspaceId: z.string().min(1),
+  approval: z.enum(["approved", "rejected"]),
+});
+export type UpdatePlanApproval = z.infer<typeof UpdatePlanApprovalSchema>;
 
 export const WorkAssignmentSchema = z.object({
   id: z.string(),
@@ -1198,8 +1205,10 @@ const PlanSummaryExportTaskSchema = z.object({
 const PlanSummaryExportPlanSchema = z.object({
   id: z.string(),
   title: z.string(),
+  approval: z.enum(["pending", "approved", "rejected"]).optional(),
   total: z.number().int().nonnegative(),
   ready: z.number().int().nonnegative(),
+  approvalBlocked: z.number().int().nonnegative().optional(),
   dependencyBlocked: z.number().int().nonnegative(),
   delegated: z.number().int().nonnegative(),
   queued: z.number().int().nonnegative(),

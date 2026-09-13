@@ -48,6 +48,8 @@ describe("isReadyTask", () => {
     expect(isReadyTask(task("todo"), [assignment("queued")])).toBe(false);
     expect(isReadyTask(task("todo"), [assignment("running")])).toBe(false);
     expect(isReadyTask(task("todo"), [assignment("completed")])).toBe(true);
+    expect(isReadyTask({ ...task("todo"), planApproval: "pending" }, [])).toBe(false);
+    expect(isReadyTask({ ...task("todo"), planApproval: "rejected" }, [])).toBe(false);
   });
 
   it("routes a custom-surface action to the ready Taskboard filter", async () => {
@@ -248,6 +250,40 @@ describe("summarizeTaskPlans", () => {
     expect(onSavePlan).toHaveBeenCalledOnce();
     expect(onSavePlan).toHaveBeenCalledWith(
       expect.objectContaining({ id: "plan-1", title: "Launch plan" }),
+    );
+  });
+
+  it("exposes pending plan approval through explicit callbacks", async () => {
+    const planned = {
+      ...task("todo", "planned-approval"),
+      planId: "00000000-0000-4000-8000-000000000004",
+      planTitle: "Approval plan",
+      planApproval: "pending" as const,
+    };
+    const onApprovePlan = vi.fn();
+    const onRejectPlan = vi.fn();
+    render(
+      <Taskboard
+        data={{ tasks: [planned], assignments: [], agents: [] } as unknown as BootstrapData}
+        onClearReadyFilter={vi.fn()}
+        onCreate={vi.fn()}
+        onMove={vi.fn()}
+        onThread={vi.fn()}
+        onInspect={vi.fn()}
+        onApprovePlan={onApprovePlan}
+        onRejectPlan={onRejectPlan}
+      />,
+    );
+
+    expect(screen.getByText("Approval: pending")).toBeVisible();
+    expect(screen.getByText(/1 approval-blocked/)).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Approve plan" }));
+    expect(onApprovePlan).toHaveBeenCalledWith(
+      expect.objectContaining({ id: planned.planId, approval: "pending" }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Reject plan" }));
+    expect(onRejectPlan).toHaveBeenCalledWith(
+      expect.objectContaining({ id: planned.planId, approval: "pending" }),
     );
   });
 
