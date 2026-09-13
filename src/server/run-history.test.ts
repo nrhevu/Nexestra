@@ -470,6 +470,18 @@ describe("run history server", () => {
         }),
       ]),
     );
+    const harnessFiltered = await store.listRunHistory({
+      workspaceId: workspace.id,
+      agentHarness: "opencode",
+      limit: 50,
+    });
+    expect(harnessFiltered.items.map((item) => item.run.id)).toEqual([historical.id]);
+    const modelFiltered = await store.listRunHistory({
+      workspaceId: workspace.id,
+      agentModel: "new-model",
+      limit: 50,
+    });
+    expect(modelFiltered.items.map((item) => item.run.id)).toEqual(["legacy-profile"]);
   });
 
   it("does not flag a run at the exact configured cost limit", async () => {
@@ -1093,6 +1105,8 @@ describe("run history cursor", () => {
   const request: RunHistoryRequest = {
     workspaceId: "workspace-1",
     agentId: "agent-1",
+    agentHarness: "opencode",
+    agentModel: "open-model",
     threadId: "thread-1",
     status: "completed",
     limit: 25,

@@ -113,3 +113,4 @@
 | [0110](0110-restore-preflight-conflict-categories.md) | Accepted | Categorize read-only archive restore collisions by path hash |
 | [0111](0111-historical-agent-profile-attribution.md) | Accepted | Preserve bounded harness and model labels from run creation |
 | [0112](0112-safe-mcp-resource-template-expansion.md) | Accepted | Expand cataloged MCP resource templates with bounded exact variables |
+| [0113](0113-run-history-harness-model-filters.md) | Accepted | Filter run history by immutable harness and model labels |

@@ -788,6 +788,8 @@ export type AgentRun = z.infer<typeof RunSchema>;
 export const RunHistoryRequestSchema = z.object({
   workspaceId: z.string().trim().min(1).max(200),
   agentId: z.string().trim().min(1).max(200).optional(),
+  agentHarness: z.enum(["codex", "opencode", "custom"]).optional(),
+  agentModel: z.string().trim().min(1).max(200).optional(),
   threadId: z.string().trim().min(1).max(200).optional(),
   status: RunSchema.shape.status.optional(),
   cost: z.enum(["all", "over_budget"]).optional(),
@@ -915,6 +917,8 @@ export const RunHistoryExportSchema = z.object({
   exportedAt: z.string().datetime(),
   filters: z.object({
     agentId: z.string().nullable(),
+    agentHarness: z.enum(["codex", "opencode", "custom"]).nullable().optional(),
+    agentModel: z.string().nullable().optional(),
     threadId: z.string().nullable(),
     status: RunSchema.shape.status.nullable(),
     cost: z.enum(["all", "over_budget"]).optional(),

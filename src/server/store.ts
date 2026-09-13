@@ -3509,6 +3509,8 @@ export class FileStore {
         if (
           cursor.workspaceId !== input.workspaceId ||
           cursor.agentId !== input.agentId ||
+          cursor.agentHarness !== input.agentHarness ||
+          cursor.agentModel !== input.agentModel ||
           cursor.threadId !== input.threadId ||
           cursor.status !== input.status ||
           (cursor.cost ?? "all") !== costFilter ||
@@ -3561,6 +3563,12 @@ export class FileStore {
         for (const summary of index.runHistory.values()) {
           allSummaries.push(summary);
           if (input.agentId !== undefined && summary.agentId !== input.agentId) continue;
+          const profile = runAgentProfile(agents.get(summary.agentId), summary);
+          const profileModel =
+            profile.agentModel === undefined ? undefined : this.redactSecrets(profile.agentModel);
+          if (input.agentHarness !== undefined && profile.agentHarness !== input.agentHarness)
+            continue;
+          if (input.agentModel !== undefined && profileModel !== input.agentModel) continue;
           if (input.threadId !== undefined && summary.threadId !== input.threadId) continue;
           if (input.status !== undefined && summary.status !== input.status) continue;
           if (costFilter === "over_budget") {

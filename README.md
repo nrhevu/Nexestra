@@ -121,6 +121,10 @@ and [ADR 0111](docs/adr/0111-historical-agent-profile-attribution.md).
 MCP resource-template reads require an exact catalog template and a bounded exact variable map.
 Missing or extra variables, control characters, non-scalars, malformed templates, and oversized
 values fail before a read; accepted values are URI-encoded. See [ADR 0112](docs/adr/0112-safe-mcp-resource-template-expansion.md).
+Run history also offers harness and model filters bound into its cursors, so Codex, OpenCode, and
+custom-provider comparisons stay isolated across pages. Legacy rows use the current profile labels;
+snapshot rows remain filterable after profile edits or agent deletion. Exported filters preserve the
+selection. See [ADR 0113](docs/adr/0113-run-history-harness-model-filters.md).
 Enable **Auto-refresh newest page** when supervising active work; it checks the current filtered
 first page every 15 seconds, pauses on older pages, and never retries or changes run state.
 

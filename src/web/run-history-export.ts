@@ -13,6 +13,8 @@ export interface RunHistoryExportInput {
   coverage: RunHistoryPage["coverage"];
   filters: {
     agentId: string | null;
+    agentHarness?: "codex" | "opencode" | "custom" | null;
+    agentModel?: string | null;
     threadId: string | null;
     status: RunHistoryPage["items"][number]["run"]["status"] | null;
     cost?: "all" | "over_budget";

@@ -74,6 +74,8 @@ interface RunHistoryViewState {
 interface RunHistoryFilters {
   workspaceId: string;
   agentId: string;
+  agentHarness: "" | "codex" | "opencode" | "custom";
+  agentModel: string;
   threadId: string;
   status: RunStatus | "";
   cost: "all" | "over_budget";
@@ -203,6 +205,8 @@ export function RunHistoryView({
   const [filters, setFilters] = useState<RunHistoryFilters>({
     workspaceId,
     agentId: "",
+    agentHarness: "",
+    agentModel: "",
     threadId: "",
     status: "",
     cost: initialCostFilter,
@@ -298,6 +302,8 @@ export function RunHistoryView({
         limit: String(PAGE_LIMIT),
       });
       if (filters.agentId !== "") params.set("agentId", filters.agentId);
+      if (filters.agentHarness !== "") params.set("agentHarness", filters.agentHarness);
+      if (filters.agentModel !== "") params.set("agentModel", filters.agentModel);
       if (filters.threadId !== "") params.set("threadId", filters.threadId);
       if (filters.status !== "") params.set("status", filters.status);
       if (filters.cost !== "all") params.set("cost", filters.cost);
@@ -457,7 +463,15 @@ export function RunHistoryView({
     inFlightRef.current = false;
     filtersKeyRef.current = null;
     revisionRef.current = undefined;
-    setFilters({ workspaceId, agentId: "", threadId: "", status: "", cost: "all" });
+    setFilters({
+      workspaceId,
+      agentId: "",
+      agentHarness: "",
+      agentModel: "",
+      threadId: "",
+      status: "",
+      cost: "all",
+    });
     setView(initialViewState(workspaceId));
   }, [filters.workspaceId, workspaceId]);
 
@@ -515,6 +529,12 @@ export function RunHistoryView({
 
   const currentWorkspace = view.workspaceId === workspaceId;
   const rows = currentWorkspace ? (view.page?.items ?? []) : [];
+  const profileOptions = useMemo(() => {
+    const models = new Set(
+      rows.map((item) => item.agentModel).filter((value): value is string => !!value),
+    );
+    return { models: [...models].sort((left, right) => left.localeCompare(right)) };
+  }, [rows]);
   const nextCursor = currentWorkspace ? (view.page?.nextCursor ?? null) : null;
   const hasNewer = currentWorkspace ? view.previousCursors.length > 0 : false;
   const pageNumber = currentWorkspace ? view.previousCursors.length + 1 : 1;
@@ -533,6 +553,8 @@ export function RunHistoryView({
           coverage: view.coverage,
           filters: {
             agentId: filters.agentId || null,
+            agentHarness: filters.agentHarness || null,
+            agentModel: filters.agentModel || null,
             threadId: filters.threadId || null,
             status: filters.status || null,
             ...(filters.cost === "all" ? {} : { cost: filters.cost }),
@@ -583,6 +605,17 @@ export function RunHistoryView({
 
   const handleAgentChange = (event: ChangeEvent<HTMLSelectElement>) => {
     setFilters((current) => ({ ...current, agentId: event.target.value }));
+  };
+
+  const handleHarnessChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    setFilters((current) => ({
+      ...current,
+      agentHarness: event.target.value as RunHistoryFilters["agentHarness"],
+    }));
+  };
+
+  const handleModelChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    setFilters((current) => ({ ...current, agentModel: event.target.value }));
   };
 
   const handleThreadChange = (event: ChangeEvent<HTMLSelectElement>) => {
@@ -708,6 +741,36 @@ export function RunHistoryView({
             {agentOptions.map((agent) => (
               <option key={agent.id} value={agent.id}>
                 {agent.archived ? `${agent.name} (archived)` : agent.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="run-history-filter">
+          <span>Harness</span>
+          <select
+            aria-label="Run harness"
+            value={filters.agentHarness}
+            onChange={handleHarnessChange}
+            disabled={!currentWorkspace}
+          >
+            <option value="">All harnesses</option>
+            <option value="codex">Codex</option>
+            <option value="opencode">OpenCode</option>
+            <option value="custom">Custom</option>
+          </select>
+        </label>
+        <label className="run-history-filter">
+          <span>Model</span>
+          <select
+            aria-label="Run model"
+            value={filters.agentModel}
+            onChange={handleModelChange}
+            disabled={!currentWorkspace}
+          >
+            <option value="">All models</option>
+            {profileOptions.models.map((model) => (
+              <option key={model} value={model}>
+                {model}
               </option>
             ))}
           </select>

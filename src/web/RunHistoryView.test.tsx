@@ -313,6 +313,35 @@ describe("RunHistoryView requests and filters", () => {
     expect(pageParams(lastFetchInput(fetchMock)).get("cost")).toBe("over_budget");
   });
 
+  it("filters by the immutable harness and model labels", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(
+        makePage([
+          makeItem(
+            makeRun("run-profile", { harnessSnapshot: "opencode", modelSnapshot: "open-model" }),
+            {
+              agentHarness: "opencode",
+              agentModel: "open-model",
+            },
+          ),
+        ]),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    renderView();
+    await screen.findByLabelText("Run run-profile");
+
+    await user.selectOptions(screen.getByLabelText("Run harness"), "opencode");
+    await waitFor(() =>
+      expect(pageParams(lastFetchInput(fetchMock)).get("agentHarness")).toBe("opencode"),
+    );
+    await user.selectOptions(screen.getByLabelText("Run model"), "open-model");
+    await waitFor(() =>
+      expect(pageParams(lastFetchInput(fetchMock)).get("agentModel")).toBe("open-model"),
+    );
+  });
+
   it("starts with an over-budget filter requested by a custom surface", async () => {
     const fetchMock = vi.fn(async () => jsonResponse(makePage([makeItem(makeRun("run-1"))])));
     vi.stubGlobal("fetch", fetchMock);

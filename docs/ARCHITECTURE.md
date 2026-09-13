@@ -214,6 +214,11 @@ rows after a profile change. See [ADR 0095](adr/0095-agent-profile-labels-in-his
   URI-encodes values before reading. Missing or extra variables never result in a server call. See
   [ADR 0112](adr/0112-safe-mcp-resource-template-expansion.md).
 
+- Run history filters by immutable `agentHarness` and `agentModel` labels before keyset pagination.
+  Legacy summaries fall back to the current profile, while snapshots remain filterable after profile
+  edits or deletion. Cursor payloads bind both filters and exports retain them. See [ADR
+  0113](adr/0113-run-history-harness-model-filters.md).
+
 Attention snooze and dismiss operations append bounded metadata to `state.json`. The store retains
 up to 200 entries per workspace and exposes them through an explicit-refresh history endpoint; the
 surface returns only action, kind, and timestamp metadata. This audit does not change the derived

@@ -10,6 +10,8 @@ export interface RunHistoryCursorPayload {
   version: 1;
   workspaceId: string;
   agentId?: string;
+  agentHarness?: "codex" | "opencode" | "custom";
+  agentModel?: string;
   threadId?: string;
   status?: AgentRun["status"];
   cost?: "all" | "over_budget";
@@ -27,6 +29,8 @@ export function encodeRunHistoryCursor(
     version: 1,
     workspaceId: input.workspaceId,
     ...(input.agentId ? { agentId: input.agentId } : {}),
+    ...(input.agentHarness ? { agentHarness: input.agentHarness } : {}),
+    ...(input.agentModel ? { agentModel: input.agentModel } : {}),
     ...(input.threadId ? { threadId: input.threadId } : {}),
     ...(input.status ? { status: input.status } : {}),
     ...(input.cost === "over_budget" ? { cost: input.cost } : {}),
@@ -42,6 +46,8 @@ const RUN_HISTORY_CURSOR_KEYS = [
   "version",
   "workspaceId",
   "agentId",
+  "agentHarness",
+  "agentModel",
   "threadId",
   "status",
   "cost",
@@ -114,6 +120,14 @@ export function decodeRunHistoryCursor(
       (typeof payload.agentId !== "string" ||
         payload.agentId.length < 1 ||
         payload.agentId.length > 200)) ||
+    (payload.agentHarness !== undefined &&
+      payload.agentHarness !== "codex" &&
+      payload.agentHarness !== "opencode" &&
+      payload.agentHarness !== "custom") ||
+    (payload.agentModel !== undefined &&
+      (typeof payload.agentModel !== "string" ||
+        payload.agentModel.length < 1 ||
+        payload.agentModel.length > 200)) ||
     (payload.threadId !== undefined &&
       (typeof payload.threadId !== "string" ||
         payload.threadId.length < 1 ||
