@@ -147,3 +147,4 @@
 83. [Server-authoritative restore preflight research](research/2026-09-13-server-authoritative-restore-preflight.md): verify archive identity and target conflicts before mutation.
 84. [Create-only archive import research](research/2026-09-13-create-only-archive-import.md): stage a verified export into a new archived workspace with collision rejection and rollback.
 85. [Reversible Attention clear research](research/2026-09-13-reversible-attention-clear.md): restore one workspace-scoped snooze or dismissal through bounded audit metadata.
+86. [Durable queued-run rehydration research](research/2026-09-13-durable-queued-run-rehydration.md): resume persisted queued runs after restart through the serial dispatcher queue.

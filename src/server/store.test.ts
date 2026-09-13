@@ -1780,6 +1780,28 @@ describe("FileStore", () => {
     expect(data.runs[0]?.status).toBe("interrupted");
   });
 
+  it("keeps queued runs durable across restart for dispatcher rehydration", async () => {
+    const store = await openStore();
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const now = new Date().toISOString();
+    const message = await store.createUserMessage(thread.id, "queued", []);
+    const run = await store.updateRun({
+      id: crypto.randomUUID(),
+      threadId: thread.id,
+      triggerMessageId: message.id,
+      agentId: "missing-agent",
+      attempt: 1,
+      status: "queued",
+      createdAt: now,
+      updatedAt: now,
+    });
+    const reopened = await FileStore.open({ root: store.root, workspacePath: store.workspacePath });
+    expect((await reopened.threadData(thread.id)).runs).toEqual([
+      expect.objectContaining({ id: run.id, status: "queued" }),
+    ]);
+  });
+
   it("replays tool events and interrupts pending approval and input after restart", async () => {
     const store = await openStore();
     const [thread] = store.listThreads();

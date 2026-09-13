@@ -61,6 +61,7 @@ export function createApp(options: CreateAppOptions) {
   const defaultRepositories = new RepositoryManager(options.store);
   const repositories = options.repositories ?? defaultRepositories;
   const dispatcher = new AgentDispatcher(options.store, runner, repositories);
+  void dispatcher.resumeQueuedRuns().catch(() => undefined);
   const chat = new ChatService(options.store, dispatcher);
   const launchPath = options.launchPath ?? launchDesktopPath;
   const localRunner = runner instanceof LocalAgentRunner ? runner : undefined;

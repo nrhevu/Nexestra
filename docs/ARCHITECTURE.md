@@ -364,9 +364,10 @@ and `tool.updated` events use a monotonically increasing sequence. Artifact meta
 IDs are committed in the same append; uploaded bytes live under a thread-scoped private directory.
 User messages are appended and fsynced before agents are queued. Read projections select messages
 and artifacts by sequence and the final state of each run. On startup, only an incomplete JSONL tail
-is truncated. After a restart, queued, running, approval-waiting, or input-waiting runs are completed
-if their replies were fsynced; otherwise, they and any unfinished tools are marked interrupted and
-can be retried.
+is truncated. Queued runs without a reply remain queued and are rehydrated into the per-agent
+dispatcher queue; running, approval-waiting, or input-waiting runs are completed if their replies
+were fsynced, otherwise they and unfinished tools are marked interrupted and can be retried. The
+queue is still process-local while the server is running.
 
 Keyed user messages carry a private `submission` receipt in their canonical `message.created`
 event. It stores hashes of the normalized UUID and the server-verified payload, rather than a

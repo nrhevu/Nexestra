@@ -422,7 +422,7 @@ describe("recoverable submission dispatch", () => {
     expect(await userMessages(store, thread.id)).toHaveLength(1);
   });
 
-  it("does not auto-run an interrupted run after restart and keeps explicit run retry", async () => {
+  it("rehydrates a queued run after restart without duplicating the submission", async () => {
     const { store, thread } = await setup();
     const codex = await createAgent(store, "codex");
     const requestId = uuidJ;
@@ -453,15 +453,10 @@ describe("recoverable submission dispatch", () => {
     const chat = new ChatService(reopened, dispatcher);
     const result = await chat.send(thread.id, { content: "@codex restart me", requestId });
     expect(result.replayed).toBe(true);
-    expect(runner.invocations).toHaveLength(0);
-    const data = await reopened.threadData(thread.id);
-    expect(data.runs.find((run) => run.id === runId)?.status).toBe("interrupted");
-
-    const retried = await dispatcher.retry(runId);
-    expect(retried.id).not.toBe(runId);
-    expect(retried.attempt).toBe(2);
     await dispatcher.waitForIdle();
     expect(runner.invocations).toHaveLength(1);
+    const data = await reopened.threadData(thread.id);
+    expect(data.runs.find((run) => run.id === runId)?.status).toBe("completed");
     expect(await userMessages(reopened, thread.id)).toHaveLength(1);
   });
 

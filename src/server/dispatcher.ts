@@ -481,6 +481,27 @@ export class AgentDispatcher {
     }
   }
 
+  async resumeQueuedRuns(): Promise<void> {
+    for (const thread of this.store.listThreads()) {
+      if (thread.archived) continue;
+      const data = await this.store.threadData(thread.id);
+      for (const run of data.runs) {
+        if (run.status !== "queued" || this.liveRuns.has(run.id)) continue;
+        const trigger = data.messages.find((message) => message.id === run.triggerMessageId);
+        if (!trigger) {
+          await this.store.updateRun({
+            ...run,
+            status: "failed",
+            error: "The queued run trigger message is missing.",
+            updatedAt: new Date().toISOString(),
+          });
+          continue;
+        }
+        await this.reconcileQueuedRun(run, trigger);
+      }
+    }
+  }
+
   liveRunExists(runId: string): boolean {
     return this.liveRuns.has(runId);
   }

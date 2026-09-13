@@ -422,7 +422,9 @@ Manual delegation saves a user request with the selected Worker's mention before
 The process dialog opens the queued assignment immediately, streams its progress, and keeps Stop
 available while it runs. Manual and Master assignments share the Worker's serial queue, including
 verification; other Workers can proceed independently. Failed preparations and Worker calls retain
-their run and tool history so the task can be retried.
+their run and tool history so the task can be retried. Queued runs remain queued across a server
+restart and are rehydrated into the serial dispatcher; runs already executing or waiting for input
+recover as interrupted. Multi-process queue leasing is not yet supported.
 
 Custom-provider Master agents have a provider-neutral
 harness with `list`, `glob`, `grep`, `read`, `edit`, `write`, `bash`, `apply_patch`, `skill`,

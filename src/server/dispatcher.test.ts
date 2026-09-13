@@ -329,6 +329,38 @@ describe("mention dispatch", () => {
     });
   });
 
+  it("rehydrates queued runs after a dispatcher restart", async () => {
+    const { store, thread } = await setup();
+    const agent = await store.createAgent({
+      kind: "worker",
+      name: "Queued worker",
+      handle: "queued-worker",
+      description: "",
+      instructions: "",
+      harness: "codex",
+    });
+    const message = await store.createUserMessage(thread.id, "resume me", []);
+    const now = new Date().toISOString();
+    const run = await store.updateRun({
+      id: crypto.randomUUID(),
+      threadId: thread.id,
+      triggerMessageId: message.id,
+      agentId: agent.id,
+      attempt: 1,
+      status: "queued",
+      createdAt: now,
+      updatedAt: now,
+    });
+    const restartedRunner = new FakeRunner();
+    const restarted = new AgentDispatcher(store, restartedRunner);
+    await restarted.resumeQueuedRuns();
+    await restarted.waitForIdle();
+    expect(restartedRunner.invocations).toHaveLength(1);
+    expect((await store.threadData(thread.id)).runs).toEqual([
+      expect.objectContaining({ id: run.id, status: "completed" }),
+    ]);
+  });
+
   it("redacts credential-like profile snapshots from active run projections", async () => {
     const root = await mkdtemp(join(tmpdir(), "nexestra-dispatch-profile-redaction-"));
     const store = await FileStore.open({ root, workspacePath: root });

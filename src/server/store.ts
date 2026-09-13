@@ -4520,6 +4520,7 @@ export class FileStore {
         ) {
           continue;
         }
+        if (run.status === "queued") continue;
         const hasReply = data.messages.some(
           (message) =>
             message.author.kind === "agent" &&
