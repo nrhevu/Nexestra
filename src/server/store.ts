@@ -1014,6 +1014,11 @@ export class FileStore {
         ...imported.workspaces[0],
         archived: true,
       });
+      const importedAgents = imported.agents.map((agent) =>
+        agent.kind === "master" && agent.provider.type === "custom"
+          ? { ...agent, provider: { ...agent.provider, apiKey: undefined } }
+          : agent,
+      );
       const mapped = new Map<string, Uint8Array>();
       for (const entry of report.manifest.entries) {
         if (
@@ -1060,7 +1065,7 @@ export class FileStore {
           workspaces: [...this.state.workspaces, importedWorkspace],
           agents: [
             ...this.state.agents,
-            ...imported.agents.map((entry) => ({ ...entry, workspaceId: sourceId })),
+            ...importedAgents.map((entry) => ({ ...entry, workspaceId: sourceId })),
           ],
           threads: [
             ...this.state.threads,

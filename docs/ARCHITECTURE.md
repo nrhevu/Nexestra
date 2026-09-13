@@ -671,7 +671,7 @@ credentials.
   dispatch agents or execute configured content. Saved notes are included in workspace exports as
   a separately typed, redacted `whiteboard` entry.
 
-- Workspace export has no import/restore workflow and is not a complete backup. Snapshot inventory
+- Workspace export is not a complete backup. Snapshot inventory
   scans transcripts under the write barrier before a second read for ZIP generation. Stored ZIP
   entries avoid compression work; the browser holds a bounded ZIP Blob. Known-credential redaction
   cannot discover other secrets or decode arbitrary binary encodings. Hashes are integrity checks,
@@ -685,7 +685,9 @@ credentials.
   paths with a GET-only local path inventory while keeping archive bytes in the browser; failed
   inventories remain explicitly unchecked. It now includes bounded recovery-manifest hashes and
   classifies paths as safe to create, existing-identical, or conflicting; legacy path-only responses
-  are treated as conflicts. Import, merge policy and rollback remain future work. See
+  are treated as conflicts. The server can import a verified archive as a new archived workspace,
+  rejecting workspace/entity IDs and paths that already exist and rolling back staged files if state
+  persistence fails. Merge, remap, and overwrite restore remain unsupported. See
   [ADR 0101](adr/0101-read-only-restore-preflight.md) and [ADR 0102](adr/0102-target-aware-restore-preflight.md).
   See also [ADR 0110](adr/0110-restore-preflight-conflict-categories.md).
 
