@@ -359,6 +359,10 @@ revision remain read-only and acquire no new provenance from a preview. The inli
 old responses when its version/document/workspace changes and makes the scrollable text accessible
 to keyboard readers. See [ADR 0036](adr/0036-knowledge-preview.md).
 
+Knowledge retrieval is a client-side filter over the selected workspace's loaded metadata. It
+matches name, handle, description, document filename, or repository source and supports kind tabs;
+it never scans transcripts or document bytes. See [ADR 0133](adr/0133-knowledge-retrieval-filters.md).
+
 Each thread has one canonical JSONL file. The `message.created`, `artifact.created`, `run.updated`,
 and `tool.updated` events use a monotonically increasing sequence. Artifact metadata and message
 IDs are committed in the same append; uploaded bytes live under a thread-scoped private directory.

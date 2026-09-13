@@ -2385,6 +2385,69 @@ kbd {
   gap: 13px;
   padding: 20px;
 }
+.knowledge-controls {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 16px 20px 4px;
+}
+.knowledge-controls > label {
+  color: var(--muted);
+  display: flex;
+  flex: 1 1 260px;
+  flex-direction: column;
+  font-size: 11px;
+  gap: 5px;
+}
+.knowledge-controls input {
+  min-height: 32px;
+  padding: 6px 9px;
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  background: var(--input-bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+.knowledge-controls input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.knowledge-kind-tabs {
+  border: 0;
+  display: flex;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+}
+.knowledge-kind-tabs legend {
+  color: var(--muted);
+  font-size: 11px;
+  margin-bottom: 5px;
+}
+.knowledge-kind-tabs button {
+  min-height: 32px;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+}
+.knowledge-kind-tabs button:hover,
+.knowledge-kind-tabs button.active {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.knowledge-match-count {
+  color: var(--muted);
+  font-size: 11px;
+  margin-bottom: 8px;
+  white-space: nowrap;
+}
 .knowledge-card {
   min-width: 0;
   border: 1px solid var(--border);

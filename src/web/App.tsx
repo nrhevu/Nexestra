@@ -5408,7 +5408,29 @@ function ToolCallRow({
   );
 }
 
-function KnowledgeView({
+export type KnowledgeKindFilter = "all" | KnowledgeItem["kind"];
+
+export function filterKnowledgeItems(
+  items: KnowledgeItem[],
+  workspaceId: string,
+  query: string,
+  kind: KnowledgeKindFilter,
+): KnowledgeItem[] {
+  const normalized = query.trim().toLocaleLowerCase();
+  return items.filter((item) => {
+    if (item.workspaceId !== workspaceId || (kind !== "all" && item.kind !== kind)) return false;
+    if (!normalized) return true;
+    const searchable = [
+      item.name,
+      item.handle,
+      item.description,
+      item.kind === "document" ? item.fileName : item.source,
+    ];
+    return searchable.some((value) => value.toLocaleLowerCase().includes(normalized));
+  });
+}
+
+export function KnowledgeView({
   data,
   onCreate,
   onInspect,
@@ -5417,8 +5439,11 @@ function KnowledgeView({
   onCreate: () => void;
   onInspect: (item: KnowledgeItem) => void;
 }) {
+  const [query, setQuery] = useState("");
+  const [kind, setKind] = useState<KnowledgeKindFilter>("all");
   const documents = data.knowledge.filter((item) => item.kind === "document");
   const repositories = data.knowledge.filter((item) => item.kind === "repository");
+  const filteredKnowledge = filterKnowledgeItems(data.knowledge, data.workspace.id, query, kind);
   return (
     <div className="surface-view">
       <header className="workspace-header">
@@ -5452,6 +5477,39 @@ function KnowledgeView({
           <strong className="accent-number">{data.assignments.length}</strong>
         </div>
       </div>
+      {data.knowledge.length > 0 && (
+        <div className="knowledge-controls">
+          <label>
+            <span>Search knowledge</span>
+            <input
+              aria-label="Search knowledge"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Name, #handle, file or source"
+            />
+          </label>
+          <fieldset className="knowledge-kind-tabs">
+            <legend>Knowledge kind</legend>
+            {(["all", "document", "repository"] as const).map((option) => (
+              <button
+                type="button"
+                className={kind === option ? "active" : ""}
+                key={option}
+                onClick={() => setKind(option)}
+              >
+                {option === "all"
+                  ? `All (${data.knowledge.length})`
+                  : option === "document"
+                    ? `Documents (${documents.length})`
+                    : `Repositories (${repositories.length})`}
+              </button>
+            ))}
+          </fieldset>
+          <span className="knowledge-match-count">
+            {filteredKnowledge.length} matching item{filteredKnowledge.length === 1 ? "" : "s"}
+          </span>
+        </div>
+      )}
       {data.knowledge.length === 0 ? (
         <EmptyState
           icon={<BookOpen size={25} />}
@@ -5460,9 +5518,17 @@ function KnowledgeView({
           action="Add your first item"
           onAction={onCreate}
         />
+      ) : filteredKnowledge.length === 0 ? (
+        <div className="empty-state">
+          <span>
+            <Search size={25} />
+          </span>
+          <h2>No matching knowledge</h2>
+          <p>Try another name, handle, file, source, or kind filter.</p>
+        </div>
       ) : (
         <div className="knowledge-grid">
-          {data.knowledge.map((item) => (
+          {filteredKnowledge.map((item) => (
             <article
               className={`knowledge-card${item.kind === "document" ? " has-download" : ""}`}
               key={item.id}

@@ -163,3 +163,4 @@
 99. [Stop pending runs from Needs attention research](research/2026-09-13-stop-attention-run.md): add a workspace-guarded stop intervention for approval/input Master runs.
 100. [Bulk stop pending runs research](research/2026-09-13-bulk-stop-attention-runs.md): clear selected approval/input Master runs sequentially while retaining failures.
 101. [Cross-workspace monitor research](research/2026-09-13-cross-workspace-monitor.md): compare count-only activity and observation age across workspaces.
+102. [Knowledge retrieval filters research](research/2026-09-13-knowledge-retrieval-filters.md): search and filter selected-workspace Knowledge metadata without scanning bytes.

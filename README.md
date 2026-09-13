@@ -378,6 +378,9 @@ Use **Preview current** or a version's **Preview** button to read document text 
 or restoring it. The preview shows up to the first 128 KiB of source text, verifies stored revision
 checksums and provides a download for that version. Text remains plain text, including Markdown
 and HTML; unsupported files have a download fallback. Previewing does not create or change versions.
+Knowledge also has a local search and kind filter for the selected workspace. It matches bounded
+metadata such as name, `#handle`, description, filename, or repository source, shows the matching
+count, and keeps detail/download actions available. It never scans transcripts or document bytes.
 
 The **Whiteboard** surface is a small workspace-scoped Markdown scratchpad for plans and decisions.
 It is saved under managed local storage, redacts configured credentials before persistence and
