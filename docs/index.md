@@ -156,3 +156,4 @@
 92. [Durable plan provenance research](research/2026-09-13-durable-plan-provenance.md): preserve bounded plan identity on Master-created Taskboard tasks.
 93. [Durable thread plan mode research](research/2026-09-13-durable-thread-plan-mode.md): persist a replayable soft planning toggle without changing execution permissions.
 94. [Taskboard plan summary research](research/2026-09-13-taskboard-plan-summary.md): group durable plan tasks into bounded progress cards while approval remains future work.
+95. [Dependent tool-call ordering research](research/2026-09-13-dependent-tool-call-ordering.md): keep independent tool calls parallel while waiting for plan state before delegation.

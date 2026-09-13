@@ -413,7 +413,7 @@ export class LocalAgentRunner implements AgentRunner {
           function: { name: call.name, arguments: call.arguments },
         })),
       });
-      const outputs = await Promise.all(calls.map((call) => tools.execute(call)));
+      const outputs = await executeToolCalls(calls, (call) => tools.execute(call));
       for (const [index, call] of calls.entries()) {
         messages.push({
           role: "tool",
@@ -474,7 +474,7 @@ export class LocalAgentRunner implements AgentRunner {
       if (!toolsEnabled) throw new Error("Provider continued calling tools after the step limit.");
       guardRepeatedCalls(calls, recentCalls);
       if (isRecord(payload) && Array.isArray(payload.output)) input.push(...payload.output);
-      const outputs = await Promise.all(calls.map((call) => tools.execute(call)));
+      const outputs = await executeToolCalls(calls, (call) => tools.execute(call));
       for (const [index, call] of calls.entries()) {
         input.push({
           type: "function_call_output",
@@ -543,7 +543,7 @@ export class LocalAgentRunner implements AgentRunner {
       if (!toolsEnabled) throw new Error("Provider continued calling tools after the step limit.");
       guardRepeatedCalls(calls, recentCalls);
       messages.push({ role: "assistant", content: anthropicAssistantContent(payload) });
-      const outputs = await Promise.all(calls.map((call) => tools.execute(call)));
+      const outputs = await executeToolCalls(calls, (call) => tools.execute(call));
       messages.push({
         role: "user",
         content: calls.map((call, index) => ({
@@ -1595,6 +1595,35 @@ function chatAssistantContent(payload: unknown): string | null {
   const first = payload.choices[0];
   if (!isRecord(first) || !isRecord(first.message)) return null;
   return typeof first.message.content === "string" ? first.message.content : null;
+}
+
+async function executeToolCalls(
+  calls: HarnessToolRequest[],
+  execute: (call: HarnessToolRequest) => Promise<string>,
+): Promise<string[]> {
+  const hasPlan = calls.some((call) => call.name === "plan");
+  const delegateIndexes = hasPlan
+    ? calls.flatMap((call, index) => (call.name === "delegate" ? [index] : []))
+    : [];
+  if (delegateIndexes.length === 0) return Promise.all(calls.map(execute));
+
+  const delegateIndexSet = new Set(delegateIndexes);
+  const outputs = Array<string>(calls.length);
+  await Promise.all(
+    calls.flatMap((call, index) =>
+      delegateIndexSet.has(index)
+        ? []
+        : execute(call).then((output) => {
+            outputs[index] = output;
+          }),
+    ),
+  );
+  await Promise.all(
+    delegateIndexes.map(async (index) => {
+      outputs[index] = await execute(calls[index] as HarnessToolRequest);
+    }),
+  );
+  return outputs;
 }
 
 function guardRepeatedCalls(calls: HarnessToolRequest[], recentCalls: string[]): void {

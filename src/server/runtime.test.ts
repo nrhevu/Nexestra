@@ -1020,6 +1020,103 @@ describe("parseProviderReply", () => {
     },
   );
 
+  it("executes a same-turn plan before its dependent delegate call", async () => {
+    const { agent, invocation, store } = await customMasterFixture("openai-chat", "full");
+    const taskId = "f5a80f87-456d-4c35-9081-356cbe665510";
+    const createdAt = "2026-09-03T00:00:00.000Z";
+    let planFinished = false;
+    const responses = [
+      {
+        choices: [
+          {
+            message: {
+              content: null,
+              tool_calls: [
+                {
+                  id: "call-plan",
+                  type: "function",
+                  function: {
+                    name: "plan",
+                    arguments: JSON.stringify({
+                      title: "Implementation plan",
+                      steps: [{ title: "Build feature", description: "Implement it." }],
+                    }),
+                  },
+                },
+                {
+                  id: "call-delegate",
+                  type: "function",
+                  function: {
+                    name: "delegate",
+                    arguments: JSON.stringify({
+                      taskId,
+                      worker: "builder",
+                      repository: "product-repo",
+                    }),
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      },
+      { choices: [{ message: { content: "Delegated." } }] },
+    ];
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify(responses.shift())),
+    );
+    const delegate = vi.fn(async () => {
+      expect(planFinished).toBe(true);
+      return {
+        assignment: {
+          id: "assignment-1",
+          workspaceId: invocation.thread.workspaceId,
+          taskId,
+          threadId: invocation.thread.id,
+          masterRunId: invocation.runId ?? "run-tools",
+          workerAgentId: "worker-1",
+          repositoryId: "repository-1",
+          status: "completed" as const,
+          branch: "nexestra/assignment-1",
+          worktreePath: "workspaces/worktree-1",
+          result: "done",
+          createdAt,
+          updatedAt: createdAt,
+        },
+        result: "done",
+      };
+    });
+
+    await expect(
+      new LocalAgentRunner({ store, fetch: fetchMock as typeof fetch }).invoke(agent, {
+        ...invocation,
+        toolHooks: {
+          update: async () => undefined,
+          requestApproval: async () => true,
+          createPlan: async (_title, steps) => {
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            planFinished = true;
+            return steps.map((step) => ({
+              id: taskId,
+              workspaceId: invocation.thread.workspaceId,
+              title: step.title,
+              description: step.description,
+              status: "todo" as const,
+              assigneeId: null,
+              threadId: invocation.thread.id,
+              verificationCommand: "",
+              createdAt,
+              updatedAt: createdAt,
+            }));
+          },
+          delegate,
+        },
+      }),
+    ).resolves.toBe("Delegated.");
+    expect(delegate).toHaveBeenCalledOnce();
+  });
+
   it("stops three identical provider tool calls instead of looping forever", async () => {
     const { agent, invocation, root, store } = await customMasterFixture("openai-chat");
     await writeFile(join(root, "loop.txt"), "loop\n");

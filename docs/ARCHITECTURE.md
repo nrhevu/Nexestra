@@ -527,8 +527,11 @@ interactive questions, durable planning, and Worker delegation. LSP is deliberat
 allows contextual tools directly and pauses edits, shell, web, and extensions. Auto allows all
 built-ins and pauses custom or MCP tools. Full access removes tool approval prompts. An asked tool
 is written to the thread and pauses its run until the user decides; a question pauses in a distinct
-input state until the local user responds. Multiple calls from one model step execute concurrently,
-and a run stays paused until all outstanding approvals or questions are resolved. File tools accept
+input state until the local user responds. Multiple independent calls from one model step execute
+concurrently, and a run stays paused until all outstanding approvals or questions are resolved. If
+a response contains both `plan` and `delegate`, the runtime waits for the plan calls before executing
+dependent delegations and preserves provider call order in the returned tool results. See [ADR 0126](adr/0126-dependent-tool-call-ordering.md).
+File tools accept
 relative paths and absolute paths inside the repository, reject traversal and escaping symlinks,
 and protect Nexestra data and credentials. Workspace, data-root, and absolute-path comparisons use
 canonical physical paths so symlink aliases such as macOS `/var` versus `/private/var` cannot bypass

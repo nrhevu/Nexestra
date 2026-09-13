@@ -126,3 +126,4 @@
 | [0123](0123-durable-plan-provenance.md) | Accepted | Preserve bounded plan identity on tasks created by the Master plan tool |
 | [0124](0124-durable-thread-plan-mode.md) | Accepted | Persist and replay a soft plan-mode toggle per thread |
 | [0125](0125-taskboard-plan-summary.md) | Accepted | Show read-only progress summaries for Master-created plans |
+| [0126](0126-dependent-tool-call-ordering.md) | Accepted | Order plan-dependent delegation calls without losing independent parallelism |
