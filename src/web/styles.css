@@ -2734,6 +2734,67 @@ kbd {
   background: transparent;
   color: var(--muted);
 }
+.task-plan-summary {
+  margin-bottom: 22px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-raised);
+}
+.task-plan-summary-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.task-plan-summary-header h2 {
+  margin: 4px 0 0;
+  font-size: 18px;
+}
+.task-plan-summary-header > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.task-plan-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+.task-plan-summary-card {
+  padding: 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.task-plan-summary-card h3 {
+  margin: 0 0 7px;
+  font-size: 13px;
+}
+.task-plan-summary-card p {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.task-plan-summary-tasks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.task-plan-summary-tasks button {
+  padding: 5px 9px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  font-size: 10px;
+}
+.task-plan-summary-tasks button:hover,
+.task-plan-summary-tasks button:focus-visible {
+  border-color: var(--accent);
+  outline: 0;
+}
 .column-dot {
   width: 7px;
   height: 7px;

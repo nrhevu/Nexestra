@@ -5611,6 +5611,59 @@ export function isReadyTask(task: Task, assignments: WorkAssignment[]): boolean 
   );
 }
 
+export interface TaskPlanSummary {
+  id: string;
+  title: string;
+  total: number;
+  ready: number;
+  delegated: number;
+  queued: number;
+  running: number;
+  blocked: number;
+  done: number;
+  tasks: Task[];
+}
+
+export function summarizeTaskPlans(
+  tasks: Task[],
+  assignments: WorkAssignment[],
+): TaskPlanSummary[] {
+  const latestAssignments = new Map<string, WorkAssignment>();
+  for (const assignment of assignments) {
+    const previous = latestAssignments.get(assignment.taskId);
+    if (!previous || assignment.updatedAt > previous.updatedAt) {
+      latestAssignments.set(assignment.taskId, assignment);
+    }
+  }
+  const summaries = new Map<string, TaskPlanSummary>();
+  for (const task of tasks) {
+    if (!task.planId || !task.planTitle) continue;
+    const summary = summaries.get(task.planId) ?? {
+      id: task.planId,
+      title: task.planTitle,
+      total: 0,
+      ready: 0,
+      delegated: 0,
+      queued: 0,
+      running: 0,
+      blocked: 0,
+      done: 0,
+      tasks: [],
+    };
+    summary.total += 1;
+    summary.tasks.push(task);
+    const assignment = latestAssignments.get(task.id);
+    if (task.status === "done") summary.done += 1;
+    else if (task.status === "blocked") summary.blocked += 1;
+    else if (assignment?.status === "queued") summary.queued += 1;
+    else if (assignment?.status === "running") summary.running += 1;
+    else if (assignment) summary.delegated += 1;
+    else summary.ready += 1;
+    summaries.set(task.planId, summary);
+  }
+  return [...summaries.values()].sort((left, right) => left.title.localeCompare(right.title));
+}
+
 export function Taskboard(props: {
   data: BootstrapData;
   readyOnly?: boolean;
@@ -5634,6 +5687,7 @@ export function Taskboard(props: {
   const visibleTasks = props.readyOnly
     ? props.data.tasks.filter((task) => isReadyTask(task, props.data.assignments))
     : props.data.tasks;
+  const planSummaries = summarizeTaskPlans(props.data.tasks, props.data.assignments);
   return (
     <div className="surface-view">
       <header className="workspace-header">
@@ -5658,6 +5712,41 @@ export function Taskboard(props: {
           </button>
         </div>
       </header>
+      {planSummaries.length > 0 && (
+        <section className="task-plan-summary" aria-label="Plan progress">
+          <div className="task-plan-summary-header">
+            <div>
+              <p className="eyebrow">PLANS</p>
+              <h2>Plan progress</h2>
+            </div>
+            <span>{planSummaries.length} plans</span>
+          </div>
+          <div className="task-plan-summary-grid">
+            {planSummaries.map((plan) => (
+              <article className="task-plan-summary-card" key={plan.id}>
+                <h3>{plan.title}</h3>
+                <p>
+                  {plan.total} tasks · {plan.ready} ready · {plan.delegated} delegated ·{" "}
+                  {plan.queued} queued · {plan.running} running · {plan.blocked} blocked ·{" "}
+                  {plan.done} done
+                </p>
+                <div className="task-plan-summary-tasks">
+                  {plan.tasks.map((task) => (
+                    <button
+                      type="button"
+                      key={task.id}
+                      onClick={() => props.onInspect(task)}
+                      aria-label={`Open planned task ${task.title}`}
+                    >
+                      {task.title}
+                    </button>
+                  ))}
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
       <div className="board">
         {columns.map((column, index) => {
           const tasks = visibleTasks.filter((task) => task.status === column.status);

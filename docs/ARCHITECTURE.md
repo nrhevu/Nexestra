@@ -680,6 +680,11 @@ credentials.
   title on every created Task. Taskboard renders the title, while assignment and verification state
   remain independent; the metadata is carried by normal state export/import.
 
+- Taskboard derives a read-only plan progress summary from selected-workspace tasks carrying both
+  `planId` and `planTitle`. It groups those tasks and reports bounded ready, delegated, queued,
+  running, blocked, and done counts using the latest assignment update; task buttons open the
+  existing process dialog. The summary performs no mutation or dispatch. See [ADR 0125](adr/0125-taskboard-plan-summary.md).
+
 - Taskboard's completed Worker process response may include a bounded `sourceMessage` projection for
   the latest assignment: the canonical agent reply with the assignment run ID. This powers a direct
   reviewed Knowledge capture action while the server rereads the transcript by thread/message ID;

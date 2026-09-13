@@ -5,7 +5,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BootstrapData, Task, WorkAssignment } from "../shared/contracts.js";
-import { App, isReadyTask, Taskboard } from "./App.js";
+import { App, isReadyTask, summarizeTaskPlans, Taskboard } from "./App.js";
 
 afterEach(() => {
   cleanup();
@@ -116,7 +116,7 @@ describe("isReadyTask", () => {
     expect(`${window.location.pathname}${window.location.search}`).toBe(
       "/surfaces/taskboard?filter=ready",
     );
-    expect(screen.getByText("Task ready")).toBeVisible();
+    expect(screen.getAllByText("Task ready")[0]).toBeVisible();
     expect(screen.getByText("Plan: Implementation plan")).toBeVisible();
     expect(screen.getByRole("button", { name: "Clear ready filter" })).toBeVisible();
   });
@@ -154,5 +154,74 @@ describe("isReadyTask", () => {
     expect(screen.queryByText("Task in-progress")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Clear ready filter" }));
     expect(onClearReadyFilter).toHaveBeenCalledOnce();
+  });
+});
+
+describe("summarizeTaskPlans", () => {
+  it("groups planned tasks and uses the latest assignment state", () => {
+    const planned = (id: string, status: Task["status"]): Task => ({
+      ...task(status, id),
+      planId: "plan-1",
+      planTitle: "Launch plan",
+    });
+    const summary = summarizeTaskPlans(
+      [
+        planned("ready", "todo"),
+        planned("queued", "todo"),
+        planned("running", "in_progress"),
+        planned("blocked", "blocked"),
+        planned("done", "done"),
+        { ...task("todo", "legacy"), planId: undefined, planTitle: undefined },
+      ],
+      [
+        { ...assignment("queued", "queued"), updatedAt: "2026-09-13T00:00:00.000Z" },
+        { ...assignment("completed", "queued"), updatedAt: "2026-09-13T01:00:00.000Z" },
+        { ...assignment("queued", "running"), updatedAt: "2026-09-13T00:00:00.000Z" },
+        { ...assignment("running", "running"), updatedAt: "2026-09-13T01:00:00.000Z" },
+      ],
+    );
+
+    expect(summary).toHaveLength(1);
+    expect(summary[0]).toMatchObject({
+      id: "plan-1",
+      title: "Launch plan",
+      total: 5,
+      ready: 1,
+      delegated: 1,
+      queued: 0,
+      running: 1,
+      blocked: 1,
+      done: 1,
+    });
+    expect(summary[0]?.tasks.map(({ id }) => id)).toEqual([
+      "ready",
+      "queued",
+      "running",
+      "blocked",
+      "done",
+    ]);
+  });
+
+  it("links each plan task to the existing inspection callback", async () => {
+    const planned = {
+      ...task("todo", "planned"),
+      planId: "plan-1",
+      planTitle: "Launch plan",
+    };
+    const onInspect = vi.fn();
+    render(
+      <Taskboard
+        data={{ tasks: [planned], assignments: [], agents: [] } as unknown as BootstrapData}
+        onClearReadyFilter={vi.fn()}
+        onCreate={vi.fn()}
+        onMove={vi.fn()}
+        onThread={vi.fn()}
+        onInspect={onInspect}
+      />,
+    );
+
+    expect(screen.getByRole("region", { name: "Plan progress" })).toHaveTextContent("Launch plan");
+    await userEvent.click(screen.getByRole("button", { name: "Open planned task Task planned" }));
+    expect(onInspect).toHaveBeenCalledWith(planned);
   });
 });
