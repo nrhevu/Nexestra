@@ -213,6 +213,35 @@ describe("MCP tools", () => {
     ).rejects.toThrow("required");
     await expect(
       templateTool?.execute(
+        { uriTemplate: "docs://guide/{topic}", variables: { topic: "x", extra: "y" } },
+        toolContext(),
+      ),
+    ).rejects.toThrow("not declared");
+    await expect(
+      templateTool?.execute(
+        { uriTemplate: "docs://guide/{topic}", variables: { topic: "line\nfeed" } },
+        toolContext(),
+      ),
+    ).rejects.toThrow("control characters");
+    await expect(
+      templateTool?.execute(
+        { uriTemplate: "docs://guide/{topic}", variables: { topic: "x".repeat(2_001) } },
+        toolContext(),
+      ),
+    ).rejects.toThrow("too long");
+    await expect(
+      templateTool?.execute(
+        {
+          uriTemplate: "docs://guide/{topic}",
+          variables: Object.fromEntries(
+            Array.from({ length: 51 }, (_, index) => [`v${index}`, "x"]),
+          ),
+        },
+        toolContext(),
+      ),
+    ).rejects.toThrow("map is too large");
+    await expect(
+      templateTool?.execute(
         { uriTemplate: "docs://unknown/{topic}", variables: { topic: "x" } },
         toolContext(),
       ),

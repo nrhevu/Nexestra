@@ -12,6 +12,8 @@ interface OpenClient {
 }
 
 const MAX_MCP_RESPONSE_BYTES = 5 * 1024 * 1024;
+const MAX_MCP_TEMPLATE_VARIABLES = 50;
+const MAX_MCP_TEMPLATE_VALUE_LENGTH = 2_000;
 
 interface RemoteMcpCall {
   url: string;
@@ -212,15 +214,7 @@ export async function loadMcpTools(
               if (!allowedTemplates.has(template))
                 throw new Error("MCP resource template is not in the catalog.");
               const vars = isRecord(input.variables) ? input.variables : {};
-              const variableEntries = Object.entries(vars).slice(0, 50);
-              const uri = template.replace(/\{([^}]+)\}/g, (_match, key: string) =>
-                (() => {
-                  const value = variableEntries.find(([name]) => name === key)?.[1];
-                  if (value === undefined)
-                    throw new Error(`MCP template variable ${key} is required.`);
-                  return encodeURIComponent(String(value).slice(0, 2_000));
-                })(),
-              );
+              const uri = expandMcpResourceTemplate(template, vars);
               const result = await open.client.readResource(
                 { uri },
                 { timeout: timeout.execution },
@@ -244,6 +238,52 @@ export async function loadMcpTools(
       await Promise.allSettled(clients.map((entry) => entry.close()));
     },
   };
+}
+
+function expandMcpResourceTemplate(template: string, variables: Record<string, unknown>): string {
+  const placeholders = [...template.matchAll(/\{([^{}]+)\}/g)].map((match) => match[1] ?? "");
+  if (template.includes("{") || template.includes("}")) {
+    const remainder = template.replaceAll(/\{[^{}]+\}/g, "");
+    if (remainder.includes("{") || remainder.includes("}")) {
+      throw new Error("MCP resource template is malformed.");
+    }
+  }
+  if (Object.keys(variables).length > MAX_MCP_TEMPLATE_VARIABLES) {
+    throw new Error("MCP template variable map is too large.");
+  }
+  const required = new Set(placeholders);
+  for (const name of Object.keys(variables)) {
+    if (!required.has(name)) throw new Error(`MCP template variable ${name} is not declared.`);
+  }
+  for (const name of required) {
+    const value = variables[name];
+    if (value === undefined || value === null) {
+      throw new Error(`MCP template variable ${name} is required.`);
+    }
+    if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
+      throw new Error(`MCP template variable ${name} must be a scalar.`);
+    }
+    const text = String(value);
+    if (text.length > MAX_MCP_TEMPLATE_VALUE_LENGTH) {
+      throw new Error(`MCP template variable ${name} is too long.`);
+    }
+    if (
+      [...text].some((character) => {
+        const code = character.codePointAt(0) ?? 0;
+        return code <= 0x1f || code === 0x7f;
+      })
+    ) {
+      throw new Error(`MCP template variable ${name} contains control characters.`);
+    }
+  }
+  return template.replace(/\{([^{}]+)\}/g, (_match, name: string) => {
+    const value = variables[name];
+    try {
+      return encodeURIComponent(String(value));
+    } catch {
+      throw new Error(`MCP template variable ${name} cannot be encoded.`);
+    }
+  });
 }
 
 async function connectServer(

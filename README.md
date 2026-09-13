@@ -117,6 +117,10 @@ Per-agent history entries also show bounded harness and model labels (`Codex`, `
 rewrite older comparisons; legacy runs fall back to the current profile. Provider URLs and
 credentials remain out of telemetry. See [ADR 0095](docs/adr/0095-agent-profile-labels-in-history.md)
 and [ADR 0111](docs/adr/0111-historical-agent-profile-attribution.md).
+
+MCP resource-template reads require an exact catalog template and a bounded exact variable map.
+Missing or extra variables, control characters, non-scalars, malformed templates, and oversized
+values fail before a read; accepted values are URI-encoded. See [ADR 0112](docs/adr/0112-safe-mcp-resource-template-expansion.md).
 Enable **Auto-refresh newest page** when supervising active work; it checks the current filtered
 first page every 15 seconds, pauses on older pages, and never retries or changes run state.
 

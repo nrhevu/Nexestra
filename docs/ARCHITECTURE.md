@@ -209,6 +209,11 @@ telemetry. Deleted agents omit these optional labels, and one agent can occupy m
 rows after a profile change. See [ADR 0095](adr/0095-agent-profile-labels-in-history.md) and [ADR
 0111](adr/0111-historical-agent-profile-attribution.md).
 
+- MCP resource templates remain catalog allowlisted. Expansion requires exactly the bounded scalar
+  variables declared by the selected template, rejects control characters and malformed input, and
+  URI-encodes values before reading. Missing or extra variables never result in a server call. See
+  [ADR 0112](adr/0112-safe-mcp-resource-template-expansion.md).
+
 Attention snooze and dismiss operations append bounded metadata to `state.json`. The store retains
 up to 200 entries per workspace and exposes them through an explicit-refresh history endpoint; the
 surface returns only action, kind, and timestamp metadata. This audit does not change the derived
