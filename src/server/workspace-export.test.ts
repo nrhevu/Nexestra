@@ -252,6 +252,19 @@ describe("workspace export", () => {
         },
       },
     });
+    const malformed = await app.request(`/api/workspaces/${workspace.id}/import/preflight`, {
+      method: "POST",
+      headers: { "content-type": "application/zip" },
+      body: "not-a-zip",
+    });
+    expect(malformed.status).toBe(400);
+    const foreign = await store.createWorkspace({ name: "Foreign target" });
+    const mismatch = await app.request(`/api/workspaces/${foreign.id}/import/preflight`, {
+      method: "POST",
+      headers: { "content-type": "application/zip" },
+      body: buffer,
+    });
+    expect(mismatch.status).toBe(400);
     expect(zip[statePath]).toBeDefined();
     expect(zip[transcriptPath]).toBeDefined();
     expect(zipEntry(zip, uploadPath)).toEqual(uploadBytes);
