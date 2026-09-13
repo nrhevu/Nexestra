@@ -132,3 +132,4 @@
 | [0129](0129-plan-knowledge-handoff.md) | Accepted | Save a reviewed bounded plan snapshot into Knowledge |
 | [0130](0130-stop-attention-run.md) | Accepted | Stop pending Master runs directly from Needs attention |
 | [0131](0131-bulk-stop-attention-runs.md) | Accepted | Stop selected pending Master runs sequentially from Needs attention |
+| [0132](0132-cross-workspace-monitor.md) | Accepted | Compare count-only activity across active and archived workspaces |

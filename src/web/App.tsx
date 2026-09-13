@@ -1,4 +1,5 @@
 import {
+  Activity,
   Archive,
   ArchiveRestore,
   ArrowDown,
@@ -158,6 +159,7 @@ import {
 } from "./unreadNavigation.js";
 import { WhiteboardView } from "./WhiteboardView.js";
 import { WorkspaceArchiveDialog } from "./WorkspaceArchiveDialog.js";
+import { WorkspaceMonitor } from "./WorkspaceMonitor.js";
 import { type RefreshOutcome, useWorkspaceRefresh } from "./workspaceRefresh.js";
 
 const RichMessage = lazy(() => import("./RichMessage.js"));
@@ -2241,6 +2243,30 @@ export function App() {
               Opening workspace…
             </div>
           )
+        ) : route.surface === "monitor" ? (
+          data.workspace.id === workspaceIdRef.current ? (
+            <WorkspaceMonitor
+              activeWorkspaceId={data.workspace.id}
+              workspaces={data.workspaces}
+              archivedWorkspaces={data.archivedWorkspaces}
+              summaries={data.workspaceActivitySummaries}
+              onWorkspace={(workspaceId) => void selectWorkspace(workspaceId)}
+              onAttention={(workspaceId) => {
+                if (workspaceId === workspaceIdRef.current) {
+                  openSurface("attention");
+                  return;
+                }
+                void (async () => {
+                  await selectWorkspace(workspaceId);
+                  if (workspaceIdRef.current === workspaceId) openSurface("attention");
+                })();
+              }}
+            />
+          ) : (
+            <div className="surface-view" role="status">
+              Opening workspace…
+            </div>
+          )
         ) : route.surface === "reviews" ? (
           data.workspace.id === workspaceIdRef.current ? (
             <ReviewQueueView
@@ -3272,6 +3298,16 @@ function Sidebar(props: {
           <>
             <p className="sidebar-kicker">Workspace</p>
             <div className="sidebar-list surface-list">
+              <button
+                className={
+                  props.route.surface === "monitor" ? "sidebar-row selected" : "sidebar-row"
+                }
+                type="button"
+                onClick={() => props.onSurface("monitor")}
+              >
+                <Activity size={17} />
+                <span className="row-label">Monitor</span>
+              </button>
               <button
                 className={props.route.surface === "runs" ? "sidebar-row selected" : "sidebar-row"}
                 type="button"
@@ -9432,6 +9468,7 @@ function routeFromLocation(): RouteState {
   if (parts[0] === "surfaces") {
     const surface =
       parts[1] === "taskboard" ||
+      parts[1] === "monitor" ||
       parts[1] === "knowledge" ||
       parts[1] === "attention" ||
       parts[1] === "runs" ||

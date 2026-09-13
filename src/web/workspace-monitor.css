@@ -1,0 +1,90 @@
+.workspace-monitor-list {
+  display: grid;
+  gap: 12px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.workspace-monitor-row {
+  align-items: center;
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(220px, 1fr) auto auto;
+  padding: 16px 18px;
+}
+
+.workspace-monitor-identity,
+.workspace-monitor-counts,
+.workspace-monitor-actions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.workspace-monitor-icon {
+  align-items: center;
+  background: var(--panel);
+  border-radius: 10px;
+  color: var(--accent);
+  display: inline-flex;
+  height: 34px;
+  justify-content: center;
+  width: 34px;
+}
+
+.workspace-monitor-identity h2 {
+  font-size: 0.98rem;
+  margin: 0;
+}
+
+.workspace-monitor-identity p,
+.workspace-monitor-counts span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  margin: 3px 0 0;
+}
+
+.workspace-monitor-counts span {
+  align-items: center;
+  display: inline-flex;
+  gap: 4px;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.workspace-monitor-actions {
+  justify-content: flex-end;
+}
+
+.workspace-monitor-actions button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 0.78rem;
+  gap: 4px;
+  padding: 5px 0;
+}
+
+.workspace-monitor-actions button.active {
+  color: var(--muted);
+  cursor: default;
+}
+
+@media (max-width: 900px) {
+  .workspace-monitor-row {
+    align-items: flex-start;
+    grid-template-columns: 1fr;
+  }
+
+  .workspace-monitor-actions {
+    justify-content: flex-start;
+  }
+}

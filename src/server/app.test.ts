@@ -1780,11 +1780,14 @@ describe("HTTP app", () => {
       ]),
     );
     const otherSummary = body.find((summary) => summary.workspaceId === other.id);
-    expect(otherSummary).toEqual({
-      workspaceId: other.id,
-      attentionCount: 1,
-      activeRunCount: 0,
-    });
+    expect(otherSummary).toEqual(
+      expect.objectContaining({
+        workspaceId: other.id,
+        attentionCount: 1,
+        activeRunCount: 0,
+      }),
+    );
+    expect(otherSummary?.observedAt).toEqual(expect.any(String));
     expect(otherSummary).not.toHaveProperty("attention");
     expect(task.workspaceId).toBe(other.id);
   });

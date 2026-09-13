@@ -1334,6 +1334,7 @@ export interface WorkspaceActivitySummary {
   workspaceId: string;
   attentionCount: number;
   activeRunCount: number;
+  observedAt?: string;
 }
 
 export function compareAttentionItems(left: AttentionItem, right: AttentionItem): number {

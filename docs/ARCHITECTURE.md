@@ -712,6 +712,10 @@ credentials.
 - Needs attention also supports selecting multiple approval/input runs and stopping them
   sequentially. Successful selections clear, failed IDs remain selected, and one workspace refresh
   follows the batch; task and Worker assignment rows are not selectable. See [ADR 0131](adr/0131-bulk-stop-attention-runs.md).
+- The Monitor surface renders active and archived workspace names with count-only active-run and
+  attention summaries plus an observation age. Active rows reuse workspace selection and Needs
+  attention navigation; archived rows remain informational. `observedAt` is shared by each summary
+  response, and no cross-workspace transcript or run detail is fetched. See [ADR 0132](adr/0132-cross-workspace-monitor.md).
 
 - Taskboard's completed Worker process response may include a bounded `sourceMessage` projection for
   the latest assignment: the canonical agent reply with the assignment run ID. This powers a direct

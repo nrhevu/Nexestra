@@ -6,6 +6,7 @@ import "./TopBar.css";
 
 export type TopBarSurface =
   | "taskboard"
+  | "monitor"
   | "agents"
   | "knowledge"
   | "attention"
@@ -85,6 +86,12 @@ export function TopBar(props: TopBarProps) {
           label: "Go to Taskboard",
           description: "Open the task management surface",
           action: () => props.onSurface("taskboard"),
+        },
+        {
+          id: "command:monitor",
+          label: "Workspace monitor",
+          description: "See activity across workspaces",
+          action: () => props.onSurface("monitor"),
         },
         {
           id: "command:attention",

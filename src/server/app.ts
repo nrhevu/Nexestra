@@ -131,6 +131,7 @@ export function createApp(options: CreateAppOptions) {
       workspace.id,
       dispatcher.activeRuns(workspace.id),
     );
+    const activityObservedAt = new Date().toISOString();
     const data: BootstrapData = {
       workspaces,
       archivedWorkspaces: options.store.listArchivedWorkspaces(),
@@ -153,6 +154,7 @@ export function createApp(options: CreateAppOptions) {
           workspaceId: entry.id,
           attentionCount: summary.attention.length,
           activeRunCount: summary.activeRuns.length,
+          observedAt: activityObservedAt,
         };
       }),
       runtime,
@@ -176,8 +178,9 @@ export function createApp(options: CreateAppOptions) {
     );
   });
 
-  app.get("/api/activity/summaries", (context) =>
-    context.json(
+  app.get("/api/activity/summaries", (context) => {
+    const observedAt = new Date().toISOString();
+    return context.json(
       options.store.listActiveWorkspaces().map((workspace) => {
         const activity = workspaceActivity(
           options.store,
@@ -188,10 +191,11 @@ export function createApp(options: CreateAppOptions) {
           workspaceId: workspace.id,
           attentionCount: activity.attention.length,
           activeRunCount: activity.activeRuns.length,
+          observedAt,
         };
       }),
-    ),
-  );
+    );
+  });
 
   app.post("/api/attention/:id/state", async (context) => {
     const workspaceId = context.req.query("workspaceId");
