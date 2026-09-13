@@ -387,6 +387,7 @@ describe("Activity-aware refresh", () => {
       updatedAt: now,
       messageCount: 1,
       lastMessageAt: now,
+      planMode: true,
       archived: false,
     };
     const run = {
@@ -502,6 +503,10 @@ describe("Activity-aware refresh", () => {
     await waitFor(() => {
       expect(screen.getByLabelText("Streaming response")).toHaveTextContent("Live response");
     });
+    expect(screen.getByRole("button", { name: "Plan mode on" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
     const thinking = screen.getByText("Thinking").closest("details");
     expect(thinking).not.toHaveAttribute("open");
     await userEvent.click(screen.getByText("Thinking"));
