@@ -4583,7 +4583,14 @@ export class FileStore {
       timeoutMs: WORKSPACE_EXPORT_TIMEOUT_MS,
     });
     try {
-      const stateBytes = Buffer.from(JSON.stringify(prepared.state), "utf8");
+      const stateBytes = Buffer.from(
+        `${JSON.stringify(
+          redactRecoveryValue(prepared.state, (value) => this.redactSecrets(value)),
+          null,
+          2,
+        )}\n`,
+        "utf8",
+      );
       let totalBytes = stateBytes.byteLength;
       if (totalBytes > WORKSPACE_RECOVERY_MANIFEST_MAX_BYTES) {
         throw new StoreError("invalid", "Workspace recovery manifest exceeds the size limit.");
@@ -6225,6 +6232,24 @@ async function writeTextAtomic(file: string, content: string): Promise<void> {
 
 function hashBytes(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function redactRecoveryValue(value: unknown, redact: (text: string) => string): unknown {
+  if (typeof value === "string") return redact(value);
+  if (Array.isArray(value)) return value.map((entry) => redactRecoveryValue(entry, redact));
+  if (value === null || typeof value !== "object") return value;
+  const result: Record<string, unknown> = Object.create(null);
+  for (const key of Object.keys(value)) {
+    const redactedKey = redact(key);
+    if (Object.hasOwn(result, redactedKey)) {
+      throw new StoreError(
+        "invalid",
+        "Workspace recovery metadata contains a redacted key collision.",
+      );
+    }
+    result[redactedKey] = redactRecoveryValue((value as Record<string, unknown>)[key], redact);
+  }
+  return result;
 }
 
 async function hashRecoveryFile(

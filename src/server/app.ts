@@ -20,8 +20,15 @@ import {
   ToolAnswersSchema,
   UpdateAttentionStateSchema,
   UpdateWorkspaceWhiteboardSchema,
+  WORKSPACE_EXPORT_MAX_ARCHIVE_BYTES,
 } from "../shared/contracts.js";
-import { WorkspaceArchiveTargetInventorySchema } from "../shared/workspace-archive-inspection-contracts.js";
+import { inspectWorkspaceArchive } from "../shared/workspace-archive-inspection.js";
+import {
+  type WorkspaceArchiveInspectionReport,
+  WorkspaceArchiveServerRestorePreflightSchema,
+  WorkspaceArchiveTargetInventorySchema,
+} from "../shared/workspace-archive-inspection-contracts.js";
+import { categorizeRestorePaths } from "../shared/workspace-archive-restore.js";
 import { reviewAssignmentGit } from "./assignment-review.js";
 import { workspaceActivity } from "./attention.js";
 import { ChatGptAuthManager } from "./auth.js";
@@ -275,6 +282,69 @@ export function createApp(options: CreateAppOptions) {
         workspaceId,
         paths: inventory.entries.map((entry) => entry.path),
         entries: inventory.entries,
+      }),
+    );
+  });
+
+  app.post("/api/workspaces/:id/import/preflight", async (context) => {
+    if (Object.keys(context.req.query()).length > 0) {
+      throw new StoreError("invalid", "Workspace restore planning does not accept query options.");
+    }
+    const workspaceId = context.req.param("id");
+    const workspace = options.store.getWorkspace(workspaceId);
+    if (!workspace) throw new StoreError("not_found", "Workspace not found.");
+    const declaredLength = Number(context.req.header("content-length") ?? "");
+    if (Number.isFinite(declaredLength) && declaredLength > WORKSPACE_EXPORT_MAX_ARCHIVE_BYTES) {
+      throw new StoreError("invalid", "Workspace archive exceeds the supported size limit.");
+    }
+    const body = await context.req.arrayBuffer();
+    if (body.byteLength === 0 || body.byteLength > WORKSPACE_EXPORT_MAX_ARCHIVE_BYTES) {
+      throw new StoreError("invalid", "Workspace archive exceeds the supported size limit.");
+    }
+    let report: WorkspaceArchiveInspectionReport;
+    try {
+      report = await inspectWorkspaceArchive(new Blob([new Uint8Array(body)]), {
+        expectedWorkspace: { id: workspace.id, name: workspace.name },
+      });
+    } catch {
+      throw new StoreError("invalid", "Workspace archive could not be verified.");
+    }
+    if (report.workspaceMatch?.id !== true) {
+      throw new StoreError("invalid", "Workspace archive belongs to a different workspace.");
+    }
+    const inventory = await options.store.workspaceArchiveTargetInventory(workspaceId);
+    const pathCategories = categorizeRestorePaths(report.manifest.entries, inventory.entries);
+    const restorePlan = WorkspaceArchiveServerRestorePreflightSchema.shape.restorePlan.parse({
+      ...(report.restorePlan ?? {
+        workspace: report.manifest.workspace,
+        importSupported: false,
+        counts: {
+          threads: 0,
+          agents: 0,
+          tasks: 0,
+          knowledge: 0,
+          assignments: 0,
+          attentionStates: 0,
+          attentionAudit: 0,
+        },
+        pathConflicts: { checked: false, paths: [] },
+        pathCategories: { checked: false, safeToCreate: [], existingIdentical: [], conflicts: [] },
+        unsupportedEntries: [],
+        blockers: [],
+      }),
+      pathCategories: { checked: true, ...pathCategories },
+      pathConflicts: { checked: true, paths: pathCategories.conflicts },
+    });
+    return context.json(
+      WorkspaceArchiveServerRestorePreflightSchema.parse({
+        workspaceId,
+        manifest: report.manifest,
+        targetInventory: {
+          workspaceId,
+          paths: inventory.entries.map((entry) => entry.path),
+          entries: inventory.entries,
+        },
+        restorePlan,
       }),
     );
   });

@@ -235,6 +235,23 @@ describe("workspace export", () => {
     expect(response.headers.get("content-disposition")).toContain(".zip");
 
     const zip = extractZip(buffer);
+    const preflight = await app.request(`/api/workspaces/${workspace.id}/import/preflight`, {
+      method: "POST",
+      headers: { "content-type": "application/zip" },
+      body: buffer,
+    });
+    expect(preflight.status).toBe(200);
+    await expect(preflight.json()).resolves.toMatchObject({
+      workspaceId: workspace.id,
+      manifest: { workspace: { id: workspace.id } },
+      restorePlan: {
+        pathCategories: {
+          checked: true,
+          safeToCreate: ["NOTICE.txt"],
+          conflicts: [],
+        },
+      },
+    });
     expect(zip[statePath]).toBeDefined();
     expect(zip[transcriptPath]).toBeDefined();
     expect(zipEntry(zip, uploadPath)).toEqual(uploadBytes);

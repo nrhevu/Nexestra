@@ -241,6 +241,7 @@ function isConsistentEntryKind(entry: WorkspaceExportEntry, workspaceId: string)
   const { path, kind } = entry;
   if (path === NOTICE_PATH) return kind === "notice";
   if (path === STATE_PATH) return kind === "metadata";
+  if (path === "whiteboard.md") return kind === "whiteboard";
   if (path.startsWith("threads/")) {
     return kind === "transcript" && /^[^/]+\.jsonl$/.test(path.slice("threads/".length));
   }

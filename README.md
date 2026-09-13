@@ -128,6 +128,9 @@ selection. See [ADR 0113](docs/adr/0113-run-history-harness-model-filters.md).
 Settings also lets you view a bounded, credential-free recovery manifest for an archived workspace
 before restoring it. The read-only view shows paths, sizes, and hashes; it does not activate or write
 the workspace. See [ADR 0114](docs/adr/0114-archived-workspace-recovery-manifest-surface.md).
+The server also exposes a POST-only restore preflight that verifies the uploaded ZIP, checks its
+workspace identity, refreshes target hashes, and returns safe/identical/conflict categories without
+writing. See [ADR 0115](docs/adr/0115-server-authoritative-restore-preflight.md).
 Enable **Auto-refresh newest page** when supervising active work; it checks the current filtered
 first page every 15 seconds, pauses on older pages, and never retries or changes run state.
 
