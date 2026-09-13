@@ -435,7 +435,8 @@
 
 .run-history-open,
 .run-history-retry,
-.run-history-retry-selected {
+.run-history-retry-selected,
+.run-history-copy-telemetry {
   min-width: 24px;
   min-height: 30px;
   padding: 5px 10px;
@@ -450,7 +451,8 @@
 
 .run-history-open:hover,
 .run-history-retry:hover,
-.run-history-retry-selected:hover {
+.run-history-retry-selected:hover,
+.run-history-copy-telemetry:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
@@ -481,14 +483,27 @@
 
 .run-history-open:disabled,
 .run-history-retry:disabled,
-.run-history-retry-selected:disabled {
+.run-history-retry-selected:disabled,
+.run-history-copy-telemetry:disabled {
   opacity: 0.55;
   cursor: default;
+}
+
+.run-history-telemetry-manual {
+  width: min(100%, 320px);
+  min-height: 120px;
+  resize: vertical;
+  font:
+    11px / 1.4 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
 }
 
 .run-history-open:focus-visible,
 .run-history-retry:focus-visible,
 .run-history-retry-selected:focus-visible,
+.run-history-copy-telemetry:focus-visible,
 .run-history-refresh:focus-visible,
 .run-history-export:focus-visible,
 .run-history-newer:focus-visible,
@@ -603,7 +618,8 @@
   }
 
   .run-history-open,
-  .run-history-retry {
+  .run-history-retry,
+  .run-history-copy-telemetry {
     flex: 1 1 120px;
   }
 

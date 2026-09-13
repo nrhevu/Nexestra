@@ -19,6 +19,7 @@ import {
   runHistoryExportFilename,
   serializeRunHistoryCsv,
   serializeRunHistoryExport,
+  serializeRunHistoryTelemetryRow,
 } from "./run-history-export.js";
 import "./RunHistoryView.css";
 
@@ -210,6 +211,8 @@ export function RunHistoryView({
   const [retryingRunId, setRetryingRunId] = useState<string>();
   const [selectedRetryIds, setSelectedRetryIds] = useState<Set<string>>(() => new Set());
   const [batchRetrying, setBatchRetrying] = useState(false);
+  const [copiedTelemetryRunId, setCopiedTelemetryRunId] = useState<string>();
+  const [manualTelemetry, setManualTelemetry] = useState<{ runId: string; text: string }>();
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [telemetry, setTelemetry] = useState<{
     phase: "idle" | "loading" | "ready" | "error";
@@ -560,6 +563,22 @@ export function RunHistoryView({
     anchor.download = runHistoryCsvFilename(workspaceId);
     anchor.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
+
+  const copyTelemetryRow = async (item: RunHistoryItem) => {
+    const text = serializeRunHistoryTelemetryRow(item);
+    setManualTelemetry(undefined);
+    if (!navigator.clipboard?.writeText) {
+      setManualTelemetry({ runId: item.run.id, text });
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedTelemetryRunId(item.run.id);
+      window.setTimeout(() => setCopiedTelemetryRunId(undefined), 2_000);
+    } catch {
+      setManualTelemetry({ runId: item.run.id, text });
+    }
   };
 
   const handleAgentChange = (event: ChangeEvent<HTMLSelectElement>) => {
@@ -969,6 +988,23 @@ export function RunHistoryView({
                       >
                         Open run
                       </button>
+                      <button
+                        type="button"
+                        className="run-history-copy-telemetry"
+                        aria-label={`Copy telemetry for run ${item.run.id}`}
+                        onClick={() => void copyTelemetryRow(item)}
+                      >
+                        {copiedTelemetryRunId === item.run.id ? "Copied" : "Copy telemetry"}
+                      </button>
+                      {manualTelemetry?.runId === item.run.id ? (
+                        <textarea
+                          className="run-history-telemetry-manual"
+                          aria-label={`Telemetry JSON for run ${item.run.id}`}
+                          readOnly
+                          value={manualTelemetry.text}
+                          onFocus={(event) => event.currentTarget.select()}
+                        />
+                      ) : null}
                     </div>
                   </article>
                 </li>

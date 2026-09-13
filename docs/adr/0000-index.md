@@ -108,3 +108,4 @@
 | [0105](0105-knowledge-revision-comparison.md) | Accepted | Compare bounded Knowledge document revisions |
 | [0106](0106-reversible-workspace-archive.md) | Accepted | Add reversible soft workspace archival |
 | [0107](0107-bulk-review-knowledge-capture.md) | Accepted | Capture selected Needs-work rows sequentially through the reviewed Knowledge dialog |
+| [0108](0108-run-history-telemetry-row-copy.md) | Accepted | Copy one bounded Run history telemetry row as JSON |

@@ -5,6 +5,7 @@ import {
   runHistoryExportFilename,
   serializeRunHistoryCsv,
   serializeRunHistoryExport,
+  serializeRunHistoryTelemetryRow,
 } from "./run-history-export.js";
 
 const summary: RunHistoryMetrics = {
@@ -115,5 +116,29 @@ describe("run history export", () => {
     expect(runHistoryCsvFilename("workspace / costs", new Date("2026-09-12T00:00:00Z"))).toBe(
       "nexestra-run-history-workspace-costs-2026-09-12.csv",
     );
+  });
+
+  it("serializes one bounded telemetry row without transcript or raw error text", () => {
+    const payload = JSON.parse(
+      serializeRunHistoryTelemetryRow(
+        {
+          ...item,
+          run: {
+            ...item.run,
+            failureKind: "provider",
+          },
+          taskTitle: "Release plan",
+        },
+        "2026-09-12T02:00:00.000Z",
+      ),
+    ) as Record<string, unknown>;
+    expect(payload).toMatchObject({
+      format: "nexestra.run-telemetry-row",
+      version: 1,
+      exportedAt: "2026-09-12T02:00:00.000Z",
+      run: { id: "run-1", failureKind: "provider", triggerMessageId: "message-1" },
+      taskTitle: "Release plan",
+    });
+    expect(JSON.stringify(payload)).not.toContain("transcript");
   });
 });

@@ -101,6 +101,9 @@ pages first when they should be included; the packet contains no transcript text
 errors. **Export CSV** downloads the same loaded rows as escaped spreadsheet columns for status,
 duration, usage, cost, budget, and bounded agent labels; it also excludes transcript and raw error
 text.
+Each row also offers **Copy telemetry** for a versioned JSON handoff containing only bounded run,
+agent, task, timing, usage, and cost fields. Clipboard denial shows the same payload for manual
+copying; transcript and raw provider errors are excluded. See [ADR 0108](docs/adr/0108-run-history-telemetry-row-copy.md).
 For cross-workspace comparisons, `GET /api/runs/summary` returns count-only aggregates with token,
 estimated-cost, over-budget, and transcript-coverage fields. Supplying `workspaceId` restricts the
 response to one workspace; omitting it returns one entry per workspace. The paged `/api/runs` view

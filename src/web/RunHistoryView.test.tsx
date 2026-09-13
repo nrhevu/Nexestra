@@ -870,4 +870,31 @@ describe("RunHistoryView coverage, rows, and callbacks", () => {
     expect(onOpenRun).toHaveBeenCalledTimes(2);
     expect(onOpenRun).toHaveBeenLastCalledWith(item);
   });
+
+  it("copies a telemetry-only JSON row and offers a manual fallback", async () => {
+    const user = userEvent.setup();
+    const item = makeItem(makeRun("run-copy", { failureKind: "provider" }));
+    const fetchMock = vi.fn(async () => jsonResponse(makePage([item])));
+    vi.stubGlobal("fetch", fetchMock);
+    const descriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+    });
+    try {
+      renderView();
+      await screen.findByLabelText("Run run-copy");
+      await user.click(screen.getByRole("button", { name: "Copy telemetry for run run-copy" }));
+      const manual = await screen.findByRole("textbox", {
+        name: "Telemetry JSON for run run-copy",
+      });
+      expect((manual as HTMLTextAreaElement).value).toContain(
+        '"format": "nexestra.run-telemetry-row"',
+      );
+      expect((manual as HTMLTextAreaElement).value).not.toContain("transcript");
+    } finally {
+      if (descriptor) Object.defineProperty(navigator, "clipboard", descriptor);
+      else Reflect.deleteProperty(navigator, "clipboard");
+    }
+  });
 });

@@ -109,6 +109,46 @@ export function serializeRunHistoryCsv(items: RunHistoryItem[]): string {
   return `${rows.join("\r\n")}\r\n`;
 }
 
+export function serializeRunHistoryTelemetryRow(
+  item: RunHistoryItem,
+  exportedAt = new Date().toISOString(),
+): string {
+  const usage = item.run.usage;
+  return `${JSON.stringify(
+    {
+      format: "nexestra.run-telemetry-row",
+      version: 1,
+      exportedAt,
+      run: {
+        id: item.run.id,
+        threadId: item.run.threadId,
+        triggerMessageId: item.run.triggerMessageId,
+        agentId: item.run.agentId,
+        attempt: item.run.attempt,
+        status: item.run.status,
+        failureKind: item.run.failureKind,
+        durationMs: item.run.durationMs,
+        usage,
+        createdAt: item.run.createdAt,
+        updatedAt: item.run.updatedAt,
+      },
+      agent: {
+        name: item.agentName,
+        handle: item.agentHandle,
+        harness: item.agentHarness,
+        model: item.agentModel,
+      },
+      thread: { name: item.threadName, archived: item.threadArchived },
+      taskTitle: item.taskTitle,
+      estimatedCostUsd: item.estimatedCostUsd,
+      costLimitUsd: item.costLimitUsd,
+      overBudget: item.overBudget,
+    },
+    null,
+    2,
+  )}\n`;
+}
+
 export function runHistoryCsvFilename(workspaceId: string, date = new Date()): string {
   return runHistoryExportFilename(workspaceId, date).replace(/\.json$/, ".csv");
 }

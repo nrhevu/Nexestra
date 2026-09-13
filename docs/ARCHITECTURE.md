@@ -603,6 +603,9 @@ credentials.
   Worker rows optionally include a redacted Taskboard title derived from their assignment ID; legacy
   and ordinary runs omit that context. The browser can export the loaded page as JSON or escaped CSV;
   both are page-scoped and the CSV contains telemetry only. See [ADR 0100](adr/0100-run-history-csv-export.md).
+  Each loaded row can also be copied as a versioned telemetry-only JSON envelope. Clipboard failure
+  falls back to a read-only browser field; the envelope excludes transcript text and raw provider
+  errors and does not change run state. See [ADR 0108](adr/0108-run-history-telemetry-row-copy.md).
   It has no raw run-output search.
 
 - Quality ratings are explicit single-user observations. They are attributed only when provenance
