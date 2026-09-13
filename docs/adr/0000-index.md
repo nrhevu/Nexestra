@@ -119,3 +119,4 @@
 | [0116](0116-create-only-archive-import.md) | Accepted | Import a verified archive as a new archived workspace with rollback |
 | [0117](0117-reversible-attention-clear.md) | Accepted | Restore a snoozed or dismissed Attention item through a scoped clear action |
 | [0118](0118-durable-queued-run-rehydration.md) | Accepted | Rehydrate queued runs from the canonical transcript after restart |
+| [0119](0119-custom-surface-task-entry.md) | Accepted | Allow custom surfaces to open the built-in task creation form |

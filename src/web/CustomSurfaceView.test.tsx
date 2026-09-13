@@ -24,6 +24,7 @@ const surface: CustomSurface = {
     { id: "budget", title: "Budget watch", description: "", action: "over_budget" },
     { id: "reviews", title: "Needs-work", description: "", action: "reviews" },
     { id: "blocked", title: "Blocked tasks", description: "", action: "blocked_tasks" },
+    { id: "new", title: "New task", description: "", action: "new_task" },
   ],
 };
 
@@ -49,5 +50,7 @@ describe("CustomSurfaceView", () => {
     expect(onAction).toHaveBeenLastCalledWith("over_budget");
     await userEvent.click(screen.getByRole("button", { name: "Open blocked tasks" }));
     expect(onAction).toHaveBeenLastCalledWith("blocked_tasks");
+    await userEvent.click(screen.getByRole("button", { name: "Create task" }));
+    expect(onAction).toHaveBeenLastCalledWith("new_task");
   });
 });

@@ -1467,6 +1467,11 @@ export function App() {
       customSurfaceId: surfaceId,
     });
   const openCustomSurfaceAction = (action: CustomSurfaceAction) => {
+    if (action === "new_task") {
+      setTaskStatus("todo");
+      setModal("task");
+      return;
+    }
     if (action === "blocked_tasks") {
       openSurface("taskboard");
       return;

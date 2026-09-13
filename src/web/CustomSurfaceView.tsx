@@ -3,6 +3,7 @@ import type { CustomSurface, CustomSurfaceAction } from "../shared/contracts.js"
 import "./CustomSurfaceView.css";
 
 const ACTION_LABELS: Record<CustomSurfaceAction, string> = {
+  new_task: "Create task",
   taskboard: "Open Taskboard",
   blocked_tasks: "Open blocked tasks",
   knowledge: "Open Knowledge",
