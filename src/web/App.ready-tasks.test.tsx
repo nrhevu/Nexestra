@@ -83,6 +83,7 @@ describe("isReadyTask", () => {
               description: "",
               cards: [
                 { id: "ready", title: "Ready tasks", description: "", action: "ready_tasks" },
+                { id: "agent", title: "New agent", description: "", action: "new_agent" },
               ],
             },
           ],
@@ -104,6 +105,9 @@ describe("isReadyTask", () => {
     window.history.replaceState({}, "", "/surfaces/custom/dispatch");
     render(<App />);
 
+    await userEvent.click(await screen.findByRole("button", { name: "Create agent" }));
+    expect(screen.getByRole("heading", { name: "Create agent" })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
     await userEvent.click(await screen.findByRole("button", { name: "Open ready tasks" }));
     expect(`${window.location.pathname}${window.location.search}`).toBe(
       "/surfaces/taskboard?filter=ready",

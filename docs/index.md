@@ -152,3 +152,4 @@
 88. [Upstream harness roadmap signals](research/2026-09-13-upstream-harness-roadmap.md): compare DeepSeek Harness plan state and Codeg's forms, sub-agent cards, and rollback direction.
 89. [Custom surface Knowledge entry research](research/2026-09-13-custom-surface-knowledge-entry.md): add a safe declarative shortcut to the selected workspace Knowledge form.
 90. [Ready-task dispatch triage research](research/2026-09-13-ready-task-dispatch-triage.md): open a workspace-scoped Taskboard filter for todo work without active assignments.
+91. [Custom surface agent entry research](research/2026-09-13-custom-surface-agent-entry.md): add a safe declarative shortcut to the workspace-scoped Agent form.

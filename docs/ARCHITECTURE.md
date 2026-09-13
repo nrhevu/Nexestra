@@ -667,8 +667,9 @@ credentials.
   browser evaluates no configured code, markup, URL, or command. The `new_task` and `new_knowledge`
   actions open built-in Taskboard and Knowledge forms; arbitrary configured forms remain future
   work. See [ADR 0119](adr/0119-custom-surface-task-entry.md) and [ADR
-  0120](adr/0120-custom-surface-knowledge-entry.md) and [ADR
-  0121](adr/0121-ready-task-custom-surface-filter.md).
+  0120](adr/0120-custom-surface-knowledge-entry.md), [ADR 0121](adr/0121-ready-task-custom-surface-filter.md),
+  and [ADR 0122](adr/0122-custom-surface-agent-entry.md). The `new_agent` action opens the existing
+  workspace-scoped AgentDialog; arbitrary configured forms remain future work.
 
 - Taskboard's completed Worker process response may include a bounded `sourceMessage` projection for
   the latest assignment: the canonical agent reply with the assignment run ID. This powers a direct

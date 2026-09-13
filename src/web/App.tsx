@@ -1479,6 +1479,11 @@ export function App() {
       setModal("knowledge");
       return;
     }
+    if (action === "new_agent") {
+      setAgentToEdit(undefined);
+      setModal("agent");
+      return;
+    }
     if (action === "blocked_tasks") {
       openSurface("taskboard");
       return;
