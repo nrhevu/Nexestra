@@ -4312,7 +4312,10 @@ export class FileStore {
           }
         }
         const entry = transcriptHistoryEntry(event.sequence, raw, lineStart, lineEnd);
-        if (!entry) return { status: "unknown" };
+        if (!entry) {
+          if (event.type === "plan.mode") return { status: "event", raw };
+          return { status: "unknown" };
+        }
         addTranscriptHistoryEntry(index, entry);
         if (event.type === "message.created") {
           index.messageMetadataById.set(event.message.id, {
