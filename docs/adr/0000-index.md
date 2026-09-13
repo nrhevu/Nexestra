@@ -134,3 +134,4 @@
 | [0131](0131-bulk-stop-attention-runs.md) | Accepted | Stop selected pending Master runs sequentially from Needs attention |
 | [0132](0132-cross-workspace-monitor.md) | Accepted | Compare count-only activity across active and archived workspaces |
 | [0133](0133-knowledge-retrieval-filters.md) | Accepted | Filter selected-workspace Knowledge by bounded metadata |
+| [0134](0134-cross-workspace-activity-age.md) | Accepted | Show oldest active and attention age in Monitor |

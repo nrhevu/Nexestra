@@ -1335,6 +1335,8 @@ export interface WorkspaceActivitySummary {
   attentionCount: number;
   activeRunCount: number;
   observedAt?: string;
+  oldestActiveRunStartedAt?: string | null;
+  oldestAttentionUpdatedAt?: string | null;
 }
 
 export function compareAttentionItems(left: AttentionItem, right: AttentionItem): number {

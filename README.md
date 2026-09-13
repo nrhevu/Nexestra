@@ -422,9 +422,10 @@ stops outside Taskboard.
 When several such runs are pending, select them and use **Stop selected**. Stops run sequentially,
 refresh once, and keep failed rows selected for retry; task and Worker rows cannot be selected.
 The **Monitor** surface compares active-run and attention counts across workspaces, includes the
-age of each count snapshot, and keeps archived workspace names visible without opening them. It
-uses count-only activity summaries and links active rows to workspace selection or Needs attention;
-transcripts and run details are not loaded cross-workspace.
+age of each count snapshot and the oldest active or waiting item when available, and keeps archived
+workspace names visible without opening them. It uses count-only activity summaries and links active
+rows to workspace selection or Needs attention; transcripts and run details are not loaded
+cross-workspace.
 If the provider tries to return a final answer while planned tasks are still undelegated, the
 harness sends it back to the tool loop instead of leaving silent, unassigned work on the board.
 Delegation creates `nexestra/<assignment-id>` from the selected `#repository` and checks it out into

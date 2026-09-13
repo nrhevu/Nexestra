@@ -56,6 +56,13 @@ interface CreateAppOptions {
   repositories?: AssignmentRepositoryManager;
 }
 
+function oldestTimestamp(values: string[]): string | null {
+  return values.reduce<string | null>(
+    (oldest, value) => (oldest === null || value < oldest ? value : oldest),
+    null,
+  );
+}
+
 export function createApp(options: CreateAppOptions) {
   const runner = options.runner ?? new LocalAgentRunner({ store: options.store });
   const defaultRepositories = new RepositoryManager(options.store);
@@ -155,6 +162,10 @@ export function createApp(options: CreateAppOptions) {
           attentionCount: summary.attention.length,
           activeRunCount: summary.activeRuns.length,
           observedAt: activityObservedAt,
+          oldestActiveRunStartedAt: oldestTimestamp(summary.activeRuns.map((run) => run.createdAt)),
+          oldestAttentionUpdatedAt: oldestTimestamp(
+            summary.attention.map((item) => item.updatedAt),
+          ),
         };
       }),
       runtime,
@@ -192,6 +203,12 @@ export function createApp(options: CreateAppOptions) {
           attentionCount: activity.attention.length,
           activeRunCount: activity.activeRuns.length,
           observedAt,
+          oldestActiveRunStartedAt: oldestTimestamp(
+            activity.activeRuns.map((run) => run.createdAt),
+          ),
+          oldestAttentionUpdatedAt: oldestTimestamp(
+            activity.attention.map((item) => item.updatedAt),
+          ),
         };
       }),
     );

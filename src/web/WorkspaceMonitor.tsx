@@ -14,6 +14,19 @@ export function formatWorkspaceActivityAge(observedAt?: string, now = Date.now()
   return `Observed ${hours}h ago`;
 }
 
+export function formatWorkspaceActivitySince(timestamp?: string | null, now = Date.now()): string {
+  if (!timestamp) return "";
+  const observed = Date.parse(timestamp);
+  if (!Number.isFinite(observed)) return "";
+  const seconds = Math.max(0, Math.floor((now - observed) / 1_000));
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
 export function WorkspaceMonitor({
   activeWorkspaceId,
   workspaces,
@@ -72,6 +85,20 @@ export function WorkspaceMonitor({
                       {archived
                         ? "Archived workspace"
                         : formatWorkspaceActivityAge(summary?.observedAt)}
+                      {!archived && activeRunCount > 0 && summary?.oldestActiveRunStartedAt ? (
+                        <>
+                          <br />
+                          Running since{" "}
+                          {formatWorkspaceActivitySince(summary.oldestActiveRunStartedAt)}
+                        </>
+                      ) : null}
+                      {!archived && attentionCount > 0 && summary?.oldestAttentionUpdatedAt ? (
+                        <>
+                          <br />
+                          Waiting since{" "}
+                          {formatWorkspaceActivitySince(summary.oldestAttentionUpdatedAt)}
+                        </>
+                      ) : null}
                     </p>
                   </div>
                 </div>

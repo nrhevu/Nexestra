@@ -5,7 +5,11 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Workspace, WorkspaceActivitySummary } from "../shared/contracts.js";
-import { formatWorkspaceActivityAge, WorkspaceMonitor } from "./WorkspaceMonitor.js";
+import {
+  formatWorkspaceActivityAge,
+  formatWorkspaceActivitySince,
+  WorkspaceMonitor,
+} from "./WorkspaceMonitor.js";
 
 afterEach(cleanup);
 
@@ -20,6 +24,7 @@ const workspace = (id: string, name: string, archived = false): Workspace => ({
 
 describe("WorkspaceMonitor", () => {
   it("shows count-only cross-workspace activity and archived names", () => {
+    const now = Date.now();
     render(
       <WorkspaceMonitor
         activeWorkspaceId="workspace-a"
@@ -30,7 +35,9 @@ describe("WorkspaceMonitor", () => {
             workspaceId: "workspace-a",
             attentionCount: 2,
             activeRunCount: 1,
-            observedAt: "2026-09-13T00:00:00.000Z",
+            observedAt: new Date(now).toISOString(),
+            oldestActiveRunStartedAt: new Date(now - 4 * 60 * 60 * 1_000).toISOString(),
+            oldestAttentionUpdatedAt: new Date(now - 5 * 60 * 60 * 1_000).toISOString(),
           },
           { workspaceId: "workspace-b", attentionCount: 0, activeRunCount: 0 },
         ]}
@@ -41,6 +48,20 @@ describe("WorkspaceMonitor", () => {
     expect(screen.getByRole("heading", { name: "Monitor" })).toBeVisible();
     expect(screen.getByText("1 active")).toBeVisible();
     expect(screen.getByText("2 attention")).toBeVisible();
+    expect(
+      screen.getByText(
+        (_, element) =>
+          element?.tagName === "P" &&
+          (element.textContent?.includes("Running since 4h ago") ?? false),
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        (_, element) =>
+          element?.tagName === "P" &&
+          (element.textContent?.includes("Waiting since 5h ago") ?? false),
+      ),
+    ).toBeVisible();
     expect(screen.getByText("Archived workspace")).toBeVisible();
     expect(screen.queryByText("Provider error")).not.toBeInTheDocument();
   });
@@ -80,5 +101,11 @@ describe("WorkspaceMonitor", () => {
     expect(
       formatWorkspaceActivityAge(summary.observedAt, Date.parse("2026-09-13T01:00:00.000Z")),
     ).toBe("Observed 1h ago");
+    expect(
+      formatWorkspaceActivitySince(
+        "2026-09-13T00:00:00.000Z",
+        Date.parse("2026-09-13T01:00:00.000Z"),
+      ),
+    ).toBe("1h ago");
   });
 });

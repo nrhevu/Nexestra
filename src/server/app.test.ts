@@ -974,6 +974,16 @@ describe("HTTP app", () => {
     await vi.waitFor(() => expect(runner.lastInvocation).toBeDefined());
     const [run] = app.dispatcher.activeRuns();
     if (!run) throw new Error("expected active run");
+    const activeSummaryResponse = await app.request("/api/activity/summaries");
+    const activeSummaries = (await activeSummaryResponse.json()) as Array<Record<string, unknown>>;
+    expect(activeSummaries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          workspaceId: thread.workspaceId,
+          oldestActiveRunStartedAt: run.createdAt,
+        }),
+      ]),
+    );
 
     const foreign = await store.createWorkspace({ name: "Foreign stop target" });
     const wrongWorkspace = await app.request(
@@ -1788,6 +1798,8 @@ describe("HTTP app", () => {
       }),
     );
     expect(otherSummary?.observedAt).toEqual(expect.any(String));
+    expect(otherSummary?.oldestAttentionUpdatedAt).toEqual(expect.any(String));
+    expect(otherSummary?.oldestActiveRunStartedAt).toBeNull();
     expect(otherSummary).not.toHaveProperty("attention");
     expect(task.workspaceId).toBe(other.id);
   });
