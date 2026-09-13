@@ -5617,6 +5617,7 @@ export interface TaskPlanSummary {
   title: string;
   total: number;
   ready: number;
+  dependencyBlocked: number;
   delegated: number;
   queued: number;
   running: number;
@@ -5637,6 +5638,7 @@ export function summarizeTaskPlans(
     }
   }
   const summaries = new Map<string, TaskPlanSummary>();
+  const tasksById = new Map(tasks.map((task) => [task.id, task]));
   for (const task of tasks) {
     if (!task.planId || !task.planTitle) continue;
     const summary = summaries.get(task.planId) ?? {
@@ -5644,6 +5646,7 @@ export function summarizeTaskPlans(
       title: task.planTitle,
       total: 0,
       ready: 0,
+      dependencyBlocked: 0,
       delegated: 0,
       queued: 0,
       running: 0,
@@ -5659,6 +5662,10 @@ export function summarizeTaskPlans(
     else if (assignment?.status === "queued") summary.queued += 1;
     else if (assignment?.status === "running") summary.running += 1;
     else if (assignment) summary.delegated += 1;
+    else if (
+      task.dependsOnTaskIds?.some((dependencyId) => tasksById.get(dependencyId)?.status !== "done")
+    )
+      summary.dependencyBlocked += 1;
     else summary.ready += 1;
     summaries.set(task.planId, summary);
   }
@@ -5752,9 +5759,9 @@ export function Taskboard(props: {
               <article className="task-plan-summary-card" key={plan.id}>
                 <h3>{plan.title}</h3>
                 <p>
-                  {plan.total} tasks · {plan.ready} ready · {plan.delegated} delegated ·{" "}
-                  {plan.queued} queued · {plan.running} running · {plan.blocked} blocked ·{" "}
-                  {plan.done} done
+                  {plan.total} tasks · {plan.ready} ready · {plan.dependencyBlocked}{" "}
+                  dependency-blocked · {plan.delegated} delegated · {plan.queued} queued ·{" "}
+                  {plan.running} running · {plan.blocked} blocked · {plan.done} done
                 </p>
                 <div className="task-plan-summary-tasks">
                   {plan.tasks.map((task) => (
@@ -5839,6 +5846,9 @@ function TaskCard({
         <span className="task-id">NX-{task.id.slice(0, 4).toUpperCase()}</span>
         <h3>{task.title}</h3>
         {task.planTitle && <span className="task-plan-label">Plan: {task.planTitle}</span>}
+        {task.dependsOnTaskIds && task.dependsOnTaskIds.length > 0 && (
+          <span className="task-plan-label">Depends on {task.dependsOnTaskIds.length} task(s)</span>
+        )}
         {task.description && <p>{task.description}</p>}
         {task.verificationCommand && (
           <span className="task-verification">

@@ -660,9 +660,9 @@ export class AgentDispatcher {
           },
           createPlan: async (title, steps) => {
             const planId = crypto.randomUUID();
-            const tasks = [];
+            const createdTasks: Task[] = [];
             for (const step of steps) {
-              tasks.push(
+              createdTasks.push(
                 await this.store.createTask({
                   workspaceId: thread.workspaceId,
                   title: step.title,
@@ -673,6 +673,22 @@ export class AgentDispatcher {
                   planId,
                   planTitle: title,
                 }),
+              );
+            }
+            const tasks: Task[] = [];
+            for (const [index, step] of steps.entries()) {
+              const dependencies = (step.dependsOn ?? []).map(
+                (stepNumber) => createdTasks[stepNumber - 1]?.id,
+              );
+              const dependsOnTaskIds = dependencies.filter(
+                (taskId): taskId is string => taskId !== undefined,
+              );
+              tasks.push(
+                dependsOnTaskIds.length > 0
+                  ? await this.store.updateTask(createdTasks[index]?.id ?? "", {
+                      dependsOnTaskIds,
+                    })
+                  : (createdTasks[index] as Task),
               );
             }
             this.notifyThread(run.threadId, true);
@@ -840,6 +856,15 @@ export class AgentDispatcher {
     }
     if (task.status === "done") {
       throw new StoreError("conflict", "A completed task cannot be delegated again.");
+    }
+    const unmetDependencies = (task.dependsOnTaskIds ?? []).filter(
+      (dependencyId) => this.store.getTask(dependencyId)?.status !== "done",
+    );
+    if (unmetDependencies.length > 0) {
+      throw new StoreError(
+        "conflict",
+        "This task is waiting for its prerequisite tasks to finish.",
+      );
     }
     if (
       this.delegatingTaskIds.has(task.id) ||

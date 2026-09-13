@@ -694,6 +694,11 @@ credentials.
   credentials, repository IDs, branches, and worktree paths. Oversized snapshots retain plan counts
   and set `truncated`; the export does not mutate state. See [ADR 0127](adr/0127-plan-summary-export.md).
 
+- Master plan steps optionally carry one-based `dependsOn` references. The dispatcher resolves them
+  to generated `dependsOnTaskIds`, while the store enforces same-plan, same-workspace, acyclic
+  edges. Explicit delegation rejects tasks with unfinished prerequisites; Taskboard reports those
+  tasks as dependency-blocked. Plans without dependencies remain independent. See [ADR 0128](adr/0128-plan-step-dependencies.md).
+
 - Taskboard's completed Worker process response may include a bounded `sourceMessage` projection for
   the latest assignment: the canonical agent reply with the assignment run ID. This powers a direct
   reviewed Knowledge capture action while the server rereads the transcript by thread/message ID;

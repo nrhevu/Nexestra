@@ -1141,6 +1141,11 @@ export const TaskSchema = z.object({
   threadId: z.string().nullable(),
   planId: z.string().uuid().optional(),
   planTitle: z.string().trim().max(160).optional(),
+  dependsOnTaskIds: z
+    .array(z.string().uuid())
+    .max(20)
+    .refine((ids) => new Set(ids).size === ids.length, "Task dependencies must be unique.")
+    .optional(),
   verificationCommand: z.string().trim().max(2_000).default(""),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -1185,6 +1190,7 @@ const PlanSummaryExportTaskSchema = z.object({
   id: z.string(),
   title: z.string(),
   status: TaskSchema.shape.status,
+  dependsOnTaskIds: z.array(z.string().uuid()).max(20),
   assignee: PlanSummaryExportAssigneeSchema.nullable(),
   assignmentStatus: WorkAssignmentSchema.shape.status.nullable(),
 });
@@ -1194,6 +1200,7 @@ const PlanSummaryExportPlanSchema = z.object({
   title: z.string(),
   total: z.number().int().nonnegative(),
   ready: z.number().int().nonnegative(),
+  dependencyBlocked: z.number().int().nonnegative(),
   delegated: z.number().int().nonnegative(),
   queued: z.number().int().nonnegative(),
   running: z.number().int().nonnegative(),
@@ -1276,6 +1283,11 @@ export const CreateTaskSchema = z.object({
   threadId: z.string().nullable().default(null),
   planId: z.string().uuid().optional(),
   planTitle: z.string().trim().max(160).optional(),
+  dependsOnTaskIds: z
+    .array(z.string().uuid())
+    .max(20)
+    .refine((ids) => new Set(ids).size === ids.length, "Task dependencies must be unique.")
+    .optional(),
   verificationCommand: z.string().trim().max(2_000).default(""),
 });
 
@@ -1285,6 +1297,11 @@ export const UpdateTaskSchema = z.object({
   status: z.enum(["todo", "in_progress", "blocked", "done"]).optional(),
   assigneeId: z.string().nullable().optional(),
   threadId: z.string().nullable().optional(),
+  dependsOnTaskIds: z
+    .array(z.string().uuid())
+    .max(20)
+    .refine((ids) => new Set(ids).size === ids.length, "Task dependencies must be unique.")
+    .optional(),
   verificationCommand: z.string().trim().max(2_000).optional(),
 });
 

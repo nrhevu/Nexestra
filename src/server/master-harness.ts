@@ -342,6 +342,12 @@ function builtInTools(
               properties: {
                 title: stringProperty("Concrete task title."),
                 description: stringProperty("Acceptance criteria and implementation scope."),
+                dependsOn: {
+                  type: "array",
+                  items: { type: "integer", minimum: 1, maximum: 20 },
+                  maxItems: 20,
+                  description: "One-based plan step numbers that must finish first.",
+                },
               },
               required: ["title", "description"],
               additionalProperties: false,
@@ -357,10 +363,56 @@ function builtInTools(
             z.object({
               title: z.string().trim().min(1).max(160),
               description: z.string().trim().min(1).max(1_800),
+              dependsOn: z
+                .array(z.number().int().min(1).max(20))
+                .max(20)
+                .refine((ids) => new Set(ids).size === ids.length, "Dependencies must be unique.")
+                .default([]),
             }),
           )
           .min(1)
-          .max(20),
+          .max(20)
+          .superRefine((steps, ctx) => {
+            const graph = steps.map((step) => step.dependsOn);
+            for (const [index, dependencies] of graph.entries()) {
+              for (const dependency of dependencies) {
+                if (dependency > steps.length) {
+                  ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    path: [index, "dependsOn"],
+                    message: `Dependency step ${dependency} does not exist.`,
+                  });
+                }
+                if (dependency === index + 1) {
+                  ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    path: [index, "dependsOn"],
+                    message: "A step cannot depend on itself.",
+                  });
+                }
+              }
+            }
+            const visiting = new Set<number>();
+            const visited = new Set<number>();
+            const visit = (index: number): void => {
+              if (visiting.has(index)) {
+                ctx.addIssue({
+                  code: z.ZodIssueCode.custom,
+                  path: [index, "dependsOn"],
+                  message: "Plan dependencies cannot contain a cycle.",
+                });
+                return;
+              }
+              if (visited.has(index)) return;
+              visiting.add(index);
+              for (const dependency of graph[index] ?? []) {
+                if (dependency <= steps.length) visit(dependency - 1);
+              }
+              visiting.delete(index);
+              visited.add(index);
+            };
+            for (let index = 0; index < graph.length; index += 1) visit(index);
+          }),
       }),
       async (input, context) => {
         if (!context.hooks?.createPlan) {
@@ -371,7 +423,12 @@ function builtInTools(
         return JSON.stringify(
           {
             title: input.title,
-            tasks: tasks.map((task) => ({ id: task.id, title: task.title, status: task.status })),
+            tasks: tasks.map((task) => ({
+              id: task.id,
+              title: task.title,
+              status: task.status,
+              dependsOnTaskIds: task.dependsOnTaskIds ?? [],
+            })),
           },
           null,
           2,

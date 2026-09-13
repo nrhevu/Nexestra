@@ -3038,9 +3038,11 @@ export class FileStore {
     return this.withWrite(async () => {
       const workspaceId = this.requireWorkspace(input.workspaceId).id;
       this.validateReferences(workspaceId, input.assigneeId, input.threadId);
+      const id = crypto.randomUUID();
+      this.validateTaskDependencies(workspaceId, input.planId, id, input.dependsOnTaskIds ?? []);
       const now = new Date().toISOString();
       const task = TaskSchema.parse({
-        id: crypto.randomUUID(),
+        id,
         workspaceId,
         title: input.title,
         description: input.description,
@@ -3049,6 +3051,7 @@ export class FileStore {
         threadId: input.threadId,
         ...(input.planId ? { planId: input.planId } : {}),
         ...(input.planTitle ? { planTitle: input.planTitle } : {}),
+        ...(input.dependsOnTaskIds ? { dependsOnTaskIds: input.dependsOnTaskIds } : {}),
         verificationCommand: input.verificationCommand,
         createdAt: now,
         updatedAt: now,
@@ -3068,9 +3071,17 @@ export class FileStore {
       const assigneeId = input.assigneeId === undefined ? current.assigneeId : input.assigneeId;
       const threadId = input.threadId === undefined ? current.threadId : input.threadId;
       this.validateReferences(current.workspaceId, assigneeId, threadId);
+      const dependsOnTaskIds = input.dependsOnTaskIds ?? current.dependsOnTaskIds ?? [];
+      this.validateTaskDependencies(
+        current.workspaceId,
+        current.planId,
+        current.id,
+        dependsOnTaskIds,
+      );
       const updated = TaskSchema.parse({
         ...current,
         ...input,
+        ...(input.dependsOnTaskIds ? { dependsOnTaskIds } : {}),
         updatedAt: new Date().toISOString(),
       });
       this.state.tasks[index] = updated;
@@ -4659,6 +4670,45 @@ export class FileStore {
     ) {
       throw new StoreError("invalid", "The linked thread does not exist.");
     }
+  }
+
+  private validateTaskDependencies(
+    workspaceId: string,
+    planId: string | undefined,
+    taskId: string,
+    dependencyIds: string[],
+  ): void {
+    if (dependencyIds.length === 0) return;
+    if (!planId) {
+      throw new StoreError("invalid", "Task dependencies require a plan.");
+    }
+    const planTasks = this.state.tasks.filter(
+      (task) => task.workspaceId === workspaceId && task.planId === planId,
+    );
+    const taskById = new Map(planTasks.map((task) => [task.id, task]));
+    for (const dependencyId of dependencyIds) {
+      const dependency = taskById.get(dependencyId);
+      if (!dependency || dependency.id === taskId) {
+        throw new StoreError(
+          "invalid",
+          "Task dependencies must reference another task in the same plan.",
+        );
+      }
+    }
+    const graph = new Map(planTasks.map((task) => [task.id, task.dependsOnTaskIds ?? []] as const));
+    graph.set(taskId, dependencyIds);
+    const visiting = new Set<string>();
+    const visited = new Set<string>();
+    const visit = (id: string): void => {
+      if (visiting.has(id))
+        throw new StoreError("invalid", "Task dependencies cannot contain a cycle.");
+      if (visited.has(id)) return;
+      visiting.add(id);
+      for (const dependencyId of graph.get(id) ?? []) visit(dependencyId);
+      visiting.delete(id);
+      visited.add(id);
+    };
+    for (const id of graph.keys()) visit(id);
   }
 
   private requireWorkspace(id?: string): Workspace {

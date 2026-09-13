@@ -128,3 +128,4 @@
 | [0125](0125-taskboard-plan-summary.md) | Accepted | Show read-only progress summaries for Master-created plans |
 | [0126](0126-dependent-tool-call-ordering.md) | Accepted | Order plan-dependent delegation calls without losing independent parallelism |
 | [0127](0127-plan-summary-export.md) | Accepted | Export a bounded credential-free plan handoff packet from Taskboard |
+| [0128](0128-plan-step-dependencies.md) | Accepted | Preserve bounded prerequisite edges and prevent early delegation |

@@ -84,6 +84,41 @@ function abortable(invocation: AgentInvocation): Promise<string> {
 }
 
 describe("manual Worker delegation", () => {
+  it("holds a dependent task until its prerequisite is done", async () => {
+    const invocations: AgentInvocation[] = [];
+    const fixture = await setup(async (_agent, invocation) => {
+      invocations.push(invocation);
+      return "Finished.";
+    });
+    const { dispatcher, store, worker, repository } = fixture;
+    const planId = "00000000-0000-4000-8000-000000000201";
+    const prerequisite = await store.createTask({
+      title: "Prepare dependency",
+      description: "",
+      threadId: fixture.thread.id,
+      planId,
+      planTitle: "Ordered plan",
+    });
+    const dependent = await store.createTask({
+      title: "Run dependent task",
+      description: "",
+      threadId: fixture.thread.id,
+      planId,
+      planTitle: "Ordered plan",
+    });
+    await store.updateTask(dependent.id, { dependsOnTaskIds: [prerequisite.id] });
+
+    await expect(
+      dispatcher.delegateFromTask(dependent.id, worker.handle, repository.handle),
+    ).rejects.toMatchObject({ code: "conflict" });
+    expect(invocations).toHaveLength(0);
+
+    await store.updateTask(prerequisite.id, { status: "done" });
+    await dispatcher.delegateFromTask(dependent.id, worker.handle, repository.handle);
+    await waitUntil(() => store.getTask(dependent.id)?.status === "done");
+    expect(invocations).toHaveLength(1);
+  });
+
   it("queues behind the same Worker's chat, rejects duplicate starts, and lets another Worker proceed", async () => {
     const chatGate = deferred();
     const invocations: { agent: Agent; invocation: AgentInvocation }[] = [];

@@ -1714,6 +1714,61 @@ describe("FileStore", () => {
     expect(task.status).toBe("in_progress");
   });
 
+  it("validates same-plan task dependencies and rejects cycles", async () => {
+    const store = await openStore();
+    const planId = "00000000-0000-4000-8000-000000000101";
+    const otherPlanId = "00000000-0000-4000-8000-000000000102";
+    const first = await store.createTask({
+      title: "First",
+      description: "",
+      assigneeId: null,
+      threadId: null,
+      planId,
+      planTitle: "Ordered plan",
+    });
+    const second = await store.createTask({
+      title: "Second",
+      description: "",
+      assigneeId: null,
+      threadId: null,
+      planId,
+      planTitle: "Ordered plan",
+    });
+    const foreign = await store.createTask({
+      title: "Foreign",
+      description: "",
+      assigneeId: null,
+      threadId: null,
+      planId: otherPlanId,
+      planTitle: "Other plan",
+    });
+
+    await expect(
+      store.updateTask(second.id, { dependsOnTaskIds: [first.id] }),
+    ).resolves.toMatchObject({
+      dependsOnTaskIds: [first.id],
+    });
+    await expect(
+      store.updateTask(first.id, { dependsOnTaskIds: [second.id] }),
+    ).rejects.toMatchObject({
+      code: "invalid",
+    });
+    await expect(
+      store.updateTask(second.id, { dependsOnTaskIds: [foreign.id] }),
+    ).rejects.toMatchObject({
+      code: "invalid",
+    });
+    await expect(
+      store.createTask({
+        title: "Unplanned",
+        description: "",
+        assigneeId: null,
+        threadId: null,
+        dependsOnTaskIds: [first.id],
+      }),
+    ).rejects.toMatchObject({ code: "invalid" });
+  });
+
   it("updates and deletes a task while protecting active Worker assignments", async () => {
     const store = await openStore();
     const [workspace] = store.listWorkspaces();

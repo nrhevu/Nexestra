@@ -225,6 +225,25 @@ describe("summarizeTaskPlans", () => {
     expect(onInspect).toHaveBeenCalledWith(planned);
   });
 
+  it("separates dependency-blocked work from ready plan tasks", () => {
+    const prerequisite = {
+      ...task("todo", "prerequisite"),
+      planId: "plan-1",
+      planTitle: "Launch plan",
+    };
+    const dependent = {
+      ...task("todo", "dependent"),
+      planId: "plan-1",
+      planTitle: "Launch plan",
+      dependsOnTaskIds: [prerequisite.id],
+    };
+    expect(summarizeTaskPlans([prerequisite, dependent], [])[0]).toMatchObject({
+      total: 2,
+      ready: 1,
+      dependencyBlocked: 1,
+    });
+  });
+
   it("exports plan summaries through a client-side download", async () => {
     const planned = {
       ...task("todo", "planned"),

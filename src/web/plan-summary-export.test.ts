@@ -27,6 +27,7 @@ function summary(tasks: Task[]): TaskPlanSummary {
     title: "Launch plan",
     total: tasks.length,
     ready: 0,
+    dependencyBlocked: 0,
     delegated: tasks.length,
     queued: 0,
     running: tasks.length,
@@ -93,6 +94,7 @@ describe("plan summary export", () => {
       id: "task-1",
       title: "Task task-1",
       status: "in_progress",
+      dependsOnTaskIds: [],
       assignee: {
         id: "agent-1",
         name: "Builder",
@@ -125,6 +127,27 @@ describe("plan summary export", () => {
     expect(parsed.includedTaskCount).toBe(200);
     expect(parsed.truncated).toBe(true);
     expect(parsed.plans[0]?.total).toBe(1);
+  });
+
+  it("filters foreign workspace tasks and assignments before export", () => {
+    const local = plannedTask("task-1");
+    const foreign = { ...plannedTask("foreign"), workspaceId: "workspace-2" };
+    const parsed = PlanSummaryExportSchema.parse(
+      JSON.parse(
+        serializePlanSummaryExport({
+          workspaceId: "workspace-1",
+          plans: [summary([local, foreign])],
+          agents: [worker],
+          assignments: [
+            assignment,
+            { ...assignment, taskId: "foreign", workspaceId: "workspace-2" },
+          ],
+        }),
+      ),
+    );
+    expect(parsed.plans[0]).toMatchObject({ total: 1 });
+    expect(parsed.plans[0]?.tasks.map(({ id }) => id)).toEqual(["task-1"]);
+    expect(parsed.includedTaskCount).toBe(1);
   });
 
   it("uses a stable workspace-scoped filename", () => {

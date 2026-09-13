@@ -232,6 +232,23 @@ class StoppableDelegatingMasterRunner implements AgentRunner {
   }
 }
 
+class DependencyPlanningMasterRunner implements AgentRunner {
+  async runtimeStatus() {
+    return readyRuntime;
+  }
+
+  async invoke(agent: Agent, invocation: AgentInvocation) {
+    if (agent.kind !== "master" || !invocation.toolHooks?.createPlan) {
+      throw new Error("expected planning Master hooks");
+    }
+    const tasks = await invocation.toolHooks.createPlan("Ordered plan", [
+      { title: "Prepare", description: "Prepare the prerequisite." },
+      { title: "Build", description: "Build after prepare.", dependsOn: [1] },
+    ]);
+    return `Created ${tasks.length} planned tasks.`;
+  }
+}
+
 class FakeAssignmentRepositories implements AssignmentRepositoryManager {
   constructor(private readonly root: string) {}
 
@@ -895,6 +912,46 @@ describe("mention dispatch", () => {
         author: { name: "Builder" },
       },
     });
+  });
+
+  it("persists plan-step dependencies before returning the plan result", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nexestra-dispatch-plan-deps-"));
+    const store = await FileStore.open({ root, workspacePath: root });
+    const runner = new DependencyPlanningMasterRunner();
+    const dispatcher = new AgentDispatcher(
+      store,
+      runner,
+      new FakeAssignmentRepositories(store.root),
+    );
+    const chat = new ChatService(store, dispatcher);
+    const [thread] = store.listThreads();
+    if (!thread) throw new Error("expected seeded thread");
+    const master = await store.createAgent({
+      kind: "master",
+      name: "Lead",
+      handle: "lead",
+      description: "",
+      instructions: "",
+      accessMode: "full",
+      provider: {
+        type: "custom",
+        name: "Test provider",
+        baseUrl: "https://example.test/v1",
+        model: "test-model",
+        protocol: "openai-chat",
+      },
+    });
+    expect(master.kind).toBe("master");
+
+    await chat.send(thread.id, { content: "@lead plan the ordered work" });
+    await dispatcher.waitForIdle();
+
+    const tasks = store.listTasks();
+    expect(tasks).toHaveLength(2);
+    const prerequisite = tasks.find((task) => task.title === "Prepare");
+    const dependent = tasks.find((task) => task.title === "Build");
+    expect(dependent?.dependsOnTaskIds).toEqual([prerequisite?.id]);
+    expect(prerequisite?.planId).toBe(dependent?.planId);
   });
 
   it("delegates work without requiring #repository in the user message", async () => {

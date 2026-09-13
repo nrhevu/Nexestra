@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { MasterAccessMode, MasterAgent, ToolCall } from "../shared/contracts.js";
 import {
   createMasterToolSession,
@@ -305,6 +305,37 @@ describe("Master harness tools", () => {
     expect(delegated).toEqual([
       expect.objectContaining({ workerHandle: "builder", repositoryHandle: "product-repo" }),
     ]);
+  });
+
+  it("rejects plan dependency references that are out of range or cyclic", async () => {
+    const context = await toolContext("full");
+    const createPlan = vi.fn(async () => []);
+    context.hooks = {
+      update: async () => undefined,
+      requestApproval: async () => true,
+      createPlan,
+    };
+    const session = await createMasterToolSession(context);
+    try {
+      await expect(
+        callSession(session, "plan", {
+          title: "Invalid plan",
+          steps: [{ title: "Only step", description: "Do it", dependsOn: [2] }],
+        }),
+      ).resolves.toContain("Dependency step 2 does not exist");
+      await expect(
+        callSession(session, "plan", {
+          title: "Cyclic plan",
+          steps: [
+            { title: "First", description: "Do first", dependsOn: [2] },
+            { title: "Second", description: "Do second", dependsOn: [1] },
+          ],
+        }),
+      ).resolves.toContain("Plan dependencies cannot contain a cycle");
+      expect(createPlan).not.toHaveBeenCalled();
+    } finally {
+      await session.close();
+    }
   });
 
   it("applies add, update, move, and delete patch operations", async () => {

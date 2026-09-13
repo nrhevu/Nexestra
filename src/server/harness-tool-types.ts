@@ -4,7 +4,10 @@ export interface MasterToolHooks {
   update(toolCall: ToolCall): Promise<void>;
   requestApproval(toolCall: ToolCall): Promise<boolean>;
   requestInput?(toolCall: ToolCall): Promise<string[][]>;
-  createPlan?(title: string, steps: { title: string; description: string }[]): Promise<Task[]>;
+  createPlan?(
+    title: string,
+    steps: { title: string; description: string; dependsOn?: number[] }[],
+  ): Promise<Task[]>;
   delegate?(input: {
     taskId: string;
     workerHandle: string;
