@@ -35,7 +35,8 @@ Known credentials are redacted from structured text; an original upload or docum
 literal known credential blocks the export. This does not detect every possible secret.
 Exports are limited to 128 MiB of source data and fail visibly if included files are missing or
 change during preparation. **Cancel export** stops a pending request; changing workspace also
-cancels it. Import and restore are not supported. See
+cancels it. Settings can import a verified archive as a new archived workspace; merge and overwrite
+restore are not supported. See [ADR 0116](docs/adr/0116-create-only-archive-import.md) and
 [the export design and limits](docs/adr/0046-portable-workspace-export.md).
 
 Choose **Inspect workspace ZIP** in Settings or `/inspect workspace zip` to check a saved Nexestra
@@ -47,8 +48,9 @@ completeness or the ability to restore the data. When opened from a workspace, t
 warns if the archive's manifest belongs to a different workspace; the workspace ID is authoritative
 and the display name is informational. After verification, **Plan restore** shows a bounded,
 read-only inventory and explicit blockers. It also compares manifest paths with the selected local
-workspace through a GET-only loopback inventory; archive bytes stay in the browser. Import, merge
-conflict handling and rollback remain unsupported. The preflight also classifies bounded paths as
+workspace through a GET-only loopback inventory; archive bytes stay in the browser. Create-only
+import runs through the server with collision rejection and rollback; merge and overwrite restore
+remain unsupported. The preflight also classifies bounded paths as
 safe to create, already identical, or changed and conflicting; legacy path-only inventories are
 treated conservatively as conflicts. See [ADR 0110](docs/adr/0110-restore-preflight-conflict-categories.md)
 and
