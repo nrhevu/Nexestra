@@ -709,6 +709,9 @@ credentials.
 - Needs attention exposes a busy-aware stop action only for approval/input Master runs. The browser
   sends the selected workspace ID to the stop endpoint, which checks the run's thread workspace
   before interruption; Worker assignment rows remain Taskboard-only. See [ADR 0130](adr/0130-stop-attention-run.md).
+- Needs attention also supports selecting multiple approval/input runs and stopping them
+  sequentially. Successful selections clear, failed IDs remain selected, and one workspace refresh
+  follows the batch; task and Worker assignment rows are not selectable. See [ADR 0131](adr/0131-bulk-stop-attention-runs.md).
 
 - Taskboard's completed Worker process response may include a bounded `sourceMessage` projection for
   the latest assignment: the canonical agent reply with the assignment run ID. This powers a direct

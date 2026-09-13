@@ -416,6 +416,8 @@ not included.
 Needs attention also provides **Stop run** on approval or input rows. The action is scoped to the
 selected workspace, refreshes the monitor after stopping, and does not expose Worker assignment
 stops outside Taskboard.
+When several such runs are pending, select them and use **Stop selected**. Stops run sequentially,
+refresh once, and keep failed rows selected for retry; task and Worker rows cannot be selected.
 If the provider tries to return a final answer while planned tasks are still undelegated, the
 harness sends it back to the tool loop instead of leaving silent, unassigned work on the board.
 Delegation creates `nexestra/<assignment-id>` from the selected `#repository` and checks it out into

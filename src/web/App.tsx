@@ -2329,6 +2329,27 @@ export function App() {
                 setError(messageFrom(caught));
               }
             }}
+            onStopRuns={async (runs) => {
+              const failed: string[] = [];
+              for (const run of runs) {
+                try {
+                  await api(
+                    `/api/runs/${encodeURIComponent(run.runId)}/stop?workspaceId=${encodeURIComponent(data.workspace.id)}`,
+                    { method: "POST", body: "{}" },
+                  );
+                } catch (caught) {
+                  failed.push(run.runId);
+                  setError(messageFrom(caught));
+                }
+              }
+              await refresh(true);
+              flash(
+                failed.length === 0
+                  ? `${runs.length} agent run${runs.length === 1 ? "" : "s"} stopped.`
+                  : `${runs.length - failed.length} run${runs.length - failed.length === 1 ? "" : "s"} stopped; ${failed.length} still needs attention.`,
+              );
+              return failed;
+            }}
             onTask={(id) => void inspectTask(id)}
             onSnooze={(id, durationMinutes = 60) => {
               void (async () => {

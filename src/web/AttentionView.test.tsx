@@ -139,6 +139,34 @@ describe("Needs attention", () => {
     expect(screen.queryByRole("button", { name: "Stop run" })).toBeEnabled();
   });
 
+  it("stops selected Master runs sequentially and retains partial failures", async () => {
+    const onStopRuns = vi.fn(async (runs: Array<{ threadId: string; runId: string }>) => {
+      expect(runs.map((run) => run.runId)).toEqual(["run-one", "run-two"]);
+      return ["run-two"];
+    });
+    render(
+      <AttentionView
+        items={[
+          approval("run:one", "run-one", "thread-one"),
+          approval("run:two", "run-two", "thread-two"),
+          task("task:blocked", "task-blocked", "worker-run", "thread-worker"),
+        ]}
+        onThread={vi.fn()}
+        onTask={vi.fn()}
+        onStopRuns={onStopRuns}
+      />,
+    );
+    const checkboxes = screen.getAllByRole("checkbox");
+    expect(checkboxes).toHaveLength(2);
+    await userEvent.click(checkboxes[0] as HTMLElement);
+    await userEvent.click(checkboxes[1] as HTMLElement);
+    expect(screen.getByRole("button", { name: "Stop selected (2)" })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Stop selected (2)" }));
+    await waitFor(() => expect(onStopRuns).toHaveBeenCalledOnce());
+    expect(checkboxes[0]).not.toBeChecked();
+    expect(checkboxes[1]).toBeChecked();
+  });
+
   it("keeps task precedence over run navigation when a task row also carries a run id", async () => {
     const onRun = vi.fn();
     const onThread = vi.fn();

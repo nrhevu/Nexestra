@@ -20,6 +20,7 @@ export function AttentionView({
   onTask,
   onRun,
   onStopRun,
+  onStopRuns,
   onSnooze,
   onDismiss,
   onClear,
@@ -30,6 +31,7 @@ export function AttentionView({
   onTask: (id: string) => void;
   onRun?: (threadId: string, runId: string) => void;
   onStopRun?: (threadId: string, runId: string) => Promise<void>;
+  onStopRuns?: (runs: Array<{ threadId: string; runId: string }>) => Promise<string[]>;
   onSnooze?: (id: string, durationMinutes?: number) => void;
   onDismiss?: (id: string) => void;
   onClear?: (id: string, kind: AttentionAuditEntry["kind"]) => void;
@@ -38,6 +40,11 @@ export function AttentionView({
   const [auditError, setAuditError] = useState("");
   const [auditLoading, setAuditLoading] = useState(false);
   const [stoppingRunId, setStoppingRunId] = useState<string>();
+  const [selectedRunIds, setSelectedRunIds] = useState<Set<string>>(() => new Set());
+  const [stoppingSelected, setStoppingSelected] = useState(false);
+  const stoppableItems = items.filter(
+    (item) => item.runId && item.threadId && (item.kind === "approval" || item.kind === "input"),
+  );
 
   async function loadAudit() {
     if (!workspaceId) return;
@@ -65,7 +72,33 @@ export function AttentionView({
           <h1>Needs attention</h1>
           <p className="subtitle">Review pending decisions and work that needs your help.</p>
         </div>
-        <span className="attention-total">{items.length} pending</span>
+        <div className="header-actions">
+          {onStopRuns && selectedRunIds.size > 0 && (
+            <button
+              className="danger-button"
+              type="button"
+              disabled={stoppingSelected}
+              onClick={() => {
+                const selected = stoppableItems.filter((item) =>
+                  selectedRunIds.has(item.runId as string),
+                );
+                setStoppingSelected(true);
+                void onStopRuns(
+                  selected.map((item) => ({
+                    threadId: item.threadId as string,
+                    runId: item.runId as string,
+                  })),
+                )
+                  .then((failedRunIds) => setSelectedRunIds(new Set(failedRunIds)))
+                  .catch(() => undefined)
+                  .finally(() => setStoppingSelected(false));
+              }}
+            >
+              {stoppingSelected ? "Stopping…" : `Stop selected (${selectedRunIds.size})`}
+            </button>
+          )}
+          <span className="attention-total">{items.length} pending</span>
+        </div>
       </header>
       {items.length === 0 ? (
         <div className="empty-state">
@@ -79,6 +112,25 @@ export function AttentionView({
         <ul className="attention-list" aria-label="Items needing attention">
           {items.map((item) => (
             <li className="attention-item" key={item.id}>
+              {onStopRuns &&
+                item.runId &&
+                item.threadId &&
+                (item.kind === "approval" || item.kind === "input") && (
+                  <input
+                    type="checkbox"
+                    aria-label={`Select run: ${item.title}`}
+                    checked={selectedRunIds.has(item.runId)}
+                    disabled={stoppingSelected}
+                    onChange={(event) => {
+                      setSelectedRunIds((current) => {
+                        const next = new Set(current);
+                        if (event.target.checked) next.add(item.runId as string);
+                        else next.delete(item.runId as string);
+                        return next;
+                      });
+                    }}
+                  />
+                )}
               <CircleAlert className="attention-icon" size={19} aria-hidden="true" />
               <div className="attention-content">
                 <span className="attention-reason">{reasons[item.kind]}</span>
