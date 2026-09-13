@@ -40,7 +40,7 @@ describe("AttentionAuditEntrySchema", () => {
 });
 
 describe("CustomSurfaceSchema", () => {
-  it("accepts the over-budget telemetry action and rejects unknown actions", () => {
+  it("accepts focused task actions and rejects unknown actions", () => {
     const base = {
       id: "monitor",
       title: "Monitor",
@@ -48,6 +48,12 @@ describe("CustomSurfaceSchema", () => {
       cards: [{ id: "budget", title: "Budget", description: "", action: "over_budget" }],
     };
     expect(CustomSurfaceSchema.safeParse(base).success).toBe(true);
+    expect(
+      CustomSurfaceSchema.safeParse({
+        ...base,
+        cards: [{ ...base.cards[0], action: "blocked_tasks" }],
+      }).success,
+    ).toBe(true);
     expect(
       CustomSurfaceSchema.safeParse({
         ...base,

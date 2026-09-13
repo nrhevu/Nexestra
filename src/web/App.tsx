@@ -1455,6 +1455,10 @@ export function App() {
       customSurfaceId: surfaceId,
     });
   const openCustomSurfaceAction = (action: CustomSurfaceAction) => {
+    if (action === "blocked_tasks") {
+      openSurface("taskboard");
+      return;
+    }
     if (action === "over_budget") {
       navigate("/surfaces/runs?cost=over_budget", {
         view: "surfaces",
@@ -2204,6 +2208,7 @@ export function App() {
                 surface={customSurface}
                 counts={{
                   taskboard: data.tasks.filter((task) => task.status !== "done").length,
+                  blocked_tasks: data.tasks.filter((task) => task.status === "blocked").length,
                   knowledge: data.knowledge.length,
                   attention: data.attention.length,
                   runs: data.activeRuns.length,

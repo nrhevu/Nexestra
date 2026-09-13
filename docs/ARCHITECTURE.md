@@ -635,7 +635,8 @@ credentials.
   Their actions are an allowlisted set of trusted surfaces and their labels are bounded/redacted
   before bootstrap. Cards for Taskboard, Knowledge, Attention, Needs-work review, and Agents show live counts from
   the selected workspace; the `over_budget` card shows a complete-coverage budget count and opens
-  the matching Run history filter. Run history and Needs-work review remain direct links. The
+  the matching Run history filter. The `blocked_tasks` card counts selected-workspace tasks with
+  status `blocked` and opens Taskboard. Run history and Needs-work review remain direct links. The
   browser evaluates no configured code, markup, URL, or command. Custom forms remain future work.
 
 - Taskboard's completed Worker process response may include a bounded `sourceMessage` projection for

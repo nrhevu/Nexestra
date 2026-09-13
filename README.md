@@ -127,6 +127,8 @@ Custom surfaces can also include an `over_budget` card. It shows the selected wo
 coverage count and opens Run history with the same cost filter; incomplete telemetry leaves the
 count absent rather than presenting a misleading zero. See [ADR
 0098](docs/adr/0098-over-budget-custom-surface-card.md).
+They can also include `blocked_tasks`, which counts only selected-workspace tasks currently blocked
+and opens Taskboard for the full context. See [ADR 0109](docs/adr/0109-blocked-task-custom-surface-card.md).
 
 Open **Needs-work review** under Surfaces, or use `/needs-work review`, to revisit the latest
 negative rating for each agent reply across the workspace. The queue shows a bounded, redacted

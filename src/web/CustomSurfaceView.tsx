@@ -4,6 +4,7 @@ import "./CustomSurfaceView.css";
 
 const ACTION_LABELS: Record<CustomSurfaceAction, string> = {
   taskboard: "Open Taskboard",
+  blocked_tasks: "Open blocked tasks",
   knowledge: "Open Knowledge",
   attention: "Open Attention",
   runs: "Open Run history",
