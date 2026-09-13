@@ -139,3 +139,4 @@
 75. [Bulk review Knowledge capture research](research/2026-09-12-bulk-review-knowledge-capture.md): capture visible reviewed rows sequentially while preserving explicit naming and canonical provenance.
 76. [Run history telemetry row copy research](research/2026-09-13-run-history-telemetry-row-copy.md): hand off one bounded telemetry row without transcript or raw provider errors.
 77. [Blocked-task custom surface card research](research/2026-09-13-blocked-task-custom-surface-card.md): expose a selected-workspace blocked-task signal through the allowlisted surface actions.
+78. [Restore preflight conflict categories research](research/2026-09-13-restore-preflight-conflict-categories.md): distinguish safe, identical, and changed target paths without mutation.

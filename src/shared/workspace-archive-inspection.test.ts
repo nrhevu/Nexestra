@@ -18,6 +18,7 @@ import {
   WORKSPACE_ARCHIVE_INSPECTION_CORE_TIMEOUT_MS,
   type WorkspaceArchiveInspectionProgress,
 } from "./workspace-archive-inspection-contracts.js";
+import { categorizeRestorePaths } from "./workspace-archive-restore.js";
 
 const NOTICE_PATH = "NOTICE.txt";
 const MANIFEST_PATH = "manifest.json";
@@ -453,6 +454,26 @@ function insertGapBeforeCentral(bytes: Uint8Array, gapLength: number): Uint8Arra
 }
 
 describe("workspace archive inspection engine", () => {
+  it("categorizes restore paths by deterministic target hash comparison", () => {
+    expect(
+      categorizeRestorePaths(
+        [
+          { path: "new.txt", bytes: 3, sha256: "a".repeat(64) },
+          { path: "same.txt", bytes: 3, sha256: "b".repeat(64) },
+          { path: "changed.txt", bytes: 3, sha256: "c".repeat(64) },
+        ],
+        [
+          { path: "same.txt", bytes: 3, sha256: "b".repeat(64) },
+          { path: "changed.txt", bytes: 4, sha256: "d".repeat(64) },
+        ],
+      ),
+    ).toEqual({
+      safeToCreate: ["new.txt"],
+      existingIdentical: ["same.txt"],
+      conflicts: ["changed.txt"],
+    });
+  });
+
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
@@ -506,6 +527,12 @@ describe("workspace archive inspection engine", () => {
         assignments: 0,
       },
       pathConflicts: { checked: false, paths: [] },
+      pathCategories: {
+        checked: false,
+        safeToCreate: [],
+        existingIdentical: [],
+        conflicts: [],
+      },
       unsupportedEntries: [],
     });
 

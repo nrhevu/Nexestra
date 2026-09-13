@@ -3,6 +3,7 @@ import {
   WORKSPACE_EXPORT_MAX_ARCHIVE_BYTES,
   WORKSPACE_EXPORT_MAX_ENTRIES,
   WorkspaceExportManifestSchema,
+  WorkspaceRecoveryManifestEntrySchema,
 } from "./contracts.js";
 
 export const WORKSPACE_ARCHIVE_INSPECTION_TIMEOUT_MS = 45_000;
@@ -36,6 +37,12 @@ export const WorkspaceArchiveRestorePlanSchema = z.object({
     checked: z.boolean(),
     paths: z.array(z.string().min(1).max(1_024)).max(100),
   }),
+  pathCategories: z.object({
+    checked: z.boolean(),
+    safeToCreate: z.array(z.string().min(1).max(1_024)).max(100),
+    existingIdentical: z.array(z.string().min(1).max(1_024)).max(100),
+    conflicts: z.array(z.string().min(1).max(1_024)).max(100),
+  }),
   unsupportedEntries: z.array(z.string().min(1).max(1_024)).max(100),
   blockers: z.array(z.string().min(1).max(500)).max(8),
 });
@@ -44,6 +51,7 @@ export type WorkspaceArchiveRestorePlan = z.infer<typeof WorkspaceArchiveRestore
 export const WorkspaceArchiveTargetInventorySchema = z.object({
   workspaceId: z.string().min(1).max(200),
   paths: z.array(z.string().min(1).max(1_024)).max(5_000),
+  entries: z.array(WorkspaceRecoveryManifestEntrySchema).max(5_000).optional(),
 });
 export type WorkspaceArchiveTargetInventory = z.infer<typeof WorkspaceArchiveTargetInventorySchema>;
 

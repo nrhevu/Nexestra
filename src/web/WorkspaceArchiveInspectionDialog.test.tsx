@@ -159,32 +159,53 @@ describe("WorkspaceArchiveInspectionDialog", () => {
   });
 
   it("reveals a read-only restore preflight inventory after verification", async () => {
-    inspectMock.mockResolvedValue(
-      report([entry("state.json", { kind: "metadata" })], {
-        restorePlan: {
-          workspace: { id: "ws-archive", name: "Archived Alpha" },
-          importSupported: false,
-          counts: {
-            threads: 2,
-            agents: 3,
-            tasks: 4,
-            knowledge: 5,
-            assignments: 6,
-            attentionStates: 1,
-            attentionAudit: 7,
-          },
-          pathConflicts: { checked: false, paths: [] },
-          unsupportedEntries: [],
-          blockers: ["Restore into Nexestra is not supported for this archive format."],
+    const inspection = report([entry("state.json", { kind: "metadata" })], {
+      restorePlan: {
+        workspace: { id: "ws-archive", name: "Archived Alpha" },
+        importSupported: false,
+        counts: {
+          threads: 2,
+          agents: 3,
+          tasks: 4,
+          knowledge: 5,
+          assignments: 6,
+          attentionStates: 1,
+          attentionAudit: 7,
         },
-      }),
-    );
+        pathConflicts: { checked: false, paths: [] },
+        pathCategories: {
+          checked: false,
+          safeToCreate: [],
+          existingIdentical: [],
+          conflicts: [],
+        },
+        unsupportedEntries: [],
+        blockers: ["Restore into Nexestra is not supported for this archive format."],
+      },
+    });
+    inspectMock.mockResolvedValue(inspection);
+    const targetEntry = inspection.manifest.entries[0];
+    if (!targetEntry) throw new Error("expected target entry");
     const user = userEvent.setup();
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ workspaceId: "ws-archive", paths: ["state.json"] }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
+      new Response(
+        JSON.stringify({
+          workspaceId: "ws-archive",
+          paths: ["state.json"],
+          entries: [
+            {
+              path: targetEntry.path,
+              kind: "state",
+              bytes: targetEntry.bytes,
+              sha256: targetEntry.sha256,
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
     );
     renderDialog({ workspace: { id: "ws-archive", name: "Archived Alpha" } });
     await chooseAndCheck(user);
@@ -193,7 +214,7 @@ describe("WorkspaceArchiveInspectionDialog", () => {
     expect(screen.getByText(/inventory only/i)).toBeInTheDocument();
     expect(screen.getByText(/Restore into Nexestra is not supported/i)).toBeInTheDocument();
     expect(screen.getByText("threads")).toBeInTheDocument();
-    expect(screen.getByText("1 path conflicts found.")).toBeInTheDocument();
+    expect(screen.getByText("0 new · 1 unchanged · 0 conflicts.")).toBeInTheDocument();
   });
 
   it("shows real progress and paginates a large verified entry list", async () => {

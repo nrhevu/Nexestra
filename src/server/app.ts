@@ -265,8 +265,14 @@ export function createApp(options: CreateAppOptions) {
       throw new StoreError("invalid", "Workspace restore planning does not accept query options.");
     }
     const workspaceId = context.req.param("id");
-    const paths = await options.store.workspaceArchiveTargetInventory(workspaceId);
-    return context.json(WorkspaceArchiveTargetInventorySchema.parse({ workspaceId, paths }));
+    const inventory = await options.store.workspaceArchiveTargetInventory(workspaceId);
+    return context.json(
+      WorkspaceArchiveTargetInventorySchema.parse({
+        workspaceId,
+        paths: inventory.entries.map((entry) => entry.path),
+        entries: inventory.entries,
+      }),
+    );
   });
 
   app.get("/api/workspaces/:id/delete/preflight", async (context) => {

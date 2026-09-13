@@ -7,6 +7,10 @@ import {
   type WorkspaceArchiveInspectionReport,
   WorkspaceArchiveTargetInventorySchema,
 } from "../shared/workspace-archive-inspection-contracts.js";
+import {
+  categorizeRestorePaths,
+  type RestorePathCategories,
+} from "../shared/workspace-archive-restore.js";
 import { api } from "./api.js";
 import { inspectArchiveInWorker } from "./workspace-archive-inspection-client.js";
 import "./WorkspaceArchiveInspectionDialog.css";
@@ -287,11 +291,10 @@ export function WorkspaceArchiveInspectionDialog({
         { signal: controller.signal },
       );
       const inventory = WorkspaceArchiveTargetInventorySchema.parse(raw);
-      const targetPaths = new Set(inventory.paths);
-      const conflicts = report.manifest.entries
-        .map((entry) => entry.path)
-        .filter((path) => targetPaths.has(path))
-        .slice(0, 100);
+      const categories: RestorePathCategories = categorizeRestorePaths(
+        report.manifest.entries,
+        inventory.entries ?? inventory.paths.map((path) => ({ path, bytes: -1, sha256: "" })),
+      );
       setReport((current) =>
         current?.restorePlan === undefined
           ? current
@@ -299,7 +302,8 @@ export function WorkspaceArchiveInspectionDialog({
               ...current,
               restorePlan: {
                 ...current.restorePlan,
-                pathConflicts: { checked: true, paths: conflicts },
+                pathConflicts: { checked: true, paths: categories.conflicts },
+                pathCategories: { checked: true, ...categories },
               },
             },
       );
@@ -467,10 +471,34 @@ export function WorkspaceArchiveInspectionDialog({
                         ))}
                       </dl>
                       <p className="workspace-archive-restore-blocker">
-                        {report.restorePlan.pathConflicts.checked
-                          ? `${formatCount(report.restorePlan.pathConflicts.paths.length)} path conflicts found.`
+                        {report.restorePlan.pathCategories.checked
+                          ? `${formatCount(report.restorePlan.pathCategories.safeToCreate.length)} new · ${formatCount(report.restorePlan.pathCategories.existingIdentical.length)} unchanged · ${formatCount(report.restorePlan.pathCategories.conflicts.length)} conflicts.`
                           : "Path conflicts were not checked because this browser has not started a restore."}
                       </p>
+                      {report.restorePlan.pathCategories.checked && (
+                        <dl className="workspace-archive-summary workspace-archive-restore-counts">
+                          <div>
+                            <dt>Safe to create</dt>
+                            <dd>
+                              {formatCount(report.restorePlan.pathCategories.safeToCreate.length)}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Existing identical</dt>
+                            <dd>
+                              {formatCount(
+                                report.restorePlan.pathCategories.existingIdentical.length,
+                              )}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Conflicting hashes</dt>
+                            <dd>
+                              {formatCount(report.restorePlan.pathCategories.conflicts.length)}
+                            </dd>
+                          </div>
+                        </dl>
+                      )}
                       {restorePlanError !== undefined && (
                         <p className="workspace-archive-restore-blocker" role="alert">
                           {restorePlanError}

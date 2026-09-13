@@ -48,7 +48,10 @@ warns if the archive's manifest belongs to a different workspace; the workspace 
 and the display name is informational. After verification, **Plan restore** shows a bounded,
 read-only inventory and explicit blockers. It also compares manifest paths with the selected local
 workspace through a GET-only loopback inventory; archive bytes stay in the browser. Import, merge
-conflict handling and rollback remain unsupported. See
+conflict handling and rollback remain unsupported. The preflight also classifies bounded paths as
+safe to create, already identical, or changed and conflicting; legacy path-only inventories are
+treated conservatively as conflicts. See [ADR 0110](docs/adr/0110-restore-preflight-conflict-categories.md)
+and
 [the inspection design](docs/adr/0047-local-workspace-archive-inspection.md).
 
 Both archive dialogs load when opened. Close or press Escape while loading; if loading fails or

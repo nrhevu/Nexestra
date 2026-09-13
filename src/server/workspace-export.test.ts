@@ -220,6 +220,9 @@ describe("workspace export", () => {
           whiteboardPath,
           revisionPath,
         ]),
+        entries: expect.arrayContaining([
+          expect.objectContaining({ path: statePath, sha256: expect.any(String) }),
+        ]),
       }),
     );
     const response = await app.request(`/api/workspaces/${workspace.id}/export`);

@@ -306,6 +306,12 @@ function restorePlan(
       attentionAudit: boundedArrayCount(state?.attentionAudit),
     },
     pathConflicts: { checked: false, paths: [] },
+    pathCategories: {
+      checked: false,
+      safeToCreate: [],
+      existingIdentical: [],
+      conflicts: [],
+    },
     unsupportedEntries: [],
     blockers,
   };

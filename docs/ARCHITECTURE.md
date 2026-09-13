@@ -662,8 +662,11 @@ credentials.
   0099](adr/0099-workspace-archive-identity-check.md). After integrity verification it can also
   show a bounded, read-only restore preflight inventory. A later target-aware step compares manifest
   paths with a GET-only local path inventory while keeping archive bytes in the browser; failed
-  inventories remain explicitly unchecked. Import, merge policy and rollback remain future work. See
+  inventories remain explicitly unchecked. It now includes bounded recovery-manifest hashes and
+  classifies paths as safe to create, existing-identical, or conflicting; legacy path-only responses
+  are treated as conflicts. Import, merge policy and rollback remain future work. See
   [ADR 0101](adr/0101-read-only-restore-preflight.md) and [ADR 0102](adr/0102-target-aware-restore-preflight.md).
+  See also [ADR 0110](adr/0110-restore-preflight-conflict-categories.md).
 
 - Conversation unread state belongs to one browser profile and origin. It counts all canonical
   messages and uses a read-through count, not a per-message receipt or proof of attention. Existing
