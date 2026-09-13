@@ -225,7 +225,9 @@ rows after a profile change. See [ADR 0095](adr/0095-agent-profile-labels-in-his
 
 - Restore preflight can also be requested server-side with the archive bytes. The endpoint verifies
   the ZIP and workspace identity, refreshes the target recovery manifest, and returns bounded path
-  categories without mutating state or files. Import and rollback policy remain future work. See
+  categories without mutating state or files. Create-only import stages verified entries into a new
+  archived workspace, rejects identity/path collisions, and rolls back moved files if state
+  persistence fails. Merge, remap, and overwrite restore remain unsupported. See
   [ADR 0115](adr/0115-server-authoritative-restore-preflight.md).
 
 Attention snooze and dismiss operations append bounded metadata to `state.json`. The store retains
