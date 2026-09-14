@@ -2534,6 +2534,14 @@ export function App() {
                 `Rejected ${plan.title}.`,
               )
             }
+            onPlanDispatchComplete={async (plan, dispatchedCount) => {
+              await refresh(true);
+              if (dispatchedCount > 0) {
+                flash(
+                  `Queued ${dispatchedCount} ready task${dispatchedCount === 1 ? "" : "s"} from ${plan.title}.`,
+                );
+              }
+            }}
           />
         )}
       </section>
@@ -5900,6 +5908,27 @@ export function summarizeTaskPlans(
   return [...summaries.values()].sort((left, right) => left.title.localeCompare(right.title));
 }
 
+export function readyPlanTasks(
+  plan: TaskPlanSummary,
+  tasks: Task[],
+  assignments: WorkAssignment[],
+): Task[] {
+  if (plan.approval !== "approved") return [];
+  const taskIdsWithAssignments = new Set(assignments.map((assignment) => assignment.taskId));
+  const tasksById = new Map(tasks.map((task) => [task.id, task]));
+  return tasks.filter(
+    (task) =>
+      task.planId === plan.id &&
+      task.status === "todo" &&
+      task.planApproval !== "pending" &&
+      task.planApproval !== "rejected" &&
+      !taskIdsWithAssignments.has(task.id) &&
+      !(task.dependsOnTaskIds ?? []).some(
+        (dependencyId) => tasksById.get(dependencyId)?.status !== "done",
+      ),
+  );
+}
+
 export function Taskboard(props: {
   data: BootstrapData;
   readyOnly?: boolean;
@@ -5911,6 +5940,7 @@ export function Taskboard(props: {
   onSavePlan?: (plan: TaskPlanSummary) => void;
   onApprovePlan?: (plan: TaskPlanSummary) => void;
   onRejectPlan?: (plan: TaskPlanSummary) => void;
+  onPlanDispatchComplete?: (plan: TaskPlanSummary, dispatchedCount: number) => Promise<void>;
 }) {
   const columns: { status: Task["status"]; title: string }[] = [
     { status: "todo", title: "To do" },
@@ -5927,6 +5957,8 @@ export function Taskboard(props: {
     ? props.data.tasks.filter((task) => isReadyTask(task, props.data.assignments))
     : props.data.tasks;
   const planSummaries = summarizeTaskPlans(props.data.tasks, props.data.assignments);
+  const [planToDispatchId, setPlanToDispatchId] = useState<string>();
+  const planToDispatch = planSummaries.find((plan) => plan.id === planToDispatchId);
   const tasksById = new Map(props.data.tasks.map((task) => [task.id, task]));
   const exportPlanSummaries = () => {
     if (planSummaries.length === 0) return;
@@ -5987,61 +6019,75 @@ export function Taskboard(props: {
             <span>{planSummaries.length} plans</span>
           </div>
           <div className="task-plan-summary-grid">
-            {planSummaries.map((plan) => (
-              <article className="task-plan-summary-card" key={plan.id}>
-                <h3>{plan.title}</h3>
-                <p className={`task-plan-approval task-plan-approval-${plan.approval}`}>
-                  Approval: {plan.approval}
-                </p>
-                <p>
-                  {plan.total} tasks · {plan.ready} ready · {plan.approvalBlocked} approval-blocked
-                  · {plan.dependencyBlocked} dependency-blocked · {plan.delegated} delegated ·{" "}
-                  {plan.queued} queued · {plan.running} running · {plan.blocked} blocked ·{" "}
-                  {plan.done} done
-                </p>
-                <div className="task-plan-summary-tasks">
-                  {plan.tasks.map((task) => (
-                    <button
-                      type="button"
-                      key={task.id}
-                      onClick={() => props.onInspect(task)}
-                      aria-label={`Open planned task ${task.title}`}
-                    >
-                      {task.title}
-                    </button>
-                  ))}
-                </div>
-                {props.onSavePlan && (
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    onClick={() => props.onSavePlan?.(plan)}
-                  >
-                    Save plan as Knowledge
-                  </button>
-                )}
-                {plan.approval !== "approved" && props.onApprovePlan && (
-                  <div className="task-plan-approval-actions">
-                    <button
-                      type="button"
-                      className="primary-button"
-                      onClick={() => props.onApprovePlan?.(plan)}
-                    >
-                      Approve plan
-                    </button>
-                    {plan.approval === "pending" && props.onRejectPlan && (
+            {planSummaries.map((plan) => {
+              const readyTasks = readyPlanTasks(plan, props.data.tasks, props.data.assignments);
+              return (
+                <article className="task-plan-summary-card" key={plan.id}>
+                  <h3>{plan.title}</h3>
+                  <p className={`task-plan-approval task-plan-approval-${plan.approval}`}>
+                    Approval: {plan.approval}
+                  </p>
+                  <p>
+                    {plan.total} tasks · {plan.ready} ready · {plan.approvalBlocked}{" "}
+                    approval-blocked · {plan.dependencyBlocked} dependency-blocked ·{" "}
+                    {plan.delegated} delegated · {plan.queued} queued · {plan.running} running ·{" "}
+                    {plan.blocked} blocked · {plan.done} done
+                  </p>
+                  <div className="task-plan-summary-tasks">
+                    {plan.tasks.map((task) => (
                       <button
                         type="button"
-                        className="danger-link"
-                        onClick={() => props.onRejectPlan?.(plan)}
+                        key={task.id}
+                        onClick={() => props.onInspect(task)}
+                        aria-label={`Open planned task ${task.title}`}
                       >
-                        Reject plan
+                        {task.title}
+                      </button>
+                    ))}
+                  </div>
+                  {props.onSavePlan && (
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => props.onSavePlan?.(plan)}
+                    >
+                      Save plan as Knowledge
+                    </button>
+                  )}
+                  {plan.approval === "approved" &&
+                    readyTasks.length > 0 &&
+                    props.onPlanDispatchComplete && (
+                      <button
+                        type="button"
+                        className="primary-button"
+                        onClick={() => setPlanToDispatchId(plan.id)}
+                      >
+                        Dispatch {readyTasks.length} ready task{readyTasks.length === 1 ? "" : "s"}
                       </button>
                     )}
-                  </div>
-                )}
-              </article>
-            ))}
+                  {plan.approval !== "approved" && props.onApprovePlan && (
+                    <div className="task-plan-approval-actions">
+                      <button
+                        type="button"
+                        className="primary-button"
+                        onClick={() => props.onApprovePlan?.(plan)}
+                      >
+                        Approve plan
+                      </button>
+                      {plan.approval === "pending" && props.onRejectPlan && (
+                        <button
+                          type="button"
+                          className="danger-link"
+                          onClick={() => props.onRejectPlan?.(plan)}
+                        >
+                          Reject plan
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </article>
+              );
+            })}
           </div>
         </section>
       )}
@@ -6079,7 +6125,173 @@ export function Taskboard(props: {
           );
         })}
       </div>
+      {planToDispatch && props.onPlanDispatchComplete && (
+        <PlanDispatchDialog
+          plan={planToDispatch}
+          data={props.data}
+          onClose={() => setPlanToDispatchId(undefined)}
+          onDispatched={props.onPlanDispatchComplete}
+        />
+      )}
     </div>
+  );
+}
+
+function PlanDispatchDialog({
+  plan,
+  data,
+  onClose,
+  onDispatched,
+}: {
+  plan: TaskPlanSummary;
+  data: BootstrapData;
+  onClose: () => void;
+  onDispatched: (plan: TaskPlanSummary, dispatchedCount: number) => Promise<void>;
+}) {
+  const readyTasks = readyPlanTasks(plan, data.tasks, data.assignments);
+  const availableWorkers = data.agents.filter(
+    (agent) => agent.kind === "worker" && agent.enabled && !agent.archived,
+  );
+  const availableRepositories = data.knowledge.filter(
+    (item) => item.kind === "repository" && item.status === "ready",
+  );
+  const [workerId, setWorkerId] = useState<string>();
+  const [repositoryId, setRepositoryId] = useState<string>();
+  const [dispatching, setDispatching] = useState(false);
+  const [attempted, setAttempted] = useState(false);
+  const [dispatchError, setDispatchError] = useState<string>();
+  const worker = availableWorkers.find((candidate) => candidate.id === workerId);
+  const repository = availableRepositories.find((candidate) => candidate.id === repositoryId);
+
+  useEffect(() => {
+    if (dispatching || attempted) return;
+    setWorkerId((current) =>
+      availableWorkers.some((candidate) => candidate.id === current)
+        ? current
+        : availableWorkers[0]?.id,
+    );
+    setRepositoryId((current) =>
+      availableRepositories.some((candidate) => candidate.id === current)
+        ? current
+        : availableRepositories[0]?.id,
+    );
+  }, [attempted, availableRepositories, availableWorkers, dispatching]);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!worker || !repository || readyTasks.length === 0) return;
+    setDispatching(true);
+    setDispatchError(undefined);
+    let dispatchedCount = 0;
+    try {
+      for (const task of readyTasks) {
+        try {
+          await api<WorkAssignment>(`/api/tasks/${encodeURIComponent(task.id)}/delegate`, {
+            method: "POST",
+            body: JSON.stringify({
+              workerHandle: worker.handle,
+              repositoryHandle: repository.handle,
+            }),
+          });
+          dispatchedCount += 1;
+        } catch (caught) {
+          setAttempted(true);
+          setDispatchError(
+            `Queued ${dispatchedCount} of ${readyTasks.length} tasks. ${task.title} was not queued: ${messageFrom(caught)}`,
+          );
+          await onDispatched(plan, dispatchedCount);
+          return;
+        }
+      }
+      await onDispatched(plan, dispatchedCount);
+      onClose();
+    } catch (caught) {
+      setAttempted(true);
+      setDispatchError(messageFrom(caught));
+    } finally {
+      setDispatching(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={`Dispatch ${plan.title}`}
+      eyebrow="PLAN DISPATCH"
+      onClose={onClose}
+      closeDisabled={dispatching}
+    >
+      <form className="task-plan-dispatch" onSubmit={(event) => void submit(event)}>
+        <p>
+          Queue {readyTasks.length} ready task{readyTasks.length === 1 ? "" : "s"} sequentially with
+          one Worker and repository. This does not resume the Master or start dependency-blocked
+          tasks.
+        </p>
+        <ul aria-label="Ready plan tasks">
+          {readyTasks.map((task) => (
+            <li key={task.id}>{task.title}</li>
+          ))}
+        </ul>
+        <div className="form-grid">
+          <Field label="Worker">
+            <select
+              aria-label="Worker"
+              value={workerId ?? ""}
+              disabled={dispatching || attempted || availableWorkers.length === 0}
+              onChange={(event) => setWorkerId(event.target.value)}
+            >
+              {availableWorkers.map((candidate) => (
+                <option key={candidate.id} value={candidate.id}>
+                  @{candidate.handle}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Repository">
+            <select
+              aria-label="Repository"
+              value={repositoryId ?? ""}
+              disabled={dispatching || attempted || availableRepositories.length === 0}
+              onChange={(event) => setRepositoryId(event.target.value)}
+            >
+              {availableRepositories.map((candidate) => (
+                <option key={candidate.id} value={candidate.id}>
+                  #{candidate.handle}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+        {availableWorkers.length === 0 && (
+          <p className="form-error">Add an enabled Worker before dispatching this plan.</p>
+        )}
+        {availableRepositories.length === 0 && (
+          <p className="form-error">Add a ready repository before dispatching this plan.</p>
+        )}
+        {readyTasks.length === 0 && (
+          <p className="form-error">No tasks in this plan are ready to dispatch.</p>
+        )}
+        {dispatchError && <p className="form-error">{dispatchError}</p>}
+        <div className="modal-actions">
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={onClose}
+            disabled={dispatching}
+          >
+            Close
+          </button>
+          <button
+            type="submit"
+            className="primary-button"
+            disabled={dispatching || attempted || readyTasks.length === 0 || !worker || !repository}
+          >
+            {dispatching
+              ? "Dispatching…"
+              : `Dispatch ${readyTasks.length} task${readyTasks.length === 1 ? "" : "s"}`}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 

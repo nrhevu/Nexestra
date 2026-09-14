@@ -2860,6 +2860,30 @@ kbd {
   padding: 5px 9px;
   font-size: 11px;
 }
+.task-plan-summary-card > .primary-button {
+  margin-top: 10px;
+}
+.task-plan-dispatch {
+  display: grid;
+  gap: 14px;
+}
+.task-plan-dispatch > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.task-plan-dispatch ul {
+  max-height: 180px;
+  overflow: auto;
+  margin: 0;
+  padding: 9px 12px 9px 28px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.65;
+}
 .task-plan-summary-card p {
   margin: 0 0 10px;
   color: var(--muted);

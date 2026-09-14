@@ -167,3 +167,4 @@
 103. [Cross-workspace activity age research](research/2026-09-13-cross-workspace-activity-age.md): expose oldest active and attention timestamps for Monitor triage.
 104. [Taskboard prerequisite links research](research/2026-09-13-taskboard-prerequisite-links.md): identify and inspect bounded same-workspace plan prerequisites.
 105. [Plan-mode approval gate research](research/2026-09-13-plan-mode-approval-gate.md): add a durable review checkpoint between planning and dispatch.
+106. [Approved-plan batch dispatch research](research/2026-09-14-approved-plan-batch-dispatch.md): queue dependency-ready approved plan work through the existing durable delegation path.

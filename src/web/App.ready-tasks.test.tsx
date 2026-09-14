@@ -5,7 +5,7 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BootstrapData, Task, WorkAssignment } from "../shared/contracts.js";
-import { App, isReadyTask, summarizeTaskPlans, Taskboard } from "./App.js";
+import { App, isReadyTask, readyPlanTasks, summarizeTaskPlans, Taskboard } from "./App.js";
 
 afterEach(() => {
   cleanup();
@@ -429,6 +429,190 @@ describe("summarizeTaskPlans", () => {
         value: originalRevokeObjectURL,
       });
     }
+  });
+});
+
+describe("approved plan dispatch", () => {
+  const taskboardProps = {
+    onClearReadyFilter: vi.fn(),
+    onCreate: vi.fn(),
+    onMove: vi.fn(async () => undefined),
+    onThread: vi.fn(),
+    onInspect: vi.fn(),
+  };
+
+  const worker = {
+    id: "worker-1",
+    kind: "worker",
+    handle: "implementer",
+    enabled: true,
+    archived: false,
+  };
+  const repository = {
+    id: "repository-1",
+    kind: "repository",
+    handle: "nexestra",
+    status: "ready",
+  };
+
+  it("selects only unassigned tasks whose plan is approved and prerequisites are done", () => {
+    const completed = {
+      ...task("done", "completed"),
+      planId: "plan-1",
+      planTitle: "Launch plan",
+      planApproval: "approved" as const,
+    };
+    const ready = {
+      ...task("todo", "ready"),
+      planId: "plan-1",
+      planTitle: "Launch plan",
+      planApproval: "approved" as const,
+      dependsOnTaskIds: [completed.id],
+    };
+    const blocked = {
+      ...task("todo", "blocked"),
+      planId: "plan-1",
+      planTitle: "Launch plan",
+      planApproval: "approved" as const,
+      dependsOnTaskIds: [ready.id],
+    };
+    const assigned = {
+      ...task("todo", "assigned"),
+      planId: "plan-1",
+      planTitle: "Launch plan",
+      planApproval: "approved" as const,
+    };
+    const tasks = [completed, ready, blocked, assigned];
+    const [plan] = summarizeTaskPlans(tasks, [assignment("completed", assigned.id)]);
+    if (!plan) throw new Error("expected a plan summary");
+
+    expect(readyPlanTasks(plan, tasks, [assignment("completed", assigned.id)])).toEqual([ready]);
+    expect(readyPlanTasks({ ...plan, approval: "pending" }, tasks, [])).toEqual([]);
+    expect(readyPlanTasks({ ...plan, approval: "rejected" }, tasks, [])).toEqual([]);
+  });
+
+  it("confirms a worker and repository, then delegates ready tasks sequentially", async () => {
+    const first = {
+      ...task("todo", "first"),
+      title: "Prepare release",
+      planId: "plan-1",
+      planTitle: "Launch plan",
+      planApproval: "approved" as const,
+    };
+    const second = {
+      ...task("todo", "second"),
+      title: "Publish release",
+      planId: "plan-1",
+      planTitle: "Launch plan",
+      planApproval: "approved" as const,
+    };
+    let resolveFirst: ((response: Response) => void) | undefined;
+    const firstResponse = new Promise<Response>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
+      if (String(input).endsWith("/first/delegate")) return firstResponse;
+      return Promise.resolve(Response.json({ id: "assignment-2" }, { status: 202 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const onPlanDispatchComplete = vi.fn(async () => undefined);
+    const user = userEvent.setup();
+    render(
+      <Taskboard
+        {...taskboardProps}
+        data={
+          {
+            tasks: [first, second],
+            assignments: [],
+            agents: [worker],
+            knowledge: [repository],
+          } as unknown as BootstrapData
+        }
+        onPlanDispatchComplete={onPlanDispatchComplete}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Dispatch 2 ready tasks" }));
+    const dialog = screen.getByRole("dialog", { name: "Dispatch Launch plan" });
+    expect(within(dialog).getByRole("list", { name: "Ready plan tasks" })).toHaveTextContent(
+      "Prepare releasePublish release",
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await user.click(within(dialog).getByRole("button", { name: "Dispatch 2 tasks" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe("/api/tasks/first/delegate");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/tasks/first/delegate",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string)).toEqual({
+      workerHandle: "implementer",
+      repositoryHandle: "nexestra",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    if (resolveFirst === undefined)
+      throw new Error("expected the first delegation request to be pending");
+    resolveFirst(Response.json({ id: "assignment-1" }, { status: 202 }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe("/api/tasks/second/delegate");
+    await waitFor(() =>
+      expect(onPlanDispatchComplete).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "plan-1" }),
+        2,
+      ),
+    );
+  });
+
+  it("stops at the first rejected delegation and reports the partial result", async () => {
+    const planned = ["first", "second", "third"].map((id) => ({
+      ...task("todo", id),
+      title: `Task ${id}`,
+      planId: "plan-1",
+      planTitle: "Launch plan",
+      planApproval: "approved" as const,
+    }));
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      if (String(input).endsWith("/first/delegate"))
+        return Promise.resolve(Response.json({ id: "assignment-1" }, { status: 202 }));
+      return Promise.resolve(
+        Response.json({ error: { message: "Task is no longer ready." } }, { status: 409 }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const onPlanDispatchComplete = vi.fn(async () => undefined);
+    const user = userEvent.setup();
+    render(
+      <Taskboard
+        {...taskboardProps}
+        data={
+          {
+            tasks: planned,
+            assignments: [],
+            agents: [worker],
+            knowledge: [repository],
+          } as unknown as BootstrapData
+        }
+        onPlanDispatchComplete={onPlanDispatchComplete}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Dispatch 3 ready tasks" }));
+    const dialog = screen.getByRole("dialog", { name: "Dispatch Launch plan" });
+    await user.click(within(dialog).getByRole("button", { name: "Dispatch 3 tasks" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe("/api/tasks/second/delegate");
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/third/delegate"))).toBe(
+      false,
+    );
+    expect(await within(dialog).findByText(/Queued 1 of 3 tasks/)).toBeVisible();
+    expect(onPlanDispatchComplete).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "plan-1" }),
+      1,
+    );
+    expect(within(dialog).getByRole("button", { name: "Dispatch 3 tasks" })).toBeDisabled();
   });
 });
 

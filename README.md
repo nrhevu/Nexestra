@@ -409,7 +409,11 @@ so planned work remains distinguishable from manually created tasks after refres
 Taskboard also groups those tasks into a plan progress summary with approval state and bounded ready,
 approval-blocked, delegated, queued, running, blocked, and done counts; each task opens the existing
 process inspection dialog. Pending plans expose explicit Approve and Reject actions. After approval,
-tasks use the existing manual Worker and repository picker.
+each plan card can open **Dispatch ready tasks**. Confirm one enabled Worker and ready repository,
+then Nexestra queues each currently ready, unassigned task sequentially through the existing
+delegation path. The batch stops at the first rejected task and reports its partial result; it does
+not resume the Master or start tasks with unfinished prerequisites. Individual tasks still use the
+existing process dialog and Worker/repository picker.
 The summary can be exported as a capped `nexestra.plan-summary` JSON handoff containing plan/task
 metadata and Worker profile labels only; descriptions, transcripts, credentials, and repository paths
 are excluded. The export is client-only and marks oversized loaded snapshots as truncated.
