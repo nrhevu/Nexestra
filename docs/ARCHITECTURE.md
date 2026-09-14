@@ -439,7 +439,10 @@ rejected tasks fail every delegation entry point and are excluded from ready-tas
 changes are refused while any plan assignment is queued or running. Plans created with plan mode off,
 legacy plans, and manual tasks retain autonomous dispatch semantics. See [ADR
 0124](adr/0124-durable-thread-plan-mode.md), [ADR 0136](adr/0136-plan-mode-approval-gate.md), and
-[ADR 0137](adr/0137-approved-plan-batch-dispatch.md).
+[ADR 0137](adr/0137-approved-plan-batch-dispatch.md). Pending and rejected summaries open a
+read-only review before either approval action; it presents plan task details, verification commands,
+prerequisite state, and source-thread links from the loaded workspace only. See [ADR
+0138](adr/0138-plan-review-dialog.md).
 
 Each repository is cloned once under the owning workspace. Every assignment creates a unique
 `nexestra/<assignment-id>` branch and a Git worktree under the same managed workspace tree. The
@@ -696,12 +699,15 @@ credentials.
 - Taskboard derives a plan progress summary from selected-workspace tasks carrying both `planId` and
   `planTitle`. It groups those tasks and reports bounded ready, delegated, queued, running, blocked,
   and done counts using the latest assignment update; task buttons open the existing process dialog.
-  An approved plan with eligible todo, unassigned work exposes an explicit batch dialog. The user
-  chooses one enabled Worker and ready repository; the browser calls the authoritative single-task
-  delegation endpoint sequentially and stops at the first refusal. Eligibility requires every
-  prerequisite to already be Done. The dialog never resumes a Master or queues a task that becomes
-  ineligible after refresh. See [ADR 0125](adr/0125-taskboard-plan-summary.md) and [ADR
-  0137](adr/0137-approved-plan-batch-dispatch.md).
+  Pending and rejected cards open a read-only review projection before approval or rejection. It
+  includes task descriptions, verification commands, prerequisite labels, and source-thread links
+  only for loaded tasks in the selected workspace; the review itself makes no mutation. An approved
+  plan with eligible todo, unassigned work exposes an explicit batch dialog. The user chooses one
+  enabled Worker and ready repository; the browser calls the authoritative single-task delegation
+  endpoint sequentially and stops at the first refusal. Eligibility requires every prerequisite to
+  already be Done. The dialog never resumes a Master or queues a task that becomes ineligible after
+  refresh. See [ADR 0125](adr/0125-taskboard-plan-summary.md), [ADR
+  0137](adr/0137-approved-plan-batch-dispatch.md), and [ADR 0138](adr/0138-plan-review-dialog.md).
 
 - Taskboard can export its loaded plan projection as a client-only, versioned `nexestra.plan-summary`
   packet. The packet is capped at 200 plans and 200 task entries, includes progress counts, task

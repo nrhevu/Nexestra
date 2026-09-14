@@ -408,8 +408,10 @@ Tasks created by that tool retain a generated plan ID and bounded plan title, wh
 so planned work remains distinguishable from manually created tasks after refresh or export.
 Taskboard also groups those tasks into a plan progress summary with approval state and bounded ready,
 approval-blocked, delegated, queued, running, blocked, and done counts; each task opens the existing
-process inspection dialog. Pending plans expose explicit Approve and Reject actions. After approval,
-each plan card can open **Dispatch ready tasks**. Confirm one enabled Worker and ready repository,
+process inspection dialog. Pending and rejected plans expose **Review plan** before their approval
+actions. The dialog shows the loaded plan steps, descriptions, verification commands, prerequisite
+state, and source-thread links without dispatching work or resuming the Master. After approval, each
+plan card can open **Dispatch ready tasks**. Confirm one enabled Worker and ready repository,
 then Nexestra queues each currently ready, unassigned task sequentially through the existing
 delegation path. The batch stops at the first rejected task and reports its partial result; it does
 not resume the Master or start tasks with unfinished prerequisites. Individual tasks still use the

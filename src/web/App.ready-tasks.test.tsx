@@ -253,18 +253,97 @@ describe("summarizeTaskPlans", () => {
     );
   });
 
-  it("exposes pending plan approval through explicit callbacks", async () => {
+  it("requires an explicit plan review before approval and exposes bounded plan details", async () => {
     const planned = {
       ...task("todo", "planned-approval"),
       planId: "00000000-0000-4000-8000-000000000004",
       planTitle: "Approval plan",
       planApproval: "pending" as const,
+      title: "Implement review flow",
+      description: "Review the planned behavior before dispatch.",
+      verificationCommand: "pnpm check",
+      threadId: "thread-1",
+      dependsOnTaskIds: ["completed-step", "missing-step"],
+    };
+    const completed = {
+      ...task("done", "completed-step"),
+      planId: planned.planId,
+      planTitle: planned.planTitle,
+      planApproval: "pending" as const,
+      title: "Complete prerequisite",
+    };
+    const foreign = {
+      ...task("todo", "foreign-step"),
+      workspaceId: "other-workspace",
+      planId: planned.planId,
+      planTitle: planned.planTitle,
+      planApproval: "pending" as const,
+      title: "Do not show this task",
     };
     const onApprovePlan = vi.fn();
     const onRejectPlan = vi.fn();
+    const onThread = vi.fn();
+    const user = userEvent.setup();
     render(
       <Taskboard
-        data={{ tasks: [planned], assignments: [], agents: [] } as unknown as BootstrapData}
+        data={
+          {
+            workspace: { id: "workspace-1" },
+            tasks: [planned, completed, foreign],
+            assignments: [],
+            agents: [],
+          } as unknown as BootstrapData
+        }
+        onClearReadyFilter={vi.fn()}
+        onCreate={vi.fn()}
+        onMove={vi.fn()}
+        onThread={onThread}
+        onInspect={vi.fn()}
+        onApprovePlan={onApprovePlan}
+        onRejectPlan={onRejectPlan}
+      />,
+    );
+
+    expect(screen.getByText("Approval: pending")).toBeVisible();
+    expect(screen.getByText(/2 approval-blocked/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Approve plan" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Review plan" }));
+    const dialog = screen.getByRole("dialog", { name: "Review Approval plan" });
+    expect(within(dialog).getByText("Review the planned behavior before dispatch.")).toBeVisible();
+    expect(within(dialog).getByText("pnpm check")).toBeVisible();
+    expect(within(dialog).getByText("Complete prerequisite · Done")).toBeVisible();
+    expect(within(dialog).getByText("Unavailable prerequisite")).toBeVisible();
+    expect(within(dialog).queryByText("Do not show this task")).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Open source thread" }));
+    expect(onThread).toHaveBeenCalledOnce();
+    expect(onThread).toHaveBeenCalledWith("thread-1");
+    await user.click(within(dialog).getByRole("button", { name: "Approve plan" }));
+    expect(onApprovePlan).toHaveBeenCalledWith(
+      expect.objectContaining({ id: planned.planId, approval: "pending" }),
+    );
+    expect(onRejectPlan).not.toHaveBeenCalled();
+  });
+
+  it("lets a reviewed pending plan be rejected exactly once", async () => {
+    const planned = {
+      ...task("todo", "planned-rejection"),
+      planId: "00000000-0000-4000-8000-000000000005",
+      planTitle: "Rejection plan",
+      planApproval: "pending" as const,
+    };
+    const onApprovePlan = vi.fn();
+    const onRejectPlan = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <Taskboard
+        data={
+          {
+            workspace: { id: "workspace-1" },
+            tasks: [planned],
+            assignments: [],
+            agents: [],
+          } as unknown as BootstrapData
+        }
         onClearReadyFilter={vi.fn()}
         onCreate={vi.fn()}
         onMove={vi.fn()}
@@ -275,16 +354,56 @@ describe("summarizeTaskPlans", () => {
       />,
     );
 
-    expect(screen.getByText("Approval: pending")).toBeVisible();
-    expect(screen.getByText(/1 approval-blocked/)).toBeVisible();
-    await userEvent.click(screen.getByRole("button", { name: "Approve plan" }));
-    expect(onApprovePlan).toHaveBeenCalledWith(
-      expect.objectContaining({ id: planned.planId, approval: "pending" }),
+    await user.click(screen.getByRole("button", { name: "Review plan" }));
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Review Rejection plan" })).getByRole("button", {
+        name: "Reject plan",
+      }),
     );
-    await userEvent.click(screen.getByRole("button", { name: "Reject plan" }));
     expect(onRejectPlan).toHaveBeenCalledWith(
       expect.objectContaining({ id: planned.planId, approval: "pending" }),
     );
+    expect(onRejectPlan).toHaveBeenCalledOnce();
+    expect(onApprovePlan).not.toHaveBeenCalled();
+  });
+
+  it("requires review before reopening a rejected plan", async () => {
+    const planned = {
+      ...task("todo", "planned-reopen"),
+      planId: "00000000-0000-4000-8000-000000000006",
+      planTitle: "Reopen plan",
+      planApproval: "rejected" as const,
+    };
+    const onApprovePlan = vi.fn();
+    const onRejectPlan = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <Taskboard
+        data={
+          {
+            workspace: { id: "workspace-1" },
+            tasks: [planned],
+            assignments: [],
+            agents: [],
+          } as unknown as BootstrapData
+        }
+        onClearReadyFilter={vi.fn()}
+        onCreate={vi.fn()}
+        onMove={vi.fn()}
+        onThread={vi.fn()}
+        onInspect={vi.fn()}
+        onApprovePlan={onApprovePlan}
+        onRejectPlan={onRejectPlan}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Approve plan" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Review plan" }));
+    const dialog = screen.getByRole("dialog", { name: "Review Reopen plan" });
+    expect(within(dialog).queryByRole("button", { name: "Reject plan" })).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Approve plan" }));
+    expect(onApprovePlan).toHaveBeenCalledOnce();
+    expect(onRejectPlan).not.toHaveBeenCalled();
   });
 
   it("preloads the reviewed Knowledge dialog and uploads only after confirmation", async () => {

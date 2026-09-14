@@ -2884,6 +2884,80 @@ kbd {
   font-size: 12px;
   line-height: 1.65;
 }
+.task-plan-review {
+  display: grid;
+  gap: 14px;
+}
+.task-plan-review > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.task-plan-review-list {
+  display: grid;
+  gap: 10px;
+}
+.task-plan-review-task {
+  display: grid;
+  gap: 10px;
+  padding: 13px;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+}
+.task-plan-review-task > header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.task-plan-review-task > header > div {
+  display: grid;
+  gap: 3px;
+}
+.task-plan-review-step,
+.task-plan-review-verification > span,
+.task-plan-review-prerequisites > span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.task-plan-review-task h3,
+.task-plan-review-task p {
+  margin: 0;
+}
+.task-plan-review-task h3 {
+  font-size: 14px;
+}
+.task-plan-review-task > p {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+.task-plan-review-verification,
+.task-plan-review-prerequisites {
+  display: grid;
+  gap: 5px;
+}
+.task-plan-review-verification code {
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 12px;
+}
+.task-plan-review-prerequisites ul {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.task-plan-review-thread-link {
+  justify-self: start;
+}
 .task-plan-summary-card p {
   margin: 0 0 10px;
   color: var(--muted);

@@ -168,3 +168,4 @@
 104. [Taskboard prerequisite links research](research/2026-09-13-taskboard-prerequisite-links.md): identify and inspect bounded same-workspace plan prerequisites.
 105. [Plan-mode approval gate research](research/2026-09-13-plan-mode-approval-gate.md): add a durable review checkpoint between planning and dispatch.
 106. [Approved-plan batch dispatch research](research/2026-09-14-approved-plan-batch-dispatch.md): queue dependency-ready approved plan work through the existing durable delegation path.
+107. [Plan review dialog research](research/2026-09-14-plan-review-dialog.md): make the durable approval checkpoint a bounded, readable review of plan steps and prerequisites.

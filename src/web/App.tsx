@@ -5957,7 +5957,9 @@ export function Taskboard(props: {
     ? props.data.tasks.filter((task) => isReadyTask(task, props.data.assignments))
     : props.data.tasks;
   const planSummaries = summarizeTaskPlans(props.data.tasks, props.data.assignments);
+  const [planToReviewId, setPlanToReviewId] = useState<string>();
   const [planToDispatchId, setPlanToDispatchId] = useState<string>();
+  const planToReview = planSummaries.find((plan) => plan.id === planToReviewId);
   const planToDispatch = planSummaries.find((plan) => plan.id === planToDispatchId);
   const tasksById = new Map(props.data.tasks.map((task) => [task.id, task]));
   const exportPlanSummaries = () => {
@@ -6066,24 +6068,13 @@ export function Taskboard(props: {
                       </button>
                     )}
                   {plan.approval !== "approved" && props.onApprovePlan && (
-                    <div className="task-plan-approval-actions">
-                      <button
-                        type="button"
-                        className="primary-button"
-                        onClick={() => props.onApprovePlan?.(plan)}
-                      >
-                        Approve plan
-                      </button>
-                      {plan.approval === "pending" && props.onRejectPlan && (
-                        <button
-                          type="button"
-                          className="danger-link"
-                          onClick={() => props.onRejectPlan?.(plan)}
-                        >
-                          Reject plan
-                        </button>
-                      )}
-                    </div>
+                    <button
+                      type="button"
+                      className="primary-button"
+                      onClick={() => setPlanToReviewId(plan.id)}
+                    >
+                      Review plan
+                    </button>
                   )}
                 </article>
               );
@@ -6133,7 +6124,131 @@ export function Taskboard(props: {
           onDispatched={props.onPlanDispatchComplete}
         />
       )}
+      {planToReview && props.onApprovePlan && (
+        <PlanReviewDialog
+          plan={planToReview}
+          data={props.data}
+          onClose={() => setPlanToReviewId(undefined)}
+          onThread={props.onThread}
+          onApprove={props.onApprovePlan}
+          onReject={props.onRejectPlan}
+        />
+      )}
     </div>
+  );
+}
+
+function PlanReviewDialog({
+  plan,
+  data,
+  onClose,
+  onThread,
+  onApprove,
+  onReject,
+}: {
+  plan: TaskPlanSummary;
+  data: BootstrapData;
+  onClose: () => void;
+  onThread: (threadId: string) => void;
+  onApprove: (plan: TaskPlanSummary) => void;
+  onReject?: (plan: TaskPlanSummary) => void;
+}) {
+  const reviewTasks = plan.tasks.filter((task) => task.workspaceId === data.workspace.id);
+  const tasksById = new Map(
+    data.tasks
+      .filter((task) => task.workspaceId === data.workspace.id)
+      .map((task) => [task.id, task]),
+  );
+  return (
+    <Modal title={`Review ${plan.title}`} eyebrow="PLAN REVIEW" onClose={onClose} wide>
+      <div className="task-plan-review">
+        <p>
+          Review the current plan before{" "}
+          {plan.approval === "pending" ? "approving or rejecting" : "reopening"} it. Viewing this
+          plan does not dispatch tasks or resume the Master.
+        </p>
+        <div className="task-plan-review-list">
+          {reviewTasks.map((task, index) => {
+            const prerequisites = (task.dependsOnTaskIds ?? []).map((dependencyId) =>
+              tasksById.get(dependencyId),
+            );
+            return (
+              <article className="task-plan-review-task" key={task.id}>
+                <header>
+                  <div>
+                    <span className="task-plan-review-step">Step {index + 1}</span>
+                    <h3>{task.title}</h3>
+                  </div>
+                  <span className={`task-process-status status-${task.status}`}>
+                    {taskStatusLabels[task.status]}
+                  </span>
+                </header>
+                <p>{task.description || "No description."}</p>
+                {task.verificationCommand && (
+                  <div className="task-plan-review-verification">
+                    <span>Verification</span>
+                    <code>{task.verificationCommand}</code>
+                  </div>
+                )}
+                {task.dependsOnTaskIds && task.dependsOnTaskIds.length > 0 && (
+                  <div className="task-plan-review-prerequisites">
+                    <span>Prerequisites</span>
+                    <ul>
+                      {task.dependsOnTaskIds.map((dependencyId, dependencyIndex) => {
+                        const prerequisite = prerequisites[dependencyIndex];
+                        return (
+                          <li key={dependencyId}>
+                            {prerequisite
+                              ? `${prerequisite.title} · ${taskStatusLabels[prerequisite.status]}`
+                              : "Unavailable prerequisite"}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                )}
+                {task.threadId && (
+                  <button
+                    type="button"
+                    className="secondary-button task-plan-review-thread-link"
+                    onClick={() => onThread(task.threadId ?? "")}
+                  >
+                    Open source thread
+                  </button>
+                )}
+              </article>
+            );
+          })}
+        </div>
+        <div className="modal-actions">
+          <button type="button" className="secondary-button" onClick={onClose}>
+            Close
+          </button>
+          {plan.approval === "pending" && onReject && (
+            <button
+              type="button"
+              className="danger-link"
+              onClick={() => {
+                onReject(plan);
+                onClose();
+              }}
+            >
+              Reject plan
+            </button>
+          )}
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => {
+              onApprove(plan);
+              onClose();
+            }}
+          >
+            Approve plan
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
