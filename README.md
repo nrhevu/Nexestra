@@ -453,7 +453,9 @@ Master `plan` tool cannot invent or change it.
 Every assignment is also a durable Worker run. Click any Taskboard card to inspect its assignee,
 repository, verification result, isolated branch and worktree, current phase, live reasoning,
 streamed response, and tool calls. Completed cards retain the Worker result and verification output
-in this process view. A finished worktree can be removed explicitly; Git refuses dirty or untracked
+in this process view. When a canonical Worker reply is available, the result can be marked helpful or
+needs work there; that uses the same durable quality feedback, cost metrics, and Needs-work queue as
+the conversation view. A finished worktree can be removed explicitly; Git refuses dirty or untracked
 work, while the branch and run history remain. A blocked, failed, or interrupted assignment can be
 retried with the same Worker and repository. An unstarted task can be delegated from its process
 dialog by selecting an enabled Worker and ready repository. The process also lists every

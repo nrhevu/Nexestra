@@ -5,7 +5,14 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BootstrapData, Task, WorkAssignment } from "../shared/contracts.js";
-import { App, isReadyTask, readyPlanTasks, summarizeTaskPlans, Taskboard } from "./App.js";
+import {
+  App,
+  isReadyTask,
+  readyPlanTasks,
+  summarizeTaskPlans,
+  Taskboard,
+  TaskProcessDialog,
+} from "./App.js";
 
 afterEach(() => {
   cleanup();
@@ -732,6 +739,69 @@ describe("approved plan dispatch", () => {
       1,
     );
     expect(within(dialog).getByRole("button", { name: "Dispatch 3 tasks" })).toBeDisabled();
+  });
+});
+
+describe("Worker result quality feedback", () => {
+  it("rates a completed Worker result through its canonical source message", async () => {
+    const completed = task("done", "completed-worker-result");
+    const completedAssignment = {
+      ...assignment("completed", completed.id),
+      result: "Implemented the requested behavior.",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input).endsWith(`/api/tasks/${completed.id}/process`)) {
+          return Response.json({
+            task: completed,
+            assignment: completedAssignment,
+            assignments: [completedAssignment],
+            toolCalls: [],
+            sourceMessage: {
+              id: "worker-reply-1",
+              threadId: "thread-1",
+              content: "Implemented the requested behavior.",
+              createdAt: completed.createdAt,
+              author: { name: "Implementer" },
+            },
+          });
+        }
+        return Response.json({ error: { message: "Not found" } }, { status: 404 });
+      }),
+    );
+    const onResultFeedback = vi.fn(async () => ({
+      threadId: "thread-1",
+      messageId: "worker-reply-1",
+      value: "positive" as const,
+      updatedAt: completed.updatedAt,
+    }));
+    const user = userEvent.setup();
+    render(
+      <TaskProcessDialog
+        task={completed}
+        data={{ agents: [], knowledge: [] } as unknown as BootstrapData}
+        onClose={vi.fn()}
+        onThread={vi.fn()}
+        onCaptureMessage={vi.fn()}
+        onResultFeedback={onResultFeedback}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onStopped={vi.fn(async () => undefined)}
+      />,
+    );
+
+    await screen.findByRole("heading", { name: completed.title });
+    await user.click(screen.getByRole("button", { name: "Mark Worker result helpful" }));
+    await waitFor(() =>
+      expect(onResultFeedback).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "worker-reply-1", threadId: "thread-1" }),
+        "positive",
+      ),
+    );
+    expect(screen.getByRole("button", { name: "Mark Worker result helpful" })).toHaveClass(
+      "active",
+    );
   });
 });
 

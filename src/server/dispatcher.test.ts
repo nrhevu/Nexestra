@@ -902,6 +902,9 @@ describe("mention dispatch", () => {
         .filter((message) => message.author.kind === "agent" && message.author.id === master.id)
         .every((message) => message.runId === masterRun?.id),
     ).toBe(true);
+    const workerReply = threadData.messages.find((message) => message.runId === assignment.id);
+    if (!workerReply) throw new Error("expected the Worker reply");
+    await store.setMessageFeedback(thread.id, workerReply.id, { value: "positive" });
     await expect(dispatcher.taskProcess(plannedTask.id)).resolves.toMatchObject({
       assignment: { id: assignment.id, status: "completed" },
       run: { id: assignment.id, status: "completed" },
@@ -911,6 +914,7 @@ describe("mention dispatch", () => {
         content: "Implemented and committed the assigned change.",
         author: { name: "Builder" },
       },
+      sourceFeedback: { messageId: workerReply.id, value: "positive" },
     });
   });
 

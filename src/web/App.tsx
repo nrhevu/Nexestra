@@ -1801,10 +1801,10 @@ export function App() {
   };
 
   const setMessageFeedback = async (
-    message: Message,
+    message: Pick<Message, "id" | "threadId">,
     value: "positive" | "negative" | null,
     note?: string,
-  ): Promise<void> => {
+  ): Promise<MessageFeedback | null> => {
     try {
       const feedback = await api<MessageFeedback | null>(
         `/api/threads/${encodeURIComponent(message.threadId)}/messages/${encodeURIComponent(message.id)}/feedback`,
@@ -1818,15 +1818,17 @@ export function App() {
       setRunHistoryRefreshRevision((revision) => revision + 1);
       setReviewQueueRefreshRevision((revision) => revision + 1);
       const current = historyPageRef.current;
-      if (!current || current.thread.id !== message.threadId) return;
+      if (!current || current.thread.id !== message.threadId) return feedback;
       const nextFeedback =
         current.feedback?.filter((entry) => entry.messageId !== message.id) ?? [];
       if (feedback) nextFeedback.push(feedback);
       const next = { ...current, feedback: nextFeedback };
       historyPageRef.current = next;
       setHistoryPage(next);
+      return feedback;
     } catch (caught) {
       setError(messageFrom(caught));
+      return null;
     }
   };
 
@@ -2649,6 +2651,7 @@ export function App() {
             openThread(threadId);
           }}
           onCaptureMessage={(message) => setMessageToCapture(message)}
+          onResultFeedback={setMessageFeedback}
           onEdit={(task) => {
             setTaskToInspect(undefined);
             setTaskToEdit(task);
@@ -3513,7 +3516,7 @@ function ThreadView(props: {
     message: Message,
     value: "positive" | "negative" | null,
     note?: string,
-  ) => Promise<void>;
+  ) => Promise<unknown>;
   onRequestRename: (thread: Thread) => void;
   onArchive: (threadId: string) => Promise<void>;
   onRestore: (threadId: string) => Promise<void>;
@@ -4436,7 +4439,7 @@ const ThreadTranscript = memo(function ThreadTranscript({
     message: Message,
     value: "positive" | "negative" | null,
     note?: string,
-  ) => Promise<void>;
+  ) => Promise<unknown>;
   readOnly: boolean;
   messageTarget?: { id: string };
   historyWindowKind: HistoryWindowKind;
@@ -4724,7 +4727,7 @@ function MessageRow({
     message: Message,
     value: "positive" | "negative" | null,
     note?: string,
-  ) => Promise<void>;
+  ) => Promise<unknown>;
 }) {
   const agentAuthor = message.author.kind === "agent" ? message.author : undefined;
   const [feedbackPending, setFeedbackPending] = useState(false);
@@ -4837,7 +4840,7 @@ function FeedbackNoteDialog({
   onClose,
   onSave,
 }: {
-  message: Message;
+  message: CaptureMessage;
   onClose: () => void;
   onSave: (note: string) => Promise<void>;
 }) {
@@ -6539,12 +6542,13 @@ function TaskCard({
   );
 }
 
-function TaskProcessDialog({
+export function TaskProcessDialog({
   task,
   data,
   onClose,
   onThread,
   onCaptureMessage,
+  onResultFeedback,
   onEdit,
   onDelete,
   onStopped,
@@ -6554,6 +6558,11 @@ function TaskProcessDialog({
   onClose: () => void;
   onThread: (threadId: string) => void;
   onCaptureMessage: (message: CaptureMessage) => void;
+  onResultFeedback: (
+    message: Pick<Message, "id" | "threadId">,
+    value: "positive" | "negative" | null,
+    note?: string,
+  ) => Promise<MessageFeedback | null>;
   onEdit: (task: Task) => void;
   onDelete: (task: Task) => void;
   onStopped: () => Promise<void>;
@@ -6572,6 +6581,8 @@ function TaskProcessDialog({
   const [delegateRepositoryId, setDelegateRepositoryId] = useState<string>();
   const [delegating, setDelegating] = useState(false);
   const [delegateError, setDelegateError] = useState<string>();
+  const [resultFeedbackPending, setResultFeedbackPending] = useState(false);
+  const [resultFeedbackNoteOpen, setResultFeedbackNoteOpen] = useState(false);
   const loadProcess = useCallback(
     async (quiet = false) => {
       try {
@@ -7199,15 +7210,74 @@ function TaskProcessDialog({
                   <div className="task-process-result-header">
                     <h3>Worker result</h3>
                     {process.sourceMessage && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const sourceMessage = process.sourceMessage;
-                          if (sourceMessage) onCaptureMessage(sourceMessage);
-                        }}
-                      >
-                        Save as Knowledge
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const sourceMessage = process.sourceMessage;
+                            if (sourceMessage) onCaptureMessage(sourceMessage);
+                          }}
+                        >
+                          Save as Knowledge
+                        </button>
+                        <fieldset className="message-feedback task-process-result-feedback">
+                          <legend>Rate Worker result</legend>
+                          <button
+                            type="button"
+                            className={process.sourceFeedback?.value === "positive" ? "active" : ""}
+                            aria-label="Mark Worker result helpful"
+                            title="Mark Worker result helpful"
+                            disabled={resultFeedbackPending}
+                            onClick={async () => {
+                              const sourceMessage = process.sourceMessage;
+                              if (!sourceMessage) return;
+                              setResultFeedbackPending(true);
+                              const feedback = await onResultFeedback(
+                                sourceMessage,
+                                process.sourceFeedback?.value === "positive" ? null : "positive",
+                              );
+                              setProcess((current) =>
+                                current
+                                  ? { ...current, sourceFeedback: feedback ?? undefined }
+                                  : current,
+                              );
+                              setResultFeedbackPending(false);
+                            }}
+                          >
+                            <ThumbsUp size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            className={process.sourceFeedback?.value === "negative" ? "active" : ""}
+                            aria-label="Mark Worker result needs work"
+                            title="Mark Worker result needs work"
+                            disabled={resultFeedbackPending}
+                            onClick={async () => {
+                              const sourceMessage = process.sourceMessage;
+                              if (!sourceMessage) return;
+                              if (process.sourceFeedback?.value !== "negative") {
+                                setResultFeedbackNoteOpen(true);
+                                return;
+                              }
+                              setResultFeedbackPending(true);
+                              const feedback = await onResultFeedback(sourceMessage, null);
+                              setProcess((current) =>
+                                current
+                                  ? { ...current, sourceFeedback: feedback ?? undefined }
+                                  : current,
+                              );
+                              setResultFeedbackPending(false);
+                            }}
+                          >
+                            <ThumbsDown size={14} />
+                          </button>
+                        </fieldset>
+                        {process.sourceFeedback?.note && (
+                          <span className="message-feedback-note">
+                            {process.sourceFeedback.note}
+                          </span>
+                        )}
+                      </>
                     )}
                   </div>
                   <Suspense
@@ -7216,6 +7286,26 @@ function TaskProcessDialog({
                     <RichMessage content={assignment.result} knownHandles={knownHandles} />
                   </Suspense>
                 </section>
+              )}
+              {resultFeedbackNoteOpen && process.sourceMessage && (
+                <FeedbackNoteDialog
+                  message={process.sourceMessage}
+                  onClose={() => setResultFeedbackNoteOpen(false)}
+                  onSave={async (note) => {
+                    const sourceMessage = process.sourceMessage;
+                    if (!sourceMessage) return;
+                    setResultFeedbackPending(true);
+                    try {
+                      const feedback = await onResultFeedback(sourceMessage, "negative", note);
+                      setProcess((current) =>
+                        current ? { ...current, sourceFeedback: feedback ?? undefined } : current,
+                      );
+                      setResultFeedbackNoteOpen(false);
+                    } finally {
+                      setResultFeedbackPending(false);
+                    }
+                  }}
+                />
               )}
 
               {assignment.status === "failed" && (

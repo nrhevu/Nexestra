@@ -115,6 +115,9 @@ export class AgentDispatcher {
     const sourceMessage = thread.messages.find(
       (message) => message.author.kind === "agent" && message.runId === assignment.id,
     );
+    const sourceFeedback = sourceMessage
+      ? thread.feedback?.find((feedback) => feedback.messageId === sourceMessage.id)
+      : undefined;
     return {
       task,
       assignment,
@@ -133,6 +136,7 @@ export class AgentDispatcher {
             },
           }
         : {}),
+      ...(sourceFeedback ? { sourceFeedback: structuredClone(sourceFeedback) } : {}),
     };
   }
 

@@ -1418,6 +1418,8 @@ export interface TaskProcessData {
   sourceMessage?: Pick<Message, "id" | "threadId" | "content" | "createdAt"> & {
     author: Pick<Message["author"], "name">;
   };
+  /** Existing quality feedback for the canonical Worker reply, when it has been rated. */
+  sourceFeedback?: MessageFeedback;
 }
 
 export function extractMentionHandles(content: string): string[] {

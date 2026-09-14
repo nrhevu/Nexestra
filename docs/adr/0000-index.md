@@ -139,3 +139,4 @@
 | [0136](0136-plan-mode-approval-gate.md) | Accepted | Gate plan-mode dispatch on durable Taskboard approval |
 | [0137](0137-approved-plan-batch-dispatch.md) | Accepted | Dispatch eligible approved plan tasks sequentially from Taskboard |
 | [0138](0138-plan-review-dialog.md) | Accepted | Review pending plan steps before approval or rejection |
+| [0139](0139-task-result-quality-feedback.md) | Accepted | Rate completed Worker results from the Taskboard process view |

@@ -743,8 +743,12 @@ credentials.
 
 - Taskboard's completed Worker process response may include a bounded `sourceMessage` projection for
   the latest assignment: the canonical agent reply with the assignment run ID. This powers a direct
-  reviewed Knowledge capture action while the server rereads the transcript by thread/message ID;
-  assignment result text is presentation-only and legacy replies without provenance are omitted.
+  reviewed Knowledge capture action and Worker-result quality controls while the server rereads the
+  transcript by thread/message ID. The process response carries existing feedback for that canonical
+  message; updates use the normal feedback route, so cost metrics and the Needs-work queue stay
+  consistent. Assignment result text is presentation-only and legacy replies without provenance are
+  omitted. See [ADR 0075](adr/0075-task-result-knowledge-capture.md) and [ADR
+  0139](adr/0139-task-result-quality-feedback.md).
 
 - Whiteboard is a built-in workspace surface backed by `workspaces/<workspaceId>/whiteboard.md`.
   GET and PUT responses are workspace-scoped and redact known credentials. Markdown is bounded to
